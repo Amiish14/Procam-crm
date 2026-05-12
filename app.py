@@ -943,7 +943,9 @@ def init_db():
         else:
             print(f"✓ {Employee.query.count()} employees already in database")
 
-if __name__ == '__main__':
+with app.app_context():
     init_db()
+
+if __name__ == '__main__':
     app.run(debug=os.environ.get('DEBUG','false').lower()=='true',
             host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
