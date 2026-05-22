@@ -1,0 +1,1194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Procam ProConnect CRM</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=Barlow+Condensed:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+/* ──────── PROCAM DESIGN SYSTEM v3.0 ──────── */
+/* Exact logo colors: Red #C72435 · Charcoal #474447 · White #FFFFFF */
+:root{
+  --red:#C72435; --red-dk:#A31D2B; --red-lt:#E8374A; --red-bg:#FDF1F2; --red-border:#F5C2C6;
+  --charcoal:#474447; --charcoal-lt:#6B696C; --charcoal-bg:#F2F2F2;
+  --white:#FFFFFF; --off:#F5F7FA; --surface:#FFFFFF;
+  --border:#E4E7EC; --border-dk:#CDD2DA;
+  --text:#1A1D23; --text-2:#4A4F5C; --text-3:#8B919E; --text-4:#B0B7C3;
+  --s-new:#64748B; --s-new-bg:#F1F5F9;
+  --s-call:#92400E; --s-call-bg:#FEF3C7;
+  --s-prof:#5B21B6; --s-prof-bg:#EDE9FE;
+  --s-appt:#065F46; --s-appt-bg:#D1FAE5;
+  --s-vis:#9A3412; --s-vis-bg:#FED7AA;
+  --s-rfq:#C72435; --s-rfq-bg:#FDF1F2;
+  --s-won:#14532D; --s-won-bg:#DCFCE7;
+  --s-lost:#7F1D1D; --s-lost-bg:#FEE2E2;
+  --shadow:0 1px 3px rgba(0,0,0,.08),0 4px 12px rgba(0,0,0,.05);
+  --shadow-md:0 4px 20px rgba(0,0,0,.12);
+  --shadow-lg:0 12px 48px rgba(0,0,0,.18);
+  --r:8px; --r-lg:12px;
+  --font:'Barlow',sans-serif;
+  --font-cond:'Barlow Condensed',sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--off);color:var(--text);font-size:13.5px;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-thumb{background:var(--border-dk);border-radius:4px}
+
+/* ──────── TOPBAR ──────── */
+.top{background:var(--charcoal);height:52px;display:flex;align-items:center;padding:0 18px;gap:14px;flex-shrink:0;box-shadow:0 1px 0 rgba(255,255,255,.06),0 2px 8px rgba(0,0,0,.2);overflow:hidden;position:relative;z-index:100}
+.top-logo{display:flex;align-items:center;gap:11px;flex-shrink:0}
+.top-bars{display:flex;flex-direction:column;gap:3px}
+.tb{border-radius:2px;background:#fff}
+.tb:nth-child(1){width:22px;height:3px}
+.tb:nth-child(2){width:14px;height:3px;background:var(--red)}
+.tb:nth-child(3){width:18px;height:3px}
+.top-name{font-family:var(--font-cond);font-size:18px;font-weight:700;color:#fff;letter-spacing:.5px}
+.top-name em{color:var(--red);font-style:normal}
+.top-tag{font-size:9px;font-weight:500;color:rgba(255,255,255,.3);letter-spacing:2px;text-transform:uppercase;display:block;line-height:1;margin-top:1px}
+.top-sep{width:1px;height:26px;background:rgba(255,255,255,.12);flex-shrink:0}
+.top-chip{display:flex;align-items:center;gap:8px;padding:4px 12px 4px 5px;background:rgba(255,255,255,.07);border-radius:20px;border:1px solid rgba(255,255,255,.1)}
+.top-av{width:26px;height:26px;border-radius:50%;background:var(--red);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.top-uname{font-size:12.5px;color:#fff;font-weight:500}
+.top-urole{font-size:9.5px;color:rgba(255,255,255,.4);display:block;line-height:1.2}
+.top-r{display:flex;align-items:center;gap:10px;margin-left:auto}
+.news-bell{position:relative;cursor:pointer;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:7px;padding:6px 10px;color:rgba(255,255,255,.65);font-size:13px;display:flex;align-items:center;gap:5px;font-family:var(--font);font-size:12px;transition:.15s}
+.news-bell:hover{background:rgba(255,255,255,.12)}
+.news-dot{width:7px;height:7px;background:var(--red);border-radius:50%;position:absolute;top:5px;right:6px;animation:pd 2s infinite}
+.admin-bdg{background:var(--red);color:#fff;font-size:9px;font-weight:700;padding:3px 8px;border-radius:20px;letter-spacing:.5px;text-transform:uppercase;font-family:var(--font)}
+.logout-btn{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);color:rgba(255,255,255,.55);padding:5px 12px;border-radius:20px;font-size:11.5px;cursor:pointer;font-family:var(--font);transition:.15s}
+.logout-btn:hover{background:rgba(255,255,255,.13);color:#fff}
+@keyframes pd{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ──────── SIDEBAR ──────── */
+.shell{display:flex;flex:1;overflow:hidden;position:relative;z-index:50}
+.sb{width:208px;background:var(--charcoal);flex-shrink:0;overflow-y:auto;padding:12px 0;display:flex;flex-direction:column;position:relative;z-index:60}
+.sb-sec{font-size:9px;font-weight:700;color:rgba(255,255,255,.25);letter-spacing:1.2px;text-transform:uppercase;padding:12px 16px 5px;margin-top:6px}
+.sbi{display:flex;align-items:center;gap:9px;padding:9px 16px;color:rgba(255,255,255,.5);cursor:pointer;font-size:13px;font-weight:500;transition:.12s;border-left:3px solid transparent;user-select:none}
+.sbi:hover{background:rgba(255,255,255,.05);color:rgba(255,255,255,.85)}
+.sbi.on{color:#fff;background:rgba(199,36,53,.18);border-left-color:var(--red)}
+.sbi .ic{font-size:15px;width:18px;text-align:center;flex-shrink:0}
+.sb-cnt{background:var(--red);color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px;margin-left:auto}
+.content{flex:1;overflow-y:auto;padding:18px 20px;background:var(--off)}
+.page{display:none}.page.on{display:block}
+.pg-hd{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px}
+.pg-ttl{font-size:20px;font-weight:700;color:var(--text);font-family:var(--font-cond)}
+.pg-sub{font-size:12.5px;color:var(--text-3);margin-top:2px}
+
+/* ──────── KPI ROW ──────── */
+.krow{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:18px}
+.kpi{background:var(--surface);border-radius:var(--r);border:1px solid var(--border);padding:14px 16px;position:relative;overflow:hidden;box-shadow:var(--shadow)}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--ka,var(--red))}
+.kl{font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
+.kv{font-size:26px;font-weight:700;color:var(--text);line-height:1;font-family:var(--font-cond)}
+.ks{font-size:11px;color:var(--text-4);margin-top:3px}
+
+/* ──────── CHARTS ──────── */
+.ch-row{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:14px;margin-bottom:16px}
+.ch{background:var(--surface);border-radius:var(--r);border:1px solid var(--border);padding:14px;box-shadow:var(--shadow)}
+.ch-ttl{font-size:12.5px;font-weight:600;color:var(--text);margin-bottom:12px}
+
+/* ──────── CARD ──────── */
+.card{background:var(--surface);border-radius:var(--r);border:1px solid var(--border);box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden}
+.card-hd{padding:11px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:#FAFBFD}
+.card-ttl{font-size:13px;font-weight:600;color:var(--text)}
+
+/* ──────── FILTERS ──────── */
+.fbar{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--border);background:#FAFBFD;align-items:center}
+.fi{padding:7px 10px;border-radius:var(--r);border:1.5px solid var(--border);font-size:12.5px;font-family:var(--font);color:var(--text);background:#fff;transition:.15s}
+.fi:focus{outline:none;border-color:var(--red);box-shadow:0 0 0 2px rgba(199,36,53,.1)}
+.fi-srch{flex:1;min-width:150px}
+.f-cnt{font-size:11.5px;color:var(--text-3);padding:5px 10px;background:var(--off);border-radius:20px;white-space:nowrap}
+
+/* ──────── TABLE ──────── */
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+thead th{background:#F4F6FB;padding:8px 12px;text-align:left;font-weight:700;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;border-bottom:1.5px solid var(--border);white-space:nowrap;position:sticky;top:0;z-index:1}
+tbody tr{border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
+tbody tr:hover{background:#F8FAFD}
+tbody td{padding:8px 12px;vertical-align:middle}
+.td-m{font-weight:600;color:var(--text);font-size:12.5px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.td-s{font-size:11px;color:var(--text-3);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tddate{font-family:var(--font-mono);font-size:11px;color:var(--text-3)}
+
+/* ──────── BADGES ──────── */
+.b{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;gap:3px}
+.b::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.6;flex-shrink:0}
+.sN{background:var(--s-new-bg);color:var(--s-new)}
+.sC{background:var(--s-call-bg);color:var(--s-call)}
+.sP{background:var(--s-prof-bg);color:var(--s-prof)}
+.sA{background:var(--s-appt-bg);color:var(--s-appt)}
+.sV{background:var(--s-vis-bg);color:var(--s-vis)}
+.sR{background:var(--s-rfq-bg);color:var(--s-rfq);border:1px solid var(--red-border)}
+.sW{background:var(--s-won-bg);color:var(--s-won)}
+.sL{background:var(--s-lost-bg);color:var(--s-lost)}
+.vHT{background:#DBEAFE;color:#1E3A8A}
+.vPF{background:#EDE9FE;color:#4C1D95}
+.vWH{background:#D1FAE5;color:#065F46}
+.vIN{background:#FEF3C7;color:#78350F}
+.srcJ{background:#DBEAFE;color:#1E40AF}
+.srcM{background:#FCE7F3;color:#9D174D}
+.srcN{background:#FEF9C3;color:#713F12}
+.srcS{background:#D1FAE5;color:#065F46}
+.srcI{background:#F3E8FF;color:#5B21B6}
+.srcMn{background:#FEF3C7;color:#92400E}
+.oppB{background:var(--red-bg);color:var(--red);border:1px solid var(--red-border);font-family:var(--font-mono);letter-spacing:.5px}
+.relHi{background:#DCFCE7;color:#14532D}
+.relMe{background:#FEF3C7;color:#92400E}
+.relLo{background:#F1F5F9;color:#64748B}
+.catP{background:#DBEAFE;color:#1E3A8A}
+.catS{background:#F1F5F9;color:#1E293B}
+.catC{background:#EDE9FE;color:#4C1D95}
+.catR{background:#D1FAE5;color:#065F46}
+.catI{background:#FEF3C7;color:#78350F}
+.catD{background:#FCE7F3;color:#9D174D}
+
+/* ──────── BUTTONS ──────── */
+.btn{padding:8px 16px;border-radius:var(--r);border:none;cursor:pointer;font-size:12.5px;font-weight:600;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;transition:.15s;white-space:nowrap}
+.btn-red{background:var(--red);color:#fff}.btn-red:hover{background:var(--red-lt)}
+.btn-dk{background:var(--charcoal);color:#fff}.btn-dk:hover{background:var(--charcoal-lt)}
+.btn-ghost{background:#fff;color:var(--text);border:1.5px solid var(--border)}.btn-ghost:hover{background:var(--off);border-color:var(--border-dk)}
+.btn-sm{padding:5px 10px;font-size:11.5px;border-radius:6px}
+.btn-xs{padding:3px 8px;font-size:11px;border-radius:5px}
+
+/* ──────── MODAL ──────── */
+.mob{position:fixed;inset:0;background:rgba(71,68,71,.5);z-index:500;display:flex;align-items:flex-start;justify-content:center;padding:22px 14px;overflow-y:auto;backdrop-filter:blur(3px)}
+.mod{background:#fff;border-radius:var(--r-lg);width:100%;max-width:740px;box-shadow:var(--shadow-lg);animation:mUp .18s ease}
+.mod-sm{max-width:480px}
+@keyframes mUp{from{transform:translateY(12px);opacity:0}to{transform:none;opacity:1}}
+.mhd{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:12px;background:#FAFBFD;border-radius:var(--r-lg) var(--r-lg) 0 0}
+.m-ic{width:36px;height:36px;border-radius:var(--r);background:var(--red-bg);border:1px solid var(--red-border);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.m-ttl{font-size:15px;font-weight:700;color:var(--text);flex:1;font-family:var(--font-cond)}
+.m-sub{font-size:12px;color:var(--text-3);margin-top:1px}
+.mx{background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-3);padding:0;line-height:1;flex-shrink:0;transition:.15s}
+.mx:hover{color:var(--red)}
+.mbdy{padding:16px 20px;max-height:calc(88vh - 140px);overflow-y:auto}
+.mft{padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;background:#FAFBFD;border-radius:0 0 var(--r-lg) var(--r-lg)}
+
+/* ──────── FORM ──────── */
+.fm-s{font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.7px;padding:7px 0 6px;border-bottom:1px solid var(--border);margin:13px 0 11px}
+.fmg{margin-bottom:12px}
+.fml{display:block;font-size:10.5px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px}
+.fmc{width:100%;padding:9px 12px;border-radius:var(--r);border:1.5px solid var(--border);font-size:13px;font-family:var(--font);color:var(--text);transition:.15s;background:#fff}
+.fmc:focus{outline:none;border-color:var(--red);box-shadow:0 0 0 3px rgba(199,36,53,.07)}
+textarea.fmc{resize:vertical;min-height:75px;line-height:1.5}
+.fmr{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+.fmr3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:11px}
+
+/* ──────── PIPELINE STEPPER ──────── */
+.pipe{display:flex;border-radius:var(--r);overflow:hidden;border:1.5px solid var(--border);margin-bottom:13px}
+.ps{flex:1;padding:8px 2px;text-align:center;font-size:9px;font-weight:700;cursor:pointer;border-right:1px solid var(--border);background:#fff;color:var(--text-3);transition:.12s;text-transform:uppercase;letter-spacing:.2px;user-select:none}
+.ps:last-child{border-right:none}
+.ps.done{background:#D1FAE5;color:#065F46}
+.ps.active{background:var(--red);color:#fff}
+.ps:hover:not(.active){background:var(--off)}
+
+/* ──────── DATE CELLS ──────── */
+.dtrow{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:13px}
+.dtc{background:var(--off);border-radius:var(--r);padding:9px;border-left:3px solid var(--border-dk)}
+.dtc.ok{border-left-color:var(--red);background:var(--red-bg)}
+.dtc-l{font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}
+.dtc.ok .dtc-l{color:var(--red)}
+
+/* ──────── OPP BOX ──────── */
+.opp-b{background:linear-gradient(135deg,var(--red-bg),#FFF5F5);border:1.5px solid var(--red-border);border-radius:var(--r);padding:13px 16px;margin-bottom:13px}
+.opp-hd{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.opp-ic{width:30px;height:30px;border-radius:var(--r);background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.opp-ttl{font-size:13px;font-weight:700;color:var(--red);font-family:var(--font-cond)}
+.opp-sub{font-size:11px;color:var(--charcoal-lt)}
+.opp-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.opp-f{background:#fff;border-radius:6px;padding:8px 10px;border:1px solid var(--red-border)}
+.opp-fl{font-size:9.5px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}
+
+/* ──────── AI EMAIL BOX ──────── */
+.ai-b{background:linear-gradient(135deg,#F5F3FF,#EFF6FF);border:1.5px solid #C4B5FD;border-radius:var(--r);padding:13px;margin-top:12px}
+.ai-hd{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+.ai-ic{width:24px;height:24px;background:#7C3AED;border-radius:6px;color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.ai-lbl{font-size:10.5px;font-weight:700;color:#5B21B6;text-transform:uppercase;letter-spacing:.4px}
+.ai-pulse{width:6px;height:6px;background:#7C3AED;border-radius:50%;animation:pd 1.4s infinite;margin-left:auto}
+.ai-txt{font-size:12px;line-height:1.75;color:#374151;white-space:pre-wrap;max-height:400px;overflow-y:auto;font-family:var(--font-mono)}
+
+/* ──────── NEWS CARDS ──────── */
+.news-card{background:#fff;border-radius:var(--r);border:1px solid var(--border);padding:13px 15px;margin-bottom:9px;transition:.15s}
+.news-card:hover{border-color:var(--red-border);box-shadow:0 2px 10px rgba(199,36,53,.08)}
+.nc-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:6px}
+.nc-ttl{font-size:13.5px;font-weight:600;color:var(--text);line-height:1.4;flex:1}
+.nc-meta{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.nc-sum{font-size:12.5px;color:var(--text-2);line-height:1.6}
+.nc-actions{display:flex;gap:6px;margin-top:10px}
+
+/* ──────── EMPLOYEE CARD ──────── */
+.emp-card{background:#fff;border-radius:var(--r);border:1px solid var(--border);padding:13px 16px;display:flex;align-items:center;gap:13px;margin-bottom:9px;box-shadow:var(--shadow);transition:.15s}
+.emp-card:hover{border-color:var(--red-border)}
+.e-av{width:40px;height:40px;border-radius:50%;background:var(--charcoal);color:var(--red);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0;font-family:var(--font-cond)}
+.e-code{font-family:var(--font-mono);font-size:10px;color:var(--text-3);background:var(--off);border-radius:4px;padding:1px 6px;margin-left:6px}
+.e-name{font-size:14px;font-weight:700;color:var(--text)}
+.e-meta{font-size:11.5px;color:var(--text-3);margin-top:1px}
+.e-stats{display:flex;gap:12px;text-align:center;margin-right:8px}
+.ev{font-size:15px;font-weight:700;color:var(--text)}
+.el{font-size:9.5px;color:var(--text-3);text-transform:uppercase}
+
+/* ──────── UPLOAD ZONE ──────── */
+.upz{border:2px dashed var(--border);border-radius:var(--r);padding:28px;text-align:center;cursor:pointer;transition:.2s;background:#FAFBFD}
+.upz:hover,.upz.drag{border-color:var(--red);background:var(--red-bg)}
+
+/* ──────── TOAST ──────── */
+.toast{position:fixed;bottom:20px;right:20px;background:var(--charcoal);color:#fff;padding:10px 18px;border-radius:var(--r);font-size:13px;font-weight:500;z-index:9999;transform:translateY(70px);opacity:0;transition:.28s ease;box-shadow:var(--shadow-md);max-width:300px}
+.toast.show{transform:none;opacity:1}
+.toast.ok{background:#065F46}
+.toast.err{background:#991B1B}
+
+/* ──────── CHANGE PW OVERLAY ──────── */
+.pw-ov{position:fixed;inset:0;background:rgba(71,68,71,.65);z-index:800;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.pw-card{background:#fff;border-radius:var(--r-lg);padding:32px 36px;width:100%;max-width:360px;box-shadow:var(--shadow-lg)}
+
+/* ──────── TABS ──────── */
+.tabs{display:flex;border-bottom:2px solid var(--border);margin-bottom:14px}
+.tab{padding:8px 18px;font-size:13px;font-weight:600;color:var(--text-3);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:.15s;user-select:none;font-family:var(--font)}
+.tab:hover{color:var(--text)}
+.tab.on{color:var(--red);border-bottom-color:var(--red)}
+
+/* ──────── DETAIL GRID ──────── */
+.dg{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:13px}
+.di{background:var(--off);border-radius:var(--r);padding:9px 12px}
+.dl{font-size:9.5px;font-weight:700;color:var(--text-4);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px}
+.dv{font-size:12.5px;font-weight:500;color:var(--text)}
+.hist{background:var(--off);border-radius:var(--r);padding:10px 13px;font-size:12.5px;color:var(--text-2);line-height:1.65;max-height:80px;overflow-y:auto;border-left:3px solid var(--red)}
+
+input[type=file]{display:none}
+@media(max-width:1100px){.krow{grid-template-columns:repeat(3,1fr)}.ch-row{grid-template-columns:1fr 1fr}}
+@media(max-width:900px){.sb{display:none}}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="top-logo">
+    <img src="https://www.procamlogistics.com/public/frontend/assets/img/logo.png" alt="Procam Group" style="height:30px;object-fit:contain;filter:brightness(0) invert(1)">
+    <div style="border-left:1px solid rgba(255,255,255,.2);padding-left:12px;margin-left:4px">
+      <div class="top-tag" style="font-size:10px;color:rgba(255,255,255,.5);letter-spacing:1.5px;text-transform:uppercase">ProConnect CRM</div>
+    </div>
+  </div>
+  <div class="top-sep"></div>
+  <div class="top-chip">
+    <div class="top-av" id="tAv"></div>
+    <div>
+      <div class="top-uname" id="tName"></div>
+      <span class="top-urole" id="tRole"></span>
+    </div>
+  </div>
+  <div class="top-r">
+    <div class="news-bell admin-only" onclick="nav('news')" id="newsBell" title="News Intelligence">📰 Intelligence <div class="news-dot" id="newsDot" style="display:none"></div></div>
+    <span class="admin-bdg admin-only" id="adminBdg" style="display:none">Admin</span>
+    <button class="logout-btn" onclick="location.href='/logout'">Sign out</button>
+  </div>
+</div>
+
+<div class="shell">
+<div class="sb">
+  <div class="sb-sec">Workspace</div>
+  <div class="sbi on" onclick="nav('dash')" data-p="dash"><span class="ic">📊</span>Dashboard</div>
+  <div class="sbi" onclick="nav('leads')" data-p="leads"><span class="ic">📋</span>My Leads<span class="sb-cnt" id="sbN">0</span></div>
+  <div class="sbi" onclick="nav('outreach')" data-p="outreach"><span class="ic">✉️</span>AI Outreach</div>
+  <div class="sbi" onclick="nav('contacts')" data-p="contacts"><span class="ic">🌐</span>Global CRM</div>
+  <div class="sbi" onclick="nav('pwchange')" data-p="pwchange"><span class="ic">🔑</span>Change Password</div>
+  <div class="sb-sec admin-only">Admin</div>
+  <div class="sbi admin-only" onclick="nav('all')" data-p="all"><span class="ic">🗂️</span>All Leads</div>
+  <div class="sbi admin-only" onclick="nav('opp')" data-p="opp"><span class="ic">🎯</span>Opportunities<span class="sb-cnt" id="sbOp">0</span></div>
+  <div class="sbi admin-only" onclick="nav('news')" data-p="news"><span class="ic">📰</span>Intelligence<span class="sb-cnt" id="sbNews">0</span></div>
+  <div class="sbi admin-only" onclick="nav('team')" data-p="team"><span class="ic">👥</span>Team</div>
+  <div class="sbi admin-only" onclick="nav('assign')" data-p="assign"><span class="ic">⚡</span>Assign</div>
+  <div class="sbi admin-only" onclick="nav('employees')" data-p="employees"><span class="ic">🔐</span>Employees</div>
+  <div class="sbi admin-only" onclick="nav('upload')" data-p="upload"><span class="ic">⬆️</span>Upload</div>
+</div>
+
+<div class="content">
+
+<!-- DASHBOARD -->
+<div class="page on" id="pg-dash">
+  <div class="pg-hd"><div><div class="pg-ttl">Dashboard</div><div class="pg-sub" id="dSub"></div></div>
+    <div style="display:flex;gap:8px;align-items:center"><div id="dDate" style="font-size:11.5px;color:var(--text-3)"></div></div>
+  </div>
+  <div class="krow" id="kRow"></div>
+  <div class="ch-row">
+    <div class="ch"><div class="ch-ttl">Pipeline Stages</div><div style="height:190px;position:relative"><canvas id="cSt"></canvas></div></div>
+    <div class="ch"><div class="ch-ttl">Industry Mix</div><div style="height:190px;position:relative"><canvas id="cIn"></canvas></div></div>
+    <div class="ch"><div class="ch-ttl">Vertical Split</div><div style="height:190px;position:relative"><canvas id="cVt"></canvas></div></div>
+  </div>
+  <div class="card">
+    <div class="card-hd"><div class="card-ttl">🔥 Active Pipeline — Top 10</div><button class="btn btn-ghost btn-sm" onclick="nav('leads')">View all →</button></div>
+    <div class="tw"><table><thead><tr><th>Company</th><th>Industry</th><th>State</th><th>Stage</th><th>Vertical</th><th>Follow-up</th><th>Onboarded</th><th></th></tr></thead><tbody id="dashTb"></tbody></table></div>
+  </div>
+</div>
+
+<!-- MY LEADS -->
+<div class="page" id="pg-leads">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">My Leads</div><div class="pg-sub">Projects assigned to you — update stage, dates and contacts</div></div>
+    <button class="btn btn-red" onclick="newLead()">+ New Lead</button>
+  </div>
+  <div class="card" style="margin-bottom:0">
+    <div class="fbar">
+      <input class="fi fi-srch" id="lS" placeholder="🔍 Company, state, industry..." oninput="rLeads()">
+      <select class="fi" id="lSt" onchange="rLeads()"><option value="">All Stages</option><option>New</option><option>Call Done</option><option>Profile Sent</option><option>Appointment</option><option>Visit Done</option><option>RFQ Generated</option><option>Won</option><option>Lost</option></select>
+      <select class="fi" id="lV" onchange="rLeads()"><option value="">All Verticals</option><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option></select>
+      <button class="btn btn-ghost btn-sm" onclick="clrF('l')">✕</button>
+      <span class="f-cnt" id="lCnt"></span>
+    </div>
+    <div class="tw"><table><thead><tr><th>#</th><th>Company / Project</th><th>Industry</th><th>State</th><th>₹M</th><th>Contact</th><th>Stage</th><th>Vertical</th><th>Followup</th><th>Opp#</th><th>Onboarded</th><th></th></tr></thead><tbody id="lTb"></tbody></table></div>
+  </div>
+</div>
+
+<!-- ALL LEADS (admin) -->
+<div class="page" id="pg-all">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">All Leads</div><div class="pg-sub">Complete pipeline — all team members</div></div>
+    <button class="btn btn-red" onclick="newLead()">+ New Lead</button>
+  </div>
+  <div class="card" style="margin-bottom:0">
+    <div class="fbar">
+      <input class="fi fi-srch" id="aS" placeholder="🔍 Company, state, industry..." oninput="rAll()">
+      <select class="fi" id="aSt" onchange="rAll()"><option value="">All Stages</option><option>New</option><option>Call Done</option><option>Profile Sent</option><option>Appointment</option><option>Visit Done</option><option>RFQ Generated</option><option>Won</option><option>Lost</option></select>
+      <select class="fi" id="aAsgn" onchange="rAll()"><option value="">All Team</option></select>
+      <select class="fi" id="aV" onchange="rAll()"><option value="">All Verticals</option><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option></select>
+      <select class="fi" id="aSrc" onchange="rAll()"><option value="">All Sources</option><option value="manual">Manual</option><option value="import">Imported</option><option value="news">News Lead</option><option value="jul2025">Jul-2025</option><option value="manju">Manju</option><option value="new_project">Archive</option><option value="subsidiary">Subsidiary</option></select>
+      <button class="btn btn-ghost btn-sm" onclick="clrF('a')">✕</button>
+      <span class="f-cnt" id="aCnt"></span>
+    </div>
+    <div class="tw"><table><thead><tr><th>#</th><th>Company</th><th>Industry</th><th>State</th><th>₹M</th><th>Contact</th><th>Stage</th><th>Assigned</th><th>Source</th><th>Opp#</th><th>Onboarded</th><th></th></tr></thead><tbody id="aTb"></tbody></table></div>
+  </div>
+</div>
+
+<!-- OPPORTUNITIES (admin) -->
+<div class="page" id="pg-opp">
+  <div class="pg-hd"><div><div class="pg-ttl">Opportunities — ProConnect</div><div class="pg-sub">Leads at RFQ stage · Linked to ProConnect opportunity numbers</div></div></div>
+  <div class="card" style="margin-bottom:0">
+    <div class="fbar">
+      <input class="fi fi-srch" id="opS" placeholder="🔍 Company, opportunity number..." oninput="rOpp()">
+      <select class="fi" id="opAsgn" onchange="rOpp()"><option value="">All Team</option></select>
+      <span class="f-cnt" id="opCnt"></span>
+    </div>
+    <div class="tw"><table><thead><tr><th>Opp #</th><th>Company</th><th>Industry</th><th>₹M</th><th>Vertical</th><th>Assigned</th><th>RFQ Date</th><th>PC Stage</th><th>Close Date</th><th>Notes</th><th></th></tr></thead><tbody id="opTb"></tbody></table></div>
+  </div>
+</div>
+
+<!-- AI OUTREACH -->
+<div class="page" id="pg-outreach">
+  <div class="pg-hd"><div><div class="pg-ttl">AI Outreach</div><div class="pg-sub">Generate customised emails — add project context for sharper output</div></div></div>
+  <div class="card"><div style="padding:16px">
+    <div class="fmg"><label class="fml">Select Lead</label><select class="fmc" id="orId" onchange="loadOR()"><option value="">-- Select a lead --</option></select></div>
+    <div id="orDet" style="display:none">
+      <div class="dg" id="orGrid"></div>
+      <div class="fmr">
+        <div class="fmg"><label class="fml">Contact Person</label><input class="fmc" id="orPic"></div>
+        <div class="fmg"><label class="fml">Email</label><input class="fmc" id="orEmail"></div>
+      </div>
+      <div class="fmg"><label class="fml">Project Context / Progress Update ✦</label>
+        <textarea class="fmc" id="orCtx" rows="4" placeholder="Paste project progress details, equipment list, timeline, location specifics etc. Claude will use this to write a highly specific email.&#10;&#10;Example: Setting up 300MW solar farm in Rajasthan. Trackers + inverters arriving from China via Mundra. Need port-to-site ODC + 6 months temporary storage during construction phase."></textarea>
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px">✦ For leads from News Intelligence, the project details are pre-filled. You can edit before generating.</div>
+      </div>
+      <div class="fmr">
+        <div class="fmg"><label class="fml">Service to Pitch</label><select class="fmc" id="orVt"><option>Heavy Transport / ODC Movement</option><option>Project Freight Management</option><option>Warehousing & 3PL</option><option>Installation & Commissioning</option><option>End-to-End Project Logistics</option></select></div>
+        <div class="fmg"><label class="fml">Tone</label><select class="fmc" id="orTone"><option value="formal">Formal & Professional</option><option value="warm">Warm & Collaborative</option><option value="direct">Direct & Brief</option></select></div>
+      </div>
+      <button class="btn btn-red" id="genBtn" onclick="genEmail()">✦ Generate AI Email</button>
+      <div class="ai-b" id="aiBox" style="display:none">
+        <div class="ai-hd"><div class="ai-ic">✦</div><div class="ai-lbl">AI Draft — review before sending</div><div class="ai-pulse"></div></div>
+        <div class="ai-txt" id="aiTxt"></div>
+        <div style="margin-top:10px;display:flex;gap:7px;flex-wrap:wrap">
+          <button class="btn btn-dk btn-sm" onclick="copyMail()">📋 Copy email</button>
+          <button class="btn btn-ghost btn-sm" onclick="genEmail()">🔄 Regenerate</button>
+          <button class="btn btn-ghost btn-sm" onclick="markSent()">✅ Mark intro sent</button>
+        </div>
+      </div>
+    </div>
+  </div></div>
+</div>
+
+<!-- GLOBAL CRM -->
+<div class="page" id="pg-contacts">
+  <div class="pg-hd"><div><div class="pg-ttl">Global CRM</div><div class="pg-sub">Contacts, companies & overseas agents — auto-built from leads + manual entry</div></div><button class="btn btn-red" onclick="openCt()">+ Add</button></div>
+  <div class="tabs"><div class="tab on" onclick="ctTab('person')">People</div><div class="tab" onclick="ctTab('company')">Companies</div><div class="tab" onclick="ctTab('agent')">Overseas Agents</div></div>
+  <div id="ctCnt"></div>
+</div>
+
+<!-- NEWS INTELLIGENCE -->
+<div class="page" id="pg-news">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">Market Intelligence</div><div class="pg-sub">Industry news from ETManufacturing, Projects Today · Fetched daily from Nilesh's Outlook</div></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-ghost btn-sm" onclick="seedNews()">Seed from Outlook</button>
+      <button class="btn btn-ghost btn-sm" onclick="rNews()">🔄 Refresh</button>
+    </div>
+  </div>
+  <div id="newsCnt"></div>
+</div>
+
+<!-- TEAM -->
+<div class="page" id="pg-team">
+  <div class="pg-hd"><div><div class="pg-ttl">Team Performance</div><div class="pg-sub">Pipeline across all pre-sales and sales staff</div></div></div>
+  <div id="teamCnt"></div>
+</div>
+
+<!-- ASSIGN -->
+<div class="page" id="pg-assign">
+  <div class="pg-hd"><div><div class="pg-ttl">Assign Leads</div><div class="pg-sub">Bulk-assign or reassign leads to team members</div></div></div>
+  <div class="card"><div style="padding:13px">
+    <div class="fmr3">
+      <div class="fmg"><label class="fml">Industry</label><select class="fmc" id="asI"><option value="">All</option></select></div>
+      <div class="fmg"><label class="fml">Source</label><select class="fmc" id="asS"><option value="">All</option><option value="manual">Manual</option><option value="import">Imported</option><option value="news">News</option><option value="jul2025">Jul-2025</option><option value="manju">Manju</option><option value="subsidiary">Subsidiary</option></select></div>
+      <div class="fmg"><label class="fml">Show</label><select class="fmc" id="asU"><option value="">All leads</option><option value="u">Unassigned only</option></select></div>
+    </div>
+    <button class="btn btn-ghost btn-sm" onclick="rAssign()">Apply</button>
+  </div></div>
+  <div class="card" style="margin-bottom:0">
+    <div class="card-hd"><div class="card-ttl" id="asCnt">—</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select class="fi" id="blkU" style="width:180px"></select>
+        <button class="btn btn-red btn-sm" onclick="bulkAssign()">Assign selected</button>
+      </div>
+    </div>
+    <div class="tw"><table><thead><tr><th><input type="checkbox" id="asAll" onchange="togAll(this)"></th><th>Company</th><th>Industry</th><th>State</th><th>Current Assignee</th><th>Source</th></tr></thead><tbody id="asTb"></tbody></table></div>
+  </div>
+</div>
+
+<!-- EMPLOYEES -->
+<div class="page" id="pg-employees">
+  <div class="pg-hd"><div><div class="pg-ttl">Employee Master</div><div class="pg-sub">Pre-sales and sales team accounts · Employee code = default password on first login</div></div><button class="btn btn-red" onclick="openEmpModal()">+ Add Employee</button></div>
+  <div id="empCnt"></div>
+</div>
+
+<!-- UPLOAD -->
+<div class="page" id="pg-upload">
+  <div class="pg-hd"><div><div class="pg-ttl">Upload Data</div><div class="pg-sub">Import from any format — project subscription, visiting cards, CRM exports</div></div></div>
+  <div class="tabs" id="upTabs"><div class="tab on" onclick="upTab('xl')">Excel / CSV</div><div class="tab" onclick="upTab('mn')">Manual Entry</div><div class="tab" onclick="upTab('vc')">Visiting Cards</div></div>
+  <div id="upCnt"></div>
+</div>
+
+<!-- CHANGE PASSWORD (own) -->
+<div class="page" id="pg-pwchange">
+  <div class="pg-hd"><div><div class="pg-ttl">Change Password</div><div class="pg-sub">Set a new personal password</div></div></div>
+  <div class="card" style="max-width:400px"><div style="padding:16px">
+    <div class="fmg"><label class="fml">Current Password</label><input class="fmc" type="password" id="cpwCur"></div>
+    <div class="fmg"><label class="fml">New Password (min 6 chars)</label><input class="fmc" type="password" id="cpwNew"></div>
+    <div class="fmg"><label class="fml">Confirm New Password</label><input class="fmc" type="password" id="cpwCfm"></div>
+    <button class="btn btn-red" onclick="doChangePw()">Update Password</button>
+    <div style="margin-top:10px;font-size:12px;color:var(--text-3)" id="cpwMsg"></div>
+  </div></div>
+</div>
+
+</div><!-- content -->
+</div><!-- shell -->
+
+<!-- LEAD MODAL -->
+<div class="mob" id="ldMob" style="display:none" onclick="closeLd(event)">
+  <div class="mod" onclick="event.stopPropagation()">
+    <div class="mhd">
+      <div class="m-ic">📋</div>
+      <div><div class="m-ttl" id="ldTtl">Lead</div><div class="m-sub" id="ldSub"></div></div>
+      <button class="mx" onclick="closeLd()">✕</button>
+    </div>
+    <div class="mbdy" id="ldBdy"></div>
+    <div class="mft">
+      <button class="btn btn-ghost" onclick="orFromLd()">✉️ Email</button>
+      <button class="btn btn-ghost" onclick="closeLd()">Cancel</button>
+      <button class="btn btn-red" onclick="saveLd()">💾 Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- OPP MODAL -->
+<div class="mob" id="opMob" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+  <div class="mod mod-sm" onclick="event.stopPropagation()">
+    <div class="mhd"><div class="m-ic">🎯</div><div><div class="m-ttl" id="opTtl">ProConnect Opportunity</div><div class="m-sub">Assign opportunity number from ProConnect CRM</div></div><button class="mx" onclick="document.getElementById('opMob').style.display='none'">✕</button></div>
+    <div class="mbdy">
+      <div class="opp-b">
+        <div class="opp-hd"><div class="opp-ic">🎯</div><div><div class="opp-ttl">ProConnect Number</div><div class="opp-sub" id="opSub">Link this lead to ProConnect CRM</div></div></div>
+        <div class="opp-grid">
+          <div class="opp-f"><div class="opp-fl">Opp Number</div><input class="fmc" id="opN" placeholder="OPP-2026-0001" style="font-family:var(--font-mono);font-size:13px;padding:6px 8px"></div>
+          <div class="opp-f"><div class="opp-fl">PC Stage</div><select class="fmc" id="opSt" style="padding:6px 8px"><option>Qualification</option><option>Needs Analysis</option><option>Proposal Sent</option><option>Negotiation</option><option>Closed Won</option><option>Closed Lost</option></select></div>
+          <div class="opp-f"><div class="opp-fl">Close Date</div><input type="date" class="fmc" id="opDt" style="padding:6px 8px"></div>
+        </div>
+      </div>
+      <div class="fmg"><label class="fml">Notes</label><textarea class="fmc" id="opNts" rows="3"></textarea></div>
+    </div>
+    <div class="mft"><button class="btn btn-ghost" onclick="document.getElementById('opMob').style.display='none'">Cancel</button><button class="btn btn-red" onclick="saveOpp()">Link to ProConnect</button></div>
+  </div>
+</div>
+
+<!-- CONTACT MODAL -->
+<div class="mob" id="ctMob" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+  <div class="mod mod-sm" onclick="event.stopPropagation()">
+    <div class="mhd"><div class="m-ic">🌐</div><div><div class="m-ttl" id="ctTtl">Add Contact / Company / Agent</div></div><button class="mx" onclick="document.getElementById('ctMob').style.display='none'">✕</button></div>
+    <div class="mbdy">
+      <div class="fmg"><label class="fml">Type</label><select class="fmc" id="ctType"><option value="person">Person</option><option value="company">Company</option><option value="agent">Overseas Agent</option></select></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Name *</label><input class="fmc" id="ctN"></div><div class="fmg"><label class="fml">Company / Organisation</label><input class="fmc" id="ctC"></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Designation</label><input class="fmc" id="ctD"></div><div class="fmg"><label class="fml">Industry</label><input class="fmc" id="ctI"></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="ctE" type="email"></div><div class="fmg"><label class="fml">Phone / Mobile</label><input class="fmc" id="ctP"></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Country</label><input class="fmc" id="ctCo" value="India"></div><div class="fmg"><label class="fml">City</label><input class="fmc" id="ctCi"></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Website</label><input class="fmc" id="ctW" placeholder="https://"></div><div class="fmg"><label class="fml">LinkedIn</label><input class="fmc" id="ctL" placeholder="https://linkedin.com/in/..."></div></div>
+      <div class="fmg"><label class="fml">Agent Type / Category</label><select class="fmc" id="ctAt"><option value="">—</option><option>Overseas Agent</option><option>Partner</option><option>Vendor</option><option>Client</option><option>Consultant</option></select></div>
+      <div class="fmg"><label class="fml">Notes</label><textarea class="fmc" id="ctNote" rows="2"></textarea></div>
+    </div>
+    <div class="mft"><button class="btn btn-ghost" onclick="document.getElementById('ctMob').style.display='none'">Cancel</button><button class="btn btn-red" onclick="saveCt()">Save</button></div>
+  </div>
+</div>
+
+<!-- EMPLOYEE MODAL -->
+<div class="mob" id="eMob" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+  <div class="mod mod-sm" onclick="event.stopPropagation()">
+    <div class="mhd"><div class="m-ic">👤</div><div><div class="m-ttl" id="eMTtl">Add Employee</div><div class="m-sub">Employee code will be the default password</div></div><button class="mx" onclick="document.getElementById('eMob').style.display='none'">✕</button></div>
+    <div class="mbdy">
+      <div class="fmr"><div class="fmg"><label class="fml">Employee Code *</label><input class="fmc" id="eCode" placeholder="e.g. PCM115" style="text-transform:uppercase"></div><div class="fmg"><label class="fml">Full Name *</label><input class="fmc" id="eName"></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="eEmail" type="email"></div><div class="fmg"><label class="fml">Mobile</label><input class="fmc" id="eMob2"></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Department</label><select class="fmc" id="eDept"><option>Sales</option><option>Pre-Sales</option><option>Operations</option><option>Finance</option><option>Admin</option><option>Management</option></select></div><div class="fmg"><label class="fml">Designation</label><input class="fmc" id="eDesig"></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Vertical</label><select class="fmc" id="eVert"><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option><option>All</option></select></div><div class="fmg"><label class="fml">Role</label><select class="fmc" id="eRole"><option value="presales">Pre-Sales</option><option value="user">Sales / Ops</option><option value="admin">Admin</option></select></div></div>
+      <div style="background:var(--red-bg);border:1px solid var(--red-border);border-radius:var(--r);padding:10px 12px;font-size:12px;color:var(--red-dk);margin-top:6px">
+        Default password = Employee Code (lowercase). Employee will be forced to change on first login.
+      </div>
+    </div>
+    <div class="mft"><button class="btn btn-ghost" onclick="document.getElementById('eMob').style.display='none'">Cancel</button><button class="btn btn-red" onclick="saveEmp()">Create Employee</button></div>
+  </div>
+</div>
+
+<!-- NEWS ASSIGN MODAL -->
+<div class="mob" id="nMob" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+  <div class="mod mod-sm" onclick="event.stopPropagation()">
+    <div class="mhd"><div class="m-ic">📰</div><div><div class="m-ttl">Assign / Convert News Item</div></div><button class="mx" onclick="document.getElementById('nMob').style.display='none'">✕</button></div>
+    <div class="mbdy">
+      <div class="fmg" id="nTitle" style="font-size:13px;font-weight:500;color:var(--text);line-height:1.5;margin-bottom:14px"></div>
+      <div class="fmg"><label class="fml">Assign to</label><select class="fmc" id="nAsgn"></select></div>
+      <div class="fmg"><label class="fml">If converting to Lead — Company Name</label><input class="fmc" id="nCo" placeholder="Enter company name to create lead"></div>
+    </div>
+    <div class="mft">
+      <button class="btn btn-ghost" onclick="newsAction('delete')">🗑️ Delete</button>
+      <button class="btn btn-ghost" onclick="newsAction('assign')">Assign</button>
+      <button class="btn btn-red" onclick="newsAction('convert')">Convert to Lead ↗</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div id="dbg" style="display:none;position:fixed;bottom:60px;right:20px;background:#1a1a2a;color:#00ff88;padding:10px 14px;border-radius:8px;font-size:11px;font-family:monospace;max-width:400px;z-index:9999;max-height:200px;overflow-y:auto"></div>
+
+<script>
+// ══════════════════════════════════════════════════
+//  PROCAM ProConnect CRM — Frontend Application
+// ══════════════════════════════════════════════════
+const STAGES=['New','Call Done','Profile Sent','Appointment','Visit Done','RFQ Generated','Won','Lost'];
+const SC={New:'sN','Call Done':'sC','Profile Sent':'sP',Appointment:'sA','Visit Done':'sV','RFQ Generated':'sR',Won:'sW',Lost:'sL'};
+const SBK={jul2025:'srcJ',manju:'srcM',new_project:'srcN',subsidiary:'srcS',import:'srcI',manual:'srcMn',news:'srcI'};
+const SBL={jul2025:'Jul-25',manju:'Manju',new_project:'Arch.',subsidiary:'Subsid.',import:'Import',manual:'Manual',news:'News'};
+const VBK={'Heavy Transport':'vHT','Project Freight':'vPF',Warehousing:'vWH',Installation:'vIN'};
+const VS={'Heavy Transport':'ODC','Project Freight':'PFM',Warehousing:'WH',Installation:'Install'};
+const IV={'Power Generation':'Heavy Transport','Building Materials':'Heavy Transport','Metallurgical Industries':'Heavy Transport','Infrastructure':'Heavy Transport','Steel':'Heavy Transport','Cement':'Heavy Transport','Mining':'Heavy Transport','Railways':'Heavy Transport','Petroleum':'Project Freight','Distillery':'Project Freight','Chemicals':'Project Freight','Chemical Industry Company':'Project Freight','Manufacturing':'Warehousing','Food Processing':'Warehousing','Automotive Industries':'Warehousing','Food And Beverages':'Warehousing','Auto':'Warehousing','Hospitality and Healthcare':'Installation','Environment':'Installation'};
+let ME={}, EMPS=[], activeId=null, oppId=null, newsId=null, ctabtype='person', cCh={};
+
+const g=id=>document.getElementById(id);
+const e=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const bdg=(cls,lbl)=>`<span class="b ${cls}">${e(lbl)}</span>`;
+const sb=s=>bdg(SC[s]||'sN',s||'New');
+const vb=v=>bdg(VBK[v]||'vPF',VS[v]||v||'—');
+const srb=s=>bdg(SBK[s]||'srcMn',SBL[s]||s||'—');
+const toast=(m,t='')=>{const el=g('toast');el.textContent=m;el.className='toast show'+(t?' '+t:'');setTimeout(()=>el.classList.remove('show'),2800)};
+const api=async(url,opts={})=>{
+  const r=await fetch(url,{headers:{'Content-Type':'application/json'},credentials:'same-origin',...opts});
+  if(r.status===401){window.location.href='/login';return {};}
+  const ct=r.headers.get('content-type')||'';
+  if(!ct.includes('application/json')){console.error('Non-JSON response from',url,r.status);return {};}
+  return r.json();
+};
+const qp=(o)=>Object.entries(o).filter(([,v])=>v).map(([k,v])=>`${k}=${encodeURIComponent(v)}`).join('&');
+
+// ── INIT ──
+async function init(){
+  const dbg=g('dbg');
+  const log=(m)=>{if(dbg){dbg.style.display='block';dbg.innerHTML+=m+'<br>';console.log(m);}};
+  log('init() started');
+  try{
+    ME = await api('/api/me');
+    log('ME loaded: '+JSON.stringify(ME).substring(0,80));
+  } catch(err){ console.error('Failed to load user:', err); }
+  try{
+    EMPS = await api('/api/employees');
+  } catch(err){ console.error('Failed to load employees:', err); EMPS = []; }
+  if(!ME || !ME.emp_code){ console.error('No session - redirecting'); window.location.href='/login'; return; }
+  const ini=ME.name?.split(' ').map(w=>w[0]).slice(0,2).join('')||'?';
+  g('tAv').textContent=ini;
+  g('tName').textContent=ME.name||'';
+  g('tRole').textContent={admin:'Administrator',presales:'Pre-Sales',user:'Sales / Ops'}[ME.role]||ME.role||'';
+  if(ME.role==='admin'){
+    g('adminBdg').style.display='';
+    document.querySelectorAll('.admin-only').forEach(el=>el.style.display='');
+  } else {
+    document.querySelectorAll('.admin-only').forEach(el=>el.style.display='none');
+  }
+  g('dDate').textContent=new Date().toLocaleDateString('en-IN',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  // Populate assign dropdowns
+  const tOpts=EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join('');
+  ['aAsgn','opAsgn','blkU'].forEach(id=>{const el=g(id);if(el&&el.tagName==='SELECT')el.insertAdjacentHTML('beforeend',tOpts);});
+  nav('dash');
+}
+
+// ── NAV ──
+function nav(p){
+  const dbg=g('dbg');if(dbg){dbg.style.display='block';dbg.innerHTML+='nav('+p+')<br>';}
+  console.log('nav called:', p);
+  document.querySelectorAll('.page').forEach(el=>el.classList.toggle('on',el.id==='pg-'+p));
+  document.querySelectorAll('.sbi').forEach(el=>el.classList.toggle('on',el.dataset?.p===p));
+  const fns={dash:rDash,leads:rLeads,all:rAll,outreach:rOR,contacts:rCt,news:rNews,
+              team:rTeam,assign:rAssign,employees:rEmps,opp:rOpp,upload:()=>upTab('xl')};
+  if(fns[p]) try{fns[p]();}catch(err){console.error('nav error for page',p,err);}
+}
+
+// ── DASHBOARD ──
+async function rDash(){
+  let st;
+  try{ st=await api('/api/stats'); } catch(err){ console.error('Stats error:',err); st={total:0,active:0,mailed:0,rfq:0,opp:0,won:0,stages:{},industries:{},verticals:{},team:[],pending_news:0}; }
+  if(!st) return;
+  g('kRow').innerHTML=[
+    {l:'Total Leads',v:st.total,s:'All sources',a:'var(--red)'},
+    {l:'Active Pipeline',v:st.active,s:'Excl. won/lost',a:'#5B21B6'},
+    {l:'Intro Emailed',v:st.mailed,s:st.total?Math.round(st.mailed/st.total*100)+'%':'—',a:'#0891B2'},
+    {l:'RFQ Stage',v:st.rfq,s:'Quote ready',a:'#92400E'},
+    {l:'Opportunities',v:st.opp,s:'In ProConnect',a:'#065F46'},
+    {l:'Won',v:st.won,s:st.total?Math.round(st.won/st.total*100)+'% conv.':'—',a:'#14532D'},
+  ].map(k=>`<div class="kpi" style="--ka:${k.a}"><div class="kl">${k.l}</div><div class="kv">${k.v}</div><div class="ks">${k.s}</div></div>`).join('');
+  // Sidebar counts
+  g('sbN').textContent=st.active||0;
+  g('sbOp').textContent=st.opp||0;
+  if(st.pending_news>0){g('sbNews').textContent=st.pending_news;g('newsDot').style.display='';}
+  // Charts
+  const STAGES_FULL=STAGES;
+  const sCols=['#94A3B8','#D97706','#8B5CF6','#10B981','#EA580C','#C72435','#16A34A','#DC2626'];
+  const stD=STAGES_FULL.map(s=>st.stages[s]||0);
+  if(cCh.s)cCh.s.destroy();
+  cCh.s=new Chart(g('cSt'),{type:'bar',data:{labels:STAGES_FULL.map(s=>s.split(' ')[0]),datasets:[{data:stD,backgroundColor:sCols,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{size:8}}},y:{ticks:{stepSize:1}}}}});
+  const iK=Object.keys(st.industries||{}).sort((a,b)=>st.industries[b]-st.industries[a]).slice(0,8);
+  const iCols=['#C72435','#474447','#D97706','#8B5CF6','#10B981','#0891B2','#EA580C','#14532D'];
+  if(cCh.i)cCh.i.destroy();
+  cCh.i=new Chart(g('cIn'),{type:'doughnut',data:{labels:iK,datasets:[{data:iK.map(k=>st.industries[k]),backgroundColor:iCols,borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{boxWidth:8,font:{size:9},padding:5}}}}});
+  const verts=['Heavy Transport','Project Freight','Warehousing','Installation'];
+  if(cCh.v)cCh.v.destroy();
+  cCh.v=new Chart(g('cVt'),{type:'doughnut',data:{labels:verts,datasets:[{data:verts.map(v=>st.verticals[v]||0),backgroundColor:['#1E3A8A','#4C1D95','#065F46','#78350F'],borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{boxWidth:8,font:{size:9},padding:5}}}}});
+  g('dSub').textContent=ME.role==='admin'?`${st.total} total leads · Admin view`:`${st.total} leads assigned to you`;
+  // Active pipeline table
+  let leads=await api('/api/leads?'+qp({limit:10}));
+  if(!Array.isArray(leads))leads=[];
+  const act=leads.filter(l=>!['Won','Lost'].includes(l.stage)).slice(0,10);
+  g('dashTb').innerHTML=act.length?act.map(l=>`<tr onclick="openLd(${l.id})">
+    <td><div class="td-m">${e(l.company)}</div></td>
+    <td style="font-size:11.5px">${e(l.industry||'—')}</td><td style="font-size:11.5px">${e(l.state||'—')}</td>
+    <td>${sb(l.stage)}</td><td>${vb(l.procam_vertical)}</td>
+    <td class="tddate">${l.followup||'—'}</td>
+    <td class="tddate">${l.onboarded_date||'—'}</td>
+    <td><button class="btn btn-ghost btn-xs">Edit</button></td>
+  </tr>`).join(''):'<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-3)">No active leads</td></tr>';
+}
+
+// ── LEADS TABLE ──
+async function rLeads(){
+  const s=(g('lS')?.value||'').toLowerCase(),st=g('lSt')?.value||'',v=g('lV')?.value||'';
+  let leads=await api('/api/leads?'+qp({stage:st,vertical:v,q:s,limit:300}));
+  if(!Array.isArray(leads))leads=[];
+  g('lCnt').textContent=leads.length+' leads';
+  g('lTb').innerHTML=leads.length?leads.map((l,i)=>`<tr onclick="openLd(${l.id})">
+    <td style="color:var(--text-3);font-size:11px">${i+1}</td>
+    <td><div class="td-m">${e(l.company)}</div><div class="td-s">${e(l.project||'')}</div></td>
+    <td style="font-size:11.5px">${e(l.industry||'—')}</td><td style="font-size:11.5px">${e(l.state||'—')}</td>
+    <td style="font-size:11px;font-weight:600">${l.cost?'₹'+Number(l.cost).toLocaleString():'—'}</td>
+    <td><div style="font-size:12px;font-weight:500">${e(l.pic||'—')}</div><div style="font-size:10.5px;color:var(--text-3)">${e(l.email||'')}</div></td>
+    <td>${sb(l.stage)}</td><td>${vb(l.procam_vertical)}</td>
+    <td class="tddate" style="color:${l.followup?'var(--red)':'var(--text-4)'}">${l.followup||'—'}</td>
+    <td>${l.opp_number?`<span class="b oppB">${e(l.opp_number)}</span>`:'—'}</td>
+    <td class="tddate">${l.onboarded_date||'—'}</td>
+    <td onclick="event.stopPropagation()"><button class="btn btn-ghost btn-xs" onclick="openLd(${l.id})">✏️</button></td>
+  </tr>`).join(''):'<tr><td colspan="12" style="text-align:center;padding:24px;color:var(--text-3)">No leads</td></tr>';
+}
+
+async function rAll(){
+  const s=(g('aS')?.value||'').toLowerCase(),st=g('aSt')?.value||'',as=g('aAsgn')?.value||'',v=g('aV')?.value||'',src=g('aSrc')?.value||'';
+  let leads=await api('/api/leads?'+qp({stage:st,assigned:as,vertical:v,source:src,q:s,limit:300}));
+  if(!Array.isArray(leads))leads=[];
+  g('aCnt').textContent=leads.length+' leads';
+  g('aTb').innerHTML=leads.length?leads.map((l,i)=>`<tr onclick="openLd(${l.id})">
+    <td style="color:var(--text-3);font-size:11px">${i+1}</td>
+    <td><div class="td-m">${e(l.company)}</div><div class="td-s">${e(l.project||'')}</div></td>
+    <td style="font-size:11.5px">${e(l.industry||'—')}</td><td style="font-size:11.5px">${e(l.state||'—')}</td>
+    <td style="font-size:11px">${l.cost?'₹'+Number(l.cost).toLocaleString():'—'}</td>
+    <td><div style="font-size:11.5px">${e(l.pic||'—')}</div><div style="font-size:10.5px;color:var(--text-3)">${e(l.email||'')}</div></td>
+    <td>${sb(l.stage)}</td><td style="font-size:11.5px">${e(l.assigned_name||'—')}</td>
+    <td>${srb(l.source)}</td><td>${l.opp_number?`<span class="b oppB">${e(l.opp_number)}</span>`:'—'}</td>
+    <td class="tddate">${l.onboarded_date||'—'}</td>
+    <td onclick="event.stopPropagation()"><button class="btn btn-ghost btn-xs" onclick="openLd(${l.id})">✏️</button></td>
+  </tr>`).join(''):'<tr><td colspan="12" style="text-align:center;padding:24px;color:var(--text-3)">No leads</td></tr>';
+}
+
+async function rOpp(){
+  const s=(g('opS')?.value||'').toLowerCase(),as=g('opAsgn')?.value||'';
+  let leads=await api('/api/leads?'+qp({stage:'RFQ Generated',assigned:as,limit:200}));
+  let all=await api('/api/leads?limit=500');
+  if(!Array.isArray(leads))leads=[];
+  if(!Array.isArray(all))all=[];
+  const opps=[...leads,...all.filter(l=>l.opp_number&&!leads.find(x=>x.id===l.id))].filter(l=>!s||`${l.company} ${l.opp_number}`.toLowerCase().includes(s));
+  g('opCnt').textContent=opps.length+' opportunities';
+  g('opTb').innerHTML=opps.length?opps.map(l=>`<tr onclick="openOpp(${l.id})" style="cursor:pointer">
+    <td>${l.opp_number?`<span class="b oppB">${e(l.opp_number)}</span>`:bdg('sR','Needs OPP#')}</td>
+    <td><div class="td-m">${e(l.company)}</div></td>
+    <td style="font-size:11.5px">${e(l.industry||'—')}</td>
+    <td style="font-size:11px;font-weight:600">${l.cost?'₹'+Number(l.cost).toLocaleString():'—'}</td>
+    <td>${vb(l.procam_vertical)}</td><td style="font-size:11.5px">${e(l.assigned_name||'—')}</td>
+    <td class="tddate">${l.rfq_date||'—'}</td>
+    <td><span class="b ${l.opp_stage==='Closed Won'?'sW':l.opp_stage==='Closed Lost'?'sL':'sA'}">${e(l.opp_stage||'Qualification')}</span></td>
+    <td class="tddate">${l.opp_close_date||'—'}</td>
+    <td style="font-size:11.5px;color:var(--text-3);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e(l.opp_notes||'')}</td>
+    <td><button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();openOpp(${l.id})">Edit</button></td>
+  </tr>`).join(''):'<tr><td colspan="11" style="text-align:center;padding:36px;color:var(--text-3)"><div style="font-size:18px;margin-bottom:8px">🎯</div><div style="font-weight:500">No opportunities yet</div><div style="font-size:12px;margin-top:4px">Leads that reach RFQ Generated stage appear here</div></td></tr>';
+}
+
+function clrF(t){
+  if(t==='l')[g('lS'),g('lSt'),g('lV')].forEach(el=>{if(el)el.value=''});
+  if(t==='a')[g('aS'),g('aSt'),g('aAsgn'),g('aV'),g('aSrc')].forEach(el=>{if(el)el.value=''});
+  t==='l'?rLeads():rAll();
+}
+
+// ── LEAD MODAL ──
+async function openLd(id){
+  let leads=await api('/api/leads?limit=500');
+  if(!Array.isArray(leads))leads=[];
+  const l=leads.find(x=>x.id===id);
+  if(!l)return;
+  activeId=id;
+  g('ldTtl').textContent=l.company;
+  g('ldSub').textContent=(l.project?l.project+' · ':'')+[l.state,l.industry].filter(Boolean).join(' · ');
+  const isAdmin=ME.role==='admin';
+  const uOpts=EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('');
+  g('ldBdy').innerHTML=`
+    ${l.history||l.notes?`<div class="fmg"><label class="fml">Background</label><div class="hist">${e((l.history||l.notes||'').substring(0,400))}</div></div>`:''}
+    ${l.products?`<div style="font-size:11.5px;background:var(--off);border-radius:var(--r);padding:8px 12px;margin-bottom:12px;color:var(--text-2)">📦 ${e(l.products)}</div>`:''}
+    <div class="fm-s">Pipeline Stage</div>
+    <div class="pipe" id="ldPipe">${STAGES.map(s=>`<div class="ps ${l.stage===s?'active':STAGES.indexOf(s)<STAGES.indexOf(l.stage)?'done':''}" onclick="setStg('${s}')">${s}</div>`).join('')}</div>
+    <div class="fm-s">Activity Dates <span style="color:var(--text-4);font-size:9px;font-weight:400">— Each date tagged with entry date for tracking</span></div>
+    <div class="dtrow">
+      <div class="dtc ${l.phone_call_date?'ok':''}"><div class="dtc-l">📞 Phone Call</div><input type="date" class="fmc" id="lPC" value="${l.phone_call_date||''}" style="padding:4px 8px;font-size:11.5px;margin-top:4px"></div>
+      <div class="dtc ${l.intro_mail_date?'ok':''}"><div class="dtc-l">✉️ Intro Mail</div><input type="date" class="fmc" id="lIM" value="${l.intro_mail_date||''}" style="padding:4px 8px;font-size:11.5px;margin-top:4px"></div>
+      <div class="dtc ${l.meeting_date?'ok':''}"><div class="dtc-l">🤝 Meeting</div><input type="date" class="fmc" id="lMT" value="${l.meeting_date||''}" style="padding:4px 8px;font-size:11.5px;margin-top:4px"></div>
+      <div class="dtc ${l.rfq_date?'ok':''}"><div class="dtc-l">📋 RFQ</div><input type="date" class="fmc" id="lRQ" value="${l.rfq_date||''}" style="padding:4px 8px;font-size:11.5px;margin-top:4px"></div>
+    </div>
+    ${l.opp_number?`<div class="opp-b" style="margin-bottom:12px"><div class="opp-hd"><div class="opp-ic">🎯</div><div><div class="opp-ttl">ProConnect: ${e(l.opp_number)}</div><div class="opp-sub">${e(l.opp_stage||'')} ${l.opp_close_date?'· Close: '+l.opp_close_date:''}</div></div></div></div>`:''}
+    ${l.stage==='RFQ Generated'&&!l.opp_number?`<div style="background:var(--red-bg);border:1.5px solid var(--red-border);border-radius:var(--r);padding:11px 14px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between"><div style="font-size:12.5px;color:var(--red-dk);font-weight:600">🎯 RFQ received — link to ProConnect CRM</div><button class="btn btn-red btn-sm" onclick="closeLd();openOpp(${l.id})">Assign Opp #</button></div>`:''}
+    <div class="fm-s">Contact Information</div>
+    <div class="fmr"><div class="fmg"><label class="fml">Contact Person</label><input class="fmc" id="lPic" value="${e(l.pic||'')}"></div><div class="fmg"><label class="fml">Designation</label><input class="fmc" id="lDes" value="${e(l.designation||'')}"></div></div>
+    <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="lEm" value="${e(l.email||'')}"></div><div class="fmg"><label class="fml">Phone</label><input class="fmc" id="lPh" value="${e(l.phone||'')}"></div></div>
+    <div class="fmr"><div class="fmg"><label class="fml">Assigned To</label><select class="fmc" id="lAsgn" ${isAdmin?'':'disabled'}>${uOpts}</select></div><div class="fmg"><label class="fml">Procam Vertical</label><select class="fmc" id="lVt">${['Heavy Transport','Project Freight','Warehousing','Installation'].map(v=>`<option${v===l.procam_vertical?' selected':''}>${v}</option>`).join('')}</select></div></div>
+    <div class="fmr"><div class="fmg"><label class="fml">Next Follow-up</label><input type="date" class="fmc" id="lFu" value="${l.followup||''}"></div><div class="fmg"><label class="fml">Onboarded Date</label><input class="fmc" value="${l.onboarded_date||'—'}" disabled style="background:var(--off);color:var(--text-3)"></div></div>
+    <div class="fmg"><label class="fml">Notes / Call Summary</label><textarea class="fmc" id="lNotes" rows="3">${e(l.notes||'')}</textarea></div>
+    ${l.linkedin?`<div style="font-size:11.5px;color:var(--text-3);margin-top:4px">🔗 <a href="${e(l.linkedin)}" target="_blank" style="color:var(--red)">LinkedIn</a></div>`:''}
+  `;
+  g('ldMob').style.display='flex';
+}
+
+function setStg(s){
+  document.querySelectorAll('#ldPipe .ps').forEach((el,i)=>{
+    el.className='ps';
+    if(STAGES[i]===s)el.classList.add('active');
+    else if(STAGES.indexOf(STAGES[i])<STAGES.indexOf(s))el.classList.add('done');
+  });
+  // Store stage in hidden field
+  g('ldPipe').dataset.stage=s;
+}
+
+async function saveLd(){
+  const pipeStage=g('ldPipe')?.dataset.stage||(g('ldPipe')?.querySelector('.active')?.textContent);
+  const data={
+    pic:g('lPic')?.value, designation:g('lDes')?.value,
+    email:g('lEm')?.value, phone:g('lPh')?.value,
+    assigned_to:g('lAsgn')?.value, procam_vertical:g('lVt')?.value,
+    followup:g('lFu')?.value, notes:g('lNotes')?.value,
+    phone_call_date:g('lPC')?.value, intro_mail_date:g('lIM')?.value,
+    meeting_date:g('lMT')?.value, rfq_date:g('lRQ')?.value,
+  };
+  if(pipeStage)data.stage=pipeStage;
+  const r=await api(`/api/leads/${activeId}`,{method:'PUT',body:JSON.stringify(data)});
+  if(r.ok){closeLd();rLeads();rAll();rDash();toast('Lead saved ✓','ok');}
+  else toast(r.error||'Error saving','err');
+}
+
+function closeLd(ev){if(ev&&ev.target!==g('ldMob'))return;g('ldMob').style.display='none';activeId=null;}
+async function newLead(){
+  const r=await api('/api/leads',{method:'POST',body:JSON.stringify({company:'New Lead',stage:'New',assigned_to:ME.emp_code})});
+  if(r.ok){openLd(r.id);}
+}
+function orFromLd(){if(!activeId)return;const id=activeId;closeLd();nav('outreach');setTimeout(()=>{g('orId').value=id;loadOR();},150);}
+
+// ── OPP MODAL ──
+async function openOpp(id){
+  oppId=id;
+  let leads=await api('/api/leads?limit=500');
+  if(!Array.isArray(leads))leads=[];
+  const l=leads.find(x=>x.id===id);if(!l)return;
+  const r2=await api('/api/opp-next-number');
+  g('opTtl').textContent=l.company;
+  g('opSub').textContent=l.project||l.industry||'';
+  g('opN').value=l.opp_number||r2.number||'';
+  g('opSt').value=l.opp_stage||'Qualification';
+  g('opDt').value=l.opp_close_date||'';
+  g('opNts').value=l.opp_notes||'';
+  g('opMob').style.display='flex';
+}
+async function saveOpp(){
+  const r=await api(`/api/leads/${oppId}`,{method:'PUT',body:JSON.stringify({opp_number:g('opN').value,opp_stage:g('opSt').value,opp_close_date:g('opDt').value,opp_notes:g('opNts').value})});
+  if(r.ok){g('opMob').style.display='none';rOpp();rDash();toast('Opportunity linked ✓','ok');}
+}
+
+// ── AI OUTREACH ──
+async function rOR(){
+  let leads=await api('/api/leads?limit=300');
+  if(!Array.isArray(leads))leads=[];
+  g('orId').innerHTML='<option value="">-- Select --</option>'+leads.map(l=>`<option value="${l.id}">${e(l.company)}${l.state?' · '+l.state:''} · ${e(l.industry||'')}</option>`).join('');
+}
+async function loadOR(){
+  const id=g('orId').value;if(!id){g('orDet').style.display='none';return;}
+  const leads=await api('/api/leads?limit=500');
+  const l=leads.find(x=>x.id==id);if(!l){g('orDet').style.display='none';return;}
+  g('orDet').style.display='block';
+  g('orPic').value=l.pic||''; g('orEmail').value=l.email||'';
+  if(l.notes||l.history)g('orCtx').value=l.notes||l.history||'';
+  g('orGrid').innerHTML=`
+    <div class="di"><div class="dl">Company</div><div class="dv">${e(l.company)}</div></div>
+    <div class="di"><div class="dl">Industry</div><div class="dv">${e(l.industry||'—')}</div></div>
+    <div class="di"><div class="dl">State</div><div class="dv">${e(l.state||'—')}</div></div>
+    <div class="di"><div class="dl">Value</div><div class="dv">${l.cost?'₹'+Number(l.cost).toLocaleString()+' M':'—'}</div></div>
+    ${l.products?`<div class="di" style="grid-column:1/-1"><div class="dl">Products</div><div class="dv" style="font-size:11.5px">${e(l.products)}</div></div>`:''}
+  `;
+  const vm={'Heavy Transport':'Heavy Transport / ODC Movement','Project Freight':'Project Freight Management','Warehousing':'Warehousing & 3PL','Installation':'Installation & Commissioning'};
+  Array.from(g('orVt').options).forEach(o=>o.selected=o.value===(vm[l.procam_vertical]||''));
+  g('aiBox').style.display='none';
+}
+async function genEmail(){
+  const id=g('orId').value;
+  const leads=await api('/api/leads?limit=500');
+  const l=leads.find(x=>x.id==id);if(!l)return;
+  const vert=g('orVt').value,ctx=g('orCtx').value,pic=g('orPic').value,tone=g('orTone').value;
+  const btn=g('genBtn');btn.textContent='⏳ Generating…';btn.disabled=true;
+  g('aiBox').style.display='block';g('aiTxt').textContent='Drafting your email…';
+  const tG={formal:'formal, respectful, business-like',warm:'warm, relationship-first, collaborative',direct:'concise, direct — straight to value'}[tone]||'formal';
+  const prompt=`You are a senior BD executive at Procam Group — India's leading project logistics company (25+ years, 500T ODC capacity, pan-India, Heavy Transport, Project Freight, Warehousing, Installation).
+
+Write a ${tG} B2B outreach email.
+
+Lead:
+Company: ${l.company}
+Project: ${l.project||'N/A'}
+Industry: ${l.industry||'N/A'}
+Location: ${l.state||l.city||'India'}
+Contact: ${pic||'Sir/Madam'}${l.designation?' ('+l.designation+')':''}
+Products/Capacity: ${l.products||'N/A'}
+Value: ₹${l.cost||'N/A'} Million
+Service: ${vert}
+${ctx?'Project context:\n'+ctx:''}
+
+Format:
+1. SUBJECT: (specific, references project)
+2. BODY (under 180 words):
+- Address contact by first name
+- Reference specific project with industry insight (Steel: rolling mill ODC; Power: transformer/turbine; Chemical: GIDC freight; Renewable: blade/panel transport; Infra: critical timeline; Defence: precision movement)
+- One Procam capability callout
+- If project context given, reference it specifically
+- CTA: 20-min call this week with two time slots
+3. Sign: BD Team | Procam Logistics Pvt. Ltd. | +91-124-4873305 | www.procamlogistics.com`;
+  try{
+    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:900,messages:[{role:'user',content:prompt}]})});
+    const d=await r.json();
+    g('aiTxt').textContent=d.content?.filter(c=>c.type==='text').map(c=>c.text).join('\n')||'Generation failed.';
+  }catch(er){g('aiTxt').textContent='Error: '+er.message;}
+  btn.textContent='✦ Generate AI Email';btn.disabled=false;
+}
+function copyMail(){navigator.clipboard.writeText(g('aiTxt').textContent).then(()=>toast('Copied ✓','ok'));}
+async function markSent(){
+  const id=g('orId').value;if(!id)return;
+  await api(`/api/leads/${id}`,{method:'PUT',body:JSON.stringify({intro_mail_date:new Date().toISOString().split('T')[0],stage:'Call Done'})});
+  toast('Intro mail marked sent ✓','ok');
+}
+
+// ── GLOBAL CRM ──
+let ctype='person';
+async function rCt(){
+  const cts=await api('/api/contacts?'+qp({type:ctype}));
+  g('ctCnt').innerHTML=cts.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px">`+cts.map(c=>`
+    <div style="background:#fff;border-radius:var(--r);border:1px solid var(--border);padding:13px;cursor:pointer;transition:.15s" onmouseover="this.style.borderColor='#C72435'" onmouseout="this.style.borderColor='#E4E7EC'">
+      <div style="font-size:13.5px;font-weight:600;color:var(--text);margin-bottom:2px">${e(c.name)}</div>
+      ${c.designation?`<div style="font-size:11.5px;color:var(--text-3)">${e(c.designation)}</div>`:''}
+      ${c.company?`<div style="font-size:12px;color:var(--red);font-weight:500;margin-bottom:6px">${e(c.company)}</div>`:''}
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">
+        ${c.industry?`<span class="b srcMn">${e(c.industry)}</span>`:''}
+        ${c.country&&c.country!=='India'?`<span class="b srcI">${e(c.country)}</span>`:''}
+        ${c.agent_type?`<span class="b sA">${e(c.agent_type)}</span>`:''}
+      </div>
+      <div style="font-size:11.5px;color:var(--text-2)">${c.email?'✉️ '+e(c.email):''}</div>
+      <div style="font-size:11.5px;color:var(--text-2)">${c.phone?'📞 '+e(c.phone):''}</div>
+      ${c.website?`<div style="font-size:11px;margin-top:4px"><a href="${e(c.website)}" target="_blank" style="color:var(--red)">🌐 ${e(c.website)}</a></div>`:''}
+    </div>`).join('')+'</div>'
+  :'<div style="text-align:center;padding:40px;color:var(--text-3)">No contacts yet</div>';
+}
+function ctTab(t){ctype=t;document.querySelectorAll('.tabs .tab').forEach((el,i)=>el.classList.toggle('on',['person','company','agent'][i]===t));rCt();}
+function openCt(){g('ctN').value='';g('ctC').value='';g('ctD').value='';g('ctI').value='';g('ctE').value='';g('ctP').value='';g('ctCo').value='India';g('ctCi').value='';g('ctW').value='';g('ctL').value='';g('ctNote').value='';g('ctMob').style.display='flex';}
+async function saveCt(){
+  const r=await api('/api/contacts',{method:'POST',body:JSON.stringify({type:g('ctType').value,name:g('ctN').value,company:g('ctC').value,designation:g('ctD').value,industry:g('ctI').value,email:g('ctE').value,phone:g('ctP').value,country:g('ctCo').value,city:g('ctCi').value,website:g('ctW').value,linkedin:g('ctL').value,agent_type:g('ctAt').value,notes:g('ctNote').value})});
+  if(r.ok){g('ctMob').style.display='none';rCt();toast('Contact saved ✓','ok');}
+}
+
+// ── NEWS INTELLIGENCE ──
+async function rNews(){
+  let items=await api('/api/news');
+  if(!Array.isArray(items))items=[];
+  if(!items.length){g('newsCnt').innerHTML='<div style="text-align:center;padding:40px;color:var(--text-3)"><div style="font-size:22px;margin-bottom:10px">📰</div><div style="font-weight:500">No news items yet</div><div style="font-size:12px;margin-top:4px">Click "Seed from Outlook" to load ETManufacturing newsletter items</div></div>';return;}
+  const pending=items.filter(n=>n.status==='pending');
+  g('sbNews').textContent=pending.length;
+  const catCol={'Power':'catP','Steel / Metals':'catS','Chemicals':'catC','Renewable Energy':'catR','Infrastructure':'catI','Defence':'catD','Manufacturing':'catS'};
+  g('newsCnt').innerHTML=items.map(n=>`<div class="news-card" style="${n.status==='deleted'?'opacity:.4;':''}">
+    <div class="nc-hd">
+      <div class="nc-ttl">${e(n.title)}</div>
+      <span class="b ${n.relevance==='High'?'relHi':n.relevance==='Low'?'relLo':'relMe'}">${e(n.relevance)}</span>
+    </div>
+    <div class="nc-meta">
+      <span class="b ${catCol[n.category]||'catS'}">${e(n.category)}</span>
+      <span style="font-size:11px;color:var(--text-3)">${e(n.source)}</span>
+      <span style="font-size:11px;color:var(--text-3)">${n.published_date||''}</span>
+      <span class="b ${n.status==='pending'?'sN':n.status==='assigned'?'sA':'sL'}">${n.status}</span>
+    </div>
+    <div class="nc-sum">${e(n.summary)}</div>
+    ${n.status!=='deleted'?`<div class="nc-actions">
+      <button class="btn btn-ghost btn-sm" onclick="openNewsModal(${n.id},'${e(n.title)}')">Assign / Convert to Lead</button>
+      ${n.url?`<a href="${e(n.url)}" target="_blank" class="btn btn-ghost btn-sm">🔗 Read</a>`:''}
+    </div>`:''}
+  </div>`).join('');
+}
+async function seedNews(){
+  const r=await api('/api/news/seed',{method:'POST'});
+  toast(r.added>0?`${r.added} news items loaded from Outlook ✓`:'Already up to date','ok');
+  rNews();
+}
+async function openNewsModal(id,title){
+  newsId=id;
+  g('nTitle').textContent=title;
+  const uOpts='<option value="">-- Select --</option>'+EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join('');
+  g('nAsgn').innerHTML=uOpts; g('nCo').value='';
+  g('nMob').style.display='flex';
+}
+async function newsAction(action){
+  const r=await api(`/api/news/${newsId}/action`,{method:'POST',body:JSON.stringify({action,emp_code:g('nAsgn').value,company:g('nCo').value})});
+  if(r.ok){g('nMob').style.display='none';rNews();toast(action==='convert'?'Converted to lead ✓':action==='delete'?'Removed':'Assigned ✓','ok');}
+}
+
+// ── TEAM ──
+async function rTeam(){
+  let st=await api('/api/stats');
+  if(!st||!st.team)st={team:[]};
+  g('teamCnt').innerHTML=(st.team||[]).map(u=>{
+    const ini=u.name.split(' ').map(w=>w[0]).slice(0,2).join('');
+    const stages_html=STAGES.slice(0,6).map(s=>{const cnt=(st.team||[]).length>0?'?':'0';return'';}).join('');
+    return `<div class="emp-card">
+      <div class="e-av">${ini}</div>
+      <div style="flex:1">
+        <div class="e-name">${u.name} <span class="e-code">${u.emp_code}</span></div>
+        <div class="e-meta">${u.vertical||'—'}</div>
+      </div>
+      <div class="e-stats">
+        <div><div class="ev">${u.total}</div><div class="el">Total</div></div>
+        <div><div class="ev">${u.active}</div><div class="el">Active</div></div>
+        <div><div class="ev">${u.mailed}</div><div class="el">Mailed</div></div>
+        <div><div class="ev">${u.called}</div><div class="el">Called</div></div>
+        <div><div class="ev">${u.opp}</div><div class="el">Opps</div></div>
+        <div><div class="ev">${u.won}</div><div class="el">Won</div></div>
+      </div>
+    </div>`;
+  }).join('')||'<div style="text-align:center;padding:36px;color:var(--text-3)">No team data</div>';
+}
+
+// ── ASSIGN ──
+async function rAssign(){
+  const ind=g('asI')?.value||'',src=g('asS')?.value||'',u=g('asU')?.value||'';
+  let leads=await api('/api/leads?'+qp({industry:ind,source:src,limit:300}));
+  if(!Array.isArray(leads))leads=[];
+  const filtered=u==='u'?leads.filter(l=>!l.assigned_to):leads;
+  g('asCnt').textContent=filtered.length+' leads';
+  const uOpts=EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join('');
+  g('asTb').innerHTML=filtered.map(l=>`<tr>
+    <td><input type="checkbox" class="ac" value="${l.id}"></td>
+    <td><div class="td-m">${e(l.company)}</div><div class="td-s">${e(l.industry||'')}</div></td>
+    <td style="font-size:11.5px">${e(l.industry||'—')}</td><td style="font-size:11.5px">${e(l.state||'—')}</td>
+    <td><select class="fi" style="width:160px;padding:5px" onchange="assignOne(${l.id},this.value)"><option value="">— Assign —</option>${EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('')}</select></td>
+    <td>${srb(l.source)}</td>
+  </tr>`).join('');
+  // Populate industry filter if empty
+  if(!g('asI').children.length||g('asI').children.length<2){
+    const inds=[...new Set(leads.map(l=>l.industry).filter(Boolean))].sort();
+    g('asI').innerHTML='<option value="">All</option>'+inds.map(i=>`<option>${e(i)}</option>`).join('');
+  }
+  // Bulk user select
+  if(g('blkU').children.length<2) g('blkU').insertAdjacentHTML('beforeend',EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join(''));
+}
+async function assignOne(id,ec){
+  await api(`/api/leads/${id}`,{method:'PUT',body:JSON.stringify({assigned_to:ec})});
+  toast('Assigned ✓','ok');
+}
+function togAll(el){document.querySelectorAll('.ac').forEach(c=>c.checked=el.checked);}
+async function bulkAssign(){
+  const ec=g('blkU').value;if(!ec){toast('Select a team member','err');return;}
+  const ids=[...document.querySelectorAll('.ac:checked')].map(c=>parseInt(c.value));
+  if(!ids.length){toast('Select leads first','err');return;}
+  const r=await api('/api/leads/bulk-assign',{method:'POST',body:JSON.stringify({ids,emp_code:ec})});
+  if(r.ok){rAssign();toast(`${r.count} leads assigned ✓`,'ok');}
+}
+
+// ── EMPLOYEES ──
+async function rEmps(){
+  let emps=await api('/api/employees');
+  if(!Array.isArray(emps))emps=[];
+  g('empCnt').innerHTML=emps.map(emp=>{
+    const ini=emp.name.split(' ').map(w=>w[0]).slice(0,2).join('');
+    const leads_hint=''; // Could fetch lead count here
+    return `<div class="emp-card">
+      <div class="e-av" style="${emp.role==='admin'?'background:var(--red);':''}"><${ini}</div>
+      <div style="flex:1">
+        <div class="e-name">${e(emp.name)} <span class="e-code">${e(emp.emp_code)}</span>
+          ${emp.role==='admin'?'<span class="b sR" style="margin-left:5px">Admin</span>':emp.role==='presales'?'<span class="b sP" style="margin-left:5px">Pre-Sales</span>':''}
+        </div>
+        <div class="e-meta">${e(emp.designation||'—')} · ${e(emp.department||'—')} · ${e(emp.vertical||'—')}</div>
+        <div style="font-size:11px;color:var(--text-4);margin-top:2px">${e(emp.email||'—')}</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="resetPw(${emp.id})">Reset PW</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleEmp(${emp.id})" style="${!emp.is_active?'color:var(--s-won)':''}">
+          ${emp.is_active?'Deactivate':'Activate'}
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function openEmpModal(){
+  ['eCode','eName','eEmail','eMob2','eDesig'].forEach(id=>{const el=g(id);if(el)el.value='';});
+  g('eMob').style.display='flex';
+}
+async function saveEmp(){
+  const code=g('eCode')?.value.trim().toUpperCase();const name=g('eName')?.value.trim();
+  if(!code||!name){toast('Code and name required','err');return;}
+  const r=await api('/api/employees',{method:'POST',body:JSON.stringify({emp_code:code,name,email:g('eEmail').value,mobile:g('eMob2').value,department:g('eDept').value,designation:g('eDesig').value,vertical:g('eVert').value,role:g('eRole').value})});
+  if(r.ok){g('eMob').style.display='none';rEmps();toast(r.message||'Employee created ✓','ok');}
+  else toast(r.error||'Error','err');
+}
+async function resetPw(id){
+  if(!confirm('Reset password to employee code (lowercase)?'))return;
+  const r=await api(`/api/employees/${id}`,{method:'PUT',body:JSON.stringify({reset_password:true})});
+  if(r.ok)toast('Password reset to employee code ✓','ok');
+}
+async function toggleEmp(id){
+  const emps=await api('/api/employees');
+  const emp=emps.find(e=>e.id===id);if(!emp)return;
+  const r=await api(`/api/employees/${id}`,{method:'PUT',body:JSON.stringify({is_active:!emp.is_active})});
+  if(r.ok){rEmps();toast(`${emp.name} ${!emp.is_active?'activated':'deactivated'} ✓`);}
+}
+
+// ── UPLOAD ──
+async function upTab(t){
+  document.querySelectorAll('#upTabs .tab').forEach((el,i)=>el.classList.toggle('on',['xl','mn','vc'][i]===t));
+  if(t==='xl'){
+    g('upCnt').innerHTML=`<div class="card"><div style="padding:16px">
+      <div class="upz" id="upZ" onclick="document.getElementById('fi').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="dropF(event)">
+        <div style="font-size:32px;margin-bottom:10px">📂</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px">Drop any Excel or CSV here</div>
+        <div style="font-size:12px;color:var(--text-3)">Auto-detects columns · newprojectstracker.com · Manju format · Visiting cards · Any CRM export</div>
+      </div>
+      <input type="file" id="fi" accept=".xlsx,.xls,.csv" onchange="uploadF(event)">
+      <div id="upSt" style="margin-top:12px"></div>
+    </div></div>`;
+  }else if(t==='mn'){
+    const uOpts=EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===ME.emp_code?' selected':''}>${e(em.name)}</option>`).join('');
+    g('upCnt').innerHTML=`<div class="card"><div style="padding:16px">
+      <div class="fmr"><div class="fmg"><label class="fml">Company *</label><input class="fmc" id="mnCo"></div><div class="fmg"><label class="fml">Project</label><input class="fmc" id="mnPr"></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Industry</label><input class="fmc" id="mnIn"></div><div class="fmg"><label class="fml">State</label><input class="fmc" id="mnSt"></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Value ₹M</label><input class="fmc" id="mnVl" type="number"></div><div class="fmg"><label class="fml">Vertical</label><select class="fmc" id="mnVt"><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option></select></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Contact Person</label><input class="fmc" id="mnPic"></div><div class="fmg"><label class="fml">Email</label><input class="fmc" id="mnEm" type="email"></div></div>
+      <div class="fmg"><label class="fml">Notes</label><textarea class="fmc" id="mnNo" rows="3"></textarea></div>
+      <button class="btn btn-red" onclick="saveMn()">+ Add Lead</button>
+    </div></div>`;
+  }else{
+    g('upCnt').innerHTML=`<div class="card"><div style="padding:16px">
+      <p style="font-size:13px;color:var(--text-3);margin-bottom:14px">Paste visiting card data. Format: <code>Name | Company | Phone | Email</code> (one per line)</p>
+      <textarea class="fmc" id="vcTxt" rows="10" placeholder="Amit Sharma | Siemens Energy | +91-9876543210 | a.sharma@siemens.com"></textarea>
+      <button class="btn btn-red" style="margin-top:12px" onclick="saveVC()">Import</button>
+    </div></div>`;
+  }
+}
+function uploadF(ev){const f=ev.target.files[0];if(f)procXL(f);}
+function dropF(ev){ev.preventDefault();g('upZ')?.classList.remove('drag');const f=ev.dataTransfer.files[0];if(f)procXL(f);}
+async function procXL(file){
+  const r2=new FileReader(); r2.onload=async ev=>{
+    try{
+      const wb=XLSX.read(ev.target.result,{type:'array'});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+      if(!rows.length){g('upSt').innerHTML='<div style="padding:10px;background:#FEE2E2;color:#991B1B;border-radius:6px">No data rows found</div>';return;}
+      const keys=Object.keys(rows[0]);
+      const fd=(vars)=>keys.find(k=>vars.some(v=>k.toLowerCase().replace(/[\s_\-\.]/g,'').includes(v)))||'';
+      const cC=fd(['company','client','org']);const cP=fd(['project','title','lead']);
+      const cI=fd(['industry','sector']);const cSt=fd(['state','projectstate','addrstate']);
+      const cCi=fd(['city','location','district']);const cPic=fd(['pic','contactperson','contact','person']);
+      const cE=fd(['email','mail']);const cPh=fd(['phone','tel','mobile']);
+      const cCo=fd(['cost','value','amount']);const cPC=fd(['phonecall','calldate']);
+      const cIM=fd(['intromail','maildate','emailsent']);const cMt=fd(['meeting','meetingdate']);
+      const cRQ=fd(['rfq','rfqdate']);const cFu=fd(['followup','nextaction']);
+      const rows2=rows.map(row=>{
+        const pc=cPC?String(row[cPC]||''):'',im=cIM?String(row[cIM]||''):'';
+        const mt=cMt?String(row[cMt]||''):'',rq=cRQ?String(row[cRQ]||''):'';
+        let stg='New';
+        if(rq&&rq.trim()&&rq!=='None')stg='RFQ Generated';
+        else if(mt&&mt.trim()&&mt!=='None')stg='Visit Done';
+        else if(im&&im.trim()&&im!=='None')stg='Profile Sent';
+        else if(pc&&pc.trim()&&pc!=='None')stg='Call Done';
+        const ind=String(row[cI]||'').trim();
+        return{company:String(row[cC]||''),project:String(row[cP]||''),industry:ind,cost:parseFloat(row[cCo])||0,state:String(row[cSt]||''),city:String(row[cCi]||''),pic:String(row[cPic]||''),email:String(row[cE]||''),phone:String(row[cPh]||''),stage:stg,vertical:IV[ind]||'Project Freight',source:'import',phone_call_date:pc,intro_mail_date:im,meeting_date:mt,rfq_date:rq,followup:String(row[cFu]||''),week_tag:`W${new Date().toISOString().split('T')[0]}`};
+      }).filter(r=>r.company);
+      const res=await api('/api/leads/import',{method:'POST',body:JSON.stringify(rows2)});
+      g('upSt').innerHTML=`<div style="padding:12px;background:#D1FAE5;color:#065F46;border-radius:6px;font-weight:500">✅ ${res.added} new leads added · ${res.updated} existing updated</div>`;
+      rDash();
+    }catch(err){g('upSt').innerHTML=`<div style="padding:10px;background:#FEE2E2;color:#991B1B;border-radius:6px">Error: ${e(err.message)}</div>`;}
+  };r2.readAsArrayBuffer(file);
+}
+async function saveMn(){
+  const co=g('mnCo')?.value.trim();if(!co){toast('Company required','err');return;}
+  const ind=g('mnIn')?.value.trim()||'';
+  const r=await api('/api/leads',{method:'POST',body:JSON.stringify({company:co,project:g('mnPr').value,industry:ind,cost:parseFloat(g('mnVl').value)||0,state:g('mnSt').value,pic:g('mnPic').value,email:g('mnEm').value,procam_vertical:g('mnVt').value,notes:g('mnNo').value,source:'manual',assigned_to:ME.emp_code})});
+  if(r.ok){toast('Lead added ✓','ok');rDash();['mnCo','mnPr','mnIn','mnSt','mnVl','mnPic','mnEm','mnNo'].forEach(id=>{const el=g(id);if(el)el.value='';});}
+}
+async function saveVC(){
+  const txt=g('vcTxt')?.value.trim();if(!txt){toast('Paste data first','err');return;}
+  const rows=txt.split('\n').map(ln=>{const p=ln.split('|').map(x=>x.trim());return p.length>=2?{company:p[1]||'Unknown',project:'Visiting card',pic:p[0]||'',phone:p[2]||'',email:p[3]||'',source:'manual',stage:'New',procam_vertical:'Project Freight',assigned_to:ME.emp_code}:null;}).filter(Boolean);
+  const r=await api('/api/leads/import',{method:'POST',body:JSON.stringify(rows)});
+  if(r.ok)toast(`${r.added} contacts imported ✓`,'ok');
+}
+
+// ── CHANGE PASSWORD ──
+async function doChangePw(){
+  const cur=g('cpwCur').value,nw=g('cpwNew').value,cf=g('cpwCfm').value;
+  if(nw.length<6){g('cpwMsg').textContent='Password must be at least 6 characters';return;}
+  if(nw!==cf){g('cpwMsg').textContent='Passwords do not match';return;}
+  const r=await api('/change-password',{method:'POST',body:JSON.stringify({current:cur,new_password:nw})});
+  if(r.ok){g('cpwMsg').style.color='#065F46';g('cpwMsg').textContent='Password changed successfully ✓';[g('cpwCur'),g('cpwNew'),g('cpwCfm')].forEach(el=>el.value='');}
+  else{g('cpwMsg').style.color='var(--red)';g('cpwMsg').textContent=r.error||'Error';}
+}
+
+// BOOT
+window.onerror = function(msg, src, line, col, err){
+  console.error('JS Error:', msg, 'at', src, line, col, err);
+  return false;
+};
+window.onunhandledrejection = function(e){
+  console.error('Unhandled promise rejection:', e.reason);
+};
+init().catch(err=>console.error('init() failed:', err));
+</script>
+</body>
+</html>
