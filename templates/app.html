@@ -604,7 +604,7 @@ const qp=(o)=>Object.entries(o).filter(([,v])=>v).map(([k,v])=>`${k}=${encodeURI
 // ── INIT ──
 async function init(){
   const dbg=g('dbg');
-  const log=(m)=>{if(dbg){dbg.style.display='block';dbg.innerHTML+=m+'<br>';console.log(m);}};
+  const log=(m)=>{console.log(m);};
   log('init() started');
   try{
     ME = await api('/api/me');
@@ -633,7 +633,6 @@ async function init(){
 
 // ── NAV ──
 function nav(p){
-  const dbg=g('dbg');if(dbg){dbg.style.display='block';dbg.innerHTML+='nav('+p+')<br>';}
   console.log('nav called:', p);
   document.querySelectorAll('.page').forEach(el=>el.classList.toggle('on',el.id==='pg-'+p));
   document.querySelectorAll('.sbi').forEach(el=>el.classList.toggle('on',el.dataset?.p===p));
