@@ -16,6 +16,18 @@ app = Flask(__name__)
 # ProxyFix honours X-Forwarded-Prefix set by nginx (see hub/nginx-procamlogitech.conf)
 # so url_for() emits /CRM-prefixed URLs when we're proxied.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+# Belt-and-braces: even if ProxyFix's X-Forwarded-Prefix handling misfires,
+# force SCRIPT_NAME from the URL_PREFIX env var so url_for() always emits
+# the /CRM-prefixed URL. Without this, Flask redirects can end up bare-path
+# ("/login") and nginx 404s them.
+_url_prefix = (os.environ.get('URL_PREFIX') or '').rstrip('/')
+if _url_prefix:
+    _inner_app = app.wsgi_app
+    def _force_script_name(environ, start_response):
+        environ['SCRIPT_NAME'] = _url_prefix
+        return _inner_app(environ, start_response)
+    app.wsgi_app = _force_script_name
 app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///procam_crm.db')
 if db_url.startswith('postgres://'):
