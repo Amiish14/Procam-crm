@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Procam ProConnect CRM</title>
+<title>Procam CRM</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=Barlow+Condensed:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
-/* ────────── PROCAM PROCONNECT — DESIGN SYSTEM v4 ────────── */
+/* ────────── PROCAM CRM — DESIGN SYSTEM v4 ────────── */
 :root{
   --red:#C72435; --red-hover:#A31D2B; --red-tint:#FDEEF0;
   --ink:#0B0D12; --ink-2:#1F2430;
@@ -392,7 +392,7 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
 
 <!-- OPPORTUNITIES (admin) -->
 <div class="page" id="pg-opp">
-  <div class="pg-hd"><div><div class="pg-ttl">Opportunities — ProConnect</div><div class="pg-sub">Leads at RFQ stage · Linked to ProConnect opportunity numbers</div></div></div>
+  <div class="pg-hd"><div><div class="pg-ttl">Opportunities</div><div class="pg-sub">Leads with an opportunity number assigned</div></div></div>
   <div class="card" style="margin-bottom:0">
     <div class="fbar">
       <input class="fi fi-srch" id="opS" placeholder="Search Company, opportunity number..." oninput="rOpp()">
@@ -611,10 +611,10 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
 <!-- OPP MODAL -->
 <div class="mob" id="opMob" style="display:none" onclick="if(event.target===this)this.style.display='none'">
   <div class="mod mod-sm" onclick="event.stopPropagation()">
-    <div class="mhd"><div class="m-ic">🎯</div><div><div class="m-ttl" id="opTtl">ProConnect Opportunity</div><div class="m-sub">Assign opportunity number from ProConnect CRM</div></div><button class="mx" onclick="document.getElementById('opMob').style.display='none'">✕</button></div>
+    <div class="mhd"><div class="m-ic">🎯</div><div><div class="m-ttl" id="opTtl">Opportunity</div><div class="m-sub">Assign an opportunity number to this lead</div></div><button class="mx" onclick="document.getElementById('opMob').style.display='none'">✕</button></div>
     <div class="mbdy">
       <div class="opp-b">
-        <div class="opp-hd"><div class="opp-ic">🎯</div><div><div class="opp-ttl">ProConnect Number</div><div class="opp-sub" id="opSub">Link this lead to ProConnect CRM</div></div></div>
+        <div class="opp-hd"><div class="opp-ic">🎯</div><div><div class="opp-ttl">Opportunity Number</div><div class="opp-sub" id="opSub">Link this lead to an opportunity</div></div></div>
         <div class="opp-grid">
           <div class="opp-f"><div class="opp-fl">Opp number</div><input class="fmc" id="opN" placeholder="OPP-2026-0001" style="font-family:var(--font-num);letter-spacing:.02em"></div>
           <div class="opp-f"><div class="opp-fl">PC stage</div><select class="fmc" id="opSt"><option>Qualification</option><option>Needs Analysis</option><option>Proposal Sent</option><option>Negotiation</option><option>Closed Won</option><option>Closed Lost</option></select></div>
@@ -623,7 +623,7 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
       </div>
       <div class="fmg"><label class="fml">Notes</label><textarea class="fmc" id="opNts" rows="3"></textarea></div>
     </div>
-    <div class="mft"><button class="btn btn-ghost" onclick="document.getElementById('opMob').style.display='none'">Cancel</button><button class="btn btn-red" onclick="saveOpp()">Link to ProConnect</button></div>
+    <div class="mft"><button class="btn btn-ghost" onclick="document.getElementById('opMob').style.display='none'">Cancel</button><button class="btn btn-red" onclick="saveOpp()">Link Opportunity</button></div>
   </div>
 </div>
 
@@ -684,7 +684,7 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
 
 <script>
 // ══════════════════════════════════════════════════
-//  PROCAM ProConnect CRM — Frontend Application
+//  PROCAM CRM — Frontend Application
 // ══════════════════════════════════════════════════
 const STAGES=['New Opportunity','Qualified','Proposal Due','Negotiation Due','Decision Taken','Won','Lost','On Hold','Not Interested'];
 const SC={'New Opportunity':'sN','Qualified':'sC','Proposal Due':'sP','Negotiation Due':'sR','Decision Taken':'sA','Won':'sW','Lost':'sL','On Hold':'sV','Not Interested':'sL',
@@ -774,7 +774,7 @@ async function rDash(){
     {l:'Active pipeline',v:st.active,s:'Excl. closed'},
     {l:'Intro emailed',v:st.mailed,s:st.total?Math.round(st.mailed/st.total*100)+'% of total':'—'},
     {l:'RFQ stage',v:st.rfq,s:'Quote ready'},
-    {l:'Opportunities',v:st.opp,s:'In ProConnect'},
+    {l:'Opportunities',v:st.opp,s:'Registered'},
     {l:'Won',v:st.won,s:st.total?Math.round(st.won/st.total*100)+'% conversion':'—'},
   ].map(k=>`<div class="kpi"><div class="kl">${k.l}</div><div class="kv">${k.v}</div><div class="ks">${k.s}</div></div>`).join('');
   // Sidebar counts
@@ -954,8 +954,8 @@ async function openLd(id){
       <div class="dtc ${l.meeting_date?'ok':''}"><div class="dtc-l">Meeting</div><input type="date" class="fmc" id="lMT" value="${l.meeting_date||''}"></div>
       <div class="dtc ${l.rfq_date?'ok':''}"><div class="dtc-l">RFQ</div><input type="date" class="fmc" id="lRQ" value="${l.rfq_date||''}"></div>
     </div>
-    ${l.opp_number?`<div class="opp-b"><div class="opp-hd"><div><div class="opp-ttl">ProConnect: ${e(l.opp_number)}</div><div class="opp-sub">${e(l.opp_stage||'')} ${l.opp_close_date?'· Close: '+l.opp_close_date:''}</div></div></div></div>`:''}
-    ${l.stage==='RFQ Generated'&&!l.opp_number?`<div style="background:var(--red-tint);border:1px solid var(--red);border-radius:var(--r);padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px"><div style="font-size:13px;color:var(--red);font-weight:600">RFQ received — link to ProConnect CRM</div><button class="btn btn-red btn-sm" onclick="closeLd();openOpp(${l.id})">Assign Opp #</button></div>`:''}
+    ${l.opp_number?`<div class="opp-b"><div class="opp-hd"><div><div class="opp-ttl">Opp: ${e(l.opp_number)}</div><div class="opp-sub">${e(l.opp_stage||'')} ${l.opp_close_date?'· Close: '+l.opp_close_date:''}</div></div></div></div>`:''}
+    ${l.stage==='RFQ Generated'&&!l.opp_number?`<div style="background:var(--red-tint);border:1px solid var(--red);border-radius:var(--r);padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px"><div style="font-size:13px;color:var(--red);font-weight:600">RFQ received — assign an opportunity number</div><button class="btn btn-red btn-sm" onclick="closeLd();openOpp(${l.id})">Assign Opp #</button></div>`:''}
     <div class="fm-s">Contact information</div>
     <div class="fmr"><div class="fmg"><label class="fml">Contact person</label><input class="fmc" id="lPic" value="${e(l.pic||'')}"></div><div class="fmg"><label class="fml">Designation</label><input class="fmc" id="lDes" value="${e(l.designation||'')}"></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="lEm" value="${e(l.email||'')}"></div><div class="fmg"><label class="fml">Phone</label><input class="fmc" id="lPh" value="${e(l.phone||'')}"></div></div>

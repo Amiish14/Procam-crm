@@ -1,5 +1,5 @@
 # ============================================================
-#  PROCAM ProConnect CRM — Flask Application
+#  PROCAM CRM — Flask Application
 #  Version 3.0  |  Ready for Render / PRERNA-stack hosting
 # ============================================================
 
@@ -147,7 +147,7 @@ class Lead(db.Model):
     intro_mail_date  = db.Column(db.Date)
     meeting_date     = db.Column(db.Date)
     rfq_date         = db.Column(db.Date)
-    # ProConnect Opportunity
+    # Opportunity link
     opp_number       = db.Column(db.String(30))
     opp_stage        = db.Column(db.String(40))
     opp_close_date   = db.Column(db.Date)

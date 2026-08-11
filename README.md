@@ -1,11 +1,11 @@
-# Procam ProConnect CRM v3.0
+# Procam CRM v3.0
 **Full-stack pre-sales CRM for Procam Group — Sales, Pre-Sales, Admin access tiers**
 
 ## Features
 - Employee Master with emp code as default password + forced change on first login
 - Lead pipeline: New → Call Done → Profile Sent → Appointment → Visit Done → RFQ Generated → Won/Lost
 - Activity date tracking (phone call, intro mail, meeting, RFQ) with onboarded date stamp
-- ProConnect Opportunity number assignment when RFQ is received
+- Opportunity number assignment when RFQ is received
 - Market Intelligence: ETManufacturing / Projects Today newsletter parsing from Nilesh's Outlook
 - Global CRM: People, Companies, Overseas Agents with country/city/website
 - AI Outreach: Claude-powered email generation with project context
