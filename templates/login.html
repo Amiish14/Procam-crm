@@ -4,76 +4,98 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Procam ProConnect CRM — Sign In</title>
-<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;500;600;700;800&family=Barlow+Condensed:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;500;600;700;800&family=Barlow+Condensed:wght@500;700&display=swap" rel="stylesheet">
 <style>
-/* Procam exact brand colors: Red #C72435, Charcoal #474447, White #FFFFFF */
+/* ────────── PROCAM PROCONNECT — SIGN IN ────────── */
+:root{
+  --red:#C72435; --red-hover:#A31D2B; --red-tint:#FDEEF0;
+  --ink:#0B0D12; --ink-2:#1F2430;
+  --text:#363B47; --text-2:#6B7280; --text-3:#9CA3AF;
+  --bg:#F7F8FA; --card:#FFFFFF;
+  --border:#E5E7EB; --border-2:#F0F2F5; --surface-2:#FAFBFC;
+  --danger:#B91C1C;
+  --r-sm:4px; --r:6px; --r-lg:10px;
+  --sh-1:0 1px 2px rgba(11,13,18,.04),0 1px 3px rgba(11,13,18,.03);
+  --sh-2:0 4px 16px rgba(11,13,18,.06),0 1px 3px rgba(11,13,18,.04);
+  --sh-lg:0 12px 40px rgba(11,13,18,.12),0 4px 12px rgba(11,13,18,.06);
+  --font:'Barlow','Inter',-apple-system,system-ui,sans-serif;
+  --font-num:'Barlow Condensed','Barlow',sans-serif;
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Barlow',sans-serif;min-height:100vh;display:flex;background:#F5F7FA}
-.left{width:460px;flex-shrink:0;background:#474447;display:flex;flex-direction:column;justify-content:space-between;padding:48px 44px;position:relative;overflow:hidden}
-.left::after{content:'';position:absolute;top:-60px;right:-60px;width:300px;height:300px;border-radius:50%;background:rgba(199,36,53,.08);pointer-events:none}
-.left::before{content:'';position:absolute;bottom:-80px;left:-40px;width:250px;height:250px;border-radius:50%;background:rgba(255,255,255,.03);pointer-events:none}
+html,body{height:100%}
+body{font-family:var(--font);min-height:100vh;display:flex;background:var(--bg);color:var(--text);font-size:13.5px;line-height:1.55;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+
+/* ────────── LEFT PANEL — near-black hero ────────── */
+.left{width:520px;flex-shrink:0;background:#0B0D12;display:flex;flex-direction:column;justify-content:space-between;padding:56px 56px;position:relative;overflow:hidden;color:#fff}
+.left::after{content:'';position:absolute;top:-220px;right:-260px;width:520px;height:520px;border-radius:50%;background:rgba(199,36,53,.06);pointer-events:none}
+.left::before{content:'';position:absolute;bottom:-220px;left:-160px;width:420px;height:420px;border-radius:50%;background:rgba(255,255,255,.02);pointer-events:none}
 .logo-area{position:relative;z-index:1}
-.logo-mark{display:flex;align-items:center;gap:13px;margin-bottom:32px}
-.logo-bars{display:flex;flex-direction:column;gap:4px}
-.lb{border-radius:2px;background:#fff}
-.lb1{width:28px;height:4px}
-.lb2{width:18px;height:4px;background:#C72435}
-.lb3{width:23px;height:4px}
-.logo-text{font-family:'Barlow Condensed',sans-serif;font-size:30px;font-weight:700;color:#fff;letter-spacing:1px}
-.logo-text em{color:#C72435;font-style:normal}
-.logo-tag{font-size:9.5px;font-weight:500;color:rgba(255,255,255,.35);letter-spacing:2.5px;text-transform:uppercase;margin-top:2px}
-.hero-ttl{font-size:30px;font-weight:700;color:rgba(255,255,255,.88);line-height:1.3;margin-bottom:10px;position:relative;z-index:1}
-.hero-ttl em{color:#C72435;font-style:normal}
-.hero-sub{font-size:13px;color:rgba(255,255,255,.45);line-height:1.65;position:relative;z-index:1}
-.footer-note{font-size:11px;color:rgba(255,255,255,.25);line-height:1.7;position:relative;z-index:1}
-.right{flex:1;display:flex;align-items:center;justify-content:center;padding:40px}
-.signin-card{background:#fff;border-radius:14px;padding:44px 46px;width:100%;max-width:400px;box-shadow:0 8px 40px rgba(71,68,71,.12)}
-.sc-ttl{font-size:24px;font-weight:700;color:#1A1D23;margin-bottom:4px}
-.sc-sub{font-size:13px;color:#8B919E;margin-bottom:30px}
+.logo-mark{display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin-bottom:0}
+.logo-mark img{height:34px;object-fit:contain;filter:brightness(0) invert(1);opacity:.95}
+.logo-tag{font-size:10.5px;font-weight:600;color:#5B6270;letter-spacing:.12em;text-transform:uppercase}
+.hero{position:relative;z-index:1}
+.hero-ttl{font-size:36px;font-weight:700;color:#fff;line-height:1.15;margin-bottom:16px;letter-spacing:-.02em}
+.hero-ttl em{color:var(--red);font-style:normal}
+.hero-sub{font-size:14px;color:#8B92A0;line-height:1.65;font-weight:400;max-width:400px}
+.footer-note{font-size:11.5px;color:#5B6270;line-height:1.7;position:relative;z-index:1;letter-spacing:.005em}
+
+/* ────────── RIGHT PANEL — sign-in ────────── */
+.right{flex:1;display:flex;align-items:center;justify-content:center;padding:40px;background:var(--bg)}
+.signin-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r-lg);padding:40px 44px;width:100%;max-width:380px;box-shadow:var(--sh-2)}
+.sc-ttl{font-size:22px;font-weight:700;color:var(--ink);letter-spacing:-.015em;line-height:1.2}
+.sc-sub{font-size:13px;color:var(--text-2);margin-top:6px;margin-bottom:32px;font-weight:400}
 .fg{margin-bottom:18px}
-.fl{display:block;font-size:10.5px;font-weight:700;color:#4A4F5C;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
-.fi{width:100%;padding:12px 14px;border-radius:8px;border:1.5px solid #E4E7EC;font-size:14px;font-family:'Barlow',sans-serif;color:#1A1D23;transition:.15s;background:#fff}
-.fi:focus{outline:none;border-color:#C72435;box-shadow:0 0 0 3px rgba(199,36,53,.1)}
-.fi::placeholder{color:#B0B7C3}
-.signin-btn{width:100%;padding:13px;background:#C72435;color:#fff;border:none;border-radius:8px;font-size:14.5px;font-weight:700;font-family:'Barlow',sans-serif;letter-spacing:.3px;cursor:pointer;transition:.15s;margin-top:6px}
-.signin-btn:hover{background:#E8374A}
-.signin-btn:active{background:#A31D2B;transform:scale(.99)}
-.err-box{background:#FDF1F2;border:1.5px solid #F5C2C6;color:#A31D2B;padding:11px 14px;border-radius:8px;font-size:12.5px;font-weight:500;margin-top:12px;display:none}
-.info-box{background:#F0F7FF;border:1px solid #C3D9F4;color:#1E40AF;padding:11px 14px;border-radius:8px;font-size:12px;line-height:1.6;margin-top:18px}
-.info-box strong{font-weight:600}
-/* Change password overlay */
-.pw-overlay{position:fixed;inset:0;background:rgba(71,68,71,.6);z-index:1000;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
-.pw-card{background:#fff;border-radius:14px;padding:36px 40px;width:100%;max-width:380px;box-shadow:0 16px 48px rgba(0,0,0,.2)}
-.pw-ttl{font-size:18px;font-weight:700;color:#1A1D23;margin-bottom:4px}
-.pw-sub{font-size:12.5px;color:#8B919E;margin-bottom:24px}
+.fl{display:block;font-size:11.5px;font-weight:500;color:var(--ink-2);margin-bottom:6px}
+.fi{width:100%;height:36px;padding:0 12px;border-radius:var(--r);border:1px solid var(--border);font-size:13px;font-family:var(--font);color:var(--ink-2);background:#fff;transition:border-color .12s,box-shadow .12s;font-weight:400;line-height:1}
+.fi:focus{outline:none;border-color:var(--red);box-shadow:0 0 0 3px rgba(199,36,53,.15)}
+.fi::placeholder{color:var(--text-3)}
+.signin-btn{width:100%;height:40px;background:var(--red);color:#fff;border:none;border-radius:var(--r);font-size:13.5px;font-weight:600;font-family:var(--font);letter-spacing:.01em;cursor:pointer;transition:background .12s,transform .06s;margin-top:8px;line-height:1}
+.signin-btn:hover{background:var(--red-hover)}
+.signin-btn:active{transform:translateY(1px)}
+.signin-btn:disabled{background:var(--text-3);cursor:wait}
+.err-box{background:rgba(185,28,28,.06);border:1px solid rgba(185,28,28,.25);color:#991B1B;padding:10px 14px;border-radius:var(--r);font-size:12.5px;font-weight:500;margin-top:14px;display:none;line-height:1.5}
+.info-box{background:var(--surface-2);border:1px solid var(--border-2);color:var(--text-2);padding:12px 14px;border-radius:var(--r);font-size:12px;line-height:1.6;margin-top:18px}
+.info-box strong{color:var(--ink-2);font-weight:600}
+
+/* ────────── CHANGE-PASSWORD OVERLAY ────────── */
+.pw-overlay{position:fixed;inset:0;background:rgba(11,13,18,.48);z-index:1000;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+.pw-card{background:#fff;border-radius:var(--r-lg);padding:32px 36px;width:100%;max-width:400px;box-shadow:var(--sh-lg)}
+.pw-ttl{font-size:18px;font-weight:700;color:var(--ink);letter-spacing:-.005em}
+.pw-sub{font-size:13px;color:var(--text-2);margin-top:6px;margin-bottom:22px;line-height:1.5}
+
+@media(max-width:900px){
+  body{flex-direction:column}
+  .left{width:100%;padding:36px 32px;min-height:auto}
+  .left .hero,.left .footer-note{display:none}
+  .right{padding:24px 20px 40px}
+}
 </style>
 </head>
 <body>
 <div class="left">
   <div class="logo-area">
-    <div class="logo-mark" style="flex-direction:column;align-items:flex-start;gap:8px">
-      <img src="https://www.procamlogistics.com/public/frontend/assets/img/logo.png" alt="Procam Group" style="height:38px;object-fit:contain;filter:brightness(0) invert(1)">
-      <div class="logo-tag">ProConnect CRM Platform</div>
+    <div class="logo-mark">
+      <img src="https://www.procamlogistics.com/public/frontend/assets/img/logo.png" alt="Procam Group">
+      <div class="logo-tag">ProConnect CRM</div>
     </div>
   </div>
-  <div>
-    <h1 class="hero-ttl">Intelligence-driven<br>pre-sales,<br><em>built for Procam</em></h1>
-    <p class="hero-sub" style="margin-top:14px">From news intelligence to RFQ — every lead tracked, dated, and ready to pitch. Powered by your Outlook, your team, and AI.</p>
+  <div class="hero">
+    <h1 class="hero-ttl">Intelligence-driven pre-sales,<br><em>built for Procam.</em></h1>
+    <p class="hero-sub">From news intelligence to RFQ — every lead tracked, dated, and ready to pitch. Powered by your Outlook, your team, and AI.</p>
   </div>
   <div class="footer-note">
     Procam Logistics Pvt. Ltd. &nbsp;·&nbsp; Procam Worldwide Logistics Pvt. Ltd.<br>
-    New Delhi &nbsp;·&nbsp; Kolkata &nbsp;·&nbsp; www.procamgroup.in<br>
-    ProConnect CRM v3.0 &nbsp;·&nbsp; Confidential
+    New Delhi &nbsp;·&nbsp; Kolkata &nbsp;·&nbsp; www.procamgroup.in
   </div>
 </div>
 
 <div class="right">
   <div class="signin-card">
     <div class="sc-ttl">Sign in</div>
-    <div class="sc-sub">Use your Employee Code and password to access your workspace</div>
+    <div class="sc-sub">Access your ProConnect workspace.</div>
     <div class="fg">
-      <label class="fl">Employee Code</label>
-      <input class="fi" id="empCode" type="text" placeholder="e.g. PCM101" autocomplete="username"
+      <label class="fl">Username</label>
+      <input class="fi" id="empCode" type="text" placeholder="Employee code" autocomplete="username"
              onkeydown="if(event.key==='Enter')doLogin()" style="text-transform:uppercase">
     </div>
     <div class="fg">
@@ -81,13 +103,8 @@ body{font-family:'Barlow',sans-serif;min-height:100vh;display:flex;background:#F
       <input class="fi" id="password" type="password" placeholder="Your password"
              autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
     </div>
-    <button class="signin-btn" onclick="doLogin()" id="loginBtn">Sign in →</button>
+    <button class="signin-btn" onclick="doLogin()" id="loginBtn">Sign in</button>
     <div class="err-box" id="errBox"></div>
-    <div class="info-box">
-      <strong>First time logging in?</strong><br>
-      Your default password is your Employee Code in lowercase.<br>
-      You will be asked to set a new password immediately after.
-    </div>
   </div>
 </div>
 
@@ -97,44 +114,53 @@ body{font-family:'Barlow',sans-serif;min-height:100vh;display:flex;background:#F
     <div class="pw-ttl">Set your new password</div>
     <div class="pw-sub">For security, please set a personal password before continuing. Minimum 6 characters.</div>
     <div class="fg">
-      <label class="fl">Current Password</label>
+      <label class="fl">Current password</label>
       <input class="fi" id="pwCurrent" type="password" placeholder="Current password">
     </div>
     <div class="fg">
-      <label class="fl">New Password</label>
+      <label class="fl">New password</label>
       <input class="fi" id="pwNew" type="password" placeholder="Min 6 characters">
     </div>
     <div class="fg">
-      <label class="fl">Confirm New Password</label>
+      <label class="fl">Confirm new password</label>
       <input class="fi" id="pwConfirm" type="password" placeholder="Repeat new password">
     </div>
-    <button class="signin-btn" onclick="doChangePassword()">Set Password & Continue →</button>
+    <button class="signin-btn" onclick="doChangePassword()">Set password & continue</button>
     <div class="err-box" id="pwErr" style="display:none"></div>
   </div>
 </div>
 
 <script>
+// Derive the CRM's base path from the current URL so fetches respect the
+// nginx /CRM prefix (or run at root during local dev with no prefix).
+function crmUrl(path){
+  // window.location.pathname on the login page is either "/login" (local dev)
+  // or "/CRM/login" (behind nginx). Strip the trailing segment.
+  const base = window.location.pathname.replace(/\/[^/]*$/, '');
+  return base + '/' + path.replace(/^\//, '');
+}
+
 async function doLogin(){
   const btn=document.getElementById('loginBtn');
   const code=document.getElementById('empCode').value.trim().toUpperCase();
   const pw=document.getElementById('password').value;
   const err=document.getElementById('errBox');
-  if(!code||!pw){err.textContent='Please enter both Employee Code and password.';err.style.display='block';return;}
+  if(!code||!pw){err.textContent='Please enter both username and password.';err.style.display='block';return;}
   btn.textContent='Signing in…';btn.disabled=true;
   try{
-    const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({emp_code:code,password:pw})});
+    const r=await fetch(crmUrl('login'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({emp_code:code,password:pw})});
     const d=await r.json();
     if(d.ok){
       if(d.must_change){
         document.getElementById('pwOverlay').style.display='flex';
       } else {
-        window.location.href='/app';
+        window.location.href=crmUrl('app');
       }
     } else {
-      err.textContent=d.error||'Invalid Employee Code or Password.';err.style.display='block';
+      err.textContent=d.error||'Invalid username or password.';err.style.display='block';
     }
   }catch(e){err.textContent='Server error. Please try again.';err.style.display='block';}
-  btn.textContent='Sign in →';btn.disabled=false;
+  btn.textContent='Sign in';btn.disabled=false;
 }
 
 async function doChangePassword(){
@@ -144,9 +170,9 @@ async function doChangePassword(){
   const err=document.getElementById('pwErr');
   if(nw.length<6){err.textContent='Password must be at least 6 characters.';err.style.display='block';return;}
   if(nw!==cf){err.textContent='Passwords do not match.';err.style.display='block';return;}
-  const r=await fetch('/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})});
+  const r=await fetch(crmUrl('change-password'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})});
   const d=await r.json();
-  if(d.ok){window.location.href='/app';}
+  if(d.ok){window.location.href=crmUrl('app');}
   else{err.textContent=d.error||'Error.';err.style.display='block';}
 }
 </script>
