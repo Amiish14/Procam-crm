@@ -281,7 +281,7 @@ input[type=file]{display:none}
   <div class="top-r">
     <div class="news-bell admin-only" onclick="nav('news')" id="newsBell" title="News Intelligence">📰 Intelligence <div class="news-dot" id="newsDot" style="display:none"></div></div>
     <span class="admin-bdg admin-only" id="adminBdg" style="display:none">Admin</span>
-    <button class="logout-btn" onclick="location.href='/logout'">Sign out</button>
+    <button class="logout-btn" onclick="location.href=crmUrl('/logout')">Sign out</button>
   </div>
 </div>
 
@@ -592,11 +592,16 @@ const sb=s=>bdg(SC[s]||'sN',s||'New');
 const vb=v=>bdg(VBK[v]||'vPF',VS[v]||v||'—');
 const srb=s=>bdg(SBK[s]||'srcMn',SBL[s]||s||'—');
 const toast=(m,t='')=>{const el=g('toast');el.textContent=m;el.className='toast show'+(t?' '+t:'');setTimeout(()=>el.classList.remove('show'),2800)};
+// Derive CRM base path so /CRM prefix is respected behind nginx.
+// window.location.pathname is /app locally or /CRM/app behind nginx.
+const CRM_BASE = window.location.pathname.replace(/\/[^/]*$/, '');
+const crmUrl = (path) => CRM_BASE + '/' + String(path).replace(/^\//, '');
 const api=async(url,opts={})=>{
-  const r=await fetch(url,{headers:{'Content-Type':'application/json'},credentials:'same-origin',...opts});
-  if(r.status===401){window.location.href='/login';return {};}
+  const fullUrl = url.startsWith('/') ? crmUrl(url) : url;
+  const r=await fetch(fullUrl,{headers:{'Content-Type':'application/json'},credentials:'same-origin',...opts});
+  if(r.status===401){window.location.href=crmUrl('/login');return {};}
   const ct=r.headers.get('content-type')||'';
-  if(!ct.includes('application/json')){console.error('Non-JSON response from',url,r.status);return {};}
+  if(!ct.includes('application/json')){console.error('Non-JSON response from',fullUrl,r.status);return {};}
   return r.json();
 };
 const qp=(o)=>Object.entries(o).filter(([,v])=>v).map(([k,v])=>`${k}=${encodeURIComponent(v)}`).join('&');
@@ -613,7 +618,7 @@ async function init(){
   try{
     EMPS = await api('/api/employees');
   } catch(err){ console.error('Failed to load employees:', err); EMPS = []; }
-  if(!ME || !ME.emp_code){ console.error('No session - redirecting'); window.location.href='/login'; return; }
+  if(!ME || !ME.emp_code){ console.error('No session - redirecting'); window.location.href=crmUrl('/login'); return; }
   const ini=ME.name?.split(' ').map(w=>w[0]).slice(0,2).join('')||'?';
   g('tAv').textContent=ini;
   g('tName').textContent=ME.name||'';
