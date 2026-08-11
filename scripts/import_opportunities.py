@@ -25,7 +25,7 @@ import pandas as pd
 
 # Make sure we import from the CRM app
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from app import app, db, Company, Opportunity, Employee  # noqa: E402
+from app import app, db, Company, Opportunity, Employee, Lead  # noqa: E402
 
 
 # ─── Value mappings ──────────────────────────────────────────────────────────
@@ -38,6 +38,19 @@ STAGE_MAP = {
     'PROPOSAL SENT':    ('Proposal Sent',     60),
     'BUDGETARY':        ('Budgetary',         30),
     'QUALIFIED':        ('Qualified',         40),
+}
+
+# Excel stage → Lead pipeline stage (New/Call Done/.../RFQ Generated/Won/Lost).
+# Every row in this Excel had an OPP number, so at minimum they reached RFQ.
+LEAD_STAGE_MAP = {
+    'WON':              'Won',
+    'LOST':             'Lost',
+    'CLOSED':           'Won',
+    'CANCELLED':        'Lost',
+    'NOT PARTICIPATED': 'Lost',
+    'PROPOSAL SENT':    'RFQ Generated',
+    'BUDGETARY':        'RFQ Generated',
+    'QUALIFIED':        'RFQ Generated',
 }
 
 VERTICAL_MAP = {
@@ -250,12 +263,95 @@ def main(xlsx_path):
             db.session.bulk_save_objects(new_opps)
             db.session.commit()
 
+        # ── 3. Leads (one per Excel row, so UI/dashboard picks them up) ─────
+        print("\n[3/3] Leads")
+        existing_leads = {l.opp_number
+                          for l in Lead.query.with_entities(
+                              Lead.opp_number).filter(
+                                  Lead.opp_number.isnot(None)).all()}
+        print(f"  {len(existing_leads)} leads-with-opp already in DB")
+
+        # emp_code → name for assigned_name column
+        emp_name_by_code = {e.emp_code: e.name for e in Employee.query.all()}
+
+        new_leads = []
+        for _, r in df.iterrows():
+            opp_no = clean(r['Opportunity No.'])
+            if not opp_no or opp_no in existing_leads:
+                continue
+
+            cust = clean(r['Customer Name']) or 'Unknown'
+            stage_raw = (clean(r['Stage.Name']) or '').upper()
+            lead_stage = LEAD_STAGE_MAP.get(stage_raw, 'RFQ Generated')
+
+            vertical = VERTICAL_MAP.get((clean(r['Vertical.Name']) or '').upper(),
+                                        clean(r['Vertical.Name']))
+
+            owner_code = resolve_owner(r['Owner'], emp_idx)
+            owner_name = emp_name_by_code.get(owner_code) if owner_code else \
+                         clean(r['Owner'])
+
+            amount = to_amount(r['Amount'])
+            cost_million = float(amount) / 1_000_000.0 if amount else 0.0
+
+            created = to_date(r['Date']) or date.today()
+            close_date = to_date(r['End Date']) or to_date(r['Start Date'])
+            start_date = to_date(r['Start Date'])
+
+            # Notes carry BU/Branch/Assignee/ERP-link
+            note_bits = []
+            if clean(r['BU']):
+                note_bits.append(f"BU: {clean(r['BU'])}")
+            if clean(r['Branch']):
+                note_bits.append(f"Branch: {clean(r['Branch'])}")
+            if clean(r['Assignee']) and clean(r['Assignee']) != clean(r['Owner']):
+                note_bits.append(f"Assignee: {clean(r['Assignee'])}")
+            if clean(r['Owner']) and not owner_code:
+                note_bits.append(f"Owner (unmatched): {clean(r['Owner'])}")
+            if clean(r['Link']):
+                link_clean = re.sub(r'\s+', '', str(r['Link']))
+                note_bits.append(f"ERP: {link_clean}")
+            notes_txt = ' | '.join(note_bits) if note_bits else None
+
+            lead = Lead(
+                source='import',
+                company=cust[:200],
+                project=(clean(r['Opportunity Description']) or 'Transport')[:300],
+                cost_million=cost_million,
+                stage=lead_stage,
+                procam_vertical=vertical,
+                assigned_to=owner_code,
+                assigned_name=owner_name,
+                opp_number=opp_no,
+                opp_stage=stage_raw.title() if stage_raw else None,
+                opp_close_date=close_date,
+                opp_notes=notes_txt,
+                rfq_date=start_date or created,
+                onboarded_date=created,
+                notes=notes_txt,
+                created_at=datetime.combine(created, datetime.min.time()),
+                updated_at=datetime.combine(created, datetime.min.time()),
+            )
+            new_leads.append(lead)
+
+            if len(new_leads) >= 1000:
+                db.session.bulk_save_objects(new_leads)
+                db.session.commit()
+                print(f"  + committed batch, {len(new_leads)} leads")
+                new_leads = []
+
+        if new_leads:
+            db.session.bulk_save_objects(new_leads)
+            db.session.commit()
+
         # ── Summary ─────────────────────────────────────────────────────────
         total_opp = Opportunity.query.count()
         total_co = Company.query.count()
+        total_leads = Lead.query.count()
         print("\n─── SUMMARY ──────────────────────────────────────────")
         print(f"  Companies in DB:     {total_co}")
         print(f"  Opportunities in DB: {total_opp}")
+        print(f"  Leads in DB:         {total_leads}")
         print(f"  Skipped (dup):       {skipped_dup}")
         print(f"  Skipped (bad row):   {skipped_bad}")
         print(f"  Owner name matched:  {matched_owners}")
