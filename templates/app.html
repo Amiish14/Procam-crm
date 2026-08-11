@@ -289,6 +289,11 @@ input[type=file]{display:none}
 <div class="sb">
   <div class="sb-sec">Workspace</div>
   <div class="sbi on" onclick="nav('dash')" data-p="dash"><span class="ic">📊</span>Dashboard</div>
+  <div class="sbi" onclick="nav('inb-new')" data-p="inb-new"><span class="ic">📥</span>New Opportunity<span class="sb-cnt" id="sbNew">0</span></div>
+  <div class="sbi" onclick="nav('inb-qual')" data-p="inb-qual"><span class="ic">✅</span>Qualified<span class="sb-cnt" id="sbQual">0</span></div>
+  <div class="sbi" onclick="nav('inb-prop')" data-p="inb-prop"><span class="ic">📝</span>Proposal Due<span class="sb-cnt" id="sbProp">0</span></div>
+  <div class="sbi" onclick="nav('inb-neg')" data-p="inb-neg"><span class="ic">🤝</span>Negotiation Due<span class="sb-cnt" id="sbNeg">0</span></div>
+  <div class="sbi" onclick="nav('inb-dec')" data-p="inb-dec"><span class="ic">⚖️</span>Decision Taken<span class="sb-cnt" id="sbDec">0</span></div>
   <div class="sbi" onclick="nav('leads')" data-p="leads"><span class="ic">📋</span>My Leads<span class="sb-cnt" id="sbN">0</span></div>
   <div class="sbi" onclick="nav('outreach')" data-p="outreach"><span class="ic">✉️</span>AI Outreach</div>
   <div class="sbi" onclick="nav('contacts')" data-p="contacts"><span class="ic">🌐</span>Global CRM</div>
@@ -331,7 +336,7 @@ input[type=file]{display:none}
   <div class="card" style="margin-bottom:0">
     <div class="fbar">
       <input class="fi fi-srch" id="lS" placeholder="🔍 Company, state, industry..." oninput="rLeads()">
-      <select class="fi" id="lSt" onchange="rLeads()"><option value="">All Stages</option><option>New</option><option>Call Done</option><option>Profile Sent</option><option>Appointment</option><option>Visit Done</option><option>RFQ Generated</option><option>Won</option><option>Lost</option></select>
+      <select class="fi" id="lSt" onchange="rLeads()"><option value="">All Stages</option><option>New Opportunity</option><option>Qualified</option><option>Proposal Due</option><option>Negotiation Due</option><option>Decision Taken</option><option>Won</option><option>Lost</option><option>On Hold</option><option>Not Interested</option></select>
       <select class="fi" id="lV" onchange="rLeads()"><option value="">All Verticals</option><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option></select>
       <button class="btn btn-ghost btn-sm" onclick="clrF('l')">✕</button>
       <span class="f-cnt" id="lCnt"></span>
@@ -349,7 +354,7 @@ input[type=file]{display:none}
   <div class="card" style="margin-bottom:0">
     <div class="fbar">
       <input class="fi fi-srch" id="aS" placeholder="🔍 Company, state, industry..." oninput="rAll()">
-      <select class="fi" id="aSt" onchange="rAll()"><option value="">All Stages</option><option>New</option><option>Call Done</option><option>Profile Sent</option><option>Appointment</option><option>Visit Done</option><option>RFQ Generated</option><option>Won</option><option>Lost</option></select>
+      <select class="fi" id="aSt" onchange="rAll()"><option value="">All Stages</option><option>New Opportunity</option><option>Qualified</option><option>Proposal Due</option><option>Negotiation Due</option><option>Decision Taken</option><option>Won</option><option>Lost</option><option>On Hold</option><option>Not Interested</option></select>
       <select class="fi" id="aAsgn" onchange="rAll()"><option value="">All Team</option></select>
       <select class="fi" id="aV" onchange="rAll()"><option value="">All Verticals</option><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option></select>
       <select class="fi" id="aSrc" onchange="rAll()"><option value="">All Sources</option><option value="manual">Manual</option><option value="import">Imported</option><option value="news">News Lead</option><option value="jul2025">Jul-2025</option><option value="manju">Manju</option><option value="new_project">Archive</option><option value="subsidiary">Subsidiary</option></select>
@@ -370,6 +375,86 @@ input[type=file]{display:none}
       <span class="f-cnt" id="opCnt"></span>
     </div>
     <div class="tw"><table><thead><tr><th>Opp #</th><th>Company</th><th>Industry</th><th>₹M</th><th>Vertical</th><th>Assigned</th><th>RFQ Date</th><th>PC Stage</th><th>Close Date</th><th>Notes</th><th></th></tr></thead><tbody id="opTb"></tbody></table></div>
+  </div>
+</div>
+
+<!-- INBOX: NEW OPPORTUNITY -->
+<div class="page" id="pg-inb-new">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">📥 New Opportunity Inbox</div><div class="pg-sub">Fresh opportunities awaiting qualification</div></div>
+    <button class="btn btn-red" onclick="newLead()">+ Add Opportunity</button>
+  </div>
+  <div class="card" style="margin-bottom:0">
+    <div class="fbar">
+      <input class="fi fi-srch" id="inbNewS" placeholder="🔍 Company, industry..." oninput="rInbox('New Opportunity','inbNew')">
+      <select class="fi" id="inbNewAsgn" onchange="rInbox('New Opportunity','inbNew')"><option value="">All Team</option></select>
+      <span class="f-cnt" id="inbNewCnt"></span>
+    </div>
+    <div class="tw"><table><thead><tr><th>Company</th><th>Industry</th><th>₹M</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbNewTb"></tbody></table></div>
+  </div>
+</div>
+
+<!-- INBOX: QUALIFIED -->
+<div class="page" id="pg-inb-qual">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">✅ Qualified Inbox</div><div class="pg-sub">Qualified opportunities ready for proposal</div></div>
+    <button class="btn btn-red" onclick="newLead()">+ Add Opportunity</button>
+  </div>
+  <div class="card" style="margin-bottom:0">
+    <div class="fbar">
+      <input class="fi fi-srch" id="inbQualS" placeholder="🔍 Company, industry..." oninput="rInbox('Qualified','inbQual')">
+      <select class="fi" id="inbQualAsgn" onchange="rInbox('Qualified','inbQual')"><option value="">All Team</option></select>
+      <span class="f-cnt" id="inbQualCnt"></span>
+    </div>
+    <div class="tw"><table><thead><tr><th>Company</th><th>Industry</th><th>₹M</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbQualTb"></tbody></table></div>
+  </div>
+</div>
+
+<!-- INBOX: PROPOSAL DUE -->
+<div class="page" id="pg-inb-prop">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">📝 Proposal Due Inbox</div><div class="pg-sub">Proposals awaiting submission</div></div>
+    <button class="btn btn-red" onclick="newLead()">+ Add Opportunity</button>
+  </div>
+  <div class="card" style="margin-bottom:0">
+    <div class="fbar">
+      <input class="fi fi-srch" id="inbPropS" placeholder="🔍 Company, industry..." oninput="rInbox('Proposal Due','inbProp')">
+      <select class="fi" id="inbPropAsgn" onchange="rInbox('Proposal Due','inbProp')"><option value="">All Team</option></select>
+      <span class="f-cnt" id="inbPropCnt"></span>
+    </div>
+    <div class="tw"><table><thead><tr><th>Company</th><th>Industry</th><th>₹M</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbPropTb"></tbody></table></div>
+  </div>
+</div>
+
+<!-- INBOX: NEGOTIATION DUE -->
+<div class="page" id="pg-inb-neg">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">🤝 Negotiation Due Inbox</div><div class="pg-sub">Opportunities in active negotiation</div></div>
+    <button class="btn btn-red" onclick="newLead()">+ Add Opportunity</button>
+  </div>
+  <div class="card" style="margin-bottom:0">
+    <div class="fbar">
+      <input class="fi fi-srch" id="inbNegS" placeholder="🔍 Company, industry..." oninput="rInbox('Negotiation Due','inbNeg')">
+      <select class="fi" id="inbNegAsgn" onchange="rInbox('Negotiation Due','inbNeg')"><option value="">All Team</option></select>
+      <span class="f-cnt" id="inbNegCnt"></span>
+    </div>
+    <div class="tw"><table><thead><tr><th>Company</th><th>Industry</th><th>₹M</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbNegTb"></tbody></table></div>
+  </div>
+</div>
+
+<!-- INBOX: DECISION TAKEN -->
+<div class="page" id="pg-inb-dec">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">⚖️ Decision Taken Inbox</div><div class="pg-sub">Opportunities awaiting terminal outcome</div></div>
+    <button class="btn btn-red" onclick="newLead()">+ Add Opportunity</button>
+  </div>
+  <div class="card" style="margin-bottom:0">
+    <div class="fbar">
+      <input class="fi fi-srch" id="inbDecS" placeholder="🔍 Company, industry..." oninput="rInbox('Decision Taken','inbDec')">
+      <select class="fi" id="inbDecAsgn" onchange="rInbox('Decision Taken','inbDec')"><option value="">All Team</option></select>
+      <span class="f-cnt" id="inbDecCnt"></span>
+    </div>
+    <div class="tw"><table><thead><tr><th>Company</th><th>Industry</th><th>₹M</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbDecTb"></tbody></table></div>
   </div>
 </div>
 
@@ -576,8 +661,9 @@ input[type=file]{display:none}
 // ══════════════════════════════════════════════════
 //  PROCAM ProConnect CRM — Frontend Application
 // ══════════════════════════════════════════════════
-const STAGES=['New','Call Done','Profile Sent','Appointment','Visit Done','RFQ Generated','Won','Lost'];
-const SC={New:'sN','Call Done':'sC','Profile Sent':'sP',Appointment:'sA','Visit Done':'sV','RFQ Generated':'sR',Won:'sW',Lost:'sL'};
+const STAGES=['New Opportunity','Qualified','Proposal Due','Negotiation Due','Decision Taken','Won','Lost','On Hold','Not Interested'];
+const SC={'New Opportunity':'sN','Qualified':'sC','Proposal Due':'sP','Negotiation Due':'sR','Decision Taken':'sA','Won':'sW','Lost':'sL','On Hold':'sV','Not Interested':'sL',
+          /* legacy pass-through */ 'New':'sN','Call Done':'sC','Profile Sent':'sP','Appointment':'sA','Visit Done':'sV','RFQ Generated':'sR'};
 const SBK={jul2025:'srcJ',manju:'srcM',new_project:'srcN',subsidiary:'srcS',import:'srcI',manual:'srcMn',news:'srcI'};
 const SBL={jul2025:'Jul-25',manju:'Manju',new_project:'Arch.',subsidiary:'Subsid.',import:'Import',manual:'Manual',news:'News'};
 const VBK={'Heavy Transport':'vHT','Project Freight':'vPF',Warehousing:'vWH',Installation:'vIN'};
@@ -632,7 +718,7 @@ async function init(){
   g('dDate').textContent=new Date().toLocaleDateString('en-IN',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
   // Populate assign dropdowns
   const tOpts=EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join('');
-  ['aAsgn','opAsgn','blkU'].forEach(id=>{const el=g(id);if(el&&el.tagName==='SELECT')el.insertAdjacentHTML('beforeend',tOpts);});
+  ['aAsgn','opAsgn','blkU','inbNewAsgn','inbQualAsgn','inbPropAsgn','inbNegAsgn','inbDecAsgn'].forEach(id=>{const el=g(id);if(el&&el.tagName==='SELECT')el.insertAdjacentHTML('beforeend',tOpts);});
   nav('dash');
 }
 
@@ -644,6 +730,11 @@ function nav(p){
   const fns={dash:rDash,leads:rLeads,all:rAll,outreach:rOR,contacts:rCt,news:rNews,
               team:rTeam,assign:rAssign,employees:rEmps,opp:rOpp,upload:()=>upTab('xl')};
   if(fns[p]) try{fns[p]();}catch(err){console.error('nav error for page',p,err);}
+  if(p==='inb-new')  rInbox('New Opportunity','inbNew');
+  if(p==='inb-qual') rInbox('Qualified','inbQual');
+  if(p==='inb-prop') rInbox('Proposal Due','inbProp');
+  if(p==='inb-neg')  rInbox('Negotiation Due','inbNeg');
+  if(p==='inb-dec')  rInbox('Decision Taken','inbDec');
 }
 
 // ── DASHBOARD ──
@@ -663,6 +754,13 @@ async function rDash(){
   g('sbN').textContent=st.active||0;
   g('sbOp').textContent=st.opp||0;
   if(st.pending_news>0){g('sbNews').textContent=st.pending_news;g('newsDot').style.display='';}
+  if(st.inbox){
+    g('sbNew').textContent=st.inbox['New Opportunity']||0;
+    g('sbQual').textContent=st.inbox['Qualified']||0;
+    g('sbProp').textContent=st.inbox['Proposal Due']||0;
+    g('sbNeg').textContent=st.inbox['Negotiation Due']||0;
+    g('sbDec').textContent=st.inbox['Decision Taken']||0;
+  }
   // Charts
   const STAGES_FULL=STAGES;
   const sCols=['#94A3B8','#D97706','#8B5CF6','#10B981','#EA580C','#C72435','#16A34A','#DC2626'];
@@ -680,7 +778,7 @@ async function rDash(){
   // Active pipeline table
   let leads=await api('/api/leads?'+qp({limit:10}));
   if(!Array.isArray(leads))leads=[];
-  const act=leads.filter(l=>!['Won','Lost'].includes(l.stage)).slice(0,10);
+  const act=leads.filter(l=>!['Won','Lost','On Hold','Not Interested'].includes(l.stage)).slice(0,10);
   g('dashTb').innerHTML=act.length?act.map(l=>`<tr onclick="openLd(${l.id})">
     <td><div class="td-m">${e(l.company)}</div></td>
     <td style="font-size:11.5px">${e(l.industry||'—')}</td><td style="font-size:11.5px">${e(l.state||'—')}</td>
@@ -689,6 +787,53 @@ async function rDash(){
     <td class="tddate">${l.onboarded_date||'—'}</td>
     <td><button class="btn btn-ghost btn-xs">Edit</button></td>
   </tr>`).join(''):'<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-3)">No active leads</td></tr>';
+}
+
+// ── INBOX (per-stage) ──
+async function rInbox(stage, prefix){
+  const s=g(prefix+'S')?.value||'';
+  const as=g(prefix+'Asgn')?.value||'';
+  const leads=await api('/api/leads?'+qp({stage:stage,assigned:as,q:s,limit:500}));
+  const tb=g(prefix+'Tb');
+  if(!tb) return;
+  const arr=Array.isArray(leads)?leads:[];
+  tb.innerHTML=arr.map(l=>`
+    <tr>
+      <td><b>${e(l.company)}</b><div style="font-size:11px;color:var(--text-3)">${e(l.project||'')}</div></td>
+      <td>${e(l.industry||'—')}</td>
+      <td>${l.cost?Number(l.cost).toFixed(1):'—'}</td>
+      <td>${e(l.assigned_name||l.assigned_to||'—')}</td>
+      <td>${e(l.onboarded_date||'')}</td>
+      <td>
+        <button class="btn btn-sm btn-red" onclick="advanceLead(${l.id})">Advance →</button>
+        <button class="btn btn-sm btn-ghost" onclick="decideLead(${l.id})">Decide ▾</button>
+      </td>
+    </tr>`).join('')||`<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-3)">No leads at this stage</td></tr>`;
+  const cnt=g(prefix+'Cnt'); if(cnt) cnt.textContent=arr.length+' leads';
+}
+
+async function advanceLead(id){
+  if(!confirm('Advance to next stage?'))return;
+  const r=await api(`/api/leads/${id}/advance`,{method:'POST',body:'{}'});
+  if(r.ok){toast('Advanced to '+r.stage,'ok');refreshCurrentInbox();rDash();}
+  else{toast(r.error||'Error','err');}
+}
+
+async function decideLead(id){
+  const outcome=prompt('Decision — enter one of: Won, Lost, On Hold, Not Interested');
+  if(!outcome)return;
+  const reason=prompt('Reason (optional)')||'';
+  const r=await api(`/api/leads/${id}/decision`,{method:'POST',body:JSON.stringify({outcome,reason})});
+  if(r.ok){toast('Marked '+r.stage,'ok');refreshCurrentInbox();rDash();}
+  else{toast(r.error||'Error','err');}
+}
+
+function refreshCurrentInbox(){
+  rInbox('New Opportunity','inbNew');
+  rInbox('Qualified','inbQual');
+  rInbox('Proposal Due','inbProp');
+  rInbox('Negotiation Due','inbNeg');
+  rInbox('Decision Taken','inbDec');
 }
 
 // ── LEADS TABLE ──
@@ -821,7 +966,7 @@ async function saveLd(){
 
 function closeLd(ev){if(ev&&ev.target!==g('ldMob'))return;g('ldMob').style.display='none';activeId=null;}
 async function newLead(){
-  const r=await api('/api/leads',{method:'POST',body:JSON.stringify({company:'New Lead',stage:'New',assigned_to:ME.emp_code})});
+  const r=await api('/api/leads',{method:'POST',body:JSON.stringify({company:'New Lead',stage:'New Opportunity',assigned_to:ME.emp_code})});
   if(r.ok){openLd(r.id);}
 }
 function orFromLd(){if(!activeId)return;const id=activeId;closeLd();nav('outreach');setTimeout(()=>{g('orId').value=id;loadOR();},150);}

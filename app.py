@@ -12,6 +12,31 @@ from sqlalchemy import UniqueConstraint, Index
 from datetime import datetime, date, timedelta
 import os, json, re, io, difflib, secrets, threading
 
+# Load .env before any os.environ reads — ensures CLI scripts and gunicorn
+# share the same DATABASE_URL / SECRET_KEY / ADMIN_INITIAL_PASSWORD etc.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
+except Exception:
+    pass
+
+# ─── Workflow stages (matches approved Opportunity workflow diagram) ────────
+# New Opportunity → Qualified → Proposal Due → Negotiation Due →
+# Decision Taken → Won  (Won triggers PM handoff)
+# At any Decision point a deal can also go to Lost / On Hold / Not Interested.
+STAGES_PIPELINE = ['New Opportunity', 'Qualified', 'Proposal Due',
+                   'Negotiation Due', 'Decision Taken']
+STAGES_TERMINAL = ['Won', 'Lost', 'On Hold', 'Not Interested']
+STAGES_ALL      = STAGES_PIPELINE + STAGES_TERMINAL
+STAGE_NEXT = {
+    'New Opportunity':  'Qualified',
+    'Qualified':        'Proposal Due',
+    'Proposal Due':     'Negotiation Due',
+    'Negotiation Due':  'Decision Taken',
+    'Decision Taken':   'Won',
+}
+DECISION_OUTCOMES = ['Won', 'Lost', 'On Hold', 'Not Interested']
+
 app = Flask(__name__)
 # ProxyFix honours X-Forwarded-Prefix set by nginx (see hub/nginx-procamlogitech.conf)
 # so url_for() emits /CRM-prefixed URLs when we're proxied.
@@ -110,7 +135,7 @@ class Lead(db.Model):
     phone2           = db.Column(db.String(30))
     linkedin         = db.Column(db.String(200))
     # Pipeline
-    stage            = db.Column(db.String(40), default='New')
+    stage            = db.Column(db.String(40), default='New Opportunity')
     procam_vertical  = db.Column(db.String(60))
     assigned_to      = db.Column(db.String(100))   # emp_code
     assigned_name    = db.Column(db.String(100))
@@ -425,6 +450,31 @@ class ImportBatch(db.Model):
     created_at    = db.Column(db.DateTime, default=datetime.utcnow)
     created_by    = db.Column(db.String(20))
     committed_at  = db.Column(db.DateTime)
+
+
+class Competitor(db.Model):
+    """Competitor tagged on an opportunity/lead (per workflow diagram)."""
+    __tablename__ = 'competitors'
+    id            = db.Column(db.Integer, primary_key=True)
+    lead_id       = db.Column(db.Integer, db.ForeignKey('leads.id'),
+                              nullable=False, index=True)
+    name          = db.Column(db.String(200), nullable=False)
+    quoted_price  = db.Column(db.Numeric(15, 2))
+    strength      = db.Column(db.String(200))   # short note on why competitive
+    weakness      = db.Column(db.String(200))
+    notes         = db.Column(db.Text)
+    added_by      = db.Column(db.String(20))
+    added_at      = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'lead_id': self.lead_id, 'name': self.name,
+            'quoted_price': float(self.quoted_price) if self.quoted_price else None,
+            'strength': self.strength or '', 'weakness': self.weakness or '',
+            'notes': self.notes or '',
+            'added_by': self.added_by or '',
+            'added_at': str(self.added_at)[:16],
+        }
 
 
 # ─────────────────── AUTH ROUTES ───────────────────
@@ -755,6 +805,116 @@ def _auto_save_contact(lead):
             db.session.add(ct)
         db.session.commit()
 
+# ─────────────────── API: WORKFLOW TRANSITIONS ───────────────────
+
+def _log_stage_change(lead, new_stage, note=None):
+    """Append a LeadStageHistory row + LeadActivity + inline note."""
+    from_st = lead.stage
+    hist = LeadStageHistory(lead_id=lead.id, from_stage=from_st,
+                            to_stage=new_stage,
+                            changed_by=session.get('emp_code') or '',
+                            note=note or '')
+    db.session.add(hist)
+    act = LeadActivity(lead_id=lead.id, kind='stage_change',
+                       subject=f'{from_st or "—"} → {new_stage}',
+                       body=note or '', performed_by=session.get('emp_code') or '')
+    db.session.add(act)
+    lead.stage = new_stage
+
+
+@app.route('/api/leads/<int:lid>/advance', methods=['POST'])
+@require_auth
+def api_lead_advance(lid):
+    """Advance a lead to the next pipeline stage per the workflow."""
+    lead = Lead.query.get_or_404(lid)
+    nxt = STAGE_NEXT.get(lead.stage)
+    if not nxt:
+        return jsonify({'ok': False,
+                        'error': f'No next stage from "{lead.stage}"'}), 400
+    data = request.get_json() or {}
+    _log_stage_change(lead, nxt, note=data.get('note'))
+    # Stamp workflow-specific dates
+    today = date.today()
+    if nxt == 'Qualified':
+        lead.phone_call_date = lead.phone_call_date or today
+    elif nxt == 'Proposal Due':
+        lead.intro_mail_date = lead.intro_mail_date or today
+    elif nxt == 'Negotiation Due':
+        lead.rfq_date = lead.rfq_date or today
+    db.session.commit()
+    return jsonify({'ok': True, 'stage': lead.stage, 'lead': lead.to_dict()})
+
+
+@app.route('/api/leads/<int:lid>/decision', methods=['POST'])
+@require_auth
+def api_lead_decision(lid):
+    """Record a terminal decision: Won / Lost / On Hold / Not Interested."""
+    lead = Lead.query.get_or_404(lid)
+    data = request.get_json() or {}
+    outcome = (data.get('outcome') or '').strip()
+    if outcome not in DECISION_OUTCOMES:
+        return jsonify({'ok': False,
+                        'error': f'Outcome must be one of {DECISION_OUTCOMES}'}), 400
+    reason = (data.get('reason') or '').strip()
+    _log_stage_change(lead, outcome, note=reason)
+    # Also update the linked Opportunity if we have one
+    if lead.opp_number:
+        opp = Opportunity.query.filter_by(opp_number=lead.opp_number).first()
+        if opp:
+            opp.stage = outcome
+            if outcome == 'Won':
+                opp.won_at = datetime.utcnow()
+                opp.probability = 100
+            elif outcome in ('Lost', 'Not Interested'):
+                opp.lost_at = datetime.utcnow()
+                opp.lost_reason = reason or outcome
+                opp.probability = 0
+    db.session.commit()
+    return jsonify({'ok': True, 'stage': lead.stage, 'lead': lead.to_dict()})
+
+
+# ─────────────────── API: COMPETITORS ───────────────────
+
+@app.route('/api/leads/<int:lid>/competitors', methods=['GET'])
+@require_auth
+def api_competitors_list(lid):
+    return jsonify([c.to_dict() for c in
+                    Competitor.query.filter_by(lead_id=lid)
+                                    .order_by(Competitor.added_at.desc()).all()])
+
+
+@app.route('/api/leads/<int:lid>/competitors', methods=['POST'])
+@require_auth
+def api_competitors_add(lid):
+    Lead.query.get_or_404(lid)   # 404 if lead missing
+    d = request.get_json() or {}
+    name = (d.get('name') or '').strip()
+    if not name:
+        return jsonify({'ok': False, 'error': 'Name required'}), 400
+    price = d.get('quoted_price')
+    try:
+        price_dec = float(price) if price not in (None, '') else None
+    except (TypeError, ValueError):
+        price_dec = None
+    c = Competitor(lead_id=lid, name=name, quoted_price=price_dec,
+                   strength=d.get('strength', ''),
+                   weakness=d.get('weakness', ''),
+                   notes=d.get('notes', ''),
+                   added_by=session.get('emp_code'))
+    db.session.add(c)
+    db.session.commit()
+    return jsonify({'ok': True, 'competitor': c.to_dict()})
+
+
+@app.route('/api/competitors/<int:cid>', methods=['DELETE'])
+@require_auth
+def api_competitors_delete(cid):
+    c = Competitor.query.get_or_404(cid)
+    db.session.delete(c)
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
 # ─────────────────── API: CONTACTS / GLOBAL CRM ───────────────────
 
 @app.route('/api/contacts', methods=['GET'])
@@ -1010,15 +1170,32 @@ def api_stats():
             })
     # News pending
     pending_news = NewsItem.query.filter_by(status='pending').count() if session.get('role')=='admin' else 0
+    # Inbox counts for the workflow sidebar (per approved workflow diagram)
+    inbox_counts = {s: stages.get(s, 0) for s in STAGES_ALL}
+    active_stages = set(STAGES_PIPELINE)   # 5 pipeline stages
     return jsonify({
         'total': len(all_leads),
-        'active': len([l for l in all_leads if l.stage not in ('Won','Lost')]),
+        'active': len([l for l in all_leads if l.stage in active_stages]),
         'mailed': len([l for l in all_leads if l.intro_mail_date]),
-        'rfq': len([l for l in all_leads if l.stage=='RFQ Generated']),
+        'rfq': len([l for l in all_leads if l.stage=='Negotiation Due']),
         'opp': len([l for l in all_leads if l.opp_number]),
         'won': len([l for l in all_leads if l.stage=='Won']),
-        'stages': stages, 'industries': industries, 'verticals': verticals,
+        'stages': stages, 'inbox': inbox_counts,
+        'industries': industries, 'verticals': verticals,
         'team': team_stats, 'pending_news': pending_news
+    })
+
+
+@app.route('/api/workflow/stages')
+@require_auth
+def api_workflow_stages():
+    """Expose stage vocabulary + transitions for the UI."""
+    return jsonify({
+        'pipeline': STAGES_PIPELINE,
+        'terminal': STAGES_TERMINAL,
+        'all':      STAGES_ALL,
+        'next':     STAGE_NEXT,
+        'decisions': DECISION_OUTCOMES,
     })
 
 # ─────────────────── API: OPP NUMBER ───────────────────
