@@ -255,6 +255,30 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                         if v not in (None, "", []):
                             merged[k] = v
 
+                # AUTHORITATIVE OVERRIDES — Graph headers win over anything AI hallucinates
+                # from the quoted-reply body. Prevents cases where AI reads an ancient
+                # quoted message deep in the thread and mis-attributes the sender.
+                if sender_email:
+                    merged["email_primary"] = sender_email
+                    # Derive company from the sender's actual domain unless AI's company
+                    # is clearly aligned with it (starts with same 4+ char prefix).
+                    from email_ingest.parser import _company_from_domain
+                    dom_company = _company_from_domain(sender_email) or ""
+                    ai_company = (merged.get("company") or "").strip()
+                    stem = (sender_email.split("@", 1)[1].split(".")[0] or "").lower()
+                    if dom_company and (not ai_company or
+                                        not ai_company.lower().startswith(stem[:4])):
+                        merged["company"] = dom_company
+
+                # Guard against AI inventing a phone that isn't in the email body —
+                # if regex found no phone in the actual email, drop AI's phone_primary.
+                if not (extracted.get("phone")) and not (
+                    ((extracted.get("body_text") or "").lower()).replace(" ", "").find(
+                        (merged.get("phone_primary") or "").replace("+91-", "").replace("-", "")
+                    ) >= 0 if merged.get("phone_primary") else False
+                ):
+                    merged["phone_primary"] = None
+
                 # Guaranteed-populated fallbacks (never blank in the UI card):
                 if not merged.get("one_line_summary"):
                     subj = (extracted.get("subject") or "").strip()

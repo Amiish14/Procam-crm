@@ -27,7 +27,7 @@ from typing import Optional
 log = logging.getLogger(__name__)
 
 # Reasonable defaults; both overrideable via env
-_DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+_DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
 _MAX_BODY_CHARS = 6000    # cap input to control cost; email tails are usually signatures/quoted-thread noise
 
 # JSON schema we ask Claude to emit. Kept flat/simple so bad JSON is rarer.
@@ -84,6 +84,62 @@ FIRST: classify with `is_business_lead` (boolean) and `lead_type`.
 If unsure, err on the side of `is_business_lead: false`. Only 5-15% of a typical business inbox is genuine new leads.
 
 ═════════════════════════════════════════════════════════════════════
+CONCRETE EXAMPLES — study these carefully. Real inbox samples with the correct classification.
+═════════════════════════════════════════════════════════════════════
+
+Example 1  ✅  is_business_lead: TRUE
+  Subject: "RFQ - Movement of Reactor Vessel from Vadodara to Kandla"
+  From: pankaj.mehta@larsentoubro.com
+  Body: "Dear team, please quote for movement of one reactor vessel (45 MT, 8.5m×3.2m×3.5m) from our Vadodara plant to Kandla port by 25 August. Route survey may be needed."
+  Correct: lead_type=inbound_rfq, one_line_summary="RFQ from L&T for 45 MT reactor Vadodara→Kandla by 25 Aug"
+
+Example 2  ❌  is_business_lead: FALSE   (vendor pitch)
+  Subject: "NORDEN MPP & HANDY *WEEKLY POSITIONS ASIA* WEEK #33"
+  From: chartering@norden.com
+  Body: "Please find attached our weekly vessel positions for Asia. NORDEN offers dry bulk and MPP tonnage..."
+  Correct: lead_type=vendor_pitch, reject_reason="Shipping line broadcasting vessel positions to freight forwarders"
+
+Example 3  ❌  is_business_lead: FALSE   (existing customer ops)
+  Subject: "Confirmation of Rates and Onboarding Documents_Procam Logistics Pvt Ltd"
+  From: onboarding@sisindia.com
+  Body: "Kindly find attached signed rate contract and vendor onboarding documents..."
+  Correct: lead_type=existing_customer_ops, reject_reason="Onboarding paperwork for existing vendor relationship"
+
+Example 4  ❌  is_business_lead: FALSE   (existing customer ops)
+  Subject: "Transporter Payment Request LR-2026-0817"
+  From: accounts@mechwell.org
+  Body: "Kindly release payment against LR-2026-0817 dated 05 Aug. Amount Rs 1,45,000..."
+  Correct: lead_type=existing_customer_ops, reject_reason="Payment request against existing LR — operational"
+
+Example 5  ❌  is_business_lead: FALSE   (vendor pitch)
+  Subject: "Comprehensive Insurance Solutions Tailored for Your Business"
+  From: info@bhavanimarineinsurance.com
+  Body: "Bhavani Marine Insurance offers cargo, transit and marine hull insurance..."
+  Correct: lead_type=vendor_pitch, reject_reason="Insurance company selling policies to us"
+
+Example 6  ❌  is_business_lead: FALSE   (newsletter/marketing)
+  Subject: "⏳ Free Pass Closing Soon – Register Now for OSH India 2026"
+  From: registrations@ind-group.com
+  Body: "Register for OSH India 2026, Asia's leading occupational health & safety expo..."
+  Correct: lead_type=newsletter_or_marketing, reject_reason="Conference registration promotion"
+
+Example 7  ✅  is_business_lead: TRUE
+  Subject: "Warehousing enquiry - 5000 sqft Chennai"
+  From: procurement@abc-manufacturing.com
+  Body: "We are looking for warehousing space in Chennai, approximately 5000 sqft, for 6 months starting September. Please share your capabilities and rates."
+  Correct: lead_type=prospect_inquiry, one_line_summary="Warehousing enquiry: 5000 sqft in Chennai for 6 months from September"
+
+Example 8  ❌  is_business_lead: FALSE   (vendor pitch)
+  Subject: "Freight Forwarding Partnership - Global Rates"
+  From: sales@globallogistics.com
+  Body: "We are a global freight forwarder offering competitive LCL/FCL rates. Would love to partner with you for your import/export needs..."
+  Correct: lead_type=vendor_pitch, reject_reason="Another freight forwarder offering their services to us"
+
+═════════════════════════════════════════════════════════════════════
+RULE OF THUMB: if the sender's company describes itself as being IN logistics/freight/shipping/warehousing/transport, they are almost certainly a vendor pitching to us, NOT a lead. Only mark TRUE if the sender is a manufacturer / EPC / trader / project owner / plant operator who NEEDS logistics done for them.
+═════════════════════════════════════════════════════════════════════
+
+═════════════════════════════════════════════════════════════════════
 For `is_business_lead: true`: also set `reject_reason: null` and fully populate ALL other fields per the schema.
 For `is_business_lead: false`: set `reject_reason` (one short line), and you can leave logistics-specific fields (origin, destination, cargo_type, etc.) as null. But still fill `company`, `contact_name`, `email_primary`, `one_line_summary`, `procam_vertical` (best guess or "Other"), `requirement_type` ("Other" or best fit), `urgency` ("Low"), `next_action_suggested` ("No action — not a lead").
 ═════════════════════════════════════════════════════════════════════
@@ -122,21 +178,36 @@ Return the JSON now."""
 
 
 def _clean_body(body: str, max_chars: int = _MAX_BODY_CHARS) -> str:
-    """Truncate body, strip quoted-reply trails to keep prompt cost down."""
+    """Truncate body + AGGRESSIVELY strip quoted-reply trails so the AI
+    never sees stale thread context (which caused hallucination bugs
+    where the AI would extract the WRONG sender/company from an old
+    quoted message deep in the thread history)."""
     if not body:
         return ""
     body = body.strip()
-    # Cut off common quoted-reply markers so we don't send old thread history
+
+    # Cut off common quoted-reply markers so we don't send old thread history.
+    # Order matters — check strongest signals first, and cut ASAP (min offset 50).
     cut_markers = [
         "\n-----Original Message-----",
-        "\nFrom: ",
-        "\nOn ",
         "\n________________________________",
+        "\nFrom: ",              # Outlook reply header
+        "\nOn ",                 # Gmail "On <date>, <name> wrote:"
+        "\n> ",                  # inline-quote marker
+        "\nSent from my ",       # mobile signature line often precedes quote
+        "\nMed venlig hilsen",   # signature marker seen in Freja
+        "\nBest regards,\nFrom:",
+        "\n---------- Forwarded message",
+        "\nCAUTION: This email originated",   # Procam banner marks a NEW top-of-thread reply
     ]
+    earliest = len(body)
     for m in cut_markers:
-        idx = body.find(m, 200)   # only cut if marker appears past first 200 chars
-        if idx != -1:
-            body = body[:idx]
+        idx = body.find(m, 50)   # allow small header slack
+        if 0 <= idx < earliest:
+            earliest = idx
+    body = body[:earliest]
+
+    # Truncate hard to control cost
     if len(body) > max_chars:
         body = body[:max_chars] + "\n[truncated]"
     return body
