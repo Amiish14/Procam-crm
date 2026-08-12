@@ -74,8 +74,10 @@ _BULK_LOCAL_RE = re.compile(
     re.I,
 )
 
-# Sender domains that never produce leads (pure marketing/aggregator infra).
+# Sender domains that never produce logistics leads. Anything ending in
+# these gets skipped. Categorised for maintenance clarity.
 _BULK_DOMAIN_SUFFIXES = (
+    # ── Email marketing / aggregator infra ──
     "substack.com", "mailchimpapp.com", "mailchimp.com",
     "em.linkedin.com", "linkedin.com",
     "sendgrid.net", "mailgun.org", "amazonses.com",
@@ -83,11 +85,64 @@ _BULK_DOMAIN_SUFFIXES = (
     "eloqua.com", "marketo.com", "salesforce.com",
     "notifications.google.com", "accounts.google.com",
     "microsoftonline.com", "office.com", "sharepointonline.com",
-    "bank.in", "hdfc.bank.in", "sbi.bank.in", "icici.bank.in",
-    "hdfcbank.bank.in", "kotakalert.bank.in", "sbicard.com",
-    "makemytrip.com", "booking.com", "cleartrip.com",
-    "economist.com", "moodys.com", "workindia.in", "naukri.com",
-    "linkedin.com", "hirect.com", "instahyre.com",
+
+    # ── Banks + payment / statement notifications ──
+    "bank.in", "hdfc.bank.in", "hdfcbank.bank.in", "sbi.bank.in",
+    "alerts.sbi.bank.in", "icici.bank.in", "axis.bank.in",
+    "kotak.bank.in", "kotakalert.bank.in", "mail.kotakalert.bank.in",
+    "deutsche.bank.in", "idfcfirst.bank.in", "emailer.idfcfirst.bank.in",
+    "sbicard.com", "americanexpress.com", "hdfcergo.com", "onlinesbi.com",
+    "paytm.com", "razorpay.com", "phonepe.com",
+
+    # ── Travel & hospitality (irrelevant) ──
+    "makemytrip.com", "booking.com", "property.booking.com", "cleartrip.com",
+    "agoda.com", "goibibo.com", "oyorooms.com", "expedia.com",
+    "airbnb.com", "trip.com", "ixigo.com", "yatra.com", "myvacationaffair.in",
+
+    # ── Job boards / HR consulting / staffing spam ──
+    "naukri.com", "workindia.in", "hirect.com", "instahyre.com",
+    "indeed.com", "monster.com", "timesjobs.com", "foundit.in",
+    "apna.co", "mafoistrategy.com", "hr.mafoistrategy.com",
+    "silveroakhealth.com", "workforcemanagerhub.com", "splendin.com",
+    "workflowbizpro.com", "nistglobal.com", "infiflex.com",
+    "inventiconnect.com", "sspu.ac.in",
+
+    # ── News / newsletters / research feeds ──
+    "economist.com", "b.economist.com", "moodys.com",
+    "economictimesnews.com", "ettech.com", "timesofindianewsletters.in",
+    "hindustantimes.com", "nbmcw.in", "pv-magazine.com", "saurenergy.com",
+    "breakbulk.news", "freightweek.org", "joc.com", "heavyliftpfi.com",
+    "projectcargonetwork.com", "railanalysisindia.com", "metrorailnews.in",
+    "hktdc.com", "core-shipping.com", "projectstoday.net",
+    "logisyn.com", "supplychaincatalyst", "vccircle.co", "ibef.org",
+    "sagarsandesh.in", "sagarsandesh01", "sagarsandesh04",
+    "shisl.com", "trstexpo.com", "cwiemeevents.com",
+    "combinedlogisticsnetworks.com", "forwarderfocusdirectory.com",
+    "ffconnex1.com", "conference.cii.in", "messages.cii.in",
+    "email.engage.here.com", "engage.here.com",
+    "comms.dell.com", "emails.woodmac.com", "email.lawrbit.com",
+    "events.trstexpo.com", "events.messefrankfurtindia.in",
+    "mailers.hdfcbank.bank.in", "read.directtoconsumer.co",
+    "newsletter.theneurondaily.com", "updates.combinedlogisticsnetworks.com",
+    "mnmreports.com", "metalogicpms.com",
+    "quarantine@messaging.microsoft.com", "messaging.microsoft.com",
+    "conference.cii.in", "messages.cii.in", "ficci.com",
+    "assocham.co.in", "careedge.in", "powerlineonline.in",
+    "indiashippingnews.com", "royalmedia.com", "tracxn.com",
+    "immensitylogistics.com", "ezeeshipping.com",
+
+    # ── Government / tender aggregators / random alerts ──
+    "nic.in", "gov.in", "etender-nic@nic.in",
+    "tenderwizardhelpdesk1.in", "hal-india.co.in",
+    "procuretiger.com", "procuretigers.com", "gem.gov.in",
+    "odexservices.com", "one-line.com", "cma-cgm.com",
+    "customer.cmacgm-group.com", "emailer.idfcfirst.bank.in",
+
+    # ── Random consulting / SaaS pings / spam ──
+    "mismosystems.com", "aparajitha.com", "hansinfomatic.in",
+    "silveroakhealth.com", "giftveda.in", "kecrpg.com",
+    "hansinfomatic.in", "ptandco.com", "info.thenavalarch.com",
+    "129122150.mailchimpapp.com",
 )
 
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
@@ -427,6 +482,15 @@ def extract_lead(msg: dict) -> Optional[dict]:
     elif score > 1.0:
         score = 1.0
     payload["confidence"] = round(score, 3)
+
+    # Hard requirement: must contain some real logistics content.
+    # An email with NO cargo keywords, NO RFQ signal, NO route reference,
+    # and NO phone is not a logistics lead — probably admin/tech/HR chatter
+    # that slipped through the domain blocklist. Skip it outright.
+    if not cargo and not rfq and not (origin or destination) and not phone:
+        payload["confidence"] = round(score, 3)
+        payload["skip_reason"] = "not logistics-related (no cargo/RFQ/route/phone signals)"
+        return payload
 
     # Raised threshold: 0.4 (from 0.2). Filters out noise like single-cargo-
     # keyword ops emails from existing customers.

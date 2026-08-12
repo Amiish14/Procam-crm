@@ -245,6 +245,58 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                         if v not in (None, "", []):
                             merged[k] = v
 
+                # Guaranteed-populated fallbacks (never blank in the UI card):
+                if not merged.get("one_line_summary"):
+                    subj = (extracted.get("subject") or "").strip()
+                    cargo_hint = ", ".join(
+                        (extracted.get("signals", {}) or {}).get("cargo_keywords", [])[:3]
+                    )
+                    parts = []
+                    if merged.get("requirement_type"):
+                        parts.append(merged["requirement_type"])
+                    elif (extracted.get("signals", {}) or {}).get("rfq"):
+                        parts.append("RFQ")
+                    if cargo_hint:
+                        parts.append(f"({cargo_hint})")
+                    if merged.get("origin") and merged.get("destination"):
+                        parts.append(f"{merged['origin']} → {merged['destination']}")
+                    prefix = " ".join(parts).strip()
+                    merged["one_line_summary"] = (
+                        f"{prefix}: {subj}"[:140] if prefix else subj[:140] or
+                        f"Inbound email from {merged.get('company','Unknown')}"
+                    )
+
+                if not merged.get("procam_vertical"):
+                    ck = [c.lower() for c in
+                          (extracted.get("signals", {}) or {}).get("cargo_keywords", [])]
+                    if any(k in ck for k in ("odc", "over-dimensional", "over dimensional",
+                                             "heavy lift", "hydraulic", "trailer")):
+                        merged["procam_vertical"] = "Heavy Cargo"
+                    elif any(k in ck for k in ("project cargo",)):
+                        merged["procam_vertical"] = "Project Freight"
+                    elif any(k in ck for k in ("container", "containers", "freight",
+                                               "shipment", "consignment")):
+                        merged["procam_vertical"] = "Freight Forwarding"
+                    elif any(k in ck for k in ("warehouse", "warehousing", "storage")):
+                        merged["procam_vertical"] = "Warehousing"
+                    elif any(k in ck for k in ("installation", "rigging")):
+                        merged["procam_vertical"] = "Installation"
+                    else:
+                        merged["procam_vertical"] = "General Transport"
+
+                if not merged.get("next_action_suggested"):
+                    if merged.get("requirement_type") == "RFQ":
+                        merged["next_action_suggested"] = "Reply with a quote within 24h"
+                    elif merged.get("urgency") in ("High", "high"):
+                        merged["next_action_suggested"] = "Call the contact today to qualify"
+                    else:
+                        merged["next_action_suggested"] = "Reply to acknowledge and qualify budget + timeline"
+
+                # Normalise urgency casing (AI sometimes returns lowercase)
+                u = merged.get("urgency")
+                if isinstance(u, str) and u:
+                    merged["urgency"] = u.capitalize()
+
                 # Build Lead row — field names verified against app.py::Lead
                 lead = Lead(
                     source="email",
