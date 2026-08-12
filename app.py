@@ -159,6 +159,9 @@ class Lead(db.Model):
     created_at       = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at       = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Email ingest (source=email) — dedup key from Microsoft Graph internetMessageId
+    email_message_id = db.Column(db.String(255), unique=True, index=True, nullable=True)
+
     def to_dict(self):
         def sd(d): return str(d) if d else ''
         return {

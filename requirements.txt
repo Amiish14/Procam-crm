@@ -10,3 +10,5 @@ python-dotenv==1.0.0
 # CRM v3.1 additions
 anthropic==0.34.2      # AI Outreach (Claude)
 rapidfuzz==3.6.1       # Fuzzy header matching for imports
+# CRM v3.2 — Microsoft Graph email → lead ingest
+msal>=1.28.0           # OAuth 2.0 client-credentials for Graph API
