@@ -37,7 +37,7 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
     Returns a stats dict.
     """
     # Local imports to avoid circular reference at module import time
-    from app import app, db, Lead  # noqa: WPS433
+    from app import app, db, Lead, LeadAttachment  # noqa: WPS433
 
     started = datetime.utcnow()
     stats = {
@@ -371,8 +371,53 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     continue
 
                 db.session.add(lead)
+
+                # Flush to assign lead.id so we can key attachments to it.
+                # Rolled-back on failure so the outer batch keeps going.
+                try:
+                    db.session.flush()
+                except Exception as flush_err:  # noqa: BLE001
+                    log.exception("Flush failed before attachment fetch: %s", flush_err)
+                    db.session.rollback()
+                    stats["errors"] += 1
+                    pending_since_commit = 0
+                    continue
+
                 stats["created"] += 1
                 pending_since_commit += 1
+
+                # Attachment fetch — only if Graph flagged the message as
+                # having attachments (avoids a wasted API call per lead).
+                if msg.get("hasAttachments") and lead.id:
+                    from email_ingest.attachments import save_attachments_for_lead
+                    try:
+                        saved_atts = save_attachments_for_lead(
+                            graph=graph,
+                            mailbox=mailbox,
+                            message_id=msg_id_graph,
+                            lead_id=lead.id,
+                        )
+                    except Exception:
+                        log.exception(
+                            "save_attachments_for_lead failed lead=%s msg=%s",
+                            lead.id, msg_id_graph,
+                        )
+                        saved_atts = []
+
+                    for meta in saved_atts:
+                        try:
+                            att = LeadAttachment(
+                                lead_id=lead.id,
+                                filename=meta["filename"],
+                                content_type=meta["content_type"],
+                                size_bytes=meta["size_bytes"],
+                                storage_path=meta["storage_path"],
+                                source="email",
+                                email_attachment_id=meta.get("email_attachment_id") or None,
+                            )
+                            db.session.add(att)
+                        except Exception:
+                            log.exception("Failed to add LeadAttachment row lead=%s", lead.id)
 
                 if pending_since_commit >= 20:
                     db.session.commit()

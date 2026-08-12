@@ -212,6 +212,32 @@ class GraphClient:
             url_or_path = data.get("@odata.nextLink") or ""
             first_call = False
 
+    def list_attachments(self, mailbox: str, message_id: str) -> list[dict]:
+        """GET /users/{mailbox}/messages/{id}/attachments — returns list of attachments.
+
+        Each dict has: id, name, contentType, size, contentBytes (base64),
+        isInline, @odata.type. Filters to fileAttachments only (excludes
+        itemAttachments and referenceAttachments, which need different handling).
+
+        Called AFTER a message has passed all filters and been accepted as a
+        real lead — this keeps us from downloading attachment bytes for the
+        thousands of messages we reject each day.
+        """
+        path = (
+            f"/users/{quote(mailbox)}/messages/{quote(message_id, safe='')}"
+            "/attachments?$select=id,name,contentType,size,contentBytes,isInline"
+        )
+        resp = self._request("GET", path)
+        if resp.status_code >= 400:
+            raise RuntimeError(
+                f"Graph list_attachments failed: HTTP {resp.status_code} — "
+                f"{resp.text[:500]}"
+            )
+        data = resp.json()
+        atts = data.get("value") or []
+        return [a for a in atts
+                if str(a.get("@odata.type", "")).endswith("fileAttachment")]
+
     def mark_as_read(self, mailbox: str, message_id: str) -> None:
         """Best-effort — PATCH isRead=true. Logs on failure, never raises."""
         try:

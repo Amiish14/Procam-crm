@@ -936,19 +936,26 @@ function clrF(t){
 // modal, but only for source=email leads that were enriched by Claude Haiku.
 function renderEmailSummaryCard(l){
   const x = l.email_extracted;
-  if(!x || typeof x !== 'object') return '';
+  const atts = Array.isArray(l && l.attachments) ? l.attachments : [];
+  const hasX = x && typeof x === 'object';
+  // Render the card if EITHER we have an AI extract OR we have attachments —
+  // a lead with attachments but no AI card should still show its files.
+  if(!hasX && !atts.length) return '';
+
   const cell = (label, val) => val ? `<div><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin-bottom:2px">${label}</div><div style="font-size:13px;color:var(--ink-2);font-weight:500">${e(String(val))}</div></div>` : '';
-  const route = (x.origin || x.destination) ? `${e(x.origin||'—')}  →  ${e(x.destination||'—')}` : '';
-  const cargo = [x.cargo_type, x.cargo_weight_mt ? `${x.cargo_weight_mt} MT` : '', x.cargo_dimensions, x.cargo_qty].filter(Boolean).join(' · ');
-  const urgencyPill = x.urgency ? `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10.5px;font-weight:600;letter-spacing:.02em;background:${x.urgency==='High'?'rgba(185,28,28,.10)':x.urgency==='Medium'?'rgba(180,83,9,.10)':'rgba(107,114,128,.10)'};color:${x.urgency==='High'?'#991B1B':x.urgency==='Medium'?'#92400E':'#4B5563'}">${e(x.urgency)}</span>` : '';
-  const reqPill = (x.requirement_type) ? `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10.5px;font-weight:600;background:rgba(29,78,216,.08);color:#1D4ED8">${e(x.requirement_type)}</span>` : '';
-  const vertPill = (x.procam_vertical) ? `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10.5px;font-weight:600;background:var(--surface-2);color:var(--ink-2);border:1px solid var(--border)">${e(x.procam_vertical)}</span>` : '';
-  const reqs = Array.isArray(x.special_requirements) && x.special_requirements.length
-    ? `<div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px">${x.special_requirements.map(r=>`<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text-2)">${e(r)}</span>`).join('')}</div>` : '';
-  const summary = x.one_line_summary ? `<div style="margin-top:14px;padding:12px 14px;background:var(--surface-2);border-left:3px solid var(--red);border-radius:0 var(--r) var(--r) 0;font-size:13.5px;color:var(--ink);font-weight:500;line-height:1.5">${e(x.one_line_summary)}</div>` : '';
-  const next = x.next_action_suggested ? `<div style="margin-top:10px;font-size:12.5px;color:var(--text-2)"><span style="text-transform:uppercase;letter-spacing:.06em;font-size:10.5px;font-weight:600;color:var(--text-3)">Suggested next action · </span>${e(x.next_action_suggested)}</div>` : '';
-  return `
-    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r-lg);padding:20px 22px;margin-bottom:20px;box-shadow:var(--sh-1)">
+
+  let body = '';
+  if(hasX){
+    const route = (x.origin || x.destination) ? `${e(x.origin||'—')}  →  ${e(x.destination||'—')}` : '';
+    const cargo = [x.cargo_type, x.cargo_weight_mt ? `${x.cargo_weight_mt} MT` : '', x.cargo_dimensions, x.cargo_qty].filter(Boolean).join(' · ');
+    const urgencyPill = x.urgency ? `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10.5px;font-weight:600;letter-spacing:.02em;background:${x.urgency==='High'?'rgba(185,28,28,.10)':x.urgency==='Medium'?'rgba(180,83,9,.10)':'rgba(107,114,128,.10)'};color:${x.urgency==='High'?'#991B1B':x.urgency==='Medium'?'#92400E':'#4B5563'}">${e(x.urgency)}</span>` : '';
+    const reqPill = (x.requirement_type) ? `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10.5px;font-weight:600;background:rgba(29,78,216,.08);color:#1D4ED8">${e(x.requirement_type)}</span>` : '';
+    const vertPill = (x.procam_vertical) ? `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10.5px;font-weight:600;background:var(--surface-2);color:var(--ink-2);border:1px solid var(--border)">${e(x.procam_vertical)}</span>` : '';
+    const reqs = Array.isArray(x.special_requirements) && x.special_requirements.length
+      ? `<div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px">${x.special_requirements.map(r=>`<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text-2)">${e(r)}</span>`).join('')}</div>` : '';
+    const summary = x.one_line_summary ? `<div style="margin-top:14px;padding:12px 14px;background:var(--surface-2);border-left:3px solid var(--red);border-radius:0 var(--r) var(--r) 0;font-size:13.5px;color:var(--ink);font-weight:500;line-height:1.5">${e(x.one_line_summary)}</div>` : '';
+    const next = x.next_action_suggested ? `<div style="margin-top:10px;font-size:12.5px;color:var(--text-2)"><span style="text-transform:uppercase;letter-spacing:.06em;font-size:10.5px;font-weight:600;color:var(--text-3)">Suggested next action · </span>${e(x.next_action_suggested)}</div>` : '';
+    body = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border-2)">
         <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:var(--red)">Lead Summary · from inbound email</div>
         <div style="display:flex;gap:6px">${urgencyPill}${reqPill}${vertPill}</div>
@@ -965,7 +972,36 @@ function renderEmailSummaryCard(l){
       ${cargo ? `<div style="margin-top:10px;font-size:12.5px;color:var(--text)"><span style="text-transform:uppercase;letter-spacing:.06em;font-size:10.5px;font-weight:600;color:var(--text-3)">Cargo · </span>${e(cargo)}</div>` : ''}
       ${reqs}
       ${summary}
-      ${next}
+      ${next}`;
+  } else {
+    // No AI extract — but we still have attachments. Show a slim header
+    // so the attachment list has an obvious owner.
+    body = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border-2)">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:var(--red)">Email attachments</div>
+      </div>`;
+  }
+
+  const attsHtml = atts.length ? `
+    <div style="margin-top:${hasX ? 14 : 0}px;${hasX ? 'padding-top:14px;border-top:1px solid var(--border-2);' : ''}">
+      <div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);font-weight:600;margin-bottom:8px">Attachments · ${atts.length}</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${atts.map(a => {
+          const kb = a.size_bytes ? (a.size_bytes >= 1048576 ? (a.size_bytes/1048576).toFixed(1)+' MB' : Math.round(a.size_bytes/1024)+' KB') : '';
+          const icon = a.content_type && a.content_type.includes('pdf') ? '📄'
+                     : a.content_type && (a.content_type.includes('sheet') || a.content_type.includes('excel')) ? '📊'
+                     : a.content_type && a.content_type.startsWith('image/') ? '🖼️'
+                     : a.content_type && a.content_type.includes('word') ? '📝'
+                     : '📎';
+          return `<a href="${crmUrl('/api/leads/'+l.id+'/attachments/'+a.id+'/download')}" target="_blank" style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);text-decoration:none;color:var(--ink-2);font-size:12.5px;transition:.15s"><span style="font-size:16px">${icon}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e(a.filename)}</span><span style="color:var(--text-3);font-size:11px;font-variant-numeric:tabular-nums">${kb}</span></a>`;
+        }).join('')}
+      </div>
+    </div>` : '';
+
+  return `
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r-lg);padding:20px 22px;margin-bottom:20px;box-shadow:var(--sh-1)">
+      ${body}
+      ${attsHtml}
     </div>`;
 }
 

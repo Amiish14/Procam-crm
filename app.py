@@ -70,6 +70,18 @@ app.config['APPLICATION_ROOT'] = os.environ.get('URL_PREFIX', '/')
 
 db = SQLAlchemy(app)
 
+# Ensure the email-lead attachment storage directory exists. Overridable via
+# EMAIL_INGEST_STORAGE_ROOT so local dev doesn't have to write to /var/www.
+EMAIL_INGEST_STORAGE_ROOT = os.environ.get(
+    'EMAIL_INGEST_STORAGE_ROOT', '/var/www/procam-crm/uploads/email_leads'
+)
+try:
+    os.makedirs(EMAIL_INGEST_STORAGE_ROOT, exist_ok=True)
+except Exception:
+    # Non-fatal — file writes will fail later with a clearer error if the
+    # dir truly isn't writable (e.g. running locally without perms).
+    pass
+
 # Simple in-process lock — the Opportunity numbering sequence is generated
 # server-side and we want to serialise concurrent number requests within a
 # single gunicorn worker. Between workers, the DB unique-constraint is the
@@ -200,6 +212,38 @@ class Lead(db.Model):
             # at the top of the lead detail modal.
             'email_extracted': (json.loads(self.email_extracted_json)
                                 if self.email_extracted_json else None),
+            # Files attached to this lead — populated by email ingest from
+            # Graph API attachments, or manually uploaded later. Renders as
+            # a list under the "Lead Summary" card in the UI.
+            'attachments': [a.to_dict() for a in
+                            (LeadAttachment.query.filter_by(lead_id=self.id)
+                             .order_by(LeadAttachment.uploaded_at.desc()).all())],
+        }
+
+
+class LeadAttachment(db.Model):
+    """A file attached to a Lead. Populated by email ingest (from Graph API
+    attachments on lead emails) or manually uploaded via the CRM UI later."""
+    __tablename__ = 'lead_attachments'
+    id            = db.Column(db.Integer, primary_key=True)
+    lead_id       = db.Column(db.Integer, db.ForeignKey('leads.id', ondelete='CASCADE'),
+                              nullable=False, index=True)
+    filename      = db.Column(db.String(255), nullable=False)
+    content_type  = db.Column(db.String(120))
+    size_bytes    = db.Column(db.Integer)
+    storage_path  = db.Column(db.String(500), nullable=False)   # absolute path on VM disk
+    source        = db.Column(db.String(30), default='email')   # email | manual
+    email_attachment_id = db.Column(db.String(255), index=True)  # Graph id for dedup
+    uploaded_at   = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'filename': self.filename,
+            'content_type': self.content_type or 'application/octet-stream',
+            'size_bytes': self.size_bytes or 0,
+            'source': self.source,
+            'uploaded_at': str(self.uploaded_at)[:16] if self.uploaded_at else '',
         }
 
 
@@ -757,6 +801,39 @@ def api_delete_lead(lid):
     db.session.delete(lead)
     db.session.commit()
     return jsonify({'ok': True})
+
+
+# ─── Lead attachments (email ingest + manual upload later) ───────────
+@app.route('/api/leads/<int:lid>/attachments', methods=['GET'])
+@require_auth
+def api_lead_attachments(lid):
+    # Ownership: same rule as elsewhere — admins see all; others only their own
+    lead = Lead.query.get_or_404(lid)
+    if session.get('role') != 'admin' and lead.assigned_to and lead.assigned_to != session.get('emp_code'):
+        return jsonify({'error': 'Not your lead'}), 403
+    atts = (LeadAttachment.query
+            .filter_by(lead_id=lid)
+            .order_by(LeadAttachment.uploaded_at.desc())
+            .all())
+    return jsonify([a.to_dict() for a in atts])
+
+
+@app.route('/api/leads/<int:lid>/attachments/<int:aid>/download', methods=['GET'])
+@require_auth
+def api_lead_attachment_download(lid, aid):
+    from flask import send_file
+    lead = Lead.query.get_or_404(lid)
+    if session.get('role') != 'admin' and lead.assigned_to and lead.assigned_to != session.get('emp_code'):
+        return jsonify({'error': 'Not your lead'}), 403
+    att = LeadAttachment.query.filter_by(id=aid, lead_id=lid).first_or_404()
+    if not os.path.exists(att.storage_path):
+        abort(404, description=f"File missing on disk: {att.storage_path}")
+    return send_file(
+        att.storage_path,
+        as_attachment=True,
+        download_name=att.filename,
+        mimetype=att.content_type or 'application/octet-stream',
+    )
 
 @app.route('/api/leads/bulk-assign', methods=['POST'])
 @require_auth
