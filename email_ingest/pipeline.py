@@ -80,6 +80,41 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
         pending_since_commit = 0
         today = date.today()
 
+        # ── Per-run dedup ────────────────────────────────────────────────
+        # (a) one lead per sender email address — highest confidence wins
+        # (b) one lead per sender DOMAIN per run — stops 30 emails from
+        #     sales1@wsdlogistics.com, sales2@wsdlogistics.com etc. all
+        #     landing as separate leads on the same day
+        seen_email_in_run: dict = {}   # email_lower → confidence
+        seen_domain_in_run: dict = {}  # domain_lower → (confidence, email_lower)
+
+        # ── DB-existing dedup ────────────────────────────────────────────
+        # (a) exact email match — always skip (this person is already a lead)
+        # (b) same domain within the last N days — skip (avoids creating
+        #     new leads for the same company that already contacted us
+        #     recently, e.g. via a different person in the same team)
+        existing_emails = set()
+        existing_recent_domains = set()
+        DEDUP_DOMAIN_WINDOW_DAYS = 30
+        try:
+            for (e,) in db.session.query(Lead.email).filter(
+                Lead.email.isnot(None), Lead.email != ""
+            ).all():
+                if e:
+                    existing_emails.add(e.strip().lower())
+
+            cutoff = datetime.utcnow() - timedelta(days=DEDUP_DOMAIN_WINDOW_DAYS)
+            for (e,) in db.session.query(Lead.email).filter(
+                Lead.email.isnot(None), Lead.email != "",
+                Lead.created_at >= cutoff,
+            ).all():
+                if e and "@" in e:
+                    d = e.split("@", 1)[1].strip().lower()
+                    if d:
+                        existing_recent_domains.add(d)
+        except Exception:
+            log.exception("Could not preload existing lead emails; proceeding without DB dedup")
+
         try:
             iterator = graph.list_messages(mailbox=mailbox, since_utc=since_utc, top=100)
         except Exception as e:  # noqa: BLE001
@@ -123,6 +158,53 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                         msg_id_internet, extracted.get("subject", "")[:80], reason,
                     )
                     continue
+
+                sender_email = (extracted.get("email") or "").strip().lower()
+                sender_domain = sender_email.split("@", 1)[1] if "@" in sender_email else ""
+                confidence = float(extracted.get("confidence") or 0.0)
+
+                # DB dedup 1: exact email already in Leads → skip
+                if sender_email and sender_email in existing_emails:
+                    stats["skipped"] += 1
+                    skip_counter["existing lead: same email"] += 1
+                    continue
+
+                # DB dedup 2: same domain has an existing lead in the last
+                # 30 days → skip (avoids duplicating a company that already
+                # contacted us via a different person recently).
+                if sender_domain and sender_domain in existing_recent_domains:
+                    stats["skipped"] += 1
+                    skip_counter[f"existing lead: same domain <{DEDUP_DOMAIN_WINDOW_DAYS}d"] += 1
+                    continue
+
+                # Per-run dedup 1: same sender email seen twice in this run
+                if sender_email and sender_email in seen_email_in_run:
+                    prev_conf = seen_email_in_run[sender_email]
+                    if confidence <= prev_conf:
+                        stats["skipped"] += 1
+                        skip_counter["dup sender in this run"] += 1
+                        continue
+                    stats["created"] -= 1   # supersede the earlier queued lead
+                    skip_counter["dup sender: superseded by stronger msg"] += 1
+                seen_email_in_run[sender_email] = max(
+                    confidence, seen_email_in_run.get(sender_email, 0.0)
+                )
+
+                # Per-run dedup 2: same sender DOMAIN seen twice in this run
+                # → skip anything after the first, unless the new one has
+                # materially higher confidence (>+0.15) AND is a different
+                # person (different local-part).
+                if sender_domain and sender_domain in seen_domain_in_run:
+                    prev_conf, prev_email = seen_domain_in_run[sender_domain]
+                    same_person = (sender_email == prev_email)
+                    much_stronger = (confidence >= prev_conf + 0.15)
+                    if same_person or not much_stronger:
+                        stats["skipped"] += 1
+                        skip_counter["dup domain in this run"] += 1
+                        continue
+                    stats["created"] -= 1   # supersede the earlier queued lead
+                    skip_counter["dup domain: superseded by stronger msg"] += 1
+                seen_domain_in_run[sender_domain] = (confidence, sender_email)
 
                 # Build Lead row — field names verified against app.py::Lead
                 lead = Lead(
