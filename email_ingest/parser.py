@@ -66,6 +66,30 @@ _PHONE_RE = re.compile(r"\b(?:\+?91[-\s]?|0)?([6-9]\d{9})\b")
 
 _NOREPLY_RE = re.compile(r"no-?reply|donotreply|noreply|mailer-daemon|postmaster", re.I)
 
+# Newsletter/marketing local-parts — treat as bulk regardless of subject line.
+_BULK_LOCAL_RE = re.compile(
+    r"^(newsletter|newsletters|updates|alerts|notifications?|marketing|news|"
+    r"digest|events?|announce|announcements?|campaign|mailer|do[-_]?not[-_]?reply|"
+    r"broadcasts?|bulk|promo|promotions?)(\d*|_.*|\..*)?$",
+    re.I,
+)
+
+# Sender domains that never produce leads (pure marketing/aggregator infra).
+_BULK_DOMAIN_SUFFIXES = (
+    "substack.com", "mailchimpapp.com", "mailchimp.com",
+    "em.linkedin.com", "linkedin.com",
+    "sendgrid.net", "mailgun.org", "amazonses.com",
+    "constantcontact.com", "hubspotemail.net", "mktomail.com",
+    "eloqua.com", "marketo.com", "salesforce.com",
+    "notifications.google.com", "accounts.google.com",
+    "microsoftonline.com", "office.com", "sharepointonline.com",
+    "bank.in", "hdfc.bank.in", "sbi.bank.in", "icici.bank.in",
+    "hdfcbank.bank.in", "kotakalert.bank.in", "sbicard.com",
+    "makemytrip.com", "booking.com", "cleartrip.com",
+    "economist.com", "moodys.com", "workindia.in", "naukri.com",
+    "linkedin.com", "hirect.com", "instahyre.com",
+)
+
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 
 _INVOICE_RE = re.compile(r"\b(invoice|payment reminder|statement|receipt)\b", re.I)
@@ -284,11 +308,20 @@ def _should_skip(msg: dict) -> Optional[str]:
     if from_email and _NOREPLY_RE.search(from_email):
         return "no-reply sender"
 
-    # Internal domains
+    # Internal domains AND bulk-mail infra domains
     if from_email and "@" in from_email:
         sender_domain = from_email.split("@", 1)[1].lower()
         if sender_domain in _skip_domains():
             return f"internal domain: {sender_domain}"
+        # Bulk marketing / SaaS-email infra (Substack, Mailchimp, LinkedIn, etc.)
+        for suffix in _BULK_DOMAIN_SUFFIXES:
+            if sender_domain == suffix or sender_domain.endswith("." + suffix):
+                return f"bulk marketing infra: {sender_domain}"
+
+        # Newsletter-style local part (newsletter@, updates@, alerts@, ...)
+        local = from_email.split("@", 1)[0]
+        if _BULK_LOCAL_RE.match(local):
+            return f"bulk sender: {local}@"
 
     # Newsletters
     for pfx in _NEWSLETTER_PREFIXES:
@@ -370,25 +403,34 @@ def extract_lead(msg: dict) -> Optional[dict]:
     company = _company_from_domain(from_email)
     payload["company"] = company
 
-    # Confidence
+    # Confidence — weighted to favour real inquiries with actionable signals.
     score = 0.0
     if phone:
         score += 0.30
     if rfq:
-        score += 0.20
+        score += 0.30            # RFQ is the strongest single signal
     if origin or destination:
         score += 0.20
-    if len(cargo) >= 2:
-        score += 0.15
+    if len(cargo) >= 3:
+        score += 0.20            # 3+ cargo keywords implies genuine logistics content
+    elif len(cargo) >= 2:
+        score += 0.10
     if company:
-        score += 0.15
+        score += 0.10
+    # Penalise pure "personal domain" senders unless they have RFQ signals
+    if from_email and "@" in from_email:
+        domain = from_email.split("@", 1)[1].lower()
+        if domain in PERSONAL_DOMAINS and not rfq:
+            score -= 0.10
     if score < 0.0:
         score = 0.0
     elif score > 1.0:
         score = 1.0
     payload["confidence"] = round(score, 3)
 
-    if score < 0.2:
+    # Raised threshold: 0.4 (from 0.2). Filters out noise like single-cargo-
+    # keyword ops emails from existing customers.
+    if score < 0.4:
         payload["skip_reason"] = "low confidence"
 
     return payload
