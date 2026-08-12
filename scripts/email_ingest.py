@@ -3,7 +3,7 @@
 import sys, os, json, logging
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.email_ingest.pipeline import run_ingest
+from email_ingest.pipeline import run_ingest
 
 if __name__ == '__main__':
     logging.basicConfig(
