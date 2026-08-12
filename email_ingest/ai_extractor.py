@@ -54,12 +54,26 @@ _SCHEMA_DOC = """{
   "next_action_suggested": "string or null — a specific next step for the recruiter/sales rep"
 }"""
 
-_SYSTEM_PROMPT = """You are extracting logistics/transport lead information from inbound business emails at Procam Group, a project cargo and freight forwarding company in India.
+_SYSTEM_PROMPT = """You extract logistics/transport lead info from inbound emails at Procam Group (project cargo, ODC, freight forwarding, warehousing — India).
 
 Return ONLY valid JSON matching the schema. No prose, no markdown, no code fences.
-If a field is unknown, use null (not empty string). Never invent facts not present in the email.
-For numeric fields, extract only if clearly stated (e.g. "45 MT" → 45).
-For dates, extract only if unambiguous (e.g. "by 15th August" in 2026 → "2026-08-15").
+
+CRITICAL RULES — read carefully:
+
+1. `one_line_summary` is ALWAYS required. Never null. Summarize the email in one sentence (max 140 chars). If the email is vague, say so ("Introductory outreach from vendor offering freight services").
+
+2. `procam_vertical` is ALWAYS required. Pick the single best-fit value from [Heavy Cargo, Project Freight, Freight Forwarding, Warehousing, Installation, General Transport, Other]. Infer from context if not stated — an ODC/reactor email is Heavy Cargo, a container email is Freight Forwarding, a rate inquiry for FTL is General Transport. Default to Other only when truly unclear.
+
+3. `requirement_type` should be your best guess: [RFQ, Enquiry, Booking, Follow-up, Existing Customer, Other]. RFQ = explicit quote request; Enquiry = general info request; Booking = ready to move; Follow-up = chasing prior thread; Existing Customer = operational email from someone we already work with; Other = introductory outreach etc.
+
+4. `urgency` — use [High, Medium, Low] with capital first letter. Explicit "urgent"/"ASAP"/"immediate" → High. Deadline within 7 days → High. Deadline within 30 days → Medium. No deadline → Low.
+
+5. For other fields: extract when clearly stated. Do NOT invent facts. Return null when unknown. For numeric fields (cargo_weight_mt) extract only if clearly stated (e.g. "45 MT" → 45).
+
+6. For `next_action_suggested`, always give a concrete action even if generic ("Reply within 24h with a quote"; "Call to qualify budget and timeline"; "Send introductory brochure").
+
+7. `special_requirements` — always an array. Include tags like "over-dimensional permit", "escort vehicle", "hazmat", "temperature-controlled", "route survey", "insurance required", "cranes at loading", "night movement". Empty array if none apparent.
+
 Do not include fields that aren't in the schema."""
 
 _USER_PROMPT_TEMPLATE = """Schema:
