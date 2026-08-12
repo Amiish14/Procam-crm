@@ -161,6 +161,13 @@ class Lead(db.Model):
 
     # Email ingest (source=email) — dedup key from Microsoft Graph internetMessageId
     email_message_id = db.Column(db.String(255), unique=True, index=True, nullable=True)
+    # Structured JSON extracted from the email by Claude Haiku (see email_ingest/ai_extractor.py).
+    # Includes: company, contact_name, designation, phone_primary, phone_secondary,
+    # email_primary, email_secondary, origin, destination, cargo_type, cargo_weight_mt,
+    # cargo_dimensions, cargo_qty, procam_vertical, requirement_type, urgency,
+    # target_date, special_requirements (list), one_line_summary, next_action_suggested.
+    # Rendered as a "Lead Summary" card at the top of the lead detail modal.
+    email_extracted_json = db.Column(db.Text, nullable=True)
 
     def to_dict(self):
         def sd(d): return str(d) if d else ''
@@ -187,7 +194,12 @@ class Lead(db.Model):
             'opp_notes': self.opp_notes or '',
             'onboarded_date': sd(self.onboarded_date),
             'week_tag': self.week_tag or '',
-            'created_at': str(self.created_at)[:10] if self.created_at else ''
+            'created_at': str(self.created_at)[:10] if self.created_at else '',
+            # AI-extracted structured summary (populated only for source=email leads
+            # that went through Claude Haiku). Renders as the "Lead Summary" card
+            # at the top of the lead detail modal.
+            'email_extracted': (json.loads(self.email_extracted_json)
+                                if self.email_extracted_json else None),
         }
 
 

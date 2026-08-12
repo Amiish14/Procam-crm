@@ -932,6 +932,43 @@ function clrF(t){
 }
 
 // ── LEAD MODAL ──
+// Renders the AI-extracted "Lead Summary" card at the top of the lead detail
+// modal, but only for source=email leads that were enriched by Claude Haiku.
+function renderEmailSummaryCard(l){
+  const x = l.email_extracted;
+  if(!x || typeof x !== 'object') return '';
+  const cell = (label, val) => val ? `<div><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin-bottom:2px">${label}</div><div style="font-size:13px;color:var(--ink-2);font-weight:500">${e(String(val))}</div></div>` : '';
+  const route = (x.origin || x.destination) ? `${e(x.origin||'—')}  →  ${e(x.destination||'—')}` : '';
+  const cargo = [x.cargo_type, x.cargo_weight_mt ? `${x.cargo_weight_mt} MT` : '', x.cargo_dimensions, x.cargo_qty].filter(Boolean).join(' · ');
+  const urgencyPill = x.urgency ? `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10.5px;font-weight:600;letter-spacing:.02em;background:${x.urgency==='High'?'rgba(185,28,28,.10)':x.urgency==='Medium'?'rgba(180,83,9,.10)':'rgba(107,114,128,.10)'};color:${x.urgency==='High'?'#991B1B':x.urgency==='Medium'?'#92400E':'#4B5563'}">${e(x.urgency)}</span>` : '';
+  const reqPill = (x.requirement_type) ? `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10.5px;font-weight:600;background:rgba(29,78,216,.08);color:#1D4ED8">${e(x.requirement_type)}</span>` : '';
+  const vertPill = (x.procam_vertical) ? `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10.5px;font-weight:600;background:var(--surface-2);color:var(--ink-2);border:1px solid var(--border)">${e(x.procam_vertical)}</span>` : '';
+  const reqs = Array.isArray(x.special_requirements) && x.special_requirements.length
+    ? `<div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px">${x.special_requirements.map(r=>`<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text-2)">${e(r)}</span>`).join('')}</div>` : '';
+  const summary = x.one_line_summary ? `<div style="margin-top:14px;padding:12px 14px;background:var(--surface-2);border-left:3px solid var(--red);border-radius:0 var(--r) var(--r) 0;font-size:13.5px;color:var(--ink);font-weight:500;line-height:1.5">${e(x.one_line_summary)}</div>` : '';
+  const next = x.next_action_suggested ? `<div style="margin-top:10px;font-size:12.5px;color:var(--text-2)"><span style="text-transform:uppercase;letter-spacing:.06em;font-size:10.5px;font-weight:600;color:var(--text-3)">Suggested next action · </span>${e(x.next_action_suggested)}</div>` : '';
+  return `
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r-lg);padding:20px 22px;margin-bottom:20px;box-shadow:var(--sh-1)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border-2)">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:var(--red)">Lead Summary · from inbound email</div>
+        <div style="display:flex;gap:6px">${urgencyPill}${reqPill}${vertPill}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px 24px">
+        ${cell('Contact', x.contact_name)}
+        ${cell('Designation', x.designation)}
+        ${cell('Company', x.company)}
+        ${cell('Phone', x.phone_primary)}
+        ${cell('Email', x.email_primary)}
+        ${cell('Target date', x.target_date)}
+      </div>
+      ${route ? `<div style="margin-top:14px;padding:10px 12px;background:var(--surface-2);border-radius:var(--r);font-size:13px;color:var(--ink-2);font-weight:500;font-variant-numeric:tabular-nums">${route}</div>` : ''}
+      ${cargo ? `<div style="margin-top:10px;font-size:12.5px;color:var(--text)"><span style="text-transform:uppercase;letter-spacing:.06em;font-size:10.5px;font-weight:600;color:var(--text-3)">Cargo · </span>${e(cargo)}</div>` : ''}
+      ${reqs}
+      ${summary}
+      ${next}
+    </div>`;
+}
+
 async function openLd(id){
   let leads=await api('/api/leads?limit=500');
   if(!Array.isArray(leads))leads=[];
@@ -943,6 +980,7 @@ async function openLd(id){
   const isAdmin=ME.role==='admin';
   const uOpts=EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('');
   g('ldBdy').innerHTML=`
+    ${renderEmailSummaryCard(l)}
     ${l.history||l.notes?`<div class="fmg"><label class="fml">Background</label><div class="hist">${e((l.history||l.notes||'').substring(0,400))}</div></div>`:''}
     ${l.products?`<div style="font-size:12.5px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);padding:10px 14px;margin-bottom:16px;color:var(--text)"><span style="font-weight:600;color:var(--ink-2)">Products &middot; </span>${e(l.products)}</div>`:''}
     <div class="fm-s">Pipeline stage</div>

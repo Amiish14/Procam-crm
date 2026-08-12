@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from . import parser as email_parser
+from . import ai_extractor
 from .graph_client import GraphClient
 
 log = logging.getLogger(__name__)
@@ -206,32 +207,79 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     skip_counter["dup domain: superseded by stronger msg"] += 1
                 seen_domain_in_run[sender_domain] = (confidence, sender_email)
 
+                # AI extraction (opt-in, only if ANTHROPIC_API_KEY is set).
+                # Merges on top of regex — AI fields win where both have data.
+                ai_data = None
+                if ai_extractor.is_enabled():
+                    try:
+                        ai_data = ai_extractor.extract(msg, extracted)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("AI extraction failed for %s: %s", sender_email, e)
+                        ai_data = None
+
+                # Merge AI over regex (AI wins where both have values)
+                merged = dict(
+                    company=extracted.get("company") or "Unknown",
+                    contact_name=extracted.get("contact_name") or "",
+                    designation="",
+                    phone_primary=extracted.get("phone") or None,
+                    phone_secondary=None,
+                    email_primary=extracted.get("email") or "",
+                    email_secondary=None,
+                    origin=(extracted.get("signals", {}) or {}).get("origin"),
+                    destination=(extracted.get("signals", {}) or {}).get("destination"),
+                    cargo_type=None,
+                    cargo_weight_mt=None,
+                    cargo_dimensions=None,
+                    cargo_qty=None,
+                    procam_vertical=None,
+                    requirement_type=("RFQ" if (extracted.get("signals", {}) or {}).get("rfq") else None),
+                    urgency=(extracted.get("signals", {}) or {}).get("urgency"),
+                    target_date=None,
+                    special_requirements=[],
+                    one_line_summary="",
+                    next_action_suggested=None,
+                )
+                if ai_data:
+                    for k, v in ai_data.items():
+                        if v not in (None, "", []):
+                            merged[k] = v
+
                 # Build Lead row — field names verified against app.py::Lead
                 lead = Lead(
                     source="email",
                     stage="New Opportunity",
-                    company=(extracted.get("company") or "Unknown")[:200],
-                    pic=(extracted.get("contact_name") or "")[:100],
-                    email=(extracted.get("email") or "")[:120],
-                    phone=(extracted.get("phone") or None),
+                    company=(merged["company"] or "Unknown")[:200],
+                    pic=(merged["contact_name"] or "")[:100],
+                    designation_pic=(merged["designation"] or "")[:100],
+                    email=(merged["email_primary"] or "")[:120],
+                    phone=(merged["phone_primary"] or None),
+                    email2=(merged["email_secondary"] or None),
+                    phone2=(merged["phone_secondary"] or None),
+                    procam_vertical=merged["procam_vertical"],
                     notes=(extracted.get("body_text") or "")[:8000],
                     opp_notes=json.dumps({
                         "signals": extracted.get("signals", {}),
                         "confidence": extracted.get("confidence", 0.0),
                         "source_subject": extracted.get("subject", ""),
+                        "ai_used": bool(ai_data),
                     }),
                     email_message_id=msg_id_internet,
+                    email_extracted_json=json.dumps(merged, default=str),
                     onboarded_date=today,
                     created_at=datetime.utcnow(),
                 )
 
                 if dry_run:
                     log.info(
-                        "[dry-run] Would create Lead: company=%r email=%s "
-                        "confidence=%s cargo=%s",
-                        lead.company, lead.email,
-                        extracted.get("confidence"),
-                        extracted.get("signals", {}).get("cargo_keywords"),
+                        "[dry-run] Would create Lead: company=%r pic=%r email=%s "
+                        "vertical=%s route=%s→%s cargo=%s urgency=%s | %s",
+                        lead.company, lead.pic, lead.email,
+                        merged.get("procam_vertical"),
+                        merged.get("origin"), merged.get("destination"),
+                        merged.get("cargo_type"),
+                        merged.get("urgency"),
+                        (merged.get("one_line_summary") or "")[:100],
                     )
                     stats["created"] += 1
                     continue
