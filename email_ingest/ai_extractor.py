@@ -32,6 +32,9 @@ _MAX_BODY_CHARS = 6000    # cap input to control cost; email tails are usually s
 
 # JSON schema we ask Claude to emit. Kept flat/simple so bad JSON is rarer.
 _SCHEMA_DOC = """{
+  "is_business_lead": "boolean — TRUE only if this is a genuine new-business inquiry where the sender (or their company) wants Procam to provide logistics/transport/warehousing services. See RULES below.",
+  "lead_type": "one of [inbound_rfq, prospect_inquiry, vendor_pitch, existing_customer_ops, banking_or_admin, newsletter_or_marketing, personal_or_other]",
+  "reject_reason": "string or null — if is_business_lead is false, one short line explaining why (e.g. 'freight forwarder selling us services', 'operational update on existing shipment', 'bank statement')",
   "company": "string or null (registered/trading name of the sender's company)",
   "contact_name": "string or null (person writing the email)",
   "designation": "string or null (e.g. 'Sr Manager - Logistics')",
@@ -45,36 +48,63 @@ _SCHEMA_DOC = """{
   "cargo_weight_mt": "number or null (weight in metric tons)",
   "cargo_dimensions": "string or null (L x W x H if given)",
   "cargo_qty": "string or null (number of pieces/containers/trucks)",
-  "procam_vertical": "one of [Heavy Cargo, Project Freight, Freight Forwarding, Warehousing, Installation, General Transport, Other] or null",
-  "requirement_type": "one of [RFQ, Enquiry, Booking, Follow-up, Existing Customer, Other] or null",
-  "urgency": "one of [High, Medium, Low] or null",
+  "procam_vertical": "one of [Heavy Cargo, Project Freight, Freight Forwarding, Warehousing, Installation, General Transport, Other]",
+  "requirement_type": "one of [RFQ, Enquiry, Booking, Follow-up, Existing Customer, Other]",
+  "urgency": "one of [High, Medium, Low]",
   "target_date": "string or null (YYYY-MM-DD if a specific date is mentioned)",
   "special_requirements": ["array of short strings — permits, escorts, insurance, hazmat, temperature, route survey, etc."],
   "one_line_summary": "string — one sentence describing what the sender wants, max 140 chars",
-  "next_action_suggested": "string or null — a specific next step for the recruiter/sales rep"
+  "next_action_suggested": "string — a specific next step for the sales rep"
 }"""
 
-_SYSTEM_PROMPT = """You extract logistics/transport lead info from inbound emails at Procam Group (project cargo, ODC, freight forwarding, warehousing — India).
+_SYSTEM_PROMPT = """You are a strict lead classifier for Procam Group — a project cargo, ODC, freight forwarding, warehousing & installation company in India.
 
-Return ONLY valid JSON matching the schema. No prose, no markdown, no code fences.
+Your job: read each incoming email and decide whether it represents a GENUINE NEW-BUSINESS SALES LEAD — i.e. a potential customer (or their agent) asking Procam to move / warehouse / install something for them.
 
-CRITICAL RULES — read carefully:
+Return ONLY valid JSON matching the schema. No prose. No markdown. No code fences.
 
-1. `one_line_summary` is ALWAYS required. Never null. Summarize the email in one sentence (max 140 chars). If the email is vague, say so ("Introductory outreach from vendor offering freight services").
+═════════════════════════════════════════════════════════════════════
+FIRST: classify with `is_business_lead` (boolean) and `lead_type`.
+═════════════════════════════════════════════════════════════════════
 
-2. `procam_vertical` is ALWAYS required. Pick the single best-fit value from [Heavy Cargo, Project Freight, Freight Forwarding, Warehousing, Installation, General Transport, Other]. Infer from context if not stated — an ODC/reactor email is Heavy Cargo, a container email is Freight Forwarding, a rate inquiry for FTL is General Transport. Default to Other only when truly unclear.
+`is_business_lead: true` ONLY when the sender is a POTENTIAL CUSTOMER asking Procam to do logistics work for them. Examples that qualify:
+  - "Please quote for moving 45 MT reactor from Vadodara to Kandla by 25th"
+  - "We need warehousing space in Chennai for 5000 sqft, 6 months"
+  - "Requesting rates for FTL Bhiwadi → Nhava Sheva, monthly volume 10 trucks"
+  - "Enquiry: installation of 800MW transformer at Hyderabad plant"
+  - Any new inquiry from a manufacturer, EPC, project developer, exporter, or trader wanting Procam's services.
 
-3. `requirement_type` should be your best guess: [RFQ, Enquiry, Booking, Follow-up, Existing Customer, Other]. RFQ = explicit quote request; Enquiry = general info request; Booking = ready to move; Follow-up = chasing prior thread; Existing Customer = operational email from someone we already work with; Other = introductory outreach etc.
+`is_business_lead: false` for ALL of the following — set the matching `lead_type`:
+  - `vendor_pitch` — another logistics / freight / shipping / warehouse company is trying to sell THEIR services to Procam (e.g. offering LCL space, container slots, warehouse partnership, freight forwarding tie-up, driver-app subscription, tracking SaaS)
+  - `existing_customer_ops` — the sender is following up on an existing shipment / LR / PO / job (references LR#, PO#, invoice#, "status of my consignment", "POD pending", "when will vehicle reach", "eway bill expired")
+  - `banking_or_admin` — bank statements, payment reminders, invoices, tax notifications, government tender alerts, GST/compliance emails
+  - `newsletter_or_marketing` — industry newsletters, conference invites, webinar promotions, LinkedIn digests, product marketing
+  - `personal_or_other` — anything else (job applications, spam, personal correspondence)
 
-4. `urgency` — use [High, Medium, Low] with capital first letter. Explicit "urgent"/"ASAP"/"immediate" → High. Deadline within 7 days → High. Deadline within 30 days → Medium. No deadline → Low.
+If unsure, err on the side of `is_business_lead: false`. Only 5-15% of a typical business inbox is genuine new leads.
 
-5. For other fields: extract when clearly stated. Do NOT invent facts. Return null when unknown. For numeric fields (cargo_weight_mt) extract only if clearly stated (e.g. "45 MT" → 45).
+═════════════════════════════════════════════════════════════════════
+For `is_business_lead: true`: also set `reject_reason: null` and fully populate ALL other fields per the schema.
+For `is_business_lead: false`: set `reject_reason` (one short line), and you can leave logistics-specific fields (origin, destination, cargo_type, etc.) as null. But still fill `company`, `contact_name`, `email_primary`, `one_line_summary`, `procam_vertical` (best guess or "Other"), `requirement_type` ("Other" or best fit), `urgency` ("Low"), `next_action_suggested` ("No action — not a lead").
+═════════════════════════════════════════════════════════════════════
 
-6. For `next_action_suggested`, always give a concrete action even if generic ("Reply within 24h with a quote"; "Call to qualify budget and timeline"; "Send introductory brochure").
+Extraction rules for the leads:
 
-7. `special_requirements` — always an array. Include tags like "over-dimensional permit", "escort vehicle", "hazmat", "temperature-controlled", "route survey", "insurance required", "cranes at loading", "night movement". Empty array if none apparent.
+1. `one_line_summary` — ALWAYS required. One sentence max 140 chars describing what the sender wants.
 
-Do not include fields that aren't in the schema."""
+2. `procam_vertical` — ALWAYS required. Best-fit from [Heavy Cargo, Project Freight, Freight Forwarding, Warehousing, Installation, General Transport, Other]. ODC / reactor / heavy lift → Heavy Cargo. Containers / FCL / LCL / port → Freight Forwarding. Turnkey plant move → Project Freight. FTL / PTL / dry cargo → General Transport.
+
+3. `requirement_type` — [RFQ, Enquiry, Booking, Follow-up, Existing Customer, Other]. RFQ = explicit quote request. Enquiry = general question. Booking = ready to execute.
+
+4. `urgency` — [High, Medium, Low]. "urgent"/"ASAP" or ≤7-day deadline → High. ≤30-day → Medium.
+
+5. `next_action_suggested` — always concrete. For non-leads use "No action — not a lead".
+
+6. `special_requirements` — always an array (possibly empty). Tags: "over-dimensional permit", "escort vehicle", "hazmat", "temperature-controlled", "route survey", "night movement", "cranes at loading".
+
+7. Numeric fields (cargo_weight_mt) — extract only if clearly stated.
+
+Do not invent facts. Do not include fields outside the schema."""
 
 _USER_PROMPT_TEMPLATE = """Schema:
 {schema}

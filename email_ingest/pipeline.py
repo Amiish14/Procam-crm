@@ -217,6 +217,16 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                         log.warning("AI extraction failed for %s: %s", sender_email, e)
                         ai_data = None
 
+                # AI classifier: skip anything that isn't a genuine new-business lead
+                # (vendor pitches, ops emails from existing customers, banking, newsletters).
+                if ai_data and ai_data.get("is_business_lead") is False:
+                    lead_type = ai_data.get("lead_type") or "not a lead"
+                    reject = ai_data.get("reject_reason") or "AI classified as non-lead"
+                    stats["skipped"] += 1
+                    skip_counter[f"AI: {lead_type}"] += 1
+                    log.info("Skip [%s] %s | %s", sender_email, lead_type, reject[:80])
+                    continue
+
                 # Merge AI over regex (AI wins where both have values)
                 merged = dict(
                     company=extracted.get("company") or "Unknown",
