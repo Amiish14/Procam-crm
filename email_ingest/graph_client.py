@@ -223,9 +223,14 @@ class GraphClient:
         real lead — this keeps us from downloading attachment bytes for the
         thousands of messages we reject each day.
         """
+        # NOTE: $select cannot include contentBytes — Graph rejects it as
+        # "not a property of microsoft.graph.attachment". contentBytes only
+        # exists on the fileAttachment sub-type. Drop $select entirely and
+        # take the full payload (small — usually one attachment per email
+        # in this workload).
         path = (
             f"/users/{quote(mailbox)}/messages/{quote(message_id, safe='')}"
-            "/attachments?$select=id,name,contentType,size,contentBytes,isInline"
+            "/attachments"
         )
         resp = self._request("GET", path)
         if resp.status_code >= 400:
