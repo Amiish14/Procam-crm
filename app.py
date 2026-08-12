@@ -1563,24 +1563,52 @@ def api_outreach_generate():
 
     ctx = []
     if lead:
-        ctx.append(f"Lead: {lead.company or ''} · {lead.contact_person or ''}")
-        if lead.industry: ctx.append(f"Industry: {lead.industry}")
-        if lead.stage: ctx.append(f"Stage: {lead.stage}")
-        if lead.notes: ctx.append(f"Notes: {lead.notes[:400]}")
+        # Lead model uses `pic` (contact person) + `designation_pic`.
+        # Older code referenced `lead.contact_person` which doesn't exist and
+        # raised AttributeError → 502 to every UI call.
+        ctx.append(f"Lead: {lead.company or ''} · {lead.pic or ''}")
+        if lead.designation_pic:
+            ctx.append(f"Designation: {lead.designation_pic}")
+        if lead.industry:      ctx.append(f"Industry: {lead.industry}")
+        if lead.procam_vertical: ctx.append(f"Procam vertical: {lead.procam_vertical}")
+        if lead.stage:         ctx.append(f"Stage: {lead.stage}")
+        if lead.city or lead.state:
+            ctx.append(f"Location: {', '.join(filter(None, [lead.city, lead.state]))}")
+        # Prefer AI-extracted rich context if available (email leads)
+        if getattr(lead, 'email_extracted_json', None):
+            try:
+                x = json.loads(lead.email_extracted_json)
+                if x.get('one_line_summary'):
+                    ctx.append(f"Their inquiry: {x['one_line_summary']}")
+                if x.get('cargo_type'):
+                    ctx.append(f"Cargo: {x.get('cargo_type')} "
+                               f"{x.get('cargo_weight_mt','')} MT".strip())
+                if x.get('origin') or x.get('destination'):
+                    ctx.append(f"Route: {x.get('origin','—')} → {x.get('destination','—')}")
+            except Exception:
+                pass
+        elif lead.notes:
+            ctx.append(f"Notes: {lead.notes[:400]}")
     if company:
         ctx.append(f"Company: {company.name} · {company.industry or ''}")
         if company.notes: ctx.append(f"Company notes: {company.notes[:400]}")
     context = "\n".join(ctx) or "(no lead/company context provided)"
 
-    prompt = (
-        f"You are drafting an outreach {channel} on behalf of Procam Logistics — "
-        f"a heavy-haulage, project-freight, installation and warehousing firm.\n\n"
-        f"Context:\n{context}\n\n"
-        f"Goal: {goal}\n"
-        f"Tone: {tone}\n\n"
-        f"Write a short {channel} draft. If email, include Subject on the first line "
-        f"prefixed 'Subject:'. Keep it under 180 words. No emojis."
-    )
+    # Frontend may pass a fully composed prompt (rich, Procam-specific) as
+    # `extra_prompt`. Prefer it, otherwise fall back to a generic template.
+    extra_prompt = (d.get('extra_prompt') or '').strip()
+    if extra_prompt:
+        prompt = extra_prompt + "\n\nContext:\n" + context
+    else:
+        prompt = (
+            f"You are drafting an outreach {channel} on behalf of Procam Logistics — "
+            f"a heavy-haulage, project-freight, installation and warehousing firm.\n\n"
+            f"Context:\n{context}\n\n"
+            f"Goal: {goal}\n"
+            f"Tone: {tone}\n\n"
+            f"Write a short {channel} draft. If email, include Subject on the first line "
+            f"prefixed 'Subject:'. Keep it under 180 words. No emojis."
+        )
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)

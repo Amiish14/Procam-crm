@@ -1151,10 +1151,23 @@ Format:
 - CTA: 20-min call this week with two time slots
 3. Sign: BD Team | Procam Logistics Pvt. Ltd. | +91-124-4873305 | www.procamlogistics.com`;
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:900,messages:[{role:'user',content:prompt}]})});
-    const d=await r.json();
-    g('aiTxt').textContent=d.content?.filter(c=>c.type==='text').map(c=>c.text).join('\n')||'Generation failed.';
-  }catch(er){g('aiTxt').textContent='Error: '+er.message;}
+    // Route through our backend so the Anthropic API key stays server-side.
+    // Backend endpoint /api/outreach/generate uses ANTHROPIC_API_KEY from .env.
+    const r=await api('/api/outreach/generate',{method:'POST',body:JSON.stringify({
+      lead_id: parseInt(id, 10),
+      channel: 'email',
+      tone: tone || 'formal',
+      goal: 'introduce Procam and request a 20-minute discovery call',
+      extra_prompt: prompt,
+    })});
+    if(r && r.body){
+      g('aiTxt').textContent = (r.subject ? 'Subject: '+r.subject+'\n\n' : '') + r.body;
+    } else if(r && r.error){
+      g('aiTxt').textContent = 'Error: ' + r.error;
+    } else {
+      g('aiTxt').textContent = 'Generation failed — no response.';
+    }
+  }catch(er){g('aiTxt').textContent='Error: '+(er.message||er);}
   btn.textContent='Generate AI email';btn.disabled=false;
 }
 function copyMail(){navigator.clipboard.writeText(g('aiTxt').textContent).then(()=>toast('Copied ✓','ok'));}
