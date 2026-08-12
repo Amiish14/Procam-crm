@@ -276,34 +276,77 @@ def extract(msg: dict, regex_result: dict) -> Optional[dict]:
         body=body or "(empty body)",
     )
 
+    # Force strict schema compliance via Anthropic's tool_use API.
+    # Sonnet has been ignoring optional-looking fields in free-form JSON —
+    # tool schemas are enforced.
+    _TOOL = {
+        "name": "record_lead_classification",
+        "description": "Record the classification and extraction of an inbound email.",
+        "input_schema": {
+            "type": "object",
+            "required": [
+                "is_business_lead", "lead_type", "reject_reason",
+                "company", "contact_name", "email_primary",
+                "one_line_summary", "procam_vertical",
+                "requirement_type", "urgency", "next_action_suggested",
+                "special_requirements",
+            ],
+            "properties": {
+                "is_business_lead": {"type": "boolean"},
+                "lead_type": {"type": "string", "enum": [
+                    "inbound_rfq", "prospect_inquiry", "vendor_pitch",
+                    "existing_customer_ops", "banking_or_admin",
+                    "newsletter_or_marketing", "personal_or_other"]},
+                "reject_reason": {"type": ["string", "null"]},
+                "company": {"type": ["string", "null"]},
+                "contact_name": {"type": ["string", "null"]},
+                "designation": {"type": ["string", "null"]},
+                "phone_primary": {"type": ["string", "null"]},
+                "phone_secondary": {"type": ["string", "null"]},
+                "email_primary": {"type": ["string", "null"]},
+                "email_secondary": {"type": ["string", "null"]},
+                "origin": {"type": ["string", "null"]},
+                "destination": {"type": ["string", "null"]},
+                "cargo_type": {"type": ["string", "null"]},
+                "cargo_weight_mt": {"type": ["number", "null"]},
+                "cargo_dimensions": {"type": ["string", "null"]},
+                "cargo_qty": {"type": ["string", "null"]},
+                "procam_vertical": {"type": "string", "enum": [
+                    "Heavy Cargo", "Project Freight", "Freight Forwarding",
+                    "Warehousing", "Installation", "General Transport", "Other"]},
+                "requirement_type": {"type": "string", "enum": [
+                    "RFQ", "Enquiry", "Booking", "Follow-up",
+                    "Existing Customer", "Other"]},
+                "urgency": {"type": "string", "enum": ["High", "Medium", "Low"]},
+                "target_date": {"type": ["string", "null"]},
+                "special_requirements": {"type": "array", "items": {"type": "string"}},
+                "one_line_summary": {"type": "string"},
+                "next_action_suggested": {"type": "string"},
+            },
+        },
+    }
+
     try:
         client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         resp = client.messages.create(
             model=model,
-            max_tokens=800,
+            max_tokens=1200,
             system=_SYSTEM_PROMPT,
+            tools=[_TOOL],
+            tool_choice={"type": "tool", "name": "record_lead_classification"},
             messages=[{"role": "user", "content": user_prompt}],
         )
-        raw_text = ""
+        data = None
         for block in (resp.content or []):
-            if getattr(block, "type", "") == "text":
-                raw_text += block.text
+            if getattr(block, "type", "") == "tool_use" and block.name == "record_lead_classification":
+                data = block.input
+                break
     except Exception as e:  # noqa: BLE001
         log.warning("AI call failed for %s: %s", from_addr, e)
         return None
 
-    json_str = _repair_json(raw_text)
-    if not json_str:
-        log.warning("AI returned unparseable output for %s: %r", from_addr, raw_text[:200])
-        return None
-
-    try:
-        data = json.loads(json_str)
-    except json.JSONDecodeError as e:
-        log.warning("AI JSON decode failed for %s: %s  raw=%r", from_addr, e, json_str[:200])
-        return None
-
     if not isinstance(data, dict):
+        log.warning("AI returned no tool_use block for %s", from_addr)
         return None
 
     # Normalize types + strip nonsense
