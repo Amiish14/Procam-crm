@@ -492,9 +492,10 @@ def extract_lead(msg: dict) -> Optional[dict]:
         payload["skip_reason"] = "not logistics-related (no cargo/RFQ/route/phone signals)"
         return payload
 
-    # Raised threshold: 0.4 (from 0.2). Filters out noise like single-cargo-
-    # keyword ops emails from existing customers.
-    if score < 0.4:
+    # Threshold 0.5 (from 0.4): emails below this don't reach AI (cost gate).
+    # Anything with a real logistics signal (RFQ + cargo, or phone + route, etc.)
+    # clears 0.5 easily; weak-signal emails get filtered here for free.
+    if score < 0.5:
         payload["skip_reason"] = "low confidence"
 
     return payload
