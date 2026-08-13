@@ -29,132 +29,42 @@ from werkzeug.security import generate_password_hash
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Authoritative employee list (emp_code → full_name)
+# Authoritative employee list — CRM ACCESS ONLY.
+# Only these people should have CRM logins. Everyone else in the DB gets
+# deactivated when --purge is passed.
+# Ambiguous names on the request had multiple possible matches — my best
+# guess is noted in the comment. Tell me if any are wrong and I'll fix.
 # ──────────────────────────────────────────────────────────────────────
 EMPLOYEES = [
-    ('CON1362025', 'Pravin Choudhary'),
-    ('CON142024',  'Seema Sanjeev Moghe'),
-    ('CON242017',  'Lakshmi Narayan'),
-    ('CON252022',  'Samsul Hussain'),
-    ('DIR12010',   'Nilesh Kumar Sinha'),
-    ('DIR22010',   'James Francis Xavier'),
-    ('DIR42010',   'T G Ramalingam'),
-    ('DIR52011',   'Sethupathy Sundaram'),
-    ('DIR72012',   'Srinivas Marella'),
-    ('EMP1062016', 'Kamrul Islam'),
-    ('EMP1082016', 'Nishit Ranjan Das'),
-    ('EMP1112016', 'Bijoy Konwar'),
-    ('EMP112010',  'Sanjeev Kumar Paliwal'),
-    ('EMP1172016', 'Narender Singh'),
-    ('EMP12010',   'Nitin Rawat'),
-    ('EMP1282017', 'Pravinkumar Arumugam'),
-    ('EMP132010',  'Sahadeb Sahoo'),
-    ('EMP1322017', 'Ram Mohan Chaubey'),
-    ('EMP1332017', 'Santosh Kumar'),
-    ('EMP1342017', 'Pramod Kumar Sukla'),
-    ('EMP1372017', 'Dinesh Dubey'),
-    ('EMP142010',  'Ranjit Gogoi'),
-    ('EMP1472018', 'Kuldip Kumar'),
-    ('EMP1482018', 'Pratap Singh'),
-    ('EMP1492018', 'Chakradhar Sahoo'),
-    ('EMP1502018', 'Devendra Subhash'),
-    ('EMP1552018', 'Abhishek Singh'),
-    ('EMP1602018', 'Santhosh P'),
-    ('EMP1612018', 'Amit Kumar'),
-    ('EMP162010',  'Mohd Rahimuddin'),
-    ('EMP1662018', 'Phool Chandra Yudhishir'),
-    ('EMP1672018', 'Partab Singh'),
-    ('EMP1682018', 'Tahirul Haque'),
-    ('EMP1702018', 'Surendar Singh'),
-    ('EMP172010',  'Manjurul Hoque'),
-    ('EMP182010',  'K Umamaheswara Rao'),
-    ('EMP192010',  'Manju Mishra'),
-    ('EMP212010',  'Ajit Kumar Das'),
-    ('EMP2122018', 'Gajendra Kumar Giri'),
-    ('EMP22010',   'Rajeev Ranjan'),
-    ('EMP242010',  'Laxmi Ram Singh'),
-    ('EMP2482019', 'Tanima Mukherjee'),
-    ('EMP2582020', 'Dattaram Mahalim'),
-    ('EMP2622020', 'Aritra Mitra'),
-    ('EMP2642021', 'Kumar Satyam Ray'),
-    ('EMP2752021', 'Sagar Bhogle'),
-    ('EMP2782022', 'Gajanan Narayan Naglot'),
-    ('EMP2792022', 'Swapnil Sunil Jadhav'),
-    ('EMP2802022', 'Amol Bhagvan Nikam'),
-    ('EMP2832022', 'Mohanraj R'),
-    ('EMP2882022', 'Seema Chattopadhyay'),
-    ('EMP2892022', 'Rakesh Dnyaneshwar Rawal'),
-    ('EMP2902022', 'Vipul Sinh Zala'),
-    ('EMP2952023', 'Rameshwar Nihalsingh Gusinge'),
-    ('EMP2962023', 'Shashidhar Pandurang Naik'),
-    ('EMP2972023', 'Jayanta Kumar Paul'),
-    ('EMP2982023', 'Sharayu Uday Bhosale'),
-    ('EMP2992023', 'Dipanka Talukder'),
-    ('EMP3022023', 'Bhushan B Bhagat'),
-    ('EMP3042023', 'Vishal Raosaheb Magar'),
-    ('EMP3062023', 'Nitin Ambadas Pawar'),
-    ('EMP3072023', 'Sohel Mainoor Shaikh'),
-    ('EMP3092023', 'Satish Datta Navghare'),
-    ('EMP3102023', 'Balu Bhagovrao Jogdanad'),
-    ('EMP3122023', 'Sunita Naga Alkar'),
-    ('EMP3132023', 'Bidisha Banerjee'),
-    ('EMP3142023', 'Balkrishnan Sharma'),
-    ('EMP3152023', 'Anurag Uday Chand'),
-    ('EMP3162023', 'Birendra Kumar'),
-    ('EMP3192023', 'Panjab Dinkar Pise'),
-    ('EMP3202023', 'Shivaji Ashok Dhumal'),
-    ('EMP3212023', 'Sachin Thakur'),
-    ('EMP3222023', 'Sayanti Ghosh'),
-    ('EMP3282023', 'Jones George T'),
-    ('EMP3292023', 'Zahid Khan'),
-    ('EMP3322023', 'Aryaan Shaikh'),
-    ('EMP3372024', 'Sayantan Naskar'),
-    ('EMP3382024', 'Yogesh Kumar Rajasekaran'),
-    ('EMP3482024', 'Shriram Dattu Patil'),
-    ('EMP3532024', 'Suresh Kumar'),
-    ('EMP3542024', 'Sayan Das'),
-    ('EMP3552024', 'Karthikeyan R'),
-    ('EMP3592024', 'Amit Kakkar'),
-    ('EMP3602024', 'Ahmad Ali'),
-    ('EMP3612024', 'Kamar Khan'),
-    ('EMP3642024', 'Souvik Chakraborty'),
-    ('EMP3652025', 'Sumit Mondal'),
-    ('EMP3672025', 'Akash Prabu'),
-    ('EMP3702025', 'Suranjan Aon'),
-    ('EMP372011',  'Sanjna Vardhan'),
-    ('EMP3732025', 'Bikash Routh'),
-    ('EMP3742025', 'Muntazir Alam'),
-    ('EMP3752025', 'Vikash Dubey'),
-    ('EMP3762025', 'Parveen Sharma'),
-    ('EMP3772025', 'Sanjay Bhite'),
-    ('EMP3782025', 'Satish Jadhav'),
-    ('EMP3802025', 'Kapil Bekanale'),
-    ('EMP3822025', 'Akash Somnath Narayne'),
-    ('EMP3832025', 'Vishal Pundlik Bhokre'),
-    ('EMP3842025', 'Saurabh Ramesh Waghmare'),
-    ('EMP3852025', 'Avinash Tukaram Ghatul'),
-    ('EMP3862025', 'Chandresh Kumar Baijnath Yadav'),
-    ('EMP3882025', 'Sundhar Rajan S'),
-    ('EMP3892025', 'Bhavin Vinodhbhai Jiilka'),
-    ('EMP3902025', 'Bala Murugan T'),
-    ('EMP3912025', 'Shyam Bharti'),
-    ('EMP3932025', 'Manish Kumar Bhakta'),
-    ('EMP3942025', 'Aniket Ray Chaudhuri'),
-    ('EMP3952025', 'Venkatesh Ramarao Althada'),
-    ('EMP3962025', 'Dhanashree Harishchandra Pawar'),
-    ('EMP3972025', 'Samiksha Chandrakant Vayngankar'),
-    ('EMP3982025', 'Ashitosh Sarjerao Gholap'),
-    ('EMP3992025', 'Hazarat Ali'),
-    ('EMP4002025', 'Md Inamuddin'),
-    ('EMP4022025', 'Vikrant Vats'),
-    ('EMP4032025', 'Pramod Kumar'),
-    ('EMP4042026', 'Guruswami Mohanta'),
-    ('EMP4052026', 'Akram Mahmud Mujawar'),
-    ('EMP4062026', 'Pravin Abasaheb Barde'),
-    ('EMP472012',  'Gowdhaman Rajakrishnan'),
-    ('EMP482012',  'Saktheeswari Murugavel'),
-    ('EMP572012',  'Vijay T V'),
-    ('EMP812015',  'Ramesh Yadav Sechae'),
+    ('EMP3702025', 'Suranjan Aon'),                # "Suranjan"
+    ('EMP2992023', 'Dipanka Talukder'),            # "Dipanka"
+    ('EMP2882022', 'Seema Chattopadhyay'),         # "Seema"
+    ('EMP3542024', 'Sayan Das'),                   # "Syan" — best guess
+    ('EMP2972023', 'Jayanta Kumar Paul'),          # "Jayanta"
+    # "RP Shah" — no match in payroll master, SKIPPED. Send me his EMP code.
+    ('DIR12010',   'Nilesh Kumar Sinha'),          # Super Admin
+    ('DIR42010',   'T G Ramalingam'),              # "TGR"
+    ('EMP372011',  'Sanjna Vardhan'),              # "Sanjna"
+    ('EMP472012',  'Gowdhaman Rajakrishnan'),      # "Gowdhaman"
+    ('CON242017',  'Lakshmi Narayan'),             # "Laksmi Narayan"
+    ('EMP2982023', 'Sharayu Uday Bhosale'),        # "Sharayu"
+    ('CON142024',  'Seema Sanjeev Moghe'),         # "Seema Modhe"
+    ('EMP242010',  'Laxmi Ram Singh'),             # "Laxmi"
+    ('EMP3322023', 'Aryaan Shaikh'),               # "Aryan"
+    ('EMP4062026', 'Pravin Abasaheb Barde'),       # "Pravin" — best guess
+    ('DIR72012',   'Srinivas Marella'),            # "Srinivas"
+    ('CON1362025', 'Pravin Choudhary'),            # "Pravin Choudhary"
+    ('EMP3152023', 'Anurag Uday Chand'),           # "Anurag"
+    ('EMP1282017', 'Pravinkumar Arumugam'),        # "Pravin Kumar" — best guess
+    ('DIR52011',   'Sethupathy Sundaram'),         # "Sethupathy"
+    ('EMP2902022', 'Vipul Sinh Zala'),             # "Vipul"
+    ('DIR22010',   'James Francis Xavier'),        # "Francis Xavier"
+    ('EMP572012',  'Vijay T V'),                   # "TV Vijay"
+    ('EMP12010',   'Nitin Rawat'),                 # "Nitin Rawat"
+    ('EMP112010',  'Sanjeev Kumar Paliwal'),       # "Sanjeev Paliwal"
+    ('EMP3592024', 'Amit Kakkar'),                 # "Amit Kakkar"
+    ('EMP3212023', 'Sachin Thakur'),               # "Sachin"
+    ('EMP2642021', 'Kumar Satyam Ray'),            # "Satyam"
 ]
 
 
@@ -189,6 +99,7 @@ EXPLICIT_OVERRIDES = {
 # authoritative code so nothing gets lost.
 LEAD_REASSIGN_ON_PURGE = {
     'EMP4092026': 'CON1362025',   # Pravin Choudhary — duplicate code, keep CON1362025
+    'PCM001':     'DIR12010',     # retire test super admin — transfer to real Nilesh
 }
 
 
