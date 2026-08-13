@@ -167,9 +167,29 @@ def default_role(emp_code):
     return 'sales'
 
 
-# Accounts that must NEVER be deactivated regardless of --purge, so we
-# always have an admin door.
-PROTECTED_EMP_CODES = {'PCM001'}
+# Accounts that must NEVER be deactivated regardless of --purge.
+# (Empty now — the old PCM001 super admin is being retired. DIR12010
+# Nilesh becomes the sole super admin.)
+PROTECTED_EMP_CODES = set()
+
+# Explicit password + role overrides for specific accounts (not the default
+# "password = emp_code, must_change_pw = True" behaviour).
+# DIR12010 Nilesh gets his real chosen password so he doesn't have to
+# reset on first login. Role = admin (super admin).
+EXPLICIT_OVERRIDES = {
+    'DIR12010': {
+        'password': 'Salesforce123',
+        'must_change_pw': False,
+        'role': 'admin',
+    },
+}
+
+# When --purge deactivates an old emp code but the same PERSON exists under
+# a different code that IS on the list, reassign all their leads to the
+# authoritative code so nothing gets lost.
+LEAD_REASSIGN_ON_PURGE = {
+    'EMP4092026': 'CON1362025',   # Pravin Choudhary — duplicate code, keep CON1362025
+}
 
 
 def main(apply_changes: bool, purge_others: bool):
@@ -184,34 +204,44 @@ def main(apply_changes: bool, purge_others: bool):
 
         for emp_code, full_name in EMPLOYEES:
             emp = existing_by_code.get(emp_code)
+            override = EXPLICIT_OVERRIDES.get(emp_code, {})
+            init_password = override.get('password', emp_code)
+            must_change = override.get('must_change_pw', True)
+            role = override.get('role', default_role(emp_code))
+
             if emp is None:
                 emp = Employee(
                     emp_code=emp_code,
                     name=full_name,
-                    role=default_role(emp_code),
+                    role=role,
                     is_active=True,
-                    must_change_pw=True,
+                    must_change_pw=must_change,
                 )
-                emp.password_hash = generate_password_hash(emp_code)
+                emp.password_hash = generate_password_hash(init_password)
                 if apply_changes:
                     db.session.add(emp)
                 new_count += 1
+                tag = ' (OVERRIDE — custom password, no forced change)' if override else ''
                 print(f'  + NEW  {emp_code:12s}  {full_name}  '
-                      f'(role={default_role(emp_code)})')
+                      f'(role={role}){tag}')
             else:
                 changes = []
                 # Only overwrite name if it looks materially different
-                # (case-insensitive compare, strip whitespace)
                 if (emp.name or '').strip().lower() != full_name.strip().lower():
                     emp.name = full_name
                     changes.append('name')
                     name_updated_count += 1
-                # Always ensure they can log in with their emp_code
-                emp.password_hash = generate_password_hash(emp_code)
-                emp.must_change_pw = True
+                # Ensure they can log in
+                emp.password_hash = generate_password_hash(init_password)
+                emp.must_change_pw = must_change
                 emp.is_active = True
+                if override:
+                    emp.role = role     # explicit overrides also promote role
                 pw_reset_count += 1
-                if changes:
+                if override:
+                    print(f'  ~ UPDT {emp_code:12s}  {full_name}  '
+                          f'(role={role}, OVERRIDE — custom password)')
+                elif changes:
                     print(f'  ~ UPDT {emp_code:12s}  {full_name}  '
                           f'(changed: {",".join(changes)})')
                 else:
@@ -228,12 +258,27 @@ def main(apply_changes: bool, purge_others: bool):
             print()
             print(f'─── PURGE — deactivating {len(to_deactivate)} employees not on the list ───')
             for e in to_deactivate:
-                # Count leads that will become orphaned (assigned to a deactivated user)
+                # Count leads that will become orphaned, or reassign if the
+                # same person exists under a different authoritative code.
+                reassign_to = LEAD_REASSIGN_ON_PURGE.get(e.emp_code)
                 try:
                     from app import Lead
-                    orphaned = Lead.query.filter_by(assigned_to=e.emp_code).count()
-                    purge_orphaned_leads += orphaned
-                    tag = f'  ({orphaned} lead(s) orphaned)' if orphaned else ''
+                    lead_q = Lead.query.filter_by(assigned_to=e.emp_code)
+                    n_leads = lead_q.count()
+                    if reassign_to and n_leads:
+                        # Get the target employee's name for assigned_name
+                        target = Employee.query.filter_by(emp_code=reassign_to).first()
+                        target_name = target.name if target else ''
+                        tag = f'  ({n_leads} lead(s) → reassigned to {reassign_to} {target_name})'
+                        if apply_changes:
+                            for l in lead_q.all():
+                                l.assigned_to = reassign_to
+                                l.assigned_name = target_name
+                    elif n_leads:
+                        tag = f'  ({n_leads} lead(s) orphaned)'
+                        purge_orphaned_leads += n_leads
+                    else:
+                        tag = ''
                 except Exception:
                     tag = ''
                 print(f'  x DEAC {e.emp_code:12s}  {e.name}{tag}')
