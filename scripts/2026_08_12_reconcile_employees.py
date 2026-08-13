@@ -15,8 +15,12 @@ Idempotent — safe to re-run. Never deletes or deactivates existing employees
 that aren't on this list (they stay as-is).
 
 Usage:
-    python scripts/2026_08_12_reconcile_employees.py           # dry-run summary
-    python scripts/2026_08_12_reconcile_employees.py --apply   # commit changes
+    python scripts/2026_08_12_reconcile_employees.py                  # dry-run summary
+    python scripts/2026_08_12_reconcile_employees.py --apply          # commit upserts
+    python scripts/2026_08_12_reconcile_employees.py --apply --purge  # also deactivate
+                                                                       # employees NOT on the list
+                                                                       # (PCM001 super admin is
+                                                                       # always preserved)
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -163,7 +167,12 @@ def default_role(emp_code):
     return 'sales'
 
 
-def main(apply_changes: bool):
+# Accounts that must NEVER be deactivated regardless of --purge, so we
+# always have an admin door.
+PROTECTED_EMP_CODES = {'PCM001'}
+
+
+def main(apply_changes: bool, purge_others: bool):
     with app.app_context():
         existing_by_code = {e.emp_code: e
                             for e in Employee.query.all()}
@@ -208,6 +217,30 @@ def main(apply_changes: bool):
                 else:
                     already_matching_count += 1
 
+        # ── Purge phase: deactivate anyone NOT on the authoritative list ──
+        purge_count = 0
+        purge_orphaned_leads = 0
+        if purge_others:
+            authoritative_codes = {code for code, _ in EMPLOYEES} | PROTECTED_EMP_CODES
+            to_deactivate = [e for e in existing_by_code.values()
+                             if e.emp_code not in authoritative_codes
+                             and e.is_active]
+            print()
+            print(f'─── PURGE — deactivating {len(to_deactivate)} employees not on the list ───')
+            for e in to_deactivate:
+                # Count leads that will become orphaned (assigned to a deactivated user)
+                try:
+                    from app import Lead
+                    orphaned = Lead.query.filter_by(assigned_to=e.emp_code).count()
+                    purge_orphaned_leads += orphaned
+                    tag = f'  ({orphaned} lead(s) orphaned)' if orphaned else ''
+                except Exception:
+                    tag = ''
+                print(f'  x DEAC {e.emp_code:12s}  {e.name}{tag}')
+                if apply_changes:
+                    e.is_active = False
+                purge_count += 1
+
         if apply_changes:
             db.session.commit()
 
@@ -217,6 +250,9 @@ def main(apply_changes: bool):
         print(f'  Existing accounts renamed:       {name_updated_count}')
         print(f'  Existing accounts passwd-reset:  {pw_reset_count}')
         print(f'  Already matched (no name change):{already_matching_count}')
+        if purge_others:
+            print(f'  Deactivated (not on list):       {purge_count}')
+            print(f'  Leads on deactivated employees:  {purge_orphaned_leads}')
         print()
         if not apply_changes:
             print('  NOTE: this was a dry run. Re-run with --apply to commit.')
@@ -225,8 +261,14 @@ def main(apply_changes: bool):
             print('    username = <their EMP code, e.g. EMP2972023>')
             print('    password = <same EMP code>')
             print('  On first login they will be forced to set a new password.')
+            if purge_others and purge_orphaned_leads:
+                print()
+                print(f'  WARNING: {purge_orphaned_leads} lead(s) are still assigned to')
+                print(f'  now-deactivated employees. Nilesh (DIR12010) will still see')
+                print(f'  them in the admin view. Reassign via the Assign tab in CRM.')
 
 
 if __name__ == '__main__':
     apply = '--apply' in sys.argv
-    main(apply_changes=apply)
+    purge = '--purge' in sys.argv
+    main(apply_changes=apply, purge_others=purge)
