@@ -124,6 +124,7 @@ tbody td:first-child{color:var(--text-3);font-weight:400}
 .b{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:var(--r-sm);font-size:11px;font-weight:600;letter-spacing:.02em;white-space:nowrap;line-height:1;text-transform:none}
 .b::before{display:none}
 /* Stage */
+.sT{background:rgba(147,51,234,.10);color:#7C3AED}
 .sN{background:rgba(29,78,216,.10);color:#1E3A8A}
 .sC{background:rgba(29,78,216,.08);color:#1D4ED8}
 .sP{background:rgba(180,83,9,.10);color:#B45309}
@@ -313,6 +314,7 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
   </div>
   <div class="sb-sec">Workspace</div>
   <div class="sbi on" onclick="nav('dash')" data-p="dash"><span class="ic">📊</span>Dashboard</div>
+  <div class="sbi" onclick="nav('inb-pre')" data-p="inb-pre"><span class="ic">🎯</span>Pre-Sales<span class="sb-cnt" id="sbPre">0</span></div>
   <div class="sbi" onclick="nav('inb-new')" data-p="inb-new"><span class="ic">📥</span>New Opportunity<span class="sb-cnt" id="sbNew">0</span></div>
   <div class="sbi" onclick="nav('inb-qual')" data-p="inb-qual"><span class="ic">✅</span>Qualified<span class="sb-cnt" id="sbQual">0</span></div>
   <div class="sbi" onclick="nav('inb-prop')" data-p="inb-prop"><span class="ic">📝</span>Proposal Due<span class="sb-cnt" id="sbProp">0</span></div>
@@ -400,6 +402,22 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
       <span class="f-cnt" id="opCnt"></span>
     </div>
     <div class="tw"><table><thead><tr><th>Opp #</th><th>Company</th><th>Industry</th><th>₹M</th><th>Vertical</th><th>Assigned</th><th>RFQ Date</th><th>PC Stage</th><th>Close Date</th><th>Notes</th><th></th></tr></thead><tbody id="opTb"></tbody></table></div>
+  </div>
+</div>
+
+<!-- INBOX: PRE-SALES -->
+<div class="page" id="pg-inb-pre">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">Pre-Sales Inbox</div><div class="pg-sub">Early-stage prospects — pitch, contact and qualify before opportunity creation</div></div>
+    <button class="btn btn-red" onclick="newLead()">+ Add Pre-Sales Lead</button>
+  </div>
+  <div class="card" style="margin-bottom:0">
+    <div class="fbar">
+      <input class="fi fi-srch" id="inbPreS" placeholder="Search Company, industry..." oninput="rInbox('Pre-Sales','inbPre')">
+      <select class="fi" id="inbPreAsgn" onchange="rInbox('Pre-Sales','inbPre')"><option value="">All Team</option></select>
+      <span class="f-cnt" id="inbPreCnt"></span>
+    </div>
+    <div class="tw"><table><thead><tr><th>Company</th><th>State</th><th>Industry</th><th>₹M</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbPreTb"></tbody></table></div>
   </div>
 </div>
 
@@ -687,8 +705,8 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
 // ══════════════════════════════════════════════════
 //  PROCAM CRM — Frontend Application
 // ══════════════════════════════════════════════════
-const STAGES=['New Opportunity','Qualified','Proposal Due','Negotiation Due','Decision Taken','Won','Lost','On Hold','Not Interested'];
-const SC={'New Opportunity':'sN','Qualified':'sC','Proposal Due':'sP','Negotiation Due':'sR','Decision Taken':'sA','Won':'sW','Lost':'sL','On Hold':'sV','Not Interested':'sL',
+const STAGES=['Pre-Sales','New Opportunity','Qualified','Proposal Due','Negotiation Due','Decision Taken','Won','Lost','On Hold','Not Interested'];
+const SC={'Pre-Sales':'sT','New Opportunity':'sN','Qualified':'sC','Proposal Due':'sP','Negotiation Due':'sR','Decision Taken':'sA','Won':'sW','Lost':'sL','On Hold':'sV','Not Interested':'sL',
           /* legacy pass-through */ 'New':'sN','Call Done':'sC','Profile Sent':'sP','Appointment':'sA','Visit Done':'sV','RFQ Generated':'sR'};
 const SBK={jul2025:'srcJ',manju:'srcM',new_project:'srcN',subsidiary:'srcS',import:'srcI',manual:'srcMn',news:'srcI'};
 const SBL={jul2025:'Jul-25',manju:'Manju',new_project:'Arch.',subsidiary:'Subsid.',import:'Import',manual:'Manual',news:'News'};
@@ -749,7 +767,7 @@ async function init(){
 }
 
 // ── NAV ──
-const PG_TITLES={dash:'Overview','inb-new':'New Opportunity','inb-qual':'Qualified','inb-prop':'Proposal Due','inb-neg':'Negotiation Due','inb-dec':'Decision Taken',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload'};
+const PG_TITLES={dash:'Overview','inb-pre':'Pre-Sales','inb-new':'New Opportunity','inb-qual':'Qualified','inb-prop':'Proposal Due','inb-neg':'Negotiation Due','inb-dec':'Decision Taken',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload'};
 function nav(p){
   console.log('nav called:', p);
   document.querySelectorAll('.page').forEach(el=>el.classList.toggle('on',el.id==='pg-'+p));
@@ -758,6 +776,7 @@ function nav(p){
   const fns={dash:rDash,leads:rLeads,all:rAll,outreach:rOR,contacts:rCt,news:rNews,
               team:rTeam,assign:rAssign,employees:rEmps,opp:rOpp,upload:()=>upTab('xl')};
   if(fns[p]) try{fns[p]();}catch(err){console.error('nav error for page',p,err);}
+  if(p==='inb-pre')  rInbox('Pre-Sales','inbPre');
   if(p==='inb-new')  rInbox('New Opportunity','inbNew');
   if(p==='inb-qual') rInbox('Qualified','inbQual');
   if(p==='inb-prop') rInbox('Proposal Due','inbProp');
@@ -783,6 +802,7 @@ async function rDash(){
   g('sbOp').textContent=st.opp||0;
   if(st.pending_news>0){g('sbNews').textContent=st.pending_news;g('newsDot').style.display='';}
   if(st.inbox){
+    g('sbPre').textContent=st.inbox['Pre-Sales']||0;
     g('sbNew').textContent=st.inbox['New Opportunity']||0;
     g('sbQual').textContent=st.inbox['Qualified']||0;
     g('sbProp').textContent=st.inbox['Proposal Due']||0;
@@ -859,6 +879,7 @@ async function decideLead(id){
 }
 
 function refreshCurrentInbox(){
+  rInbox('Pre-Sales','inbPre');
   rInbox('New Opportunity','inbNew');
   rInbox('Qualified','inbQual');
   rInbox('Proposal Due','inbProp');
