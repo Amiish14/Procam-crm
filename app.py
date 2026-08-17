@@ -24,11 +24,12 @@ except Exception:
 # New Opportunity → Qualified → Proposal Due → Negotiation Due →
 # Decision Taken → Won  (Won triggers PM handoff)
 # At any Decision point a deal can also go to Lost / On Hold / Not Interested.
-STAGES_PIPELINE = ['New Opportunity', 'Qualified', 'Proposal Due',
+STAGES_PIPELINE = ['Pre-Sales', 'New Opportunity', 'Qualified', 'Proposal Due',
                    'Negotiation Due', 'Decision Taken']
 STAGES_TERMINAL = ['Won', 'Lost', 'On Hold', 'Not Interested']
 STAGES_ALL      = STAGES_PIPELINE + STAGES_TERMINAL
 STAGE_NEXT = {
+    'Pre-Sales':        'New Opportunity',
     'New Opportunity':  'Qualified',
     'Qualified':        'Proposal Due',
     'Proposal Due':     'Negotiation Due',
@@ -36,6 +37,31 @@ STAGE_NEXT = {
     'Decision Taken':   'Won',
 }
 DECISION_OUTCOMES = ['Won', 'Lost', 'On Hold', 'Not Interested']
+# Common Indian states — used in the Company + Lead state dropdown.
+STATE_LIST = [
+    'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh',
+    'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand',
+    'Karnataka', 'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur',
+    'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan',
+    'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh',
+    'Uttarakhand', 'West Bengal',
+    'Delhi', 'Jammu and Kashmir', 'Ladakh', 'Chandigarh',
+    'Puducherry', 'Andaman and Nicobar Islands', 'Dadra and Nagar Haveli',
+    'Daman and Diu', 'Lakshadweep',
+]
+# Reasons captured when a Lead / Opportunity is Lost
+LOSS_REASONS = [
+    'Price too high',
+    'Lost to competitor',
+    'Timeline mismatch',
+    'Vehicle/capacity unavailable',
+    'Customer postponed / on hold',
+    'Not commercially viable',
+    'Client selected in-house transport',
+    'Documentation / compliance issue',
+    'Payment terms mismatch',
+    'Other',
+]
 
 app = Flask(__name__)
 # ProxyFix honours X-Forwarded-Prefix set by nginx (see hub/nginx-procamlogitech.conf)
@@ -260,6 +286,7 @@ class Contact(db.Model):
     mobile      = db.Column(db.String(30))
     # Global fields for overseas agents
     country     = db.Column(db.String(60))
+    state       = db.Column(db.String(80), index=True)
     city        = db.Column(db.String(60))
     website     = db.Column(db.String(200))
     linkedin    = db.Column(db.String(200))
@@ -324,6 +351,7 @@ class Company(db.Model):
     industry      = db.Column(db.String(120))
     website       = db.Column(db.String(200))
     country       = db.Column(db.String(80))
+    state         = db.Column(db.String(80), index=True)
     city          = db.Column(db.String(80))
     address       = db.Column(db.Text)
     phone         = db.Column(db.String(40))
@@ -341,7 +369,8 @@ class Company(db.Model):
         return {
             'id': self.id, 'name': self.name, 'industry': self.industry or '',
             'website': self.website or '', 'country': self.country or '',
-            'city': self.city or '', 'address': self.address or '',
+            'state': self.state or '', 'city': self.city or '',
+            'address': self.address or '',
             'phone': self.phone or '', 'email': self.email or '',
             'linkedin': self.linkedin or '', 'tier': self.tier or '',
             'notes': self.notes or '', 'is_active': self.is_active,
@@ -397,6 +426,10 @@ class Opportunity(db.Model):
     won_at        = db.Column(db.DateTime)
     lost_at       = db.Column(db.DateTime)
     lost_reason   = db.Column(db.String(255))
+    # Filled when a Won opportunity is converted to a project in TMS.
+    # Free-text so it works standalone; may hold TMS project code (e.g. PRO2402...)
+    won_project_ref = db.Column(db.String(60), index=True)
+    won_project_at  = db.Column(db.DateTime)
     created_at    = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at    = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -418,6 +451,8 @@ class Opportunity(db.Model):
             'won_at': str(self.won_at)[:10] if self.won_at else '',
             'lost_at': str(self.lost_at)[:10] if self.lost_at else '',
             'lost_reason': self.lost_reason or '',
+            'won_project_ref': self.won_project_ref or '',
+            'won_project_at': str(self.won_project_at)[:10] if self.won_project_at else '',
             'created_at': str(self.created_at)[:10],
         }
 
@@ -948,6 +983,12 @@ def api_lead_decision(lid):
         return jsonify({'ok': False,
                         'error': f'Outcome must be one of {DECISION_OUTCOMES}'}), 400
     reason = (data.get('reason') or '').strip()
+    # Enforce loss-reason capture for Lost / Not Interested (spec: capture
+    # reason for future analysis)
+    if outcome in ('Lost', 'Not Interested') and not reason:
+        return jsonify({'ok': False,
+                        'error': f'reason required when marking {outcome}. '
+                                 f'Choose one of {LOSS_REASONS}.'}), 400
     _log_stage_change(lead, outcome, note=reason)
     # Also update the linked Opportunity if we have one
     if lead.opp_number:
@@ -963,6 +1004,51 @@ def api_lead_decision(lid):
                 opp.probability = 0
     db.session.commit()
     return jsonify({'ok': True, 'stage': lead.stage, 'lead': lead.to_dict()})
+
+
+@app.route('/api/opportunities/<int:oid>/convert-to-project', methods=['POST'])
+@require_auth
+def api_opp_convert_to_project(oid):
+    """Mark a Won opportunity as converted to a TMS project.
+
+    Body: {"project_ref": "PRO2402/JOB000123"}   (optional — free text)
+
+    Does not currently POST to TMS — that's a cross-app integration best
+    done from TMS itself (Rate Sourcing pulling from CRM). This endpoint
+    just stamps won_project_ref / won_project_at on the Opportunity + linked
+    Lead so the CRM knows the deal has crossed over.
+    """
+    opp = Opportunity.query.get_or_404(oid)
+    if opp.stage != 'Won':
+        return jsonify({'ok': False,
+                        'error': 'Only Won opportunities can convert to a project.'}), 400
+    data = request.get_json() or {}
+    ref = (data.get('project_ref') or '').strip()
+    opp.won_project_ref = ref or None
+    opp.won_project_at = datetime.utcnow()
+    # Also stamp on the Lead for pipeline visibility
+    if opp.lead_id:
+        lead = db.session.get(Lead, opp.lead_id)
+        if lead:
+            lead.opp_stage = 'Won → Project'
+    db.session.commit()
+    return jsonify({'ok': True, 'opportunity': opp.to_dict()})
+
+
+@app.route('/api/config/stages')
+def api_config_stages():
+    return jsonify({'pipeline': STAGES_PIPELINE, 'terminal': STAGES_TERMINAL,
+                     'all': STAGES_ALL, 'next': STAGE_NEXT})
+
+
+@app.route('/api/config/states')
+def api_config_states():
+    return jsonify({'states': STATE_LIST})
+
+
+@app.route('/api/config/loss-reasons')
+def api_config_loss_reasons():
+    return jsonify({'reasons': LOSS_REASONS})
 
 
 # ─────────────────── API: COMPETITORS ───────────────────
@@ -1041,6 +1127,7 @@ def api_create_contact():
         phone        = d.get('phone',''),
         mobile       = d.get('mobile',''),
         country      = d.get('country','India'),
+        state        = d.get('state',''),
         city         = d.get('city',''),
         website      = d.get('website',''),
         linkedin     = d.get('linkedin',''),
@@ -1050,6 +1137,28 @@ def api_create_contact():
     )
     db.session.add(ct)
     db.session.commit()
+    # If Type=Company, also upsert the Company master so pipeline dashboards
+    # get proper State + Industry columns instead of '—'.
+    if ct.contact_type == 'company' and ct.company:
+        existing = Company.query.filter(
+            db.func.lower(Company.name) == ct.company.strip().lower()).first()
+        if not existing:
+            c = Company(
+                name=ct.company.strip(), industry=ct.industry or None,
+                country=ct.country or None, state=ct.state or None,
+                city=ct.city or None, phone=ct.phone or None,
+                email=ct.email or None, website=ct.website or None,
+                linkedin=ct.linkedin or None, notes=ct.notes or None,
+                created_by=session.get('emp_code'))
+            db.session.add(c); db.session.commit()
+        else:
+            # Patch only the empty fields — never overwrite existing data
+            for src, val in [('industry', ct.industry), ('state', ct.state),
+                              ('city', ct.city), ('phone', ct.phone),
+                              ('email', ct.email), ('website', ct.website)]:
+                if val and not getattr(existing, src):
+                    setattr(existing, src, val)
+            db.session.commit()
     return jsonify({'ok': True, 'id': ct.id})
 
 @app.route('/api/contacts/<int:cid>', methods=['PUT'])
@@ -1350,7 +1459,8 @@ def api_create_company():
         return jsonify({'error': 'Company already exists', 'id': existing.id}), 409
     c = Company(name=d['name'].strip(), industry=d.get('industry'),
                 website=d.get('website'), country=d.get('country'),
-                city=d.get('city'), address=d.get('address'),
+                state=d.get('state'), city=d.get('city'),
+                address=d.get('address'),
                 phone=d.get('phone'), email=d.get('email'),
                 linkedin=d.get('linkedin'), tier=d.get('tier'),
                 notes=d.get('notes'), created_by=session.get('emp_code'))
@@ -1363,8 +1473,8 @@ def api_create_company():
 def api_update_company(cid):
     c = Company.query.get_or_404(cid)
     d = request.get_json(force=True) or {}
-    for f in ('name', 'industry', 'website', 'country', 'city', 'address',
-              'phone', 'email', 'linkedin', 'tier', 'notes'):
+    for f in ('name', 'industry', 'website', 'country', 'state', 'city',
+              'address', 'phone', 'email', 'linkedin', 'tier', 'notes'):
         if f in d: setattr(c, f, d[f])
     db.session.commit()
     return jsonify(c.to_dict())
@@ -1811,6 +1921,29 @@ def api_leads_import_commit():
 def init_db():
     with app.app_context():
         db.create_all()
+        # Additive column autoheal — safe to run every boot (Postgres
+        # ADD COLUMN IF NOT EXISTS + SQLite's ALTER TABLE won't error if
+        # column exists thanks to the try/except).
+        from sqlalchemy import text as _sql
+        _adds = [
+            ('companies',     'state',            'VARCHAR(80)'),
+            ('contacts',      'state',            'VARCHAR(80)'),
+            ('opportunities', 'won_project_ref',  'VARCHAR(60)'),
+            ('opportunities', 'won_project_at',   'TIMESTAMP'),
+        ]
+        for tbl, col, dtype in _adds:
+            try:
+                db.session.execute(_sql(
+                    f'ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} {dtype}'))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                try:
+                    db.session.execute(_sql(
+                        f'ALTER TABLE {tbl} ADD COLUMN {col} {dtype}'))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()   # column already exists — fine
         # Create employees from PRERNA Employee Master if none exist
         if Employee.query.count() == 0:
             EMPLOYEES = [

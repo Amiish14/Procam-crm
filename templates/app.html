@@ -361,7 +361,7 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
   <div class="card" style="margin-bottom:0">
     <div class="fbar">
       <input class="fi fi-srch" id="lS" placeholder="Search Company, state, industry..." oninput="rLeads()">
-      <select class="fi" id="lSt" onchange="rLeads()"><option value="">All Stages</option><option>New Opportunity</option><option>Qualified</option><option>Proposal Due</option><option>Negotiation Due</option><option>Decision Taken</option><option>Won</option><option>Lost</option><option>On Hold</option><option>Not Interested</option></select>
+      <select class="fi" id="lSt" onchange="rLeads()"><option value="">All Stages</option><option>Pre-Sales</option><option>New Opportunity</option><option>Qualified</option><option>Proposal Due</option><option>Negotiation Due</option><option>Decision Taken</option><option>Won</option><option>Lost</option><option>On Hold</option><option>Not Interested</option></select>
       <select class="fi" id="lV" onchange="rLeads()"><option value="">All Verticals</option><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option></select>
       <button class="btn btn-ghost btn-sm" onclick="clrF('l')">Clear</button>
       <span class="f-cnt" id="lCnt"></span>
@@ -379,7 +379,7 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
   <div class="card" style="margin-bottom:0">
     <div class="fbar">
       <input class="fi fi-srch" id="aS" placeholder="Search Company, state, industry..." oninput="rAll()">
-      <select class="fi" id="aSt" onchange="rAll()"><option value="">All Stages</option><option>New Opportunity</option><option>Qualified</option><option>Proposal Due</option><option>Negotiation Due</option><option>Decision Taken</option><option>Won</option><option>Lost</option><option>On Hold</option><option>Not Interested</option></select>
+      <select class="fi" id="aSt" onchange="rAll()"><option value="">All Stages</option><option>Pre-Sales</option><option>New Opportunity</option><option>Qualified</option><option>Proposal Due</option><option>Negotiation Due</option><option>Decision Taken</option><option>Won</option><option>Lost</option><option>On Hold</option><option>Not Interested</option></select>
       <select class="fi" id="aAsgn" onchange="rAll()"><option value="">All Team</option></select>
       <select class="fi" id="aV" onchange="rAll()"><option value="">All Verticals</option><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option></select>
       <select class="fi" id="aSrc" onchange="rAll()"><option value="">All Sources</option><option value="manual">Manual</option><option value="import">Imported</option><option value="news">News Lead</option><option value="jul2025">Jul-2025</option><option value="manju">Manju</option><option value="new_project">Archive</option><option value="subsidiary">Subsidiary</option></select>
@@ -636,7 +636,8 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
       <div class="fmr"><div class="fmg"><label class="fml">Name *</label><input class="fmc" id="ctN"></div><div class="fmg"><label class="fml">Company / Organisation</label><input class="fmc" id="ctC"></div></div>
       <div class="fmr"><div class="fmg"><label class="fml">Designation</label><input class="fmc" id="ctD"></div><div class="fmg"><label class="fml">Industry</label><input class="fmc" id="ctI"></div></div>
       <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="ctE" type="email"></div><div class="fmg"><label class="fml">Phone / Mobile</label><input class="fmc" id="ctP"></div></div>
-      <div class="fmr"><div class="fmg"><label class="fml">Country</label><input class="fmc" id="ctCo" value="India"></div><div class="fmg"><label class="fml">City</label><input class="fmc" id="ctCi"></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Country</label><input class="fmc" id="ctCo" value="India"></div><div class="fmg"><label class="fml">State</label><select class="fmc" id="ctSt"><option value="">—</option><option>Andhra Pradesh</option><option>Arunachal Pradesh</option><option>Assam</option><option>Bihar</option><option>Chhattisgarh</option><option>Delhi</option><option>Goa</option><option>Gujarat</option><option>Haryana</option><option>Himachal Pradesh</option><option>Jammu and Kashmir</option><option>Jharkhand</option><option>Karnataka</option><option>Kerala</option><option>Ladakh</option><option>Madhya Pradesh</option><option>Maharashtra</option><option>Manipur</option><option>Meghalaya</option><option>Mizoram</option><option>Nagaland</option><option>Odisha</option><option>Puducherry</option><option>Punjab</option><option>Rajasthan</option><option>Sikkim</option><option>Tamil Nadu</option><option>Telangana</option><option>Tripura</option><option>Uttar Pradesh</option><option>Uttarakhand</option><option>West Bengal</option></select></div></div>
+      <div class="fmg"><label class="fml">City</label><input class="fmc" id="ctCi"></div>
       <div class="fmr"><div class="fmg"><label class="fml">Website</label><input class="fmc" id="ctW" placeholder="https://"></div><div class="fmg"><label class="fml">LinkedIn</label><input class="fmc" id="ctL" placeholder="https://linkedin.com/in/..."></div></div>
       <div class="fmg"><label class="fml">Agent Type / Category</label><select class="fmc" id="ctAt"><option value="">—</option><option>Overseas Agent</option><option>Partner</option><option>Vendor</option><option>Client</option><option>Consultant</option></select></div>
       <div class="fmg"><label class="fml">Notes</label><textarea class="fmc" id="ctNote" rows="2"></textarea></div>
@@ -1199,7 +1200,7 @@ async function rCt(){
 function ctTab(t){ctype=t;document.querySelectorAll('.tabs .tab').forEach((el,i)=>el.classList.toggle('on',['person','company','agent'][i]===t));rCt();}
 function openCt(){g('ctN').value='';g('ctC').value='';g('ctD').value='';g('ctI').value='';g('ctE').value='';g('ctP').value='';g('ctCo').value='India';g('ctCi').value='';g('ctW').value='';g('ctL').value='';g('ctNote').value='';g('ctMob').style.display='flex';}
 async function saveCt(){
-  const r=await api('/api/contacts',{method:'POST',body:JSON.stringify({type:g('ctType').value,name:g('ctN').value,company:g('ctC').value,designation:g('ctD').value,industry:g('ctI').value,email:g('ctE').value,phone:g('ctP').value,country:g('ctCo').value,city:g('ctCi').value,website:g('ctW').value,linkedin:g('ctL').value,agent_type:g('ctAt').value,notes:g('ctNote').value})});
+  const r=await api('/api/contacts',{method:'POST',body:JSON.stringify({type:g('ctType').value,name:g('ctN').value,company:g('ctC').value,designation:g('ctD').value,industry:g('ctI').value,email:g('ctE').value,phone:g('ctP').value,country:g('ctCo').value,state:g('ctSt').value,city:g('ctCi').value,website:g('ctW').value,linkedin:g('ctL').value,agent_type:g('ctAt').value,notes:g('ctNote').value})});
   if(r.ok){g('ctMob').style.display='none';rCt();toast('Contact saved ✓','ok');}
 }
 
