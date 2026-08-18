@@ -609,12 +609,14 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
       <div class="opp-b">
         <div class="opp-hd"><div class="opp-ic">🎯</div><div><div class="opp-ttl">Opportunity Number</div><div class="opp-sub" id="opSub">Link this lead to an opportunity</div></div></div>
         <div class="opp-grid">
-          <div class="opp-f"><div class="opp-fl">Opp number</div><input class="fmc" id="opN" placeholder="OPP-2026-0001" style="font-family:var(--font-num);letter-spacing:.02em"></div>
+          <div class="opp-f"><div class="opp-fl">Opp number <span id="opNAuto" style="color:var(--text-3);font-weight:400;font-size:11px">(auto)</span></div><input class="fmc" id="opN" placeholder="OPP-2026-0001" style="font-family:var(--font-num);letter-spacing:.02em" readonly></div>
           <div class="opp-f"><div class="opp-fl">PC stage</div><select class="fmc" id="opSt"><option>Qualification</option><option>Needs Analysis</option><option>Proposal Sent</option><option>Negotiation</option><option>Closed Won</option><option>Closed Lost</option></select></div>
           <div class="opp-f"><div class="opp-fl">Close date</div><input type="date" class="fmc" id="opDt"></div>
+          <div class="opp-f"><div class="opp-fl">Value (INR)</div><input type="number" class="fmc" id="opVal" placeholder="e.g. 1250000" style="font-family:var(--font-num)"></div>
         </div>
       </div>
       <div class="fmg"><label class="fml">Notes</label><textarea class="fmc" id="opNts" rows="3"></textarea></div>
+      <div id="opBanner" style="display:none;background:var(--red-tint);border:1px solid var(--red);border-radius:var(--r);padding:10px 14px;margin-top:10px;font-size:12.5px;color:var(--red);font-weight:600"></div>
     </div>
     <div class="mft"><button class="btn btn-ghost" onclick="document.getElementById('opMob').style.display='none'">Cancel</button><button class="btn btn-red" onclick="saveOpp()">Link Opportunity</button></div>
   </div>
@@ -791,7 +793,13 @@ async function rDash(){
   const STAGES_FULL=STAGES;
   const CHART_GREYS=['#E5E7EB','#D1D5DB','#CBD1D9','#9CA3AF','#6B7280','#4B5563','#374151','#1F2430'];
   const stCols=STAGES_FULL.map((s,i)=>s==='Won'?'#059669':s==='Lost'||s==='Not Interested'?'#B91C1C':(s==='Negotiation Due'||s==='Proposal Due')?'#C72435':CHART_GREYS[i%CHART_GREYS.length]);
-  const stD=STAGES_FULL.map(s=>st.stages[s]||0);
+  // Sum legacy + new stage names into the new buckets during transition.
+  const LEGACY_INTO={'New':['Pre-Sales'],'Call Done':['New Opportunity'],'Profile Sent':['Qualified'],'Appointment':['Proposal Due'],'Visit Done':[],'RFQ Generated':['Negotiation Due','Decision Taken']};
+  const stD=STAGES_FULL.map(s=>{
+    let n=st.stages[s]||0;
+    (LEGACY_INTO[s]||[]).forEach(lg=>{n+=st.stages[lg]||0});
+    return n;
+  });
   const axisOpts={grid:{color:'#F0F2F5',drawBorder:false},ticks:{color:'#6B7280',font:{size:10,family:"'Barlow',sans-serif"}}};
   if(cCh.s)cCh.s.destroy();
   cCh.s=new Chart(g('cSt'),{type:'bar',data:{labels:STAGES_FULL.map(s=>s.split(' ')[0]),datasets:[{data:stD,backgroundColor:stCols,borderRadius:3,barThickness:'flex',maxBarThickness:24}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{backgroundColor:'#0B0D12',titleFont:{size:11},bodyFont:{size:12}}},scales:{x:{...axisOpts,grid:{display:false}},y:{...axisOpts,ticks:{...axisOpts.ticks,stepSize:1}}}}});
@@ -921,7 +929,7 @@ async function rOpp(){
     <td><span class="b ${l.opp_stage==='Closed Won'?'sW':l.opp_stage==='Closed Lost'?'sL':'sA'}">${e(l.opp_stage||'Qualification')}</span></td>
     <td class="tddate">${l.opp_close_date||'—'}</td>
     <td style="color:var(--text-2);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e(l.opp_notes||'')}</td>
-    <td><button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();openOpp(${l.id})">Edit</button></td>
+    <td onclick="event.stopPropagation()" style="white-space:nowrap"><button class="btn btn-ghost btn-xs" onclick="openOpp(${l.id})">Edit</button>${l.opp_number&&l.opp_stage&&OPP_NEXT[l.opp_stage]?` <button class="btn btn-red btn-xs" title="Advance to ${OPP_NEXT[l.opp_stage]}" onclick="advanceOpp(${l.id},'${l.opp_stage.replace(/'/g,"\\'")}')">Advance →</button>`:''}</td>
   </tr>`).join(''):'<tr><td colspan="11" style="text-align:center;padding:48px;color:var(--text-3)"><div style="font-weight:500;color:var(--ink-2);font-size:14px">No opportunities yet</div><div style="font-size:12px;margin-top:4px">Leads that reach RFQ Generated stage appear here</div></td></tr>';
 }
 
@@ -1080,18 +1088,65 @@ async function openOpp(id){
   let leads=await api('/api/leads?limit=500');
   if(!Array.isArray(leads))leads=[];
   const l=leads.find(x=>x.id===id);if(!l)return;
-  const r2=await api('/api/opp-next-number');
   g('opTtl').textContent=l.company;
   g('opSub').textContent=l.project||l.industry||'';
-  g('opN').value=l.opp_number||r2.number||'';
-  g('opSt').value=l.opp_stage||'Qualification';
-  g('opDt').value=l.opp_close_date||'';
-  g('opNts').value=l.opp_notes||'';
+  const b=g('opBanner');
+  if(l.opp_number){
+    // Existing opportunity — edit mode
+    g('opN').value=l.opp_number;
+    g('opNAuto').textContent='';
+    g('opSt').value=l.opp_stage||'Qualification';
+    g('opDt').value=l.opp_close_date||'';
+    g('opVal').value=l.cost?Math.round(Number(l.cost)*1000000):'';
+    g('opNts').value=l.opp_notes||'';
+    b.style.display='none';
+  } else {
+    // First-time assignment — call assign-opp endpoint on save
+    const r2=await api('/api/opp-next-number');
+    g('opN').value=r2.number||'';
+    g('opNAuto').textContent='(auto)';
+    g('opSt').value='Qualification';
+    g('opDt').value='';
+    g('opVal').value=l.cost?Math.round(Number(l.cost)*1000000):'';
+    g('opNts').value='';
+    if(l.stage==='RFQ Generated'){
+      b.textContent='RFQ received. Assigning this opportunity number will create a ProConnect opportunity record.';
+      b.style.display='block';
+    } else {
+      b.textContent='⚠️ Lead is at stage "'+l.stage+'". Only RFQ Generated leads can be assigned an opportunity.';
+      b.style.display='block';
+    }
+  }
   g('opMob').style.display='flex';
 }
 async function saveOpp(){
-  const r=await api(`/api/leads/${oppId}`,{method:'PUT',body:JSON.stringify({opp_number:g('opN').value,opp_stage:g('opSt').value,opp_close_date:g('opDt').value,opp_notes:g('opNts').value})});
-  if(r.ok){g('opMob').style.display='none';rOpp();rDash();toast('Opportunity linked ✓','ok');}
+  const leads=await api('/api/leads?limit=500');
+  const l=Array.isArray(leads)?leads.find(x=>x.id===oppId):null;
+  const val=g('opVal').value?Number(g('opVal').value):null;
+  if(l && !l.opp_number){
+    // First-time assignment via /assign-opp — creates Opportunity row + generates OPP#
+    const r=await api(`/api/leads/${oppId}/assign-opp`,{method:'POST',body:JSON.stringify({
+      stage:g('opSt').value,
+      expected_close_date:g('opDt').value||null,
+      value_inr:val,
+      notes:g('opNts').value||''
+    })});
+    if(r.ok){g('opMob').style.display='none';rOpp();rDash();toast(`Opp ${r.opp?.opp_number||''} created ✓`,'ok');}
+    else toast(r.error||'Assign failed','err');
+  } else {
+    // Edit mode — update lead-side opp fields
+    const r=await api(`/api/leads/${oppId}`,{method:'PUT',body:JSON.stringify({opp_stage:g('opSt').value,opp_close_date:g('opDt').value,opp_notes:g('opNts').value})});
+    if(r.ok){g('opMob').style.display='none';rOpp();rDash();toast('Opportunity updated ✓','ok');}
+  }
+}
+// One-click stage advance on Opportunity rows
+const OPP_NEXT={'Qualification':'Needs Analysis','Needs Analysis':'Proposal Sent','Proposal Sent':'Negotiation','Negotiation':'Closed Won'};
+async function advanceOpp(id,cur){
+  const nxt=OPP_NEXT[cur];
+  if(!nxt){toast('Terminal stage — no next step','warn');return;}
+  if(!confirm(`Advance opportunity to "${nxt}"?`))return;
+  const r=await api(`/api/leads/${id}`,{method:'PUT',body:JSON.stringify({opp_stage:nxt})});
+  if(r.ok){rOpp();rDash();toast(`Advanced to ${nxt} ✓`,'ok');}
 }
 
 // ── AI OUTREACH ──
