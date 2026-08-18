@@ -24,19 +24,43 @@ except Exception:
 # New Opportunity → Qualified → Proposal Due → Negotiation Due →
 # Decision Taken → Won  (Won triggers PM handoff)
 # At any Decision point a deal can also go to Lost / On Hold / Not Interested.
-STAGES_PIPELINE = ['Pre-Sales', 'New Opportunity', 'Qualified', 'Proposal Due',
-                   'Negotiation Due', 'Decision Taken']
+STAGES_PIPELINE = ['New', 'Call Done', 'Profile Sent', 'Appointment',
+                   'Visit Done', 'RFQ Generated']
 STAGES_TERMINAL = ['Won', 'Lost', 'On Hold', 'Not Interested']
 STAGES_ALL      = STAGES_PIPELINE + STAGES_TERMINAL
 STAGE_NEXT = {
-    'Pre-Sales':        'New Opportunity',
-    'New Opportunity':  'Qualified',
-    'Qualified':        'Proposal Due',
-    'Proposal Due':     'Negotiation Due',
-    'Negotiation Due':  'Decision Taken',
-    'Decision Taken':   'Won',
+    'New':            'Call Done',
+    'Call Done':      'Profile Sent',
+    'Profile Sent':   'Appointment',
+    'Appointment':    'Visit Done',
+    'Visit Done':     'RFQ Generated',
+    'RFQ Generated':  'Won',
+}
+# Legacy stage names → new stage names. Applied automatically when a
+# lead's stage doesn't match STAGES_ALL. Ensures 9,500+ existing leads
+# keep working through the new pipeline without a manual migration.
+LEGACY_STAGE_MAP = {
+    'Pre-Sales':        'New',
+    'New Opportunity':  'Call Done',
+    'Qualified':        'Profile Sent',
+    'Proposal Due':     'Appointment',
+    'Negotiation Due':  'Visit Done',
+    'Decision Taken':   'RFQ Generated',
 }
 DECISION_OUTCOMES = ['Won', 'Lost', 'On Hold', 'Not Interested']
+
+# ProConnect Opportunity stages — used AFTER a Lead reaches
+# 'RFQ Generated' and is converted into an Opportunity.
+OPP_STAGES_PIPELINE = ['Qualification', 'Needs Analysis',
+                        'Proposal Sent', 'Negotiation']
+OPP_STAGES_TERMINAL = ['Closed Won', 'Closed Lost']
+OPP_STAGES_ALL      = OPP_STAGES_PIPELINE + OPP_STAGES_TERMINAL
+OPP_STAGE_NEXT = {
+    'Qualification':   'Needs Analysis',
+    'Needs Analysis':  'Proposal Sent',
+    'Proposal Sent':   'Negotiation',
+    'Negotiation':     'Closed Won',
+}
 # Common Indian states — used in the Company + Lead state dropdown.
 STATE_LIST = [
     'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh',
@@ -952,21 +976,41 @@ def _log_stage_change(lead, new_stage, note=None):
 @app.route('/api/leads/<int:lid>/advance', methods=['POST'])
 @require_auth
 def api_lead_advance(lid):
-    """Advance a lead to the next pipeline stage per the workflow."""
+    """Advance a lead to the next pipeline stage per the workflow.
+
+    Also accepts explicit 'to_stage' in body to jump straight to a stage
+    (used by the pipeline stepper buttons: Call Done, Profile Sent, etc.)
+    """
     lead = Lead.query.get_or_404(lid)
-    nxt = STAGE_NEXT.get(lead.stage)
-    if not nxt:
-        return jsonify({'ok': False,
-                        'error': f'No next stage from "{lead.stage}"'}), 400
+    # Auto-migrate legacy stage names to the new pipeline
+    if lead.stage in LEGACY_STAGE_MAP:
+        lead.stage = LEGACY_STAGE_MAP[lead.stage]
     data = request.get_json() or {}
+    explicit = (data.get('to_stage') or '').strip()
+    if explicit:
+        if explicit not in STAGES_ALL:
+            return jsonify({'ok': False,
+                            'error': f'Unknown stage "{explicit}"'}), 400
+        nxt = explicit
+    else:
+        nxt = STAGE_NEXT.get(lead.stage)
+        if not nxt:
+            return jsonify({'ok': False,
+                            'error': f'No next stage from "{lead.stage}"'}), 400
     _log_stage_change(lead, nxt, note=data.get('note'))
-    # Stamp workflow-specific dates
+    # Stamp workflow-specific dates when the corresponding stage is reached
     today = date.today()
-    if nxt == 'Qualified':
+    stamp_date = data.get('event_date')
+    if stamp_date:
+        try: today = datetime.strptime(stamp_date, '%Y-%m-%d').date()
+        except ValueError: pass
+    if nxt == 'Call Done':
         lead.phone_call_date = lead.phone_call_date or today
-    elif nxt == 'Proposal Due':
+    elif nxt == 'Profile Sent':
         lead.intro_mail_date = lead.intro_mail_date or today
-    elif nxt == 'Negotiation Due':
+    elif nxt == 'Appointment':
+        lead.meeting_date = lead.meeting_date or today
+    elif nxt == 'RFQ Generated':
         lead.rfq_date = lead.rfq_date or today
     db.session.commit()
     return jsonify({'ok': True, 'stage': lead.stage, 'lead': lead.to_dict()})
@@ -1006,6 +1050,87 @@ def api_lead_decision(lid):
     return jsonify({'ok': True, 'stage': lead.stage, 'lead': lead.to_dict()})
 
 
+@app.route('/api/leads/<int:lid>/assign-opp', methods=['POST'])
+@require_auth
+def api_lead_assign_opp(lid):
+    """RFQ Generated → convert Lead into a full ProConnect Opportunity.
+
+    Body (all optional):
+      { "expected_close_date": "2026-10-01",
+        "stage": "Qualification",   # default
+        "value_inr": 1250000,
+        "notes": "..." }
+
+    Auto-generates the next OPP-YYYY-NNNN number, links back to the lead,
+    stamps opp_number on the Lead so the pipeline card shows the link.
+    """
+    lead = Lead.query.get_or_404(lid)
+    data = request.get_json() or {}
+    # Auto-migrate legacy stage names so the RFQ check works for old leads too
+    if lead.stage in LEGACY_STAGE_MAP:
+        lead.stage = LEGACY_STAGE_MAP[lead.stage]
+    if lead.stage != 'RFQ Generated':
+        return jsonify({'ok': False,
+                        'error': f'Lead must be at RFQ Generated stage. '
+                                 f'Currently: {lead.stage}'}), 400
+    if lead.opp_number:
+        return jsonify({'ok': False,
+                        'error': f'Opportunity already assigned: {lead.opp_number}'}), 400
+
+    # Generate next OPP-YYYY-NNNN
+    yr = date.today().year
+    prefix = f"OPP-{yr}-"
+    with _opp_lock:
+        max_seq = 0
+        for row in db.session.query(Opportunity.opp_number).filter(
+                Opportunity.opp_number.like(f'{prefix}%')).all():
+            try: max_seq = max(max_seq, int(str(row[0]).split('-')[-1]))
+            except (ValueError, IndexError): pass
+        for row in db.session.query(Lead.opp_number).filter(
+                Lead.opp_number.like(f'{prefix}%')).all():
+            try: max_seq = max(max_seq, int(str(row[0]).split('-')[-1]))
+            except (ValueError, IndexError): pass
+        opp_num = f"{prefix}{str(max_seq + 1).zfill(4)}"
+
+    stage = (data.get('stage') or 'Qualification').strip()
+    if stage not in OPP_STAGES_ALL: stage = 'Qualification'
+    close = data.get('expected_close_date')
+    close_d = None
+    if close:
+        try: close_d = datetime.strptime(close, '%Y-%m-%d').date()
+        except ValueError: pass
+
+    # Find or create the Company
+    company = None
+    if lead.company:
+        company = (Company.query
+                   .filter(db.func.lower(Company.name) == lead.company.strip().lower())
+                   .first())
+
+    opp = Opportunity(
+        opp_number=opp_num,
+        lead_id=lead.id,
+        company_id=company.id if company else None,
+        title=lead.project or lead.company,
+        stage=stage,
+        value_inr=(data.get('value_inr') or lead.cost_million * 10 if lead.cost_million else None),
+        probability=30 if stage == 'Qualification' else 50,
+        expected_close_date=close_d,
+        owner_emp_code=lead.assigned_to or session.get('emp_code'),
+        rfq_received_date=lead.rfq_date or date.today(),
+        notes=(data.get('notes') or lead.opp_notes or ''),
+    )
+    db.session.add(opp)
+
+    # Stamp back on Lead
+    lead.opp_number = opp_num
+    lead.opp_stage = stage
+    lead.opp_close_date = close_d
+    if data.get('notes'): lead.opp_notes = data.get('notes')
+    db.session.commit()
+    return jsonify({'ok': True, 'opp': opp.to_dict(), 'lead': lead.to_dict()})
+
+
 @app.route('/api/opportunities/<int:oid>/convert-to-project', methods=['POST'])
 @require_auth
 def api_opp_convert_to_project(oid):
@@ -1037,8 +1162,14 @@ def api_opp_convert_to_project(oid):
 
 @app.route('/api/config/stages')
 def api_config_stages():
-    return jsonify({'pipeline': STAGES_PIPELINE, 'terminal': STAGES_TERMINAL,
-                     'all': STAGES_ALL, 'next': STAGE_NEXT})
+    return jsonify({
+        'pipeline': STAGES_PIPELINE, 'terminal': STAGES_TERMINAL,
+        'all': STAGES_ALL, 'next': STAGE_NEXT,
+        'legacy_map': LEGACY_STAGE_MAP,
+        'opp_pipeline': OPP_STAGES_PIPELINE,
+        'opp_terminal': OPP_STAGES_TERMINAL,
+        'opp_all': OPP_STAGES_ALL, 'opp_next': OPP_STAGE_NEXT,
+    })
 
 
 @app.route('/api/config/states')
