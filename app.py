@@ -2744,12 +2744,19 @@ def api_kpi_performance():
             elif m['scope_type'] == 'vertical'  and m['scope_key'] != my_vertical: continue
             elif m['scope_type'] in ('user', 'team') and m['scope_key'] not in allowed: continue
         target = float(m['target_value'] or 0)
+        # SQLite returns period_start/end as strings; Postgres as date.
+        # Normalise both to date so arithmetic works everywhere.
+        def _asdate(x):
+            if isinstance(x, date): return x
+            try:    return datetime.strptime(str(x), '%Y-%m-%d').date()
+            except Exception: return today
+        ps = _asdate(m['period_start']); pe = _asdate(m['period_end'])
         actual = _kpi_actual_for(m['kpi_key'], m['scope_type'], m['scope_key'],
-                                 m['period_start'], m['period_end'])
+                                 ps, pe)
         pct = round(100.0 * actual / target, 1) if target else 0.0
         # Time pace
-        span = max(1, (m['period_end'] - m['period_start']).days)
-        elapsed = max(0, min(span, (today - m['period_start']).days))
+        span = max(1, (pe - ps).days)
+        elapsed = max(0, min(span, (today - ps).days))
         time_pct = round(100.0 * elapsed / span, 1)
         cat = catalog.get(m['kpi_key'], {})
         w = float(cat.get('warning_threshold') or 80)
@@ -2760,7 +2767,7 @@ def api_kpi_performance():
             'name': cat.get('name') or m['kpi_key'],
             'unit': cat.get('unit') or 'count',
             'scope_type': m['scope_type'], 'scope_key': m['scope_key'] or '',
-            'period_start': str(m['period_start']), 'period_end': str(m['period_end']),
+            'period_start': str(ps), 'period_end': str(pe),
             'target': target, 'actual': actual, 'achievement_pct': pct,
             'time_elapsed_pct': time_pct, 'status': status,
             'weightage': float(m['weightage'] or 10),

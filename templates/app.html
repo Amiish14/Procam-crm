@@ -331,6 +331,9 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
   <div class="sbi admin-only" onclick="nav('team')" data-p="team"><span class="ic">👥</span>Team</div>
   <div class="sbi admin-only" onclick="nav('assign')" data-p="assign"><span class="ic">⚡</span>Assign</div>
   <div class="sbi admin-only" onclick="nav('employees')" data-p="employees"><span class="ic">🔐</span>Employees</div>
+  <div class="sbi admin-only" onclick="nav('kpi')"       data-p="kpi"><span class="ic">🎯</span>KPI Settings</div>
+  <div class="sbi"            onclick="nav('perf')"      data-p="perf"><span class="ic">📈</span>My Performance</div>
+  <div class="sbi"            onclick="nav('scorecard')" data-p="scorecard"><span class="ic">🏆</span>Team Scorecard</div>
   <div class="sbi admin-only" onclick="nav('upload')" data-p="upload"><span class="ic">⬆️</span>Upload</div>
 </div>
 
@@ -606,6 +609,90 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
   <div id="newsCnt"></div>
 </div>
 
+<!-- KPI SETTINGS (admin only) -->
+<div class="page" id="pg-kpi">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">KPI Settings</div>
+         <div class="pg-sub">Configure sales targets per user / vertical / company. Actuals are computed live from CRM activity.</div></div>
+  </div>
+  <div class="card" style="padding:1rem;">
+    <div style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:end;margin-bottom:.75rem;">
+      <select class="fi" id="kpiK" style="min-width:180px;"><option value="">-- KPI --</option></select>
+      <select class="fi" id="kpiScT" onchange="kpiScopeToggle()">
+        <option value="company">Company</option>
+        <option value="vertical">Vertical</option>
+        <option value="user">User</option>
+      </select>
+      <select class="fi" id="kpiScK"><option value="">— any —</option></select>
+      <select class="fi" id="kpiPt">
+        <option value="monthly">Monthly</option>
+        <option value="quarterly">Quarterly</option>
+        <option value="fy">Financial Year</option>
+        <option value="custom">Custom</option>
+      </select>
+      <input class="fi" id="kpiPs" type="date" placeholder="Period start">
+      <input class="fi" id="kpiPe" type="date" placeholder="Period end">
+      <input class="fi" id="kpiTv" type="number" step="0.01" placeholder="Target value" style="max-width:130px;">
+      <input class="fi" id="kpiW"  type="number" step="0.1"  placeholder="Weightage %" value="10" style="max-width:110px;">
+      <button class="btn btn-red btn-sm" onclick="saveKpiTarget()">+ Add Target</button>
+    </div>
+    <div class="tw"><table>
+      <thead><tr><th>KPI</th><th>Scope</th><th>Period</th><th>Target</th><th>Weightage</th></tr></thead>
+      <tbody id="kpiTbTgt"></tbody></table></div>
+  </div>
+  <div class="card" style="padding:1rem;margin-top:.5rem;">
+    <div class="card-hd"><div class="card-ttl">KPI Master (catalog)</div></div>
+    <div class="tw"><table>
+      <thead><tr><th>Key</th><th>Name</th><th>Category</th><th>Unit</th><th>Warn %</th><th>Success %</th></tr></thead>
+      <tbody id="kpiTbMaster"></tbody></table></div>
+  </div>
+</div>
+
+<!-- MY PERFORMANCE / Target vs Actual -->
+<div class="page" id="pg-perf">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">Performance · Target vs Actual</div>
+         <div class="pg-sub" id="perfSub">Live actuals from CRM · targets configured in KPI Settings</div></div>
+    <div style="display:flex;gap:.6rem;align-items:center;">
+      <div style="font-size:.8rem;color:#6B7280;">Composite:</div>
+      <div id="perfComp" style="font-family:Barlow;font-weight:800;font-size:1.6rem;color:#C72435;">—</div>
+    </div>
+  </div>
+  <div class="krow" id="perfRings" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));"></div>
+  <div class="card" style="padding:1rem;margin-top:.5rem;">
+    <div class="tw"><table>
+      <thead><tr><th>KPI</th><th>Scope</th><th>Period</th>
+      <th>Target</th><th>Actual</th><th>Achievement</th><th>Time Elapsed</th><th>Status</th></tr></thead>
+      <tbody id="perfTb"></tbody></table></div>
+  </div>
+</div>
+
+<!-- TEAM SCORECARD -->
+<div class="page" id="pg-scorecard">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">Team Scorecard</div>
+         <div class="pg-sub" id="scSub">Sortable — click a column header or a row to drill down</div></div>
+    <div style="display:flex;gap:.5rem;">
+      <select class="fi" id="scSort" onchange="rScorecard()">
+        <option value="won">Sort · Won ↓</option>
+        <option value="active">Sort · Active pipeline ↓</option>
+        <option value="rfqs">Sort · RFQs ↓</option>
+        <option value="conv">Sort · Conversion % ↓</option>
+        <option value="value">Sort · Won Value ↓</option>
+      </select>
+    </div>
+  </div>
+  <div class="card">
+    <div class="tw"><table>
+      <thead><tr>
+        <th>PIC</th><th>Vertical</th><th>Total</th><th>Active</th><th>Calls</th>
+        <th>Profile</th><th>Appts</th><th>Visits</th><th>RFQ</th>
+        <th>Won</th><th>Lost</th><th>Conv %</th>
+        <th>Pipeline ₹M</th><th>Won ₹M</th></tr></thead>
+      <tbody id="scTb"></tbody></table></div>
+  </div>
+</div>
+
 <!-- TEAM -->
 <div class="page" id="pg-team">
   <div class="pg-hd"><div><div class="pg-ttl">Team Performance</div><div class="pg-sub">Pipeline across all pre-sales and sales staff</div></div></div>
@@ -822,14 +909,15 @@ async function init(){
 }
 
 // ── NAV ──
-const PG_TITLES={dash:'Overview','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload'};
+const PG_TITLES={dash:'Overview','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard'};
 function nav(p){
   console.log('nav called:', p);
   document.querySelectorAll('.page').forEach(el=>el.classList.toggle('on',el.id==='pg-'+p));
   document.querySelectorAll('.sbi').forEach(el=>el.classList.toggle('on',el.dataset?.p===p));
   const t=g('topPgTtl'); if(t) t.textContent=PG_TITLES[p]||'';
   const fns={dash:rDash,leads:rLeads,all:rAll,outreach:rOR,contacts:rCt,news:rNews,
-              team:rTeam,assign:rAssign,employees:rEmps,opp:rOpp,upload:()=>upTab('xl')};
+              team:rTeam,assign:rAssign,employees:rEmps,opp:rOpp,upload:()=>upTab('xl'),
+              kpi:rKpiAdmin,perf:rPerf,scorecard:rScorecard};
   if(fns[p]) try{fns[p]();}catch(err){console.error('nav error for page',p,err);}
   if(p==='inb-new')   rInbox('New','inbNew');
   if(p==='inb-call')  rInbox('Call Done','inbCall');
@@ -1692,6 +1780,173 @@ async function openNewsModal(id,title){
 async function newsAction(action){
   const r=await api(`/api/news/${newsId}/action`,{method:'POST',body:JSON.stringify({action,emp_code:g('nAsgn').value,company:g('nCo').value})});
   if(r.ok){g('nMob').style.display='none';rNews();toast(action==='convert'?'Converted to lead ✓':action==='delete'?'Removed':'Assigned ✓','ok');}
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//   KPI SETTINGS · Admin CRUD  (Phase 2)
+// ═══════════════════════════════════════════════════════════════════
+let _kpiMaster=[], _kpiTargets=[];
+
+async function rKpiAdmin(){
+  // Populate KPI catalog + existing targets in parallel.
+  const [master, targets] = await Promise.all([
+    api('/api/kpi/settings'), api('/api/kpi/targets'),
+  ]);
+  _kpiMaster  = Array.isArray(master)  ? master  : [];
+  _kpiTargets = Array.isArray(targets) ? targets : [];
+  // KPI dropdown
+  g('kpiK').innerHTML = '<option value="">-- KPI --</option>' +
+    _kpiMaster.map(k => `<option value="${e(k.kpi_key)}">${e(k.name)} · ${k.category}</option>`).join('');
+  // Master table
+  g('kpiTbMaster').innerHTML = _kpiMaster.map(k => `
+    <tr><td class="mono">${e(k.kpi_key)}</td><td>${e(k.name)}</td>
+    <td>${e(k.category)}</td><td>${e(k.unit)}</td>
+    <td>${k.warning_threshold}%</td><td>${k.success_threshold}%</td></tr>`).join('');
+  // Existing targets table
+  g('kpiTbTgt').innerHTML = _kpiTargets.length ? _kpiTargets.map(t => `
+    <tr>
+      <td>${e(t.kpi_key)}</td>
+      <td>${e(t.scope_type)}${t.scope_key ? ' · '+e(t.scope_key) : ''}</td>
+      <td>${e(t.period_start)} → ${e(t.period_end)}</td>
+      <td class="mono">${t.target_value}</td>
+      <td>${t.weightage}%</td>
+    </tr>`).join('') : '<tr><td colspan="5" style="text-align:center;padding:1rem;color:#9CA3AF;">No targets configured yet.</td></tr>';
+  // Prime scope dropdown once
+  kpiScopeToggle();
+}
+
+async function kpiScopeToggle(){
+  const st = g('kpiScT').value;
+  const el = g('kpiScK');
+  if (st === 'company') {
+    el.innerHTML = '<option value="">Whole company</option>'; el.disabled = true;
+    return;
+  }
+  el.disabled = false;
+  el.innerHTML = '<option value="">-- pick --</option>';
+  if (st === 'vertical') {
+    // Pull distinct verticals from the dashboard options endpoint (light).
+    const opt = await api('/api/dashboard/options').catch(()=>({}));
+    el.innerHTML += (opt.verticals||[]).map(v => `<option value="${e(v)}">${e(v)}</option>`).join('');
+  } else if (st === 'user') {
+    const emps = await api('/api/employees').catch(()=>[]);
+    el.innerHTML += (Array.isArray(emps) ? emps : []).map(e_ =>
+      `<option value="${e(e_.emp_code)}">${e(e_.name)} · ${e(e_.emp_code)}</option>`).join('');
+  }
+}
+
+async function saveKpiTarget(){
+  const body = {
+    kpi_key:      g('kpiK').value,
+    scope_type:   g('kpiScT').value,
+    scope_key:    g('kpiScK').value || '',
+    period_type:  g('kpiPt').value,
+    period_start: g('kpiPs').value,
+    period_end:   g('kpiPe').value,
+    target_value: parseFloat(g('kpiTv').value || '0'),
+    weightage:    parseFloat(g('kpiW').value  || '10'),
+  };
+  if (!body.kpi_key)      { toast('Pick a KPI','err'); return; }
+  if (!body.period_start || !body.period_end) { toast('Period start + end required','err'); return; }
+  if (!body.target_value) { toast('Target value required','err'); return; }
+  const r = await api('/api/kpi/targets', {method:'POST', body:JSON.stringify(body)});
+  if (r.ok) {
+    toast('Target saved ✓','ok');
+    // Clear form values apart from KPI/scope for fast repeat-entry.
+    ['kpiPs','kpiPe','kpiTv'].forEach(id => g(id).value='');
+    rKpiAdmin();
+  } else {
+    toast(r.error || 'Save failed','err');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//   MY PERFORMANCE · Target vs Actual  (Phase 2)
+// ═══════════════════════════════════════════════════════════════════
+async function rPerf(){
+  const p = await api('/api/kpi/performance');
+  const rows = (p && p.rows) || [];
+  g('perfComp').textContent = (p && p.composite_score != null) ? p.composite_score + '%' : '—';
+  g('perfComp').style.color = !rows.length ? '#9CA3AF'
+    : (p.composite_score >= 100 ? '#059669' : p.composite_score >= 80 ? '#B45309' : '#B91C1C');
+
+  // Achievement rings (one per KPI target)
+  g('perfRings').innerHTML = rows.length ? rows.map(r => {
+    const col = r.status === 'green' ? '#059669' : r.status === 'amber' ? '#B45309' : '#B91C1C';
+    const pct = Math.min(100, Math.max(0, r.achievement_pct || 0));
+    const deg = pct * 3.6;
+    const pace = r.achievement_pct - r.time_elapsed_pct;
+    const paceLbl = pace >= 0 ? `+${pace.toFixed(0)}% ahead` : `${pace.toFixed(0)}% behind`;
+    return `<div class="kpi" style="padding:1rem;">
+      <div style="display:flex;align-items:center;gap:.75rem;">
+        <div style="width:64px;height:64px;border-radius:50%;
+          background:conic-gradient(${col} ${deg}deg, #F3F4F6 0);
+          display:flex;align-items:center;justify-content:center;font-family:Barlow;font-weight:700;color:${col};font-size:.85rem;">
+          ${Math.round(r.achievement_pct)}%
+        </div>
+        <div style="flex:1;">
+          <div class="kl">${e(r.name)}</div>
+          <div style="font-family:Barlow;font-weight:700;font-size:1.1rem;color:#111827;">
+            ${Number(r.actual).toLocaleString('en-IN')} / ${Number(r.target).toLocaleString('en-IN')}
+          </div>
+          <div class="ks" style="color:${pace >= 0 ? '#059669' : '#B45309'};">${paceLbl}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('') : '<div style="grid-column:1/-1;text-align:center;padding:2rem;color:#9CA3AF;">No KPI targets in your scope. Ask admin to configure targets in <strong>KPI Settings</strong>.</div>';
+
+  // Detail table
+  g('perfTb').innerHTML = rows.length ? rows.map(r => {
+    const col = r.status === 'green' ? '#059669' : r.status === 'amber' ? '#B45309' : '#B91C1C';
+    const bar = `<div style="background:#F3F4F6;height:6px;border-radius:4px;overflow:hidden;">
+      <div style="background:${col};height:100%;width:${Math.min(100, r.achievement_pct)}%;"></div></div>`;
+    return `<tr>
+      <td><strong>${e(r.name)}</strong> <span class="mono" style="color:#9CA3AF;">${e(r.kpi_key)}</span></td>
+      <td>${e(r.scope_type)}${r.scope_key ? ' · '+e(r.scope_key) : ''}</td>
+      <td class="tddate">${e(r.period_start)} → ${e(r.period_end)}</td>
+      <td class="mono">${Number(r.target).toLocaleString('en-IN')}</td>
+      <td class="mono" style="font-weight:600;">${Number(r.actual).toLocaleString('en-IN')}</td>
+      <td style="min-width:160px;">${bar}<div style="font-size:.72rem;margin-top:.2rem;color:${col};font-weight:600;">${r.achievement_pct}%</div></td>
+      <td>${r.time_elapsed_pct}%</td>
+      <td><span style="padding:.15rem .5rem;border-radius:10px;font-size:.72rem;font-weight:600;background:${col};color:#fff;">${r.status.toUpperCase()}</span></td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="8" style="text-align:center;padding:2rem;color:#9CA3AF;">No targets in your scope.</td></tr>';
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//   TEAM SCORECARD  (Phase 3)
+// ═══════════════════════════════════════════════════════════════════
+async function rScorecard(){
+  // Reuse the dashboard summary — its pic_board already has everything.
+  const st = await api('/api/dashboard/summary');
+  let rows = (st && st.pic_board) || [];
+  const sort = (g('scSort')||{}).value || 'won';
+  const cmp = {
+    won:    (a,b) => (b.won || 0)          - (a.won || 0),
+    active: (a,b) => (b.active || 0)       - (a.active || 0),
+    rfqs:   (a,b) => (b.rfqs || 0)         - (a.rfqs || 0),
+    conv:   (a,b) => (b.conversion_pct||0) - (a.conversion_pct||0),
+    value:  (a,b) => (b.won_value||0)      - (a.won_value||0),
+  }[sort] || ((a,b)=>0);
+  rows = rows.slice().sort(cmp);
+  g('scSub').textContent = `${rows.length} PIC${rows.length===1?'':'s'} · sorted by ${sort} · click row to drill down`;
+  // Map emp_code → vertical (best-effort via /api/employees)
+  const emps = await api('/api/employees').catch(()=>[]);
+  const vertBy = {};
+  (Array.isArray(emps) ? emps : []).forEach(e_ => vertBy[e_.emp_code] = e_.vertical || '—');
+  g('scTb').innerHTML = rows.length ? rows.map(p => `
+    <tr onclick="dashSetFilter('pic','${e(p.emp_code)}');nav('dash')" style="cursor:pointer;">
+      <td><div class="td-m">${e(p.name)}</div><div class="td-s">${e(p.emp_code)}</div></td>
+      <td>${e(vertBy[p.emp_code] || '—')}</td>
+      <td>${p.total}</td><td>${p.active}</td><td>${p.calls}</td>
+      <td>${p.profile}</td><td>${p.appts}</td><td>${p.visits}</td>
+      <td>${p.rfqs}</td>
+      <td style="color:#059669;font-weight:600;">${p.won}</td>
+      <td style="color:#B91C1C;">${p.lost}</td>
+      <td>${p.conversion_pct}%</td>
+      <td>₹${Number(p.pipeline_value).toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
+      <td style="font-weight:600;">₹${Number(p.won_value).toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
+    </tr>`).join('') : '<tr><td colspan="14" style="text-align:center;padding:2rem;color:#9CA3AF;">No people-in-charge in your scope.</td></tr>';
 }
 
 // ── TEAM ──
