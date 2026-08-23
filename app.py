@@ -2402,6 +2402,11 @@ def init_db():
         # ADD COLUMN IF NOT EXISTS + SQLite's ALTER TABLE won't error if
         # column exists thanks to the try/except).
         from sqlalchemy import text as _sql
+        # SQLite doesn't accept `BOOLEAN DEFAULT FALSE` as a literal
+        # (booleans aren't a SQL type there) — use INTEGER 0/1 instead,
+        # which SQLAlchemy's Boolean adapter reads back as Python bool.
+        _is_sqlite = db.engine.dialect.name == 'sqlite'
+        _bool_ddl  = 'INTEGER DEFAULT 0' if _is_sqlite else 'BOOLEAN DEFAULT FALSE'
         _adds = [
             ('companies',     'state',            'VARCHAR(80)'),
             ('contacts',      'state',            'VARCHAR(80)'),
@@ -2410,22 +2415,32 @@ def init_db():
             # Dashboard v2 (Phase 1-3)
             ('leads',         'lost_reason',      'VARCHAR(60)'),
             ('leads',         'stage_entered_at', 'TIMESTAMP'),
-            ('employees',     'is_vertical_head', 'BOOLEAN DEFAULT FALSE'),
+            ('employees',     'is_vertical_head', _bool_ddl),
             ('employees',     'vertical_head_id', 'INTEGER'),
         ]
         for tbl, col, dtype in _adds:
             try:
+                # Postgres path — supports IF NOT EXISTS on ALTER.
                 db.session.execute(_sql(
                     f'ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} {dtype}'))
                 db.session.commit()
-            except Exception:
+                app.logger.info('autoheal added %s.%s', tbl, col)
+            except Exception as exc1:
                 db.session.rollback()
+                # SQLite path — retry without IF NOT EXISTS. Duplicate-
+                # column errors are the expected case on re-boot; log
+                # anything else so we notice a real failure.
                 try:
                     db.session.execute(_sql(
                         f'ALTER TABLE {tbl} ADD COLUMN {col} {dtype}'))
                     db.session.commit()
-                except Exception:
-                    db.session.rollback()   # column already exists — fine
+                    app.logger.info('autoheal added %s.%s (retry)', tbl, col)
+                except Exception as exc2:
+                    db.session.rollback()
+                    msg = str(exc2).lower()
+                    if 'duplicate' not in msg and 'already exists' not in msg:
+                        app.logger.warning('autoheal FAILED %s.%s: %s',
+                                            tbl, col, exc2)
         # Dashboard v2 — KPI tables autoheal (idempotent). Boot-time
         # create so /api/kpi/* work even before the standalone migration
         # script runs.
