@@ -288,11 +288,56 @@ input[type=date].fmc,input[type=date].fi{font-family:var(--font)}
 code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--surface-2);padding:1px 5px;border-radius:var(--r-sm);border:1px solid var(--border-2);color:var(--ink-2)}
 
 @media(max-width:1200px){.krow{grid-template-columns:repeat(3,1fr)}.ch-row{grid-template-columns:1fr 1fr}}
-@media(max-width:900px){.sb{display:none}}
+
+/* ───────── Mobile / tablet drawer (< 900 px) ─────────
+   Sidebar becomes a full-height off-canvas drawer that slides in
+   when the hamburger is tapped. A dark scrim (.sb-scrim) sits above
+   the content while it's open. Below 900 px the .top hamburger
+   (#sbHamb) becomes visible; above 900 px it stays hidden and the
+   sidebar is a regular column. */
+.sb-hamb{display:none;background:none;border:0;color:#111827;font-size:22px;line-height:1;padding:0 12px;cursor:pointer;margin-right:auto}
+.sb-scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:59}
+.sb-scrim.on{display:block}
+
+@media(max-width:900px){
+  .sb{position:fixed;top:0;left:-260px;height:100vh;transition:left .22s ease;box-shadow:2px 0 18px rgba(0,0,0,.4);display:flex}
+  .sb.open{left:0}
+  .sb-hamb{display:inline-block}
+  .top-uname,.top-urole{display:none}
+  .pg{padding:14px 12px}
+  .pg-hd{flex-direction:column;align-items:flex-start;gap:8px;margin-bottom:14px}
+  .krow{grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}
+  .ch-row{grid-template-columns:1fr;gap:10px;margin-bottom:14px}
+  .ch{padding:10px 12px}
+  .ch-ttl{font-size:12px}
+  /* Charts shrink so they don't dominate the viewport */
+  .ch [style*="height:190px"],
+  .ch [style*="height:200px"],
+  .ch [style*="height:220px"]{height:180px !important}
+  /* Filter bar wraps + fills width */
+  .fi{min-width:0;flex:1 1 45%}
+  .tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .tw table{min-width:640px}
+  .kpi{padding:10px 12px}
+  .kpi .kv{font-size:1.35rem}
+  .kpi .kl,.kpi .ks{font-size:.68rem}
+  .top{padding:0 12px;height:56px}
+  .top-title{font-size:15px}
+  .top-chip{padding:2px 6px}
+}
+
+@media(max-width:520px){
+  .krow{grid-template-columns:1fr 1fr;gap:6px}
+  .kpi{padding:8px 10px}
+  .kpi .kv{font-size:1.15rem}
+  .news-bell{padding:4px 8px;font-size:11px}
+  .admin-bdg{display:none !important}
+}
 </style>
 </head>
 <body>
 <div class="top">
+  <button class="sb-hamb" id="sbHamb" onclick="sbToggle()" aria-label="Menu">☰</button>
   <div class="top-title" id="topPgTtl">Overview</div>
   <div class="top-r">
     <div class="news-bell admin-only" onclick="nav('news')" id="newsBell" title="Market Intelligence">Intelligence<div class="news-dot" id="newsDot" style="display:none"></div></div>
@@ -307,7 +352,8 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
 </div>
 
 <div class="shell">
-<div class="sb">
+<div class="sb-scrim" id="sbScrim" onclick="sbToggle(false)"></div>
+<div class="sb" id="sbEl">
   <div class="sb-logo">
     <img src="https://www.procamlogistics.com/public/frontend/assets/img/logo.png" alt="Procam Group">
     <div class="sb-logo-txt">CRM</div>
@@ -910,8 +956,19 @@ async function init(){
 
 // ── NAV ──
 const PG_TITLES={dash:'Overview','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard'};
+// Mobile off-canvas sidebar drawer.
+function sbToggle(force){
+  const sb = document.getElementById('sbEl');
+  const sc = document.getElementById('sbScrim');
+  if(!sb||!sc) return;
+  const open = (force===true)?true:(force===false)?false:!sb.classList.contains('open');
+  sb.classList.toggle('open', open);
+  sc.classList.toggle('on',    open);
+}
 function nav(p){
   console.log('nav called:', p);
+  // Auto-close drawer on phones when a nav item is tapped.
+  if (window.matchMedia && window.matchMedia('(max-width:900px)').matches) sbToggle(false);
   document.querySelectorAll('.page').forEach(el=>el.classList.toggle('on',el.id==='pg-'+p));
   document.querySelectorAll('.sbi').forEach(el=>el.classList.toggle('on',el.dataset?.p===p));
   const t=g('topPgTtl'); if(t) t.textContent=PG_TITLES[p]||'';
