@@ -156,6 +156,13 @@ class Employee(db.Model):
     is_active     = db.Column(db.Boolean, default=True)
     joined_on     = db.Column(db.Date, default=date.today)
     industries    = db.Column(db.Text, default='[]')   # JSON list
+    # Dashboard-v2 hierarchy: is_vertical_head marks a manager;
+    # vertical_head_id names the manager they report to (may be null for
+    # admins / top-of-tree). Enables role-scoped drill-down without
+    # inventing a separate teams table.
+    is_vertical_head = db.Column(db.Boolean, default=False)
+    vertical_head_id = db.Column(db.Integer, db.ForeignKey('employees.id'),
+                                 nullable=True)
     created_at    = db.Column(db.DateTime, default=datetime.utcnow)
 
     def set_password(self, pw):
@@ -214,6 +221,12 @@ class Lead(db.Model):
     opp_stage        = db.Column(db.String(40))
     opp_close_date   = db.Column(db.Date)
     opp_notes        = db.Column(db.Text)
+    # Dashboard-v2: structured lost reason (one of LOSS_REASONS) + timestamp
+    # of the moment the current stage was entered, used by pipeline-ageing
+    # buckets. Both nullable so old rows keep working; migration backfills
+    # stage_entered_at from updated_at.
+    lost_reason      = db.Column(db.String(60))
+    stage_entered_at = db.Column(db.DateTime)
     # Tracking
     onboarded_date   = db.Column(db.Date, default=date.today)   # Date entered into system
     week_tag         = db.Column(db.String(20))
@@ -748,12 +761,110 @@ def api_deactivate_employee(eid):
 # ─────────────────── API: LEADS ───────────────────
 
 def leads_for_user():
-    """Return leads visible to current session user."""
+    """Return leads visible to current session user (legacy 2-tier)."""
+    q, _ = _scope_for_current_session()
+    return q
+
+
+# ────────────────────────────────────────────────────────────────
+#   DASHBOARD-V2 SCOPE ENGINE
+#   Single source of truth for "which leads is this user allowed
+#   to see?" Every dashboard endpoint funnels through this.
+# ────────────────────────────────────────────────────────────────
+def _scope_for_current_session():
+    """Return (leads_query, allowed_emp_codes_set).
+
+    Three tiers:
+      * admin              → everything
+      * vertical head      → own leads + every report's leads (walk tree)
+      * individual         → own leads only
+
+    `emp_codes` is used by the PIC / team scoreboard widgets so they
+    only show people the current user is entitled to see.
+    """
     role = session.get('role')
-    emp_code = session.get('emp_code')
+    my_code = session.get('emp_code')
+
     if role == 'admin':
-        return Lead.query
-    return Lead.query.filter_by(assigned_to=emp_code)
+        return Lead.query, {e.emp_code for e in Employee.query.all()}
+
+    # Walk direct-report tree (bounded to 6 levels — plenty for TMS).
+    me = Employee.query.filter_by(emp_code=my_code).first()
+    if not me:
+        return Lead.query.filter_by(assigned_to=my_code), {my_code}
+
+    if getattr(me, 'is_vertical_head', False):
+        codes = {my_code}
+        frontier = [me.id]
+        for _ in range(6):
+            if not frontier: break
+            reports = (Employee.query
+                       .filter(Employee.vertical_head_id.in_(frontier))
+                       .all())
+            new_ids = []
+            for r in reports:
+                if r.emp_code not in codes:
+                    codes.add(r.emp_code); new_ids.append(r.id)
+            frontier = new_ids
+        return Lead.query.filter(Lead.assigned_to.in_(codes)), codes
+
+    return Lead.query.filter_by(assigned_to=my_code), {my_code}
+
+
+def _apply_dashboard_filters(q, args):
+    """Layer the common filter-bar filters on top of a scoped query.
+
+    Recognised query-string params:
+      from_date, to_date, vertical, industry, state, stage, pic,
+      opp_stage, source, lost_reason, ageing_bucket
+    """
+    from sqlalchemy import and_
+    _stage = (args.get('stage') or '').strip()
+    _vert  = (args.get('vertical') or '').strip()
+    _ind   = (args.get('industry') or '').strip()
+    _st    = (args.get('state') or '').strip()
+    _pic   = (args.get('pic') or '').strip()
+    _oppst = (args.get('opp_stage') or '').strip()
+    _src   = (args.get('source') or '').strip()
+    _lost  = (args.get('lost_reason') or '').strip()
+    _age   = (args.get('ageing_bucket') or '').strip()
+    _from  = (args.get('from_date') or '').strip()
+    _to    = (args.get('to_date') or '').strip()
+
+    if _stage: q = q.filter(Lead.stage == _stage)
+    if _vert:  q = q.filter(Lead.procam_vertical == _vert)
+    if _ind:   q = q.filter(Lead.industry == _ind)
+    if _st:    q = q.filter(Lead.state == _st)
+    if _pic:   q = q.filter(Lead.assigned_to == _pic)
+    if _oppst: q = q.filter(Lead.opp_stage == _oppst)
+    if _src:   q = q.filter(Lead.source == _src)
+    if _lost:  q = q.filter(Lead.lost_reason == _lost)
+    # Date range uses onboarded_date (creation cohort). Later phases can
+    # switch based on `date_field` param — kept simple for now.
+    if _from:
+        try:
+            d = datetime.strptime(_from, '%Y-%m-%d').date()
+            q = q.filter(Lead.onboarded_date >= d)
+        except ValueError: pass
+    if _to:
+        try:
+            d = datetime.strptime(_to, '%Y-%m-%d').date()
+            q = q.filter(Lead.onboarded_date <= d)
+        except ValueError: pass
+    # Ageing bucket applies against stage_entered_at (else updated_at).
+    if _age in ('0-7', '8-15', '16-30', '31-60', '60+'):
+        from sqlalchemy import func as _f, or_
+        today = date.today()
+        col = db.func.coalesce(Lead.stage_entered_at, Lead.updated_at)
+        # SQLite doesn't have INTERVAL — do day math via julianday / date.
+        # Portable: filter on Python-side date bounds.
+        if   _age == '0-7':   lo, hi = today - timedelta(days=7),   today
+        elif _age == '8-15':  lo, hi = today - timedelta(days=15),  today - timedelta(days=8)
+        elif _age == '16-30': lo, hi = today - timedelta(days=30),  today - timedelta(days=16)
+        elif _age == '31-60': lo, hi = today - timedelta(days=60),  today - timedelta(days=31)
+        else:                 lo, hi = date(1970, 1, 1),            today - timedelta(days=61)
+        q = q.filter(col >= lo, col <= hi)
+    return q
 
 @app.route('/api/leads', methods=['GET'])
 @require_auth
@@ -1518,6 +1629,241 @@ def api_stats():
     })
 
 
+# ═════════════════════════════════════════════════════════════════════
+#  DASHBOARD v2 API — role-scoped, filter-aware, one-shot aggregation.
+#  Every UI element (KPI card, chart segment, funnel stage, ageing bar)
+#  passes the same filter set through /api/dashboard/summary and gets
+#  a fully-reconciled snapshot. /api/dashboard/records powers the
+#  dynamic detail table that echoes whichever filters are active.
+# ═════════════════════════════════════════════════════════════════════
+LOST_REASONS = [
+    'Price', 'Competition', 'No Response', 'Client Decision',
+    'Technical / Capability', 'Project Cancelled', 'Project Postponed',
+    'Commercial Terms', 'Service Constraint', 'Geography Constraint',
+    'Duplicate / Invalid', 'Other',
+]
+
+
+@app.route('/api/dashboard/summary')
+@require_auth
+def api_dashboard_summary():
+    """Everything the dashboard needs to redraw in one round-trip."""
+    scoped_q, allowed_codes = _scope_for_current_session()
+    q = _apply_dashboard_filters(scoped_q, request.args)
+    leads = q.all()
+    today = date.today()
+
+    def _cnt(pred):
+        return sum(1 for l in leads if pred(l))
+    def _sum(pred, field):
+        return float(sum((getattr(l, field) or 0) for l in leads if pred(l)))
+
+    active_stages   = set(STAGES_PIPELINE)
+    terminal_won    = 'Won'
+    terminal_lost   = 'Lost'
+
+    # ── Primary KPI cards ────────────────────────────────
+    kpis = {
+        'total_leads':      len(leads),
+        'active_pipeline':  _cnt(lambda l: l.stage in active_stages),
+        'intro_emailed':    _cnt(lambda l: l.intro_mail_date is not None),
+        'calls_done':       _cnt(lambda l: l.phone_call_date is not None),
+        'profile_sent':     _cnt(lambda l: l.stage in ('Profile Sent','Appointment','Visit Done','RFQ Generated','Won')),
+        'appointments':     _cnt(lambda l: l.meeting_date is not None),
+        'visits':           _cnt(lambda l: l.stage in ('Visit Done','RFQ Generated','Won')),
+        'rfq_stage':        _cnt(lambda l: l.stage == 'RFQ Generated'),
+        'rfqs_generated':   _cnt(lambda l: l.rfq_date is not None),
+        'opportunities':    _cnt(lambda l: bool(l.opp_number)),
+        'won':              _cnt(lambda l: l.stage == terminal_won),
+        'lost':             _cnt(lambda l: l.stage == terminal_lost),
+        'won_value_m':      _sum(lambda l: l.stage == terminal_won, 'cost_million'),
+        'pipeline_value_m': _sum(lambda l: l.stage in active_stages, 'cost_million'),
+        'followup_due':     _cnt(lambda l: l.followup_date is not None and l.followup_date == today),
+        'followup_overdue': _cnt(lambda l: l.followup_date is not None and l.followup_date < today
+                                            and l.stage in active_stages),
+        'no_activity_7':    _cnt(lambda l: (l.updated_at is not None and
+                                            (today - l.updated_at.date()).days > 7
+                                            and l.stage in active_stages)),
+        'no_activity_15':   _cnt(lambda l: (l.updated_at is not None and
+                                            (today - l.updated_at.date()).days > 15
+                                            and l.stage in active_stages)),
+        'no_activity_30':   _cnt(lambda l: (l.updated_at is not None and
+                                            (today - l.updated_at.date()).days > 30
+                                            and l.stage in active_stages)),
+    }
+    total = kpis['total_leads'] or 1
+    kpis['conversion_pct'] = round(100 * kpis['won'] / total, 1)
+    kpis['rfq_won_pct'] = round(
+        100 * kpis['won'] / kpis['rfqs_generated'], 1) \
+        if kpis['rfqs_generated'] else 0
+
+    # ── Distributions ────────────────────────────────────
+    def _dist(getter):
+        out = {}
+        for l in leads:
+            k = getter(l) or '—'
+            out[k] = out.get(k, 0) + 1
+        return out
+
+    stages_dist    = _dist(lambda l: l.stage)
+    industry_dist  = {k: v for k, v in _dist(lambda l: l.industry).items() if k != '—'}
+    vertical_dist  = {k: v for k, v in _dist(lambda l: l.procam_vertical).items() if k != '—'}
+    state_dist     = {k: v for k, v in _dist(lambda l: l.state).items() if k != '—'}
+    source_dist    = _dist(lambda l: l.source)
+    lost_reason_dist = {k: v for k, v in _dist(
+        lambda l: l.lost_reason if l.stage == terminal_lost else None
+    ).items() if k != '—'}
+
+    # ── Person-In-Charge scoreboard ──────────────────────
+    pic_map = {}
+    for l in leads:
+        code = l.assigned_to or '—'
+        p = pic_map.setdefault(code, {
+            'emp_code': code, 'name': l.assigned_name or code,
+            'total': 0, 'active': 0, 'calls': 0, 'profile': 0,
+            'appts': 0, 'visits': 0, 'rfqs': 0, 'won': 0, 'lost': 0,
+            'pipeline_value': 0.0, 'won_value': 0.0,
+        })
+        p['total'] += 1
+        if l.stage in active_stages: p['active'] += 1
+        if l.phone_call_date:        p['calls']  += 1
+        if l.intro_mail_date:        p['profile'] += 1
+        if l.meeting_date:           p['appts']  += 1
+        if l.stage in ('Visit Done','RFQ Generated','Won'):
+            p['visits'] += 1
+        if l.rfq_date:               p['rfqs']   += 1
+        if l.stage == terminal_won:  p['won']    += 1;  p['won_value']      += float(l.cost_million or 0)
+        if l.stage == terminal_lost: p['lost']   += 1
+        if l.stage in active_stages: p['pipeline_value'] += float(l.cost_million or 0)
+    for p in pic_map.values():
+        p['conversion_pct'] = round(100 * p['won'] / p['total'], 1) if p['total'] else 0.0
+    pic_board = sorted(pic_map.values(),
+                       key=lambda x: (-x['won'], -x['active']))
+
+    # ── Funnel counts (cumulative — each stage counts anyone who ≥ reached it) ──
+    funnel_order = [
+        ('lead',         lambda l: True),
+        ('call',         lambda l: l.phone_call_date is not None or l.stage != 'New'),
+        ('profile_sent', lambda l: l.intro_mail_date is not None or
+                                     l.stage in ('Profile Sent','Appointment','Visit Done','RFQ Generated','Won')),
+        ('appointment',  lambda l: l.meeting_date is not None or
+                                     l.stage in ('Appointment','Visit Done','RFQ Generated','Won')),
+        ('visit',        lambda l: l.stage in ('Visit Done','RFQ Generated','Won')),
+        ('rfq',          lambda l: l.rfq_date is not None or l.stage in ('RFQ Generated','Won')),
+        ('won',          lambda l: l.stage == terminal_won),
+    ]
+    funnel = []
+    prev_n = None
+    for key, pred in funnel_order:
+        n = _cnt(pred)
+        step_conv = round(100 * n / prev_n, 1) if prev_n else None
+        funnel.append({'key': key, 'count': n, 'step_conversion': step_conv})
+        prev_n = n
+
+    # ── Ageing buckets (stage_entered_at fallback → updated_at) ──
+    def _age_days(l):
+        ref = l.stage_entered_at or l.updated_at or l.created_at
+        return (today - ref.date()).days if ref else 0
+    buckets = {'0-7': 0, '8-15': 0, '16-30': 0, '31-60': 0, '60+': 0}
+    for l in leads:
+        if l.stage not in active_stages:
+            continue
+        d = _age_days(l)
+        if   d <= 7:  buckets['0-7']  += 1
+        elif d <= 15: buckets['8-15'] += 1
+        elif d <= 30: buckets['16-30'] += 1
+        elif d <= 60: buckets['31-60'] += 1
+        else:         buckets['60+']  += 1
+
+    # ── Available filter option lists (for the filter bar dropdowns) ──
+    options = {
+        'verticals':  sorted({l.procam_vertical for l in leads if l.procam_vertical}),
+        'industries': sorted({l.industry for l in leads if l.industry}),
+        'states':     sorted({l.state for l in leads if l.state}),
+        'stages':     STAGES_ALL,
+        'lost_reasons': LOST_REASONS,
+        'pic':        [{'emp_code': e.emp_code, 'name': e.name}
+                        for e in Employee.query
+                                 .filter(Employee.emp_code.in_(allowed_codes))
+                                 .filter_by(is_active=True)
+                                 .order_by(Employee.name).all()],
+    }
+
+    return jsonify({
+        'scope': {
+            'role': session.get('role'),
+            'emp_code': session.get('emp_code'),
+            'allowed_emp_codes': sorted(allowed_codes),
+        },
+        'filters_applied': {k: v for k, v in request.args.items() if v},
+        'kpis': kpis,
+        'distributions': {
+            'stages': stages_dist,
+            'industries': industry_dist,
+            'verticals': vertical_dist,
+            'states': state_dist,
+            'sources': source_dist,
+            'lost_reasons': lost_reason_dist,
+        },
+        'pic_board': pic_board,
+        'funnel': funnel,
+        'ageing': buckets,
+        'options': options,
+    })
+
+
+@app.route('/api/dashboard/records')
+@require_auth
+def api_dashboard_records():
+    """The dynamic detail table. Honours the same filter set as summary.
+    Paginated; default page size 25, max 500."""
+    scoped_q, _ = _scope_for_current_session()
+    q = _apply_dashboard_filters(scoped_q, request.args)
+
+    # Sort — most recent activity first by default.
+    sort = (request.args.get('sort') or 'updated_desc').lower()
+    if   sort == 'created_desc':  q = q.order_by(Lead.created_at.desc())
+    elif sort == 'value_desc':    q = q.order_by(Lead.cost_million.desc().nullslast())
+    elif sort == 'ageing_desc':
+        q = q.order_by(db.func.coalesce(Lead.stage_entered_at, Lead.updated_at).asc())
+    else:
+        q = q.order_by(Lead.updated_at.desc())
+
+    try:    page = max(1, int(request.args.get('page', 1)))
+    except: page = 1
+    try:    size = min(500, max(1, int(request.args.get('size', 25))))
+    except: size = 25
+
+    total = q.count()
+    rows  = q.offset((page - 1) * size).limit(size).all()
+    return jsonify({
+        'total': total, 'page': page, 'size': size,
+        'rows': [l.to_dict() for l in rows],
+    })
+
+
+@app.route('/api/dashboard/options')
+@require_auth
+def api_dashboard_options():
+    """Lightweight — filter-bar picklists without running the summary."""
+    _, allowed = _scope_for_current_session()
+    return jsonify({
+        'verticals':  sorted({v[0] for v in db.session.query(Lead.procam_vertical)
+                              .filter(Lead.procam_vertical.isnot(None)).distinct()}),
+        'industries': sorted({v[0] for v in db.session.query(Lead.industry)
+                              .filter(Lead.industry.isnot(None)).distinct()}),
+        'states':     sorted({v[0] for v in db.session.query(Lead.state)
+                              .filter(Lead.state.isnot(None)).distinct()}),
+        'stages':     STAGES_ALL,
+        'lost_reasons': LOST_REASONS,
+        'pic':        [{'emp_code': e.emp_code, 'name': e.name}
+                        for e in Employee.query
+                                 .filter(Employee.emp_code.in_(allowed))
+                                 .filter_by(is_active=True)
+                                 .order_by(Employee.name).all()],
+    })
+
+
 @app.route('/api/workflow/stages')
 @require_auth
 def api_workflow_stages():
@@ -2237,6 +2583,193 @@ def init_db():
             db.session.commit()
             print("✓ PCM001 Super Admin seeded from ADMIN_INITIAL_PASSWORD "
                   "(force-change on first login)")
+
+# ═════════════════════════════════════════════════════════════════════
+#  KPI MASTER + TARGETS + PERFORMANCE
+#  Admin manages KPI catalog and per-scope targets. Actuals are computed
+#  live off `Lead` — no manual data entry, no double-counting.
+# ═════════════════════════════════════════════════════════════════════
+def _kpi_actual_for(kpi_key, scope_type, scope_key, period_start, period_end):
+    """Compute the live actual for a KPI over (scope, period).
+
+    scope_type ∈ {'company', 'vertical', 'user'} — 'team' treated as
+    vertical for now (Phase 2 will add teams). Actuals are pulled from
+    `Lead` using the same field semantics as /api/dashboard/summary so
+    every screen agrees.
+    """
+    q = Lead.query.filter(
+        Lead.onboarded_date >= period_start,
+        Lead.onboarded_date <= period_end,
+    )
+    if scope_type == 'vertical' and scope_key:
+        q = q.filter(Lead.procam_vertical == scope_key)
+    elif scope_type == 'user' and scope_key:
+        q = q.filter(Lead.assigned_to == scope_key)
+
+    if kpi_key == 'calls_done':
+        return q.filter(Lead.phone_call_date.isnot(None)).count()
+    if kpi_key == 'profile_sent':
+        return q.filter(Lead.intro_mail_date.isnot(None)).count()
+    if kpi_key == 'appointments':
+        return q.filter(Lead.meeting_date.isnot(None)).count()
+    if kpi_key == 'visits':
+        return q.filter(Lead.stage.in_(
+            ('Visit Done','RFQ Generated','Won'))).count()
+    if kpi_key == 'rfqs_generated':
+        return q.filter(Lead.rfq_date.isnot(None)).count()
+    if kpi_key == 'new_leads':
+        return q.count()
+    if kpi_key == 'active_pipeline':
+        return q.filter(Lead.stage.in_(STAGES_PIPELINE)).count()
+    if kpi_key == 'opportunities':
+        return q.filter(Lead.opp_number.isnot(None)).count()
+    if kpi_key == 'won_count':
+        return q.filter(Lead.stage == 'Won').count()
+    if kpi_key == 'lost_count':
+        return q.filter(Lead.stage == 'Lost').count()
+    if kpi_key == 'conversion_pct':
+        tot = q.count() or 1
+        won = q.filter(Lead.stage == 'Won').count()
+        return round(100.0 * won / tot, 2)
+    if kpi_key == 'rfq_won_pct':
+        rfq = q.filter(Lead.rfq_date.isnot(None)).count() or 1
+        won = q.filter(Lead.stage == 'Won').count()
+        return round(100.0 * won / rfq, 2)
+    if kpi_key == 'won_value':
+        return float(db.session.query(
+            db.func.coalesce(db.func.sum(Lead.cost_million), 0)
+        ).filter(Lead.stage == 'Won').filter(
+            Lead.onboarded_date >= period_start,
+            Lead.onboarded_date <= period_end,
+        ).scalar() or 0)
+    if kpi_key == 'pipeline_value':
+        return float(db.session.query(
+            db.func.coalesce(db.func.sum(Lead.cost_million), 0)
+        ).filter(Lead.stage.in_(STAGES_PIPELINE)).filter(
+            Lead.onboarded_date >= period_start,
+            Lead.onboarded_date <= period_end,
+        ).scalar() or 0)
+    if kpi_key == 'followup_compliance':
+        due  = q.filter(Lead.followup_date.isnot(None)).count() or 1
+        done = q.filter(Lead.stage.in_(STAGES_TERMINAL)).count()
+        return round(100.0 * done / due, 2)
+    return 0
+
+
+def _kpi_row_dict(row):
+    """Convert a raw DB row (sqlalchemy Row) into JSON-friendly dict."""
+    return {k: v for k, v in row._mapping.items()} if hasattr(row, '_mapping') else dict(row)
+
+
+@app.route('/api/kpi/settings', methods=['GET'])
+@require_auth
+def api_kpi_settings():
+    """Return the KPI Master (catalog)."""
+    from sqlalchemy import text as _sql
+    rows = db.session.execute(_sql(
+        'SELECT kpi_key, name, category, unit, warning_threshold, '
+        'success_threshold, default_weightage, is_active FROM kpi_settings '
+        'WHERE is_active = TRUE ORDER BY category, name')).fetchall()
+    return jsonify([_kpi_row_dict(r) for r in rows])
+
+
+@app.route('/api/kpi/targets', methods=['GET', 'POST'])
+@require_auth
+def api_kpi_targets():
+    """List (GET) or create/upsert (POST) KPI targets. Admin only."""
+    if session.get('role') != 'admin' and request.method == 'POST':
+        return jsonify({'ok': False, 'error': 'admin only'}), 403
+    from sqlalchemy import text as _sql
+    if request.method == 'GET':
+        rows = db.session.execute(_sql(
+            'SELECT id, kpi_key, scope_type, scope_key, period_type, '
+            'period_start, period_end, target_value, weightage, notes '
+            'FROM kpi_targets ORDER BY period_start DESC, kpi_key')).fetchall()
+        return jsonify([{
+            **_kpi_row_dict(r),
+            'period_start': str(r._mapping['period_start']) if r._mapping['period_start'] else '',
+            'period_end':   str(r._mapping['period_end'])   if r._mapping['period_end']   else '',
+        } for r in rows])
+    d = request.get_json() or {}
+    required = ('kpi_key', 'scope_type', 'period_type', 'period_start',
+                'period_end', 'target_value')
+    for k in required:
+        if k not in d or d[k] in (None, ''):
+            return jsonify({'ok': False, 'error': f'missing {k}'}), 400
+    db.session.execute(_sql(
+        'INSERT INTO kpi_targets (kpi_key, scope_type, scope_key, period_type, '
+        'period_start, period_end, target_value, weightage, notes, created_by) '
+        'VALUES (:k, :st, :sk, :pt, :ps, :pe, :tv, :w, :n, :cb)'
+    ), {'k': d['kpi_key'], 'st': d['scope_type'],
+        'sk': d.get('scope_key') or '', 'pt': d['period_type'],
+        'ps': d['period_start'], 'pe': d['period_end'],
+        'tv': d['target_value'], 'w': d.get('weightage') or 10,
+        'n': d.get('notes') or '', 'cb': session.get('emp_code') or ''})
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/kpi/performance')
+@require_auth
+def api_kpi_performance():
+    """Target-vs-Actual for every KPI target the current user can see.
+
+    Scoping: admin → all targets. Vertical head → targets whose
+    scope_type='vertical' matches their vertical OR scope_type='user' for
+    their reports. Individual → own user targets only.
+    """
+    from sqlalchemy import text as _sql
+    rows = db.session.execute(_sql(
+        'SELECT id, kpi_key, scope_type, scope_key, period_type, '
+        'period_start, period_end, target_value, weightage FROM kpi_targets'
+    )).fetchall()
+
+    role = session.get('role')
+    my_code = session.get('emp_code') or ''
+    me = Employee.query.filter_by(emp_code=my_code).first() if my_code else None
+    my_vertical = me.vertical if me else ''
+    _, allowed = _scope_for_current_session()
+
+    catalog = {r._mapping['kpi_key']: _kpi_row_dict(r) for r in db.session.execute(_sql(
+        'SELECT kpi_key, name, unit, warning_threshold, success_threshold '
+        'FROM kpi_settings')).fetchall()}
+
+    out = []
+    today = date.today()
+    for r in rows:
+        m = r._mapping
+        # Filter by scope
+        if role != 'admin':
+            if m['scope_type'] == 'company':      pass  # everyone sees company-wide
+            elif m['scope_type'] == 'vertical'  and m['scope_key'] != my_vertical: continue
+            elif m['scope_type'] in ('user', 'team') and m['scope_key'] not in allowed: continue
+        target = float(m['target_value'] or 0)
+        actual = _kpi_actual_for(m['kpi_key'], m['scope_type'], m['scope_key'],
+                                 m['period_start'], m['period_end'])
+        pct = round(100.0 * actual / target, 1) if target else 0.0
+        # Time pace
+        span = max(1, (m['period_end'] - m['period_start']).days)
+        elapsed = max(0, min(span, (today - m['period_start']).days))
+        time_pct = round(100.0 * elapsed / span, 1)
+        cat = catalog.get(m['kpi_key'], {})
+        w = float(cat.get('warning_threshold') or 80)
+        s = float(cat.get('success_threshold') or 100)
+        status = 'green' if pct >= s else ('amber' if pct >= w else 'red')
+        out.append({
+            'id': m['id'], 'kpi_key': m['kpi_key'],
+            'name': cat.get('name') or m['kpi_key'],
+            'unit': cat.get('unit') or 'count',
+            'scope_type': m['scope_type'], 'scope_key': m['scope_key'] or '',
+            'period_start': str(m['period_start']), 'period_end': str(m['period_end']),
+            'target': target, 'actual': actual, 'achievement_pct': pct,
+            'time_elapsed_pct': time_pct, 'status': status,
+            'weightage': float(m['weightage'] or 10),
+        })
+    # Composite score = sum(pct * weightage) / sum(weightage)
+    tot_w = sum(x['weightage'] for x in out) or 1
+    composite = round(sum(x['achievement_pct'] * x['weightage'] for x in out) / tot_w, 1)
+    return jsonify({'rows': out, 'composite_score': composite})
+
 
 with app.app_context():
     init_db()

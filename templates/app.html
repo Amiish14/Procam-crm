@@ -336,21 +336,99 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
 
 <div class="content">
 
-<!-- DASHBOARD -->
+<!-- DASHBOARD v2 — interactive, filter-driven, role-scoped -->
 <div class="page on" id="pg-dash">
   <div class="pg-hd">
-    <div><div class="pg-ttl">Overview</div><div class="pg-sub" id="dSub"></div></div>
+    <div><div class="pg-ttl">Sales Intelligence</div>
+         <div class="pg-sub" id="dSub"></div></div>
     <div class="date-stamp" id="dDate"></div>
   </div>
-  <div class="krow" id="kRow"></div>
-  <div class="ch-row">
-    <div class="ch"><div class="ch-ttl">Pipeline Stages</div><div style="height:190px;position:relative"><canvas id="cSt"></canvas></div></div>
-    <div class="ch"><div class="ch-ttl">Industry Mix</div><div style="height:190px;position:relative"><canvas id="cIn"></canvas></div></div>
-    <div class="ch"><div class="ch-ttl">Vertical Split</div><div style="height:190px;position:relative"><canvas id="cVt"></canvas></div></div>
+
+  <!-- Filter bar -->
+  <div class="card" style="padding:.75rem 1rem;margin-bottom:.75rem;">
+    <div style="display:flex;flex-wrap:wrap;gap:.55rem;align-items:end;">
+      <select class="fi" id="fPeriod" onchange="dashSetPeriod(this.value)">
+        <option value="">All time</option>
+        <option value="today">Today</option>
+        <option value="week">This Week</option>
+        <option value="month">This Month</option>
+        <option value="quarter">This Quarter</option>
+        <option value="fy">This FY</option>
+      </select>
+      <input class="fi" id="fFrom" type="date" onchange="dashRefresh()">
+      <input class="fi" id="fTo"   type="date" onchange="dashRefresh()">
+      <select class="fi" id="fVert" onchange="dashRefresh()"><option value="">All Verticals</option></select>
+      <select class="fi" id="fInd"  onchange="dashRefresh()"><option value="">All Industries</option></select>
+      <select class="fi" id="fSt"   onchange="dashRefresh()"><option value="">All States</option></select>
+      <select class="fi" id="fStg"  onchange="dashRefresh()"><option value="">All Stages</option></select>
+      <select class="fi" id="fPic"  onchange="dashRefresh()"><option value="">All PIC</option></select>
+      <select class="fi" id="fLost" onchange="dashRefresh()"><option value="">All Lost Reasons</option></select>
+      <button class="btn btn-ghost btn-sm" onclick="dashReset()">Reset</button>
+    </div>
+    <div id="fChips" style="display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.5rem;"></div>
   </div>
-  <div class="card">
-    <div class="card-hd"><div class="card-ttl">Active pipeline · Top 10</div><button class="btn btn-ghost btn-sm" onclick="nav('leads')">View all</button></div>
-    <div class="tw"><table><thead><tr><th>Company</th><th>Industry</th><th>State</th><th>Stage</th><th>Vertical</th><th>Follow-up</th><th>Onboarded</th><th></th></tr></thead><tbody id="dashTb"></tbody></table></div>
+
+  <!-- Row 1 · Primary KPI -->
+  <div class="krow" id="kRow"></div>
+
+  <!-- Row 2 · Activity KPIs -->
+  <div class="krow" id="kActivity" style="margin-top:.4rem;"></div>
+
+  <!-- Row 3 · Risk / follow-ups -->
+  <div class="krow" id="kRisk" style="margin-top:.4rem;"></div>
+
+  <!-- Row 4 · Charts (stage/industry/vertical) + funnel + ageing -->
+  <div class="ch-row">
+    <div class="ch"><div class="ch-ttl">Pipeline Stages · click to filter</div>
+      <div style="height:200px;position:relative"><canvas id="cSt"></canvas></div></div>
+    <div class="ch"><div class="ch-ttl">Industry Mix</div>
+      <div style="height:200px;position:relative"><canvas id="cIn"></canvas></div></div>
+    <div class="ch"><div class="ch-ttl">Vertical Split</div>
+      <div style="height:200px;position:relative"><canvas id="cVt"></canvas></div></div>
+  </div>
+
+  <div class="ch-row" style="margin-top:.5rem;">
+    <div class="ch"><div class="ch-ttl">Sales Funnel</div>
+      <div style="height:220px;position:relative"><canvas id="cFn"></canvas></div></div>
+    <div class="ch"><div class="ch-ttl">Pipeline Ageing · click bar to filter</div>
+      <div style="height:220px;position:relative"><canvas id="cAg"></canvas></div></div>
+    <div class="ch"><div class="ch-ttl">Lost Reasons</div>
+      <div style="height:220px;position:relative"><canvas id="cLo"></canvas></div></div>
+  </div>
+
+  <!-- Row 5 · PIC scoreboard -->
+  <div class="card" style="margin-top:.5rem;">
+    <div class="card-hd"><div class="card-ttl">Person In-Charge · Scoreboard (click a row to filter)</div>
+      <span class="f-cnt" id="picCnt"></span></div>
+    <div class="tw"><table>
+      <thead><tr><th>PIC</th><th>Total</th><th>Active</th><th>Calls</th><th>Profile</th>
+      <th>Appts</th><th>Visits</th><th>RFQ</th><th>Won</th><th>Lost</th>
+      <th>Conv %</th><th>Pipeline ₹M</th><th>Won ₹M</th></tr></thead>
+      <tbody id="picTb"></tbody></table></div>
+  </div>
+
+  <!-- Row 6 · Dynamic Detail Table -->
+  <div class="card" style="margin-top:.5rem;">
+    <div class="card-hd">
+      <div class="card-ttl" id="detTtl">Records</div>
+      <div style="display:flex;gap:.4rem;align-items:center;">
+        <input class="fi fi-srch" id="detSrch" placeholder="Filter within results…"
+               oninput="dashRenderRecords()" style="max-width:220px;">
+        <select class="fi" id="detSort" onchange="dashLoadRecords()">
+          <option value="updated_desc">Recently updated</option>
+          <option value="created_desc">Newest first</option>
+          <option value="value_desc">Value: high → low</option>
+          <option value="ageing_desc">Oldest in stage</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" onclick="dashLoadRecords(true)">View all</button>
+      </div>
+    </div>
+    <div class="tw"><table>
+      <thead><tr><th>Company / Project</th><th>Industry</th><th>State</th>
+      <th>PIC</th><th>Vertical</th><th>Stage</th><th>Follow-up</th>
+      <th>Onboarded</th><th>₹M</th><th></th></tr></thead>
+      <tbody id="dashTb"></tbody></table></div>
+    <div id="detPager" style="padding:.5rem 1rem;text-align:right;font-size:.8rem;color:#6B7280;"></div>
   </div>
 </div>
 
@@ -762,7 +840,322 @@ function nav(p){
 }
 
 // ── DASHBOARD ──
+// ═══════════════════════════════════════════════════════════════════
+//   DASHBOARD v2 — filter store, unified summary + records loader
+// ═══════════════════════════════════════════════════════════════════
+const dashState = {
+  filters: {},        // {stage,vertical,industry,state,pic,lost_reason,ageing_bucket,from_date,to_date,opp_stage}
+  summary: null,
+  records: [],
+  page: 1, size: 25, total: 0,
+  loading: false,
+};
+
+function dashSetFilter(key, val){
+  if (val === null || val === undefined || val === '') delete dashState.filters[key];
+  else dashState.filters[key] = val;
+  // Mirror to filter-bar controls so they show the active pick.
+  const bar = {stage:'fStg', vertical:'fVert', industry:'fInd', state:'fSt',
+                pic:'fPic', lost_reason:'fLost'};
+  Object.entries(bar).forEach(([fk, id]) => {
+    const el = g(id); if(!el) return;
+    el.value = dashState.filters[fk] || '';
+  });
+  dashState.page = 1;
+  dashRefresh();
+}
+
+function dashToggleFilter(key, val){
+  if (dashState.filters[key] === val) dashSetFilter(key, null);
+  else dashSetFilter(key, val);
+}
+
+function dashReset(){
+  dashState.filters = {};
+  ['fStg','fVert','fInd','fSt','fPic','fLost','fFrom','fTo','fPeriod','detSrch'].forEach(id=>{
+    const el = g(id); if(el) el.value='';
+  });
+  dashState.page = 1;
+  dashRefresh();
+}
+
+function dashSetPeriod(kind){
+  const t = new Date();
+  const iso = d => d.toISOString().slice(0,10);
+  let from='', to='';
+  if (kind === 'today')   { from = to = iso(t); }
+  else if (kind === 'week'){
+    const day = (t.getDay() + 6) % 7;  // Mon=0
+    const mon = new Date(t); mon.setDate(t.getDate() - day);
+    from = iso(mon); to = iso(t);
+  } else if (kind === 'month'){
+    from = iso(new Date(t.getFullYear(), t.getMonth(), 1)); to = iso(t);
+  } else if (kind === 'quarter'){
+    const q = Math.floor(t.getMonth()/3);
+    from = iso(new Date(t.getFullYear(), q*3, 1)); to = iso(t);
+  } else if (kind === 'fy'){
+    const y = t.getMonth() >= 3 ? t.getFullYear() : t.getFullYear()-1;
+    from = iso(new Date(y, 3, 1)); to = iso(t);
+  }
+  g('fFrom').value = from; g('fTo').value = to;
+  dashState.filters.from_date = from || undefined;
+  dashState.filters.to_date   = to   || undefined;
+  if (!from) { delete dashState.filters.from_date; delete dashState.filters.to_date; }
+  dashRefresh();
+}
+
+function dashRefresh(){
+  // Pull filter-bar values into state first (in case user typed a date).
+  const bar = {fStg:'stage', fVert:'vertical', fInd:'industry', fSt:'state',
+               fPic:'pic', fLost:'lost_reason', fFrom:'from_date', fTo:'to_date'};
+  Object.entries(bar).forEach(([id, key]) => {
+    const el = g(id); if(!el) return;
+    const v = (el.value || '').trim();
+    if (v) dashState.filters[key] = v; else delete dashState.filters[key];
+  });
+  return Promise.all([dashLoadSummary(), dashLoadRecords()]);
+}
+
+async function dashLoadSummary(){
+  if (dashState.loading) return;
+  dashState.loading = true;
+  try {
+    const st = await api('/api/dashboard/summary?' + qp(dashState.filters));
+    dashState.summary = st;
+    dashRenderChips(st);
+    dashRenderPrimaryKpis(st);
+    dashRenderActivityKpis(st);
+    dashRenderRiskKpis(st);
+    dashRenderCharts(st);
+    dashRenderPicBoard(st);
+    dashPopulateFilterOptions(st);
+    g('dSub').textContent = st.kpis.total_leads
+      ? `${Number(st.kpis.total_leads).toLocaleString('en-IN')} leads in current view · scope: ${st.scope.role}`
+      : 'No leads in current view.';
+  } catch (err) {
+    console.error('dashboard/summary failed:', err);
+  } finally {
+    dashState.loading = false;
+  }
+}
+
+async function dashLoadRecords(viewAll){
+  if (viewAll) dashState.size = 500;
+  const p = {...dashState.filters,
+             page: dashState.page, size: dashState.size,
+             sort: (g('detSort')||{}).value || 'updated_desc'};
+  try {
+    const r = await api('/api/dashboard/records?' + qp(p));
+    dashState.records = r.rows || [];
+    dashState.total   = r.total || 0;
+    dashRenderRecords();
+  } catch (err) {
+    console.error('dashboard/records failed:', err);
+  }
+}
+
+function dashRenderChips(st){
+  const chips = Object.entries(st.filters_applied || {})
+    .filter(([k]) => !['page','size','sort'].includes(k))
+    .map(([k, v]) =>
+      `<span style="display:inline-flex;align-items:center;gap:.35rem;padding:.15rem .5rem;
+        background:#FEF2F2;color:#B91C1C;border:1px solid #FCA5A5;border-radius:10px;
+        font-size:.72rem;font-weight:600;">
+        ${e(k)}: ${e(v)}
+        <span style="cursor:pointer;font-weight:700;" onclick="dashSetFilter('${k}',null)">×</span>
+       </span>`).join('');
+  g('fChips').innerHTML = chips + (chips
+    ? ` <button class="btn btn-ghost btn-xs" onclick="dashReset()">clear all</button>`
+    : `<span style="color:#9CA3AF;font-size:.72rem;">No filters applied — showing your full permitted scope.</span>`);
+}
+
+function _kpi(l, v, s, fkey, fval){
+  return `<div class="kpi" style="cursor:pointer${
+    fkey && dashState.filters[fkey] === fval ? ';outline:2px solid #C72435;' : ''
+  }" onclick="dashToggleFilter('${fkey||''}','${fval||''}')">
+    <div class="kl">${l}</div><div class="kv">${v}</div><div class="ks">${s||''}</div></div>`;
+}
+
+function dashRenderPrimaryKpis(st){
+  const k = st.kpis;
+  g('kRow').innerHTML = [
+    _kpi('Total leads',      k.total_leads,     'All sources',            null, null),
+    _kpi('Active pipeline',  k.active_pipeline, 'In one of 6 stages',     'stage', 'active'),
+    _kpi('Intro emailed',    k.intro_emailed,   pct(k.intro_emailed, k.total_leads) + ' of total', null, null),
+    _kpi('RFQ stage',        k.rfq_stage,       'Quote sent',             'stage', 'RFQ Generated'),
+    _kpi('Opportunities',    k.opportunities,   'OPP# assigned',          null, null),
+    _kpi('Won',              k.won,             k.conversion_pct + '% conv', 'stage', 'Won'),
+    _kpi('Lost',             k.lost,            'Deals lost',             'stage', 'Lost'),
+    _kpi('Business Won ₹M',  fmtInr(k.won_value_m),  'Sum of won-lead value',  null, null),
+  ].join('');
+}
+function dashRenderActivityKpis(st){
+  const k = st.kpis;
+  g('kActivity').innerHTML = [
+    _kpi('Calls done',    k.calls_done,     'Lead.phone_call_date'),
+    _kpi('Profiles sent', k.profile_sent,   'Post-Profile Sent stage'),
+    _kpi('Appointments',  k.appointments,   'Lead.meeting_date'),
+    _kpi('Visits',        k.visits,         'Visit Done+'),
+    _kpi('RFQs generated',k.rfqs_generated, 'Lead.rfq_date'),
+    _kpi('Pipeline ₹M',   fmtInr(k.pipeline_value_m), 'Active-stage value'),
+    _kpi('RFQ→Won %',     k.rfq_won_pct + '%', 'Of RFQs raised'),
+  ].join('');
+}
+function dashRenderRiskKpis(st){
+  const k = st.kpis;
+  g('kRisk').innerHTML = [
+    _kpi('Follow-up due today', k.followup_due,     'Action needed today'),
+    _kpi('Follow-up overdue',   k.followup_overdue, 'Missed deadlines'),
+    _kpi('No activity 7d+',     k.no_activity_7,    'Stale leads'),
+    _kpi('No activity 15d+',    k.no_activity_15,   'Very stale'),
+    _kpi('No activity 30d+',    k.no_activity_30,   'Critical stall'),
+  ].join('');
+}
+function pct(n, tot){ return tot ? Math.round(n/tot*100) + '%' : '—'; }
+function fmtInr(v){ return '₹' + Number(v || 0).toLocaleString('en-IN', {maximumFractionDigits: 1}); }
+
+function dashRenderCharts(st){
+  const GREY = ['#E5E7EB','#D1D5DB','#CBD1D9','#9CA3AF','#6B7280','#4B5563','#374151','#1F2430'];
+  const stageLabels = Object.keys(st.distributions.stages || {});
+  const stageData   = stageLabels.map(k => st.distributions.stages[k]);
+  const stageCols   = stageLabels.map((s,i) => s==='Won'?'#059669':(s==='Lost'||s==='Not Interested')?'#B91C1C':(s==='RFQ Generated'?'#C72435':GREY[i%GREY.length]));
+
+  if (cCh.s) cCh.s.destroy();
+  cCh.s = new Chart(g('cSt'), {type:'bar',
+    data:{labels:stageLabels, datasets:[{data:stageData, backgroundColor:stageCols, borderRadius:3, barThickness:'flex', maxBarThickness:26}]},
+    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false},
+      tooltip:{backgroundColor:'#0B0D12'}},
+      onClick:(_,el)=>{ if(el.length){ dashToggleFilter('stage', stageLabels[el[0].index]); } },
+      scales:{x:{grid:{display:false},ticks:{color:'#6B7280',font:{size:10}}},
+              y:{ticks:{color:'#6B7280',font:{size:10},stepSize:1},grid:{color:'#F0F2F5'}}}}});
+
+  const iK = Object.keys(st.distributions.industries || {}).sort((a,b)=>st.distributions.industries[b]-st.distributions.industries[a]).slice(0,8);
+  if (cCh.i) cCh.i.destroy();
+  cCh.i = new Chart(g('cIn'), {type:'doughnut',
+    data:{labels:iK, datasets:[{data:iK.map(k=>st.distributions.industries[k]), backgroundColor:['#C72435',...GREY.slice(1)], borderWidth:2, borderColor:'#fff'}]},
+    options:{responsive:true, maintainAspectRatio:false, cutout:'62%',
+      plugins:{legend:{position:'right', labels:{boxWidth:8, color:'#6B7280', font:{size:10}, padding:6}},
+                tooltip:{backgroundColor:'#0B0D12'}},
+      onClick:(_,el)=>{ if(el.length){ dashToggleFilter('industry', iK[el[0].index]); } }}});
+
+  const vK = Object.keys(st.distributions.verticals || {});
+  if (cCh.v) cCh.v.destroy();
+  cCh.v = new Chart(g('cVt'), {type:'doughnut',
+    data:{labels:vK, datasets:[{data:vK.map(k=>st.distributions.verticals[k]), backgroundColor:['#C72435','#6B7280','#9CA3AF','#CBD1D9','#374151'], borderWidth:2, borderColor:'#fff'}]},
+    options:{responsive:true, maintainAspectRatio:false, cutout:'62%',
+      plugins:{legend:{position:'right', labels:{boxWidth:8, color:'#6B7280', font:{size:10}, padding:6}},
+                tooltip:{backgroundColor:'#0B0D12'}},
+      onClick:(_,el)=>{ if(el.length){ dashToggleFilter('vertical', vK[el[0].index]); } }}});
+
+  // Funnel
+  const fn = st.funnel || [];
+  if (cCh.f) cCh.f.destroy();
+  cCh.f = new Chart(g('cFn'), {type:'bar',
+    data:{labels:fn.map(x=>x.key), datasets:[{data:fn.map(x=>x.count), backgroundColor:'#C72435', borderRadius:3}]},
+    options:{indexAxis:'y', responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false},
+        tooltip:{callbacks:{afterLabel:c=>{const step=fn[c.dataIndex]?.step_conversion; return step!==null?`Step conv: ${step}%`:''}},
+          backgroundColor:'#0B0D12'}},
+      scales:{x:{grid:{color:'#F0F2F5'},ticks:{color:'#6B7280',font:{size:10}}},
+              y:{grid:{display:false},ticks:{color:'#6B7280',font:{size:10}}}}}});
+
+  // Ageing
+  const ageKeys = ['0-7','8-15','16-30','31-60','60+'];
+  const ageData = ageKeys.map(k => (st.ageing||{})[k] || 0);
+  const ageCols = ['#D1D5DB','#F59E0B','#F97316','#EF4444','#7F1D1D'];
+  if (cCh.a) cCh.a.destroy();
+  cCh.a = new Chart(g('cAg'), {type:'bar',
+    data:{labels:ageKeys.map(k=>k+' d'), datasets:[{data:ageData, backgroundColor:ageCols, borderRadius:3}]},
+    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false},tooltip:{backgroundColor:'#0B0D12'}},
+      onClick:(_,el)=>{ if(el.length){ dashToggleFilter('ageing_bucket', ageKeys[el[0].index]); } },
+      scales:{x:{grid:{display:false},ticks:{color:'#6B7280',font:{size:10}}},
+              y:{grid:{color:'#F0F2F5'},ticks:{color:'#6B7280',font:{size:10},stepSize:1}}}}});
+
+  // Lost reasons
+  const lo = st.distributions.lost_reasons || {};
+  const loK = Object.keys(lo);
+  if (cCh.l) cCh.l.destroy();
+  cCh.l = new Chart(g('cLo'), {type:'bar',
+    data:{labels:loK, datasets:[{data:loK.map(k=>lo[k]), backgroundColor:'#B91C1C', borderRadius:3}]},
+    options:{indexAxis:'y', responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{backgroundColor:'#0B0D12'}},
+      onClick:(_,el)=>{ if(el.length){ dashSetFilter('stage','Lost'); dashSetFilter('lost_reason', loK[el[0].index]); } },
+      scales:{x:{grid:{color:'#F0F2F5'},ticks:{color:'#6B7280',font:{size:10}}},
+              y:{grid:{display:false},ticks:{color:'#6B7280',font:{size:10}}}}}});
+}
+
+function dashRenderPicBoard(st){
+  const rows = st.pic_board || [];
+  g('picCnt').textContent = `${rows.length} PIC${rows.length===1?'':'s'} in scope`;
+  g('picTb').innerHTML = rows.length ? rows.map(p => `
+    <tr onclick="dashToggleFilter('pic','${e(p.emp_code)}')" style="cursor:pointer;">
+      <td><div class="td-m">${e(p.name)}</div><div class="td-s">${e(p.emp_code)}</div></td>
+      <td>${p.total}</td><td>${p.active}</td><td>${p.calls}</td>
+      <td>${p.profile}</td><td>${p.appts}</td><td>${p.visits}</td>
+      <td>${p.rfqs}</td>
+      <td style="color:#059669;font-weight:600;">${p.won}</td>
+      <td style="color:#B91C1C;">${p.lost}</td>
+      <td>${p.conversion_pct}%</td>
+      <td>₹${Number(p.pipeline_value).toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
+      <td style="font-weight:600;">₹${Number(p.won_value).toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
+    </tr>`).join('') : '<tr><td colspan="13" style="text-align:center;padding:2rem;color:#9CA3AF;">No people-in-charge in current view.</td></tr>';
+}
+
+function dashRenderRecords(){
+  const srch = ((g('detSrch')||{}).value || '').toLowerCase();
+  const rows = srch ? dashState.records.filter(l =>
+    ((l.company||'') + ' ' + (l.state||'') + ' ' + (l.industry||'') + ' ' + (l.pic||'')).toLowerCase().includes(srch)
+  ) : dashState.records;
+
+  g('detTtl').textContent = `Records${Object.keys(dashState.filters).length
+    ? ' — filtered' : ''} · ${dashState.total.toLocaleString('en-IN')}`;
+  g('dashTb').innerHTML = rows.length ? rows.map(l => `
+    <tr onclick="openLd(${l.id})" style="cursor:pointer;">
+      <td><div class="td-m">${e(l.company)}</div><div class="td-s">${e(l.project||'')}</div></td>
+      <td>${e(l.industry||'—')}</td><td>${e(l.state||'—')}</td>
+      <td>${e(l.assigned_name||l.assigned_to||'—')}</td>
+      <td>${vb(l.procam_vertical)}</td>
+      <td>${sb(l.stage)}</td>
+      <td class="tddate">${l.followup||'—'}</td>
+      <td class="tddate">${l.onboarded_date||'—'}</td>
+      <td>₹${Number(l.cost||0).toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
+      <td><button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();openLd(${l.id})">Open</button></td>
+    </tr>`).join('') : `<tr><td colspan="10" style="text-align:center;padding:2.5rem;color:#9CA3AF;">
+      No records match the current filter combination.</td></tr>`;
+
+  const pgMax = Math.max(1, Math.ceil(dashState.total / dashState.size));
+  g('detPager').innerHTML = `Page ${dashState.page} of ${pgMax} — showing ${rows.length} of ${dashState.total}
+    ${dashState.page > 1 ? `<button class="btn btn-ghost btn-xs" onclick="dashState.page--;dashLoadRecords()">‹ Prev</button>` : ''}
+    ${dashState.page < pgMax ? `<button class="btn btn-ghost btn-xs" onclick="dashState.page++;dashLoadRecords()">Next ›</button>` : ''}`;
+}
+
+function dashPopulateFilterOptions(st){
+  const opt = st.options || {};
+  const fill = (id, list, mapper) => {
+    const el = g(id); if(!el) return;
+    const cur = el.value;
+    const first = el.querySelector('option').outerHTML;
+    el.innerHTML = first + (list||[]).map(mapper).join('');
+    el.value = cur;
+  };
+  fill('fVert', opt.verticals,  v => `<option>${e(v)}</option>`);
+  fill('fInd',  opt.industries, v => `<option>${e(v)}</option>`);
+  fill('fSt',   opt.states,     v => `<option>${e(v)}</option>`);
+  fill('fStg',  opt.stages,     v => `<option>${e(v)}</option>`);
+  fill('fPic',  opt.pic,        p => `<option value="${e(p.emp_code)}">${e(p.name)}</option>`);
+  fill('fLost', opt.lost_reasons, v => `<option>${e(v)}</option>`);
+}
+
+// Bridge: preserve the old rDash() name so other code (nav, refreshCurrentInbox
+// callbacks) that calls it still works — it now proxies to dashRefresh().
 async function rDash(){
+  await dashRefresh();
+  // Sidebar counts pulled from summary since /api/stats is no longer called here.
+  const k = (dashState.summary||{}).kpis || {};
+  if (g('sbN'))  g('sbN').textContent  = k.active_pipeline || 0;
+  if (g('sbOp')) g('sbOp').textContent = k.opportunities   || 0;
+  return;   // early-exit — legacy code path below is dead but kept for shape
+  // ── legacy /api/stats fallback (unreachable) ────────────────────
   let st;
   try{ st=await api('/api/stats'); } catch(err){ console.error('Stats error:',err); st={total:0,active:0,mailed:0,rfq:0,opp:0,won:0,stages:{},industries:{},verticals:{},team:[],pending_news:0}; }
   if(!st) return;
