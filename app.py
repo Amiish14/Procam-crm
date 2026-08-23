@@ -2407,6 +2407,11 @@ def init_db():
             ('contacts',      'state',            'VARCHAR(80)'),
             ('opportunities', 'won_project_ref',  'VARCHAR(60)'),
             ('opportunities', 'won_project_at',   'TIMESTAMP'),
+            # Dashboard v2 (Phase 1-3)
+            ('leads',         'lost_reason',      'VARCHAR(60)'),
+            ('leads',         'stage_entered_at', 'TIMESTAMP'),
+            ('employees',     'is_vertical_head', 'BOOLEAN DEFAULT FALSE'),
+            ('employees',     'vertical_head_id', 'INTEGER'),
         ]
         for tbl, col, dtype in _adds:
             try:
@@ -2421,6 +2426,70 @@ def init_db():
                     db.session.commit()
                 except Exception:
                     db.session.rollback()   # column already exists — fine
+        # Dashboard v2 — KPI tables autoheal (idempotent). Boot-time
+        # create so /api/kpi/* work even before the standalone migration
+        # script runs.
+        for _ddl in (
+            "CREATE TABLE IF NOT EXISTS kpi_settings ("
+            "  id INTEGER PRIMARY KEY, kpi_key VARCHAR(60) UNIQUE NOT NULL,"
+            "  name VARCHAR(200) NOT NULL, category VARCHAR(40) NOT NULL,"
+            "  unit VARCHAR(20) DEFAULT 'count', source_expr TEXT,"
+            "  warning_threshold NUMERIC(5,2) DEFAULT 80,"
+            "  success_threshold NUMERIC(5,2) DEFAULT 100,"
+            "  default_weightage NUMERIC(5,2) DEFAULT 10,"
+            "  is_active BOOLEAN DEFAULT TRUE,"
+            "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+            "  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+            "CREATE TABLE IF NOT EXISTS kpi_targets ("
+            "  id INTEGER PRIMARY KEY, kpi_key VARCHAR(60) NOT NULL,"
+            "  scope_type VARCHAR(20) NOT NULL, scope_key VARCHAR(60),"
+            "  period_type VARCHAR(20) NOT NULL, period_start DATE NOT NULL,"
+            "  period_end DATE NOT NULL, target_value NUMERIC(15,2) NOT NULL,"
+            "  weightage NUMERIC(5,2) DEFAULT 10, notes TEXT,"
+            "  created_by VARCHAR(20), updated_by VARCHAR(20),"
+            "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+            "  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+        ):
+            try:
+                # Postgres needs SERIAL, but 'INTEGER PRIMARY KEY' works on
+                # SQLite. For Postgres we substitute at runtime.
+                if db.engine.dialect.name == 'postgresql':
+                    _ddl = _ddl.replace('INTEGER PRIMARY KEY',
+                                        'SERIAL PRIMARY KEY')
+                db.session.execute(_sql(_ddl))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+        # Seed default KPI catalog if empty.
+        try:
+            has_any = db.session.execute(_sql('SELECT 1 FROM kpi_settings LIMIT 1')).fetchone()
+            if not has_any:
+                _defaults = [
+                    ('calls_done','Calls Done','activity','count'),
+                    ('profile_sent','Profiles Sent','activity','count'),
+                    ('appointments','Appointments','activity','count'),
+                    ('visits','Visits','activity','count'),
+                    ('rfqs_generated','RFQs Generated','activity','count'),
+                    ('new_leads','New Leads','pipeline','count'),
+                    ('active_pipeline','Active Pipeline','pipeline','count'),
+                    ('opportunities','Opportunities','pipeline','count'),
+                    ('won_count','Deals Won','pipeline','count'),
+                    ('lost_count','Deals Lost','pipeline','count'),
+                    ('conversion_pct','Lead → Won Conversion %','conversion','percent'),
+                    ('rfq_won_pct','RFQ → Won %','conversion','percent'),
+                    ('won_value','Business Won (INR M)','commercial','inr'),
+                    ('pipeline_value','Pipeline Value (INR M)','commercial','inr'),
+                    ('followup_compliance','Follow-up Compliance %','activity','percent'),
+                ]
+                for k, n, c, u in _defaults:
+                    db.session.execute(_sql(
+                        'INSERT INTO kpi_settings (kpi_key, name, category, unit, '
+                        'warning_threshold, success_threshold, default_weightage, is_active) '
+                        'VALUES (:k, :n, :c, :u, 80, 100, 10, TRUE)'),
+                        {'k': k, 'n': n, 'c': c, 'u': u})
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
         # Create employees from PRERNA Employee Master if none exist
         if Employee.query.count() == 0:
             EMPLOYEES = [
