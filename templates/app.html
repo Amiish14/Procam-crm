@@ -360,12 +360,7 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
   </div>
   <div class="sb-sec">Workspace</div>
   <div class="sbi on" onclick="nav('dash')" data-p="dash"><span class="ic">📊</span>Dashboard</div>
-  <div class="sbi" onclick="nav('inb-new')" data-p="inb-new"><span class="ic">🆕</span>New<span class="sb-cnt" id="sbNew">0</span></div>
-  <div class="sbi" onclick="nav('inb-call')" data-p="inb-call"><span class="ic">📞</span>Call Done<span class="sb-cnt" id="sbCall">0</span></div>
-  <div class="sbi" onclick="nav('inb-prof')" data-p="inb-prof"><span class="ic">📤</span>Profile Sent<span class="sb-cnt" id="sbProf">0</span></div>
-  <div class="sbi" onclick="nav('inb-appt')" data-p="inb-appt"><span class="ic">📅</span>Appointment<span class="sb-cnt" id="sbAppt">0</span></div>
-  <div class="sbi" onclick="nav('inb-visit')" data-p="inb-visit"><span class="ic">🤝</span>Visit Done<span class="sb-cnt" id="sbVisit">0</span></div>
-  <div class="sbi" onclick="nav('inb-rfq')" data-p="inb-rfq"><span class="ic">⚡</span>RFQ Generated<span class="sb-cnt" id="sbRfq">0</span></div>
+  <div class="sbi" onclick="nav('pipeline')" data-p="pipeline"><span class="ic">🚦</span>Sales Pipeline<span class="sb-cnt" id="sbPip">0</span></div>
   <div class="sbi" onclick="nav('leads')" data-p="leads"><span class="ic">📋</span>My Leads<span class="sb-cnt" id="sbN">0</span></div>
   <div class="sbi" onclick="nav('outreach')" data-p="outreach"><span class="ic">✉️</span>AI Outreach</div>
   <div class="sbi" onclick="nav('contacts')" data-p="contacts"><span class="ic">🌐</span>Global CRM</div>
@@ -653,6 +648,104 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
     </div>
   </div>
   <div id="newsCnt"></div>
+</div>
+
+<!-- ═══════════════ UNIFIED SALES PIPELINE ═══════════════ -->
+<div class="page" id="pg-pipeline">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">Sales Pipeline</div>
+         <div class="pg-sub" id="pipSub">One page for the entire lead lifecycle · click any stage to filter</div></div>
+  </div>
+
+  <!-- Visual stage stepper -->
+  <div id="pipStepper" style="display:flex;gap:.35rem;flex-wrap:wrap;margin-bottom:.75rem;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:.3rem;"></div>
+
+  <!-- Filter bar -->
+  <div class="card" style="padding:.65rem .85rem;margin-bottom:.6rem;">
+    <div style="display:flex;flex-wrap:wrap;gap:.45rem;align-items:end;">
+      <input class="fi fi-srch" id="pipQ" placeholder="Search company, contact, industry…" oninput="pipDebouncedRefresh()" style="min-width:200px;flex:1;">
+      <select class="fi" id="pipVert" onchange="pipRefresh()"><option value="">All Verticals</option></select>
+      <select class="fi" id="pipInd"  onchange="pipRefresh()"><option value="">All Industries</option></select>
+      <select class="fi" id="pipSt"   onchange="pipRefresh()"><option value="">All States</option></select>
+      <select class="fi" id="pipPic"  onchange="pipRefresh()"><option value="">All PIC</option></select>
+      <input class="fi" id="pipFrom" type="date" onchange="pipRefresh()">
+      <input class="fi" id="pipTo"   type="date" onchange="pipRefresh()">
+      <button class="btn btn-ghost btn-sm" onclick="pipReset()">Reset</button>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="card">
+    <div class="card-hd">
+      <div class="card-ttl" id="pipTblTtl">Leads</div>
+      <span class="f-cnt" id="pipCnt"></span>
+    </div>
+    <div class="tw"><table>
+      <thead><tr>
+        <th style="min-width:220px;">Company / Project</th>
+        <th>State</th><th>Industry</th><th>Vertical</th>
+        <th style="text-align:right;">₹M</th>
+        <th>PIC</th><th>Stage</th>
+        <th>Follow-up</th><th>Onboarded</th>
+        <th style="min-width:170px;">Actions</th>
+      </tr></thead>
+      <tbody id="pipTb"></tbody></table></div>
+    <div id="pipPager" style="padding:.5rem 1rem;text-align:right;font-size:.8rem;color:#6B7280;"></div>
+  </div>
+</div>
+
+<!-- Right-side Lead Drawer -->
+<div id="ldDraw" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div style="position:absolute;inset:0;background:rgba(0,0,0,.4);" onclick="closeDraw()"></div>
+  <div style="position:absolute;top:0;right:0;bottom:0;width:min(560px,100%);background:#fff;box-shadow:-6px 0 24px rgba(0,0,0,.15);overflow-y:auto;">
+    <div style="padding:1rem 1.25rem;border-bottom:1px solid #E5E7EB;display:flex;justify-content:space-between;align-items:start;gap:.75rem;">
+      <div>
+        <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;">Lead detail</div>
+        <div id="drTtl" style="font-size:1.05rem;font-weight:700;color:#111827;margin-top:.15rem;"></div>
+        <div id="drSub" style="font-size:.78rem;color:#6B7280;margin-top:.15rem;"></div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="closeDraw()">✕</button>
+    </div>
+    <div id="drBody" style="padding:1rem 1.25rem;"></div>
+  </div>
+</div>
+
+<!-- Advance modal (activity-aware) -->
+<div id="advMod" style="display:none;position:fixed;inset:0;z-index:110;background:rgba(0,0,0,.4);align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:8px;max-width:480px;width:calc(100% - 2rem);padding:1.25rem 1.5rem;box-shadow:0 20px 60px rgba(0,0,0,.25);">
+    <div style="font-size:1rem;font-weight:700;color:#111827;margin-bottom:.25rem;">Move Lead to Next Stage</div>
+    <div id="advCo"  style="font-size:.85rem;color:#6B7280;margin-bottom:.75rem;"></div>
+    <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:.5rem;align-items:center;margin-bottom:.85rem;">
+      <div style="text-align:center;padding:.55rem;background:#F3F4F6;border-radius:6px;">
+        <div style="font-size:.68rem;color:#9CA3AF;text-transform:uppercase;">Current</div>
+        <div id="advFrom" style="font-weight:700;color:#111827;"></div>
+      </div>
+      <div style="color:#C72435;font-weight:700;">→</div>
+      <div style="text-align:center;padding:.55rem;background:#FEF2F2;border-radius:6px;">
+        <div style="font-size:.68rem;color:#9CA3AF;text-transform:uppercase;">Next</div>
+        <div id="advTo" style="font-weight:700;color:#B91C1C;"></div>
+      </div>
+    </div>
+    <div id="advActivity"></div>
+    <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem;">
+      <button class="btn btn-ghost btn-sm" onclick="closeAdv()">Cancel</button>
+      <button class="btn btn-red btn-sm"   onclick="confirmAdvance()">Confirm &amp; Move</button>
+    </div>
+  </div>
+</div>
+
+<!-- Decide modal (structured Won/Lost/On Hold/Not Interested) -->
+<div id="decMod" style="display:none;position:fixed;inset:0;z-index:110;background:rgba(0,0,0,.4);align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:8px;max-width:560px;width:calc(100% - 2rem);padding:1.25rem 1.5rem;box-shadow:0 20px 60px rgba(0,0,0,.25);max-height:90vh;overflow-y:auto;">
+    <div style="font-size:1rem;font-weight:700;color:#111827;margin-bottom:.4rem;">Update Lead / Opportunity Decision</div>
+    <div id="decCo"  style="font-size:.85rem;color:#6B7280;margin-bottom:.75rem;"></div>
+    <div id="decBtns" style="display:grid;grid-template-columns:repeat(4,1fr);gap:.4rem;margin-bottom:.85rem;"></div>
+    <div id="decForm"></div>
+    <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem;">
+      <button class="btn btn-ghost btn-sm" onclick="closeDec()">Cancel</button>
+      <button class="btn btn-red btn-sm"   onclick="confirmDecide()">Save Decision</button>
+    </div>
+  </div>
 </div>
 
 <!-- KPI SETTINGS (admin only) -->
@@ -955,7 +1048,14 @@ async function init(){
 }
 
 // ── NAV ──
-const PG_TITLES={dash:'Overview','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard'};
+const PG_TITLES={dash:'Overview',pipeline:'Sales Pipeline','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard'};
+// Legacy 6-stage inbox nav ids alias into the unified Sales Pipeline
+// page pre-filtered to the corresponding stage. Preserves any old
+// bookmarked deep-link.
+const LEGACY_INBOX_ALIAS={
+  'inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent',
+  'inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated',
+};
 // Mobile off-canvas sidebar drawer.
 function sbToggle(force){
   const sb = document.getElementById('sbEl');
@@ -966,13 +1066,18 @@ function sbToggle(force){
   sc.classList.toggle('on',    open);
 }
 function nav(p){
+  // Legacy inbox item → jump to unified Pipeline pre-filtered to stage.
+  if (LEGACY_INBOX_ALIAS[p]) {
+    if (typeof pipelineState !== 'undefined') pipelineState.stage = LEGACY_INBOX_ALIAS[p];
+    p = 'pipeline';
+  }
   console.log('nav called:', p);
   // Auto-close drawer on phones when a nav item is tapped.
   if (window.matchMedia && window.matchMedia('(max-width:900px)').matches) sbToggle(false);
   document.querySelectorAll('.page').forEach(el=>el.classList.toggle('on',el.id==='pg-'+p));
   document.querySelectorAll('.sbi').forEach(el=>el.classList.toggle('on',el.dataset?.p===p));
   const t=g('topPgTtl'); if(t) t.textContent=PG_TITLES[p]||'';
-  const fns={dash:rDash,leads:rLeads,all:rAll,outreach:rOR,contacts:rCt,news:rNews,
+  const fns={dash:rDash,pipeline:rPipeline,leads:rLeads,all:rAll,outreach:rOR,contacts:rCt,news:rNews,
               team:rTeam,assign:rAssign,employees:rEmps,opp:rOpp,upload:()=>upTab('xl'),
               kpi:rKpiAdmin,perf:rPerf,scorecard:rScorecard};
   if(fns[p]) try{fns[p]();}catch(err){console.error('nav error for page',p,err);}
@@ -1837,6 +1942,375 @@ async function openNewsModal(id,title){
 async function newsAction(action){
   const r=await api(`/api/news/${newsId}/action`,{method:'POST',body:JSON.stringify({action,emp_code:g('nAsgn').value,company:g('nCo').value})});
   if(r.ok){g('nMob').style.display='none';rNews();toast(action==='convert'?'Converted to lead ✓':action==='delete'?'Removed':'Assigned ✓','ok');}
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//   UNIFIED SALES PIPELINE
+//   One page for the entire lead lifecycle. Reuses the dashboard
+//   filter engine (/api/dashboard/summary + /api/dashboard/records)
+//   so counts and rows reconcile with everything else in the CRM.
+// ═══════════════════════════════════════════════════════════════════
+const PIP_STAGES = [
+  {key:'New',           label:'New',           tone:'#6B7280'},
+  {key:'Call Done',     label:'Call Done',     tone:'#3B82F6'},
+  {key:'Profile Sent',  label:'Profile Sent',  tone:'#8B5CF6'},
+  {key:'Appointment',   label:'Appointment',   tone:'#F59E0B'},
+  {key:'Visit Done',    label:'Visit Done',    tone:'#F97316'},
+  {key:'RFQ Generated', label:'RFQ Generated', tone:'#C72435'},
+  {key:'Won',           label:'Won',           tone:'#059669', terminal:true},
+  {key:'Lost',          label:'Lost',          tone:'#B91C1C', terminal:true},
+  {key:'On Hold',       label:'On Hold',       tone:'#B45309', terminal:true},
+  {key:'Not Interested',label:'Not Interested',tone:'#374151', terminal:true},
+];
+const STAGE_NEXT_MAP = {
+  'New':'Call Done','Call Done':'Profile Sent','Profile Sent':'Appointment',
+  'Appointment':'Visit Done','Visit Done':'RFQ Generated','RFQ Generated':'Won',
+};
+const pipelineState = {
+  stage: '', q: '', vertical: '', industry: '', state: '', pic: '',
+  from_date: '', to_date: '',
+  page: 1, size: 25, total: 0, rows: [], counts: {},
+};
+let _pipT=null;
+function pipDebouncedRefresh(){ clearTimeout(_pipT); _pipT=setTimeout(pipRefresh,220); }
+
+function pipReadInputs(){
+  const g_ = id => (document.getElementById(id) || {}).value || '';
+  pipelineState.q         = g_('pipQ').trim();
+  pipelineState.vertical  = g_('pipVert');
+  pipelineState.industry  = g_('pipInd');
+  pipelineState.state     = g_('pipSt');
+  pipelineState.pic       = g_('pipPic');
+  pipelineState.from_date = g_('pipFrom');
+  pipelineState.to_date   = g_('pipTo');
+}
+
+function pipReset(){
+  pipelineState.stage=''; pipelineState.q=''; pipelineState.vertical='';
+  pipelineState.industry=''; pipelineState.state=''; pipelineState.pic='';
+  pipelineState.from_date=''; pipelineState.to_date=''; pipelineState.page=1;
+  ['pipQ','pipVert','pipInd','pipSt','pipPic','pipFrom','pipTo'].forEach(id=>{
+    const el=g(id); if(el) el.value='';
+  });
+  pipRefresh();
+}
+
+function pipStageClick(stg){
+  pipelineState.stage = (pipelineState.stage === stg) ? '' : stg;
+  pipelineState.page = 1;
+  pipRefresh();
+}
+
+async function rPipeline(){
+  await pipPopulateOptions();
+  await pipRefresh();
+}
+
+async function pipPopulateOptions(){
+  try {
+    const opt = await api('/api/dashboard/options');
+    const fill = (id, list, mapper) => {
+      const el = g(id); if(!el) return;
+      const cur = el.value;
+      el.innerHTML = el.querySelector('option').outerHTML +
+        (list||[]).map(mapper).join('');
+      el.value = cur;
+    };
+    fill('pipVert', opt.verticals,  v => `<option>${e(v)}</option>`);
+    fill('pipInd',  opt.industries, v => `<option>${e(v)}</option>`);
+    fill('pipSt',   opt.states,     v => `<option>${e(v)}</option>`);
+    fill('pipPic',  opt.pic,        p => `<option value="${e(p.emp_code)}">${e(p.name)}</option>`);
+  } catch(err){ console.warn('pipeline options load failed', err); }
+}
+
+async function pipRefresh(){
+  pipReadInputs();
+  const p = {
+    q: pipelineState.q, vertical: pipelineState.vertical,
+    industry: pipelineState.industry, state: pipelineState.state,
+    pic: pipelineState.pic, from_date: pipelineState.from_date,
+    to_date: pipelineState.to_date,
+  };
+  // Summary hits the same endpoint the Dashboard uses — role-scoped
+  // stage counts free.
+  try {
+    const st = await api('/api/dashboard/summary?' + qp(p));
+    pipelineState.counts = (st && st.distributions && st.distributions.stages) || {};
+    pipRenderStepper();
+    // Sidebar total-pipeline count matches summary's active count.
+    const k = st && st.kpis || {};
+    const sbPip = g('sbPip'); if(sbPip) sbPip.textContent = (k.active_pipeline||0);
+  } catch(err){ console.error('pipeline summary failed', err); }
+  // Records — filter by picked stage on top of the shared filters.
+  const rp = {...p, page: pipelineState.page, size: pipelineState.size, sort:'updated_desc'};
+  if (pipelineState.stage) rp.stage = pipelineState.stage;
+  try {
+    const r = await api('/api/dashboard/records?' + qp(rp));
+    pipelineState.rows = r.rows || []; pipelineState.total = r.total || 0;
+    pipRenderTable();
+  } catch(err){ console.error('pipeline records failed', err); }
+}
+
+function pipRenderStepper(){
+  const el = g('pipStepper'); if(!el) return;
+  el.innerHTML = PIP_STAGES.map(s => {
+    const n = pipelineState.counts[s.key] || 0;
+    const sel = pipelineState.stage === s.key;
+    return `<div onclick="pipStageClick('${e(s.key)}')" style="
+      cursor:pointer; padding:.55rem .8rem;
+      background:${sel ? s.tone : '#fff'};
+      color:${sel ? '#fff' : '#111827'};
+      border:1px solid ${sel ? s.tone : '#E5E7EB'};
+      border-left:4px solid ${s.tone};
+      border-radius:6px;
+      display:flex;flex-direction:column;gap:.15rem;
+      min-width:110px;">
+      <div style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;
+        color:${sel ? 'rgba(255,255,255,.85)' : '#6B7280'};font-weight:600;">${e(s.label)}</div>
+      <div style="font-family:'Barlow';font-weight:800;font-size:1.35rem;
+        color:${sel ? '#fff' : s.tone};font-variant-numeric:tabular-nums;">${n}</div>
+    </div>`;
+  }).join('');
+}
+
+function pipRenderTable(){
+  g('pipCnt').textContent = `${pipelineState.total.toLocaleString('en-IN')} lead${pipelineState.total===1?'':'s'}`
+    + (pipelineState.stage ? ` · ${pipelineState.stage}` : '');
+  g('pipTblTtl').textContent = pipelineState.stage
+    ? `Leads · ${pipelineState.stage}` : 'All leads in your scope';
+  g('pipTb').innerHTML = pipelineState.rows.length
+    ? pipelineState.rows.map(l => {
+        const proj = (l.project||'').length > 80
+          ? `<span title="${e(l.project)}">${e(l.project.slice(0,80))}…</span>`
+          : e(l.project||'');
+        return `<tr style="cursor:pointer;" onclick="openDraw(${l.id})">
+          <td onclick="event.stopPropagation();openDraw(${l.id})">
+            <div class="td-m" style="color:#B91C1C;font-weight:600;">${e(l.company)}</div>
+            <div class="td-s" style="max-width:340px;">${proj}</div>
+          </td>
+          <td>${e(l.state||'—')}</td>
+          <td>${e(l.industry||'—')}</td>
+          <td>${vb(l.procam_vertical)}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">${Number(l.cost||0).toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
+          <td>${e(l.assigned_name||l.assigned_to||'—')}</td>
+          <td>${sb(l.stage)}</td>
+          <td class="tddate">${l.followup||'—'}</td>
+          <td class="tddate">${l.onboarded_date||'—'}</td>
+          <td onclick="event.stopPropagation()">
+            ${!['Won','Lost','On Hold','Not Interested'].includes(l.stage)
+              ? `<button class="btn btn-red btn-xs" onclick="openAdv(${l.id})">Advance</button>` : ''}
+            <button class="btn btn-ghost btn-xs" onclick="openDec(${l.id})">Decide</button>
+          </td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="10" style="text-align:center;padding:2.5rem;color:#9CA3AF;">No leads match the current filter.</td></tr>';
+  const pgMax = Math.max(1, Math.ceil(pipelineState.total / pipelineState.size));
+  g('pipPager').innerHTML = `Page ${pipelineState.page} of ${pgMax}
+    ${pipelineState.page > 1 ? `<button class="btn btn-ghost btn-xs" onclick="pipelineState.page--;pipRefresh()">‹ Prev</button>` : ''}
+    ${pipelineState.page < pgMax ? `<button class="btn btn-ghost btn-xs" onclick="pipelineState.page++;pipRefresh()">Next ›</button>` : ''}`;
+}
+
+// ── Right-side lead drawer (replaces the old inline row expand) ──
+async function openDraw(lid){
+  const dr = document.getElementById('ldDraw'); if(!dr) return;
+  dr.style.display = 'block';
+  g('drTtl').textContent = 'Loading…'; g('drSub').textContent = '';
+  g('drBody').innerHTML = '<div style="color:#9CA3AF;padding:1rem 0;">Fetching lead details…</div>';
+  try {
+    // Reuse existing GET /api/leads endpoint (it returns the list) then
+    // pick this one; we already have lightweight to_dict data.
+    const list = await api('/api/leads?limit=500');
+    const l = (Array.isArray(list) ? list : []).find(x => x.id === lid) ||
+              (await api('/api/dashboard/records?page=1&size=500'))
+                .rows.find(x => x.id === lid);
+    if (!l) { g('drBody').innerHTML = '<div>Lead not found.</div>'; return; }
+    g('drTtl').textContent = l.company;
+    g('drSub').textContent = `${l.state||'—'} · ${l.industry||'—'} · ${l.procam_vertical||'—'} · PIC ${l.assigned_name||l.assigned_to||'—'}`;
+    // History timeline
+    let hist = [];
+    try { hist = await api('/api/leads/' + lid + '/history'); } catch(err){}
+    const histHtml = (Array.isArray(hist) && hist.length) ? hist.map(h => {
+      if (h.kind === 'stage') {
+        return `<div style="padding:.5rem .7rem;border-left:2px solid #C72435;background:#FEF2F2;border-radius:0 4px 4px 0;margin-bottom:.4rem;">
+          <div style="font-size:.72rem;color:#B91C1C;font-weight:600;">STAGE · ${e(h.from_stage||'—')} → ${e(h.to_stage)}</div>
+          <div style="font-size:.72rem;color:#6B7280;">${e(h.when)} · ${e(h.by||'—')}</div>
+          ${h.note ? `<div style="font-size:.78rem;color:#374151;margin-top:.15rem;">${e(h.note)}</div>` : ''}
+        </div>`;
+      }
+      return `<div style="padding:.5rem .7rem;border-left:2px solid #6B7280;background:#F3F4F6;border-radius:0 4px 4px 0;margin-bottom:.4rem;">
+        <div style="font-size:.72rem;color:#374151;font-weight:600;">${e(h.sub_kind||'').toUpperCase()} · ${e(h.subject||'')}</div>
+        <div style="font-size:.72rem;color:#6B7280;">${e(h.when)} · ${e(h.by||'—')}</div>
+        ${h.body ? `<div style="font-size:.78rem;color:#374151;margin-top:.15rem;white-space:pre-wrap;">${e(h.body)}</div>` : ''}
+      </div>`;
+    }).join('') : '<div style="color:#9CA3AF;padding:.5rem 0;">No history yet.</div>';
+
+    g('drBody').innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.65rem;font-size:.85rem;margin-bottom:1rem;">
+        <div><div style="color:#9CA3AF;font-size:.7rem;text-transform:uppercase;">Stage</div>${sb(l.stage)}</div>
+        <div><div style="color:#9CA3AF;font-size:.7rem;text-transform:uppercase;">Value</div>₹${Number(l.cost||0).toLocaleString('en-IN')} M</div>
+        <div><div style="color:#9CA3AF;font-size:.7rem;text-transform:uppercase;">Follow-up</div>${e(l.followup||'—')}</div>
+        <div><div style="color:#9CA3AF;font-size:.7rem;text-transform:uppercase;">Onboarded</div>${e(l.onboarded_date||'—')}</div>
+        <div><div style="color:#9CA3AF;font-size:.7rem;text-transform:uppercase;">Contact</div>${e(l.pic||'—')}${l.designation ? ' · '+e(l.designation) : ''}</div>
+        <div><div style="color:#9CA3AF;font-size:.7rem;text-transform:uppercase;">Phone / Email</div>${e(l.phone||'—')}<br>${e(l.email||'—')}</div>
+      </div>
+      ${l.project ? `<div style="margin-bottom:1rem;">
+        <div style="color:#9CA3AF;font-size:.7rem;text-transform:uppercase;margin-bottom:.2rem;">Project / Description</div>
+        <div style="font-size:.85rem;background:#F9FAFB;padding:.6rem .8rem;border-radius:4px;border:1px solid #E5E7EB;white-space:pre-wrap;">${e(l.project)}</div>
+      </div>` : ''}
+      ${l.notes ? `<div style="margin-bottom:1rem;">
+        <div style="color:#9CA3AF;font-size:.7rem;text-transform:uppercase;margin-bottom:.2rem;">Notes</div>
+        <div style="font-size:.82rem;background:#F9FAFB;padding:.55rem .75rem;border-radius:4px;border:1px solid #E5E7EB;white-space:pre-wrap;">${e(l.notes)}</div>
+      </div>` : ''}
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1rem;">
+        ${!['Won','Lost','On Hold','Not Interested'].includes(l.stage)
+          ? `<button class="btn btn-red btn-sm" onclick="closeDraw();openAdv(${lid})">Advance</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="closeDraw();openDec(${lid})">Decide</button>
+        <button class="btn btn-ghost btn-sm" onclick="closeDraw();openLd(${lid})">Open Full Record</button>
+      </div>
+      <div style="border-top:1px solid #E5E7EB;padding-top:.85rem;">
+        <div style="font-size:.75rem;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:.5rem;">Activity &amp; Stage Timeline</div>
+        ${histHtml}
+      </div>`;
+  } catch(err){
+    console.error('drawer load failed', err);
+    g('drBody').innerHTML = '<div style="color:#B91C1C;">Failed to load lead.</div>';
+  }
+}
+function closeDraw(){ const dr = document.getElementById('ldDraw'); if(dr) dr.style.display='none'; }
+
+// ── Advance modal ──
+let _advLid = null;
+function openAdv(lid){
+  _advLid = lid;
+  const l = (pipelineState.rows||[]).find(x => x.id === lid) ||
+            (dashState && dashState.records ? dashState.records.find(x => x.id === lid) : null);
+  if(!l){ toast('Lead not found','err'); return; }
+  const nxt = STAGE_NEXT_MAP[l.stage];
+  if(!nxt){ toast(`No next stage from "${l.stage}"`, 'warn'); return; }
+  g('advCo').textContent   = l.company + (l.project ? ' — ' + l.project.slice(0,60) : '');
+  g('advFrom').textContent = l.stage;
+  g('advTo').textContent   = nxt;
+  // Activity-specific inputs.
+  const today = new Date().toISOString().slice(0,10);
+  const activity = {
+    'Call Done':     `<div style="font-size:.78rem;color:#6B7280;margin-bottom:.35rem;">Capture call outcome</div>
+                      <input class="fmc" id="advDate" type="date" value="${today}" style="margin-bottom:.4rem;">
+                      <textarea class="fmc" id="advNote" rows="2" placeholder="Contact person, outcome, remarks…"></textarea>`,
+    'Profile Sent':  `<div style="font-size:.78rem;color:#6B7280;margin-bottom:.35rem;">Profile / intro email sent</div>
+                      <input class="fmc" id="advDate" type="date" value="${today}" style="margin-bottom:.4rem;">
+                      <textarea class="fmc" id="advNote" rows="2" placeholder="Recipient, email reference, remarks…"></textarea>`,
+    'Appointment':   `<div style="font-size:.78rem;color:#6B7280;margin-bottom:.35rem;">Schedule appointment</div>
+                      <input class="fmc" id="advDate" type="date" value="${today}" style="margin-bottom:.4rem;">
+                      <textarea class="fmc" id="advNote" rows="2" placeholder="Meeting mode, location / link, contact…"></textarea>`,
+    'Visit Done':    `<div style="font-size:.78rem;color:#6B7280;margin-bottom:.35rem;">Site / customer visit completed</div>
+                      <input class="fmc" id="advDate" type="date" value="${today}" style="margin-bottom:.4rem;">
+                      <textarea class="fmc" id="advNote" rows="2" placeholder="Attendees, requirement / scope, next action…"></textarea>`,
+    'RFQ Generated': `<div style="font-size:.78rem;color:#6B7280;margin-bottom:.35rem;">RFQ received / generated</div>
+                      <input class="fmc" id="advDate" type="date" value="${today}" style="margin-bottom:.4rem;">
+                      <textarea class="fmc" id="advNote" rows="2" placeholder="RFQ reference, scope, due date, remarks…"></textarea>`,
+  }[nxt] || `<textarea class="fmc" id="advNote" rows="2" placeholder="Optional note…"></textarea>`;
+  g('advActivity').innerHTML = activity;
+  document.getElementById('advMod').style.display = 'flex';
+}
+function closeAdv(){ document.getElementById('advMod').style.display='none'; _advLid=null; }
+async function confirmAdvance(){
+  if (!_advLid) return;
+  const body = {
+    note: (g('advNote')||{}).value || '',
+    event_date: (g('advDate')||{}).value || '',
+  };
+  const r = await api(`/api/leads/${_advLid}/advance`, {method:'POST', body: JSON.stringify(body)});
+  if (r && r.ok) {
+    toast(`Advanced to ${r.stage} ✓`, 'ok');
+    closeAdv();
+    if (document.getElementById('pg-pipeline').classList.contains('on')) pipRefresh();
+  } else {
+    toast((r && r.error) || 'Advance failed', 'err');
+  }
+}
+
+// ── Decide modal (Won/Lost/On Hold/Not Interested) ──
+let _decLid = null, _decOutcome = '';
+function openDec(lid){
+  _decLid = lid; _decOutcome = '';
+  const l = (pipelineState.rows||[]).find(x => x.id === lid) ||
+            (dashState && dashState.records ? dashState.records.find(x => x.id === lid) : null);
+  g('decCo').textContent = (l && l.company) || '';
+  const opts = [
+    {k:'Won',           bg:'#059669'},
+    {k:'Lost',          bg:'#B91C1C'},
+    {k:'On Hold',       bg:'#B45309'},
+    {k:'Not Interested',bg:'#374151'},
+  ];
+  g('decBtns').innerHTML = opts.map(o =>
+    `<button type="button" class="btn btn-ghost btn-sm" id="decBtn_${e(o.k)}"
+       onclick="pickDec('${e(o.k)}','${o.bg}')" style="border-color:${o.bg};color:${o.bg};font-weight:600;">${e(o.k)}</button>`
+  ).join('');
+  g('decForm').innerHTML = '<div style="color:#9CA3AF;font-size:.85rem;padding:.5rem;">Select an outcome above…</div>';
+  document.getElementById('decMod').style.display = 'flex';
+}
+function pickDec(k, bg){
+  _decOutcome = k;
+  ['Won','Lost','On Hold','Not Interested'].forEach(o => {
+    const b = g('decBtn_' + o); if(!b) return;
+    b.style.background = (o === k) ? bg : '';
+    b.style.color = (o === k) ? '#fff' : '';
+  });
+  const today = new Date().toISOString().slice(0,10);
+  let html = '';
+  if (k === 'Won') {
+    html = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;">
+      <label class="fml">Won Date<input class="fmc" id="decDate" type="date" value="${today}"></label>
+      <label class="fml">Business Value (₹M)<input class="fmc" id="decVal" type="number" step="0.01" placeholder="e.g. 4.5"></label>
+    </div>
+    <label class="fml">Scope / Service<input class="fmc" id="decScope" placeholder="e.g. Heavy transport, warehousing…"></label>
+    <label class="fml">Remarks / Next Handover Action<textarea class="fmc" id="decNote" rows="2"></textarea></label>`;
+  } else if (k === 'Lost' || k === 'Not Interested') {
+    const REASONS = ['Price','Competition','No Response','Client Decision','Technical / Capability',
+                     'Project Cancelled','Project Postponed','Commercial Terms','Service Constraint',
+                     'Geography Constraint','Duplicate / Invalid','Other'];
+    html = `<label class="fml">Reason * (required)
+      <select class="fmc" id="decReason"><option value="">-- pick --</option>${REASONS.map(r=>`<option>${e(r)}</option>`).join('')}</select></label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;">
+        <label class="fml">Competitor (optional)<input class="fmc" id="decComp" placeholder="Vendor name"></label>
+        <label class="fml">Lost Value (₹M, optional)<input class="fmc" id="decVal" type="number" step="0.01"></label>
+      </div>
+      <label class="fml">Remarks<textarea class="fmc" id="decNote" rows="2" placeholder="Required if reason = Other"></textarea></label>`;
+  } else if (k === 'On Hold') {
+    html = `<label class="fml">Hold Reason<input class="fmc" id="decReason"></label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;">
+        <label class="fml">Expected Review Date<input class="fmc" id="decDate" type="date"></label>
+        <label class="fml">Next Follow-up Date<input class="fmc" id="decFu"   type="date"></label>
+      </div>
+      <label class="fml">Remarks<textarea class="fmc" id="decNote" rows="2"></textarea></label>`;
+  }
+  g('decForm').innerHTML = html;
+}
+function closeDec(){ document.getElementById('decMod').style.display='none'; _decLid=null; _decOutcome=''; }
+async function confirmDecide(){
+  if (!_decLid || !_decOutcome) { toast('Pick an outcome first','warn'); return; }
+  const body = {outcome: _decOutcome};
+  const reason = (g('decReason')||{}).value || '';
+  const note   = (g('decNote')||{}).value || '';
+  if (_decOutcome === 'Lost' || _decOutcome === 'Not Interested') {
+    if (!reason) { toast('Reason is required for ' + _decOutcome, 'err'); return; }
+    if (reason === 'Other' && !note.trim()) { toast('Remarks required when reason = Other','err'); return; }
+    body.reason = reason || note;
+    body.remarks = note;
+  } else if (_decOutcome === 'On Hold') {
+    body.reason = reason || note;
+    body.remarks = note;
+  } else if (_decOutcome === 'Won') {
+    body.reason = note;
+  }
+  const r = await api(`/api/leads/${_decLid}/decision`, {method:'POST', body: JSON.stringify(body)});
+  if (r && r.ok) {
+    toast(`Marked ${_decOutcome} ✓`, 'ok');
+    closeDec();
+    if (document.getElementById('pg-pipeline').classList.contains('on')) pipRefresh();
+  } else {
+    toast((r && r.error) || 'Decision failed', 'err');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════

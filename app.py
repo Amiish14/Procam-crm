@@ -1109,6 +1109,7 @@ def api_lead_advance(lid):
             return jsonify({'ok': False,
                             'error': f'No next stage from "{lead.stage}"'}), 400
     _log_stage_change(lead, nxt, note=data.get('note'))
+    lead.stage_entered_at = datetime.utcnow()
     # Stamp workflow-specific dates when the corresponding stage is reached
     today = date.today()
     stamp_date = data.get('event_date')
@@ -1145,6 +1146,12 @@ def api_lead_decision(lid):
                         'error': f'reason required when marking {outcome}. '
                                  f'Choose one of {LOSS_REASONS}.'}), 400
     _log_stage_change(lead, outcome, note=reason)
+    # Persist structured lost_reason on the Lead so the dashboard's
+    # Lost-Reason chart + /api/dashboard/summary distributions reconcile.
+    if outcome in ('Lost', 'Not Interested'):
+        lead.lost_reason = reason
+    # Record when the stage was entered — used by pipeline-ageing buckets.
+    lead.stage_entered_at = datetime.utcnow()
     # Also update the linked Opportunity if we have one
     if lead.opp_number:
         opp = Opportunity.query.filter_by(opp_number=lead.opp_number).first()
@@ -2127,6 +2134,37 @@ def api_lead_stage_history(lid):
     hist = (LeadStageHistory.query.filter_by(lead_id=lid)
             .order_by(LeadStageHistory.changed_at.desc()).all())
     return jsonify([h.to_dict() for h in hist])
+
+
+@app.route('/api/leads/<int:lid>/history', methods=['GET'])
+@require_auth
+def api_lead_history(lid):
+    """Combined activity + stage-history timeline for the Sales Pipeline
+    drawer. Returns a chronologically-sorted single feed so the frontend
+    can render one list instead of two."""
+    Lead.query.get_or_404(lid)
+    acts = (LeadActivity.query.filter_by(lead_id=lid)
+            .order_by(LeadActivity.occurred_at.desc()).all())
+    hist = (LeadStageHistory.query.filter_by(lead_id=lid)
+            .order_by(LeadStageHistory.changed_at.desc()).all())
+    events = []
+    for a in acts:
+        events.append({
+            'kind': 'activity', 'sub_kind': a.kind,
+            'when': str(a.occurred_at)[:16] if a.occurred_at else '',
+            'subject': a.subject or '', 'body': a.body or '',
+            'by': a.performed_by or '',
+        })
+    for h in hist:
+        events.append({
+            'kind': 'stage',
+            'when': str(h.changed_at)[:16] if h.changed_at else '',
+            'from_stage': h.from_stage or '',
+            'to_stage': h.to_stage or '',
+            'note': h.note or '', 'by': h.changed_by or '',
+        })
+    events.sort(key=lambda x: x.get('when') or '', reverse=True)
+    return jsonify(events)
 
 
 # ---------- AI Outreach (Claude) ----------
