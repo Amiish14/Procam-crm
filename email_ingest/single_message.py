@@ -22,6 +22,7 @@ from typing import Optional
 from . import parser as email_parser
 from . import ai_extractor
 from . import attachments as attachments_mod
+from . import enrich as enrich_mod
 
 log = logging.getLogger(__name__)
 
@@ -66,22 +67,10 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
                     'reason': extracted['skip_reason'],
                     'lead_id': None, 'internet_message_id': imid}
 
-        # AI merge (regex fills gaps AI missed; AI wins where both agree)
-        try:
-            ai = ai_extractor.extract(msg, extracted)
-            if ai:
-                for k, v in ai.items():
-                    if v and not extracted.get(k):
-                        extracted[k] = v
-        except Exception:
-            log.exception('AI extractor failed silently — continuing on regex')
-
         # ── DB-level dedup (email + recent domain) ─────────────────────
         # v2026-08 — when a Procam employee EXPLICITLY forwards a lead to
         # the CRM inbox, honour their intent: always create the lead even
-        # if that customer already exists in the system. Same customer can
-        # legitimately raise multiple RFQs; the sales team can merge later
-        # in the UI if it's actually the same enquiry.
+        # if that customer already exists in the system.
         forwarded_by = extracted.get('forwarded_by') or msg.get('_forwarded_by')
         sender_email  = (extracted.get('email') or '').strip().lower()
         sender_domain = sender_email.split('@', 1)[1] if '@' in sender_email else ''
@@ -105,46 +94,26 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
                             'reason': f'existing lead: same domain <{DEDUP_DOMAIN_WINDOW_DAYS}d',
                             'lead_id': None, 'internet_message_id': imid}
 
-        # ── Build Lead payload — using the actual Lead schema field names.
-        contact_name = (extracted.get('contact_name')
-                        or extracted.get('name')
-                        or (sender_email.split('@', 1)[0] if sender_email else 'Unknown'))
-        subject_line = extracted.get('subject') or msg.get('subject') or ''
-        body_text    = (extracted.get('body_text')
-                        or extracted.get('body')
-                        or msg.get('bodyPreview') or '')
-        # Company must be non-null on the schema. If parser couldn't infer
-        # one, fall back to sender_domain, then to a placeholder — the
-        # sales rep can rename later; better a lead than a hard rollback.
-        company = (extracted.get('company')
-                   or (sender_domain.split('.')[0].title() if sender_domain else '')
-                   or 'Unknown Sender')
-
-        notes_parts = []
-        if forwarded_by:
-            who = forwarded_by.get('email') if isinstance(forwarded_by, dict) else str(forwarded_by)
-            notes_parts.append(
-                f"[Forwarded to CRM by {who} on "
-                f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}]"
+        # ── Build Lead payload — shared enricher, same summary card poll uses.
+        try:
+            lead_kwargs = enrich_mod.build_enriched_lead_kwargs(
+                msg, extracted,
+                sender_email=sender_email,
+                sender_domain=sender_domain,
+                forwarded_by=forwarded_by,
             )
-        if subject_line:
-            notes_parts.append(f"Subject: {subject_line}")
-        if body_text:
-            notes_parts.append(body_text)
-        notes = "\n\n".join(notes_parts) if notes_parts else None
+        except Exception as e:
+            log.exception('enricher failed for %s', imid)
+            return {'status': 'failed', 'reason': f'enricher: {e}',
+                    'lead_id': None, 'internet_message_id': imid}
 
         try:
             lead = Lead(
-                source              = 'email',
-                stage               = 'New Opportunity',
-                company             = company,
-                pic                 = contact_name,
-                email               = extracted.get('email') or None,
-                phone               = extracted.get('phone') or None,
-                notes               = notes,
-                email_message_id    = imid,
-                email_extracted_json= extracted.get('ai_summary_json'),
-                created_at          = datetime.utcnow(),
+                source            = 'email',
+                stage             = 'New Opportunity',
+                email_message_id  = imid,
+                created_at        = datetime.utcnow(),
+                **lead_kwargs,
             )
             db.session.add(lead)
             db.session.flush()
