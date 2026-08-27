@@ -44,7 +44,7 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
     imid = _internet_message_id(msg)
 
     with app.app_context():
-        # ── Idempotency ────────────────────────────────────────────────
+        # ── Idempotency (kept — same physical email must not double-insert) ──
         if imid:
             hit = (db.session.query(Lead.id)
                    .filter(Lead.email_message_id == imid).first())
@@ -53,46 +53,42 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
                         'lead_id': hit[0], 'internet_message_id': imid}
 
         # ── Parse + AI-extract ────────────────────────────────────────
+        # v2026-08 — mailbox mode: CAPTURE EVERYTHING. If the parser wants
+        # to skip (auto-reply, bulk sender, low confidence, whatever), we
+        # still create the lead. The skip_reason is preserved as a
+        # 'triage_tag' inside the lead's opp_notes so the sales team can
+        # sort them in the UI. Silently dropping mail = losing business.
         try:
             extracted = email_parser.extract_lead(msg)
         except Exception as e:
             log.exception('parser exception for %s: %s', imid, e)
-            return {'status': 'failed', 'reason': f'parser exception: {e}',
-                    'lead_id': None, 'internet_message_id': imid}
-        if extracted is None:
-            return {'status': 'skipped', 'reason': 'parser returned None',
-                    'lead_id': None, 'internet_message_id': imid}
-        if extracted.get('skip_reason'):
-            return {'status': 'skipped',
-                    'reason': extracted['skip_reason'],
-                    'lead_id': None, 'internet_message_id': imid}
+            extracted = None
 
-        # ── DB-level dedup (email + recent domain) ─────────────────────
-        # v2026-08 — when a Procam employee EXPLICITLY forwards a lead to
-        # the CRM inbox, honour their intent: always create the lead even
-        # if that customer already exists in the system.
+        if not extracted:
+            # Even if the parser completely bailed, build a minimal payload
+            # from the raw Graph message so we still get a lead row.
+            from_addr = ((msg.get('from') or {}).get('emailAddress') or {})
+            extracted = {
+                'company': '',
+                'contact_name': from_addr.get('name') or '',
+                'email': from_addr.get('address') or '',
+                'phone': None,
+                'subject': msg.get('subject') or '',
+                'body_text': msg.get('bodyPreview') or '',
+                'signals': {},
+                'confidence': 0.0,
+                'skip_reason': 'parser bailed',
+            }
+
+        triage_tag = extracted.get('skip_reason')       # None if clean
+
         forwarded_by = extracted.get('forwarded_by') or msg.get('_forwarded_by')
         sender_email  = (extracted.get('email') or '').strip().lower()
         sender_domain = sender_email.split('@', 1)[1] if '@' in sender_email else ''
-
-        if not forwarded_by:
-            if sender_email:
-                if db.session.query(Lead.id).filter(
-                        db.func.lower(Lead.email) == sender_email).first():
-                    return {'status': 'skipped', 'reason': 'existing lead: same email',
-                            'lead_id': None, 'internet_message_id': imid}
-
-            if sender_domain:
-                cutoff = datetime.utcnow() - timedelta(days=DEDUP_DOMAIN_WINDOW_DAYS)
-                recent_hit = db.session.query(Lead.id).filter(
-                    Lead.email.isnot(None),
-                    Lead.email.op('ILIKE')(f'%@{sender_domain}'),
-                    Lead.created_at >= cutoff,
-                ).first()
-                if recent_hit:
-                    return {'status': 'skipped',
-                            'reason': f'existing lead: same domain <{DEDUP_DOMAIN_WINDOW_DAYS}d',
-                            'lead_id': None, 'internet_message_id': imid}
+        # DB dedup by email / recent domain intentionally REMOVED. Users
+        # explicitly asked for zero-skip behaviour; same customer emailing
+        # a second time creates a second lead row, and the sales team can
+        # merge or close in the UI.
 
         # ── Build Lead payload — shared enricher, same summary card poll uses.
         try:
@@ -106,6 +102,17 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
             log.exception('enricher failed for %s', imid)
             return {'status': 'failed', 'reason': f'enricher: {e}',
                     'lead_id': None, 'internet_message_id': imid}
+
+        # If the parser flagged a triage reason, surface it in opp_notes so
+        # the sales team can filter (e.g. hide 'auto-reply' rows).
+        if triage_tag:
+            try:
+                import json as _json
+                cur = _json.loads(lead_kwargs.get('opp_notes') or '{}')
+                cur['triage_tag'] = triage_tag
+                lead_kwargs['opp_notes'] = _json.dumps(cur, default=str)
+            except Exception:
+                pass
 
         try:
             lead = Lead(
