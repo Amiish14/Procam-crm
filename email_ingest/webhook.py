@@ -27,7 +27,13 @@ def _get_message(graph: GraphClient, mailbox: str, message_id: str) -> dict:
             "?$select=id,internetMessageId,subject,from,toRecipients,"
             "ccRecipients,receivedDateTime,conversationId,body,bodyPreview,"
             "hasAttachments")
-    return graph._request('GET', path)
+    resp = graph._request('GET', path)
+    if resp.status_code >= 400:
+        raise RuntimeError(
+            f'Graph get_message failed: HTTP {resp.status_code} — '
+            f'{resp.text[:500]}'
+        )
+    return resp.json()
 
 
 def handle_notification(payload: dict) -> dict:

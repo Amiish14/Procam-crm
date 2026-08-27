@@ -38,6 +38,20 @@ def _need(env: str) -> str:
     return v
 
 
+def _json_or_raise(resp, context: str) -> dict:
+    """GraphClient._request returns a raw requests.Response. Parse it,
+    raise a clear error on non-2xx."""
+    if resp.status_code >= 400:
+        raise RuntimeError(
+            f'Graph {context} failed: HTTP {resp.status_code} — '
+            f'{resp.text[:500]}'
+        )
+    try:
+        return resp.json()
+    except Exception:
+        return {}
+
+
 def create() -> dict:
     """Create a new subscription. Returns the Graph subscription resource."""
     mailbox      = _need('CRM_INBOX_EMAIL')
@@ -48,11 +62,12 @@ def create() -> dict:
     payload = {
         'changeType':          'created',
         'notificationUrl':     webhook_url,
-        'resource':            f'/users/{mailbox}/mailFolders(\'Inbox\')/messages',
+        'resource':            f"/users/{mailbox}/mailFolders('Inbox')/messages",
         'expirationDateTime':  _expiry_iso(),
         'clientState':         client_state,
     }
-    res = graph._request('POST', '/subscriptions', json_body=payload)
+    resp = graph._request('POST', '/subscriptions', json_body=payload)
+    res  = _json_or_raise(resp, 'create subscription')
     log.info('Graph subscription created: id=%s expires=%s',
              res.get('id'), res.get('expirationDateTime'))
     return res
@@ -61,8 +76,9 @@ def create() -> dict:
 def renew(subscription_id: str) -> dict:
     graph = GraphClient()
     payload = {'expirationDateTime': _expiry_iso()}
-    res = graph._request('PATCH', f'/subscriptions/{subscription_id}',
-                         json_body=payload)
+    resp = graph._request('PATCH', f'/subscriptions/{subscription_id}',
+                          json_body=payload)
+    res  = _json_or_raise(resp, 'renew subscription')
     log.info('Graph subscription renewed: id=%s new expiry=%s',
              subscription_id, res.get('expirationDateTime'))
     return res
@@ -70,11 +86,17 @@ def renew(subscription_id: str) -> dict:
 
 def delete(subscription_id: str) -> None:
     graph = GraphClient()
-    graph._request('DELETE', f'/subscriptions/{subscription_id}')
+    resp = graph._request('DELETE', f'/subscriptions/{subscription_id}')
+    if resp.status_code >= 400 and resp.status_code != 404:
+        raise RuntimeError(
+            f'Graph delete subscription failed: HTTP {resp.status_code} — '
+            f'{resp.text[:500]}'
+        )
     log.info('Graph subscription deleted: %s', subscription_id)
 
 
 def list_active() -> list:
     graph = GraphClient()
-    res = graph._request('GET', '/subscriptions')
-    return res.get('value', [])
+    resp = graph._request('GET', '/subscriptions')
+    data = _json_or_raise(resp, 'list subscriptions')
+    return data.get('value', [])
