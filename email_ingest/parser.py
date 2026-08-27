@@ -326,6 +326,87 @@ def _sender_info(msg: dict) -> Tuple[str, str]:
     return (frm.get("address") or "").strip(), (frm.get("name") or "").strip()
 
 
+# ─── v2026-08 — Internal-forward promotion ─────────────────────────────
+# In mailbox mode the CRM inbox receives forwards from Procam employees who
+# want a customer enquiry captured as a Lead. The immediate sender is then
+# internal, which the internal-domain guard below would otherwise reject.
+# _promote_forwarded_sender inspects the body for the original "From:" header
+# block, and if it finds an EXTERNAL sender, rewrites msg["from"] in place so
+# every downstream step (skip check, dedup, AI extract, Lead creation)
+# attributes to the real customer, not the employee who forwarded.
+
+# Matches typical Outlook / Gmail / plain-text forward header blocks:
+#   From: John Doe <john@customer.com>
+#   From: john@customer.com
+# Case-insensitive, line-anchored (after any leading > or whitespace).
+_FORWARD_FROM_RE = re.compile(
+    r"(?im)^[\s>]*from\s*:\s*"
+    r"(?:\"?([^<\"\n\r]{1,120})\"?\s*<\s*([^>\s]+@[^>\s]+)\s*>"   # "Name" <email>
+    r"|([^\s<>()\"@]+@[^\s<>()\",;]+))"                             # bare email
+    r"\s*$"
+)
+
+# Subject prefixes that mark a forward. English + common client variants.
+_FORWARD_SUBJECT_RE = re.compile(r"^\s*(fw|fwd|fwd\.|fw\.|f/w)\s*:\s*", re.I)
+
+
+def _extract_forwarded_sender(subject: str, body_text: str) -> Optional[Tuple[str, str]]:
+    """If the message looks like a forward and the body contains an original
+    From: header, return (email, name). Else None.
+
+    Picks the FIRST From: header in the body (the outermost forward, closest
+    to the top). If someone forwards a forward, we still surface the deepest
+    original sender because that's the customer we want to attribute to."""
+    if not body_text:
+        return None
+    # Signal 1 or 2 must hold. Either the subject is prefixed with Fwd/FW,
+    # OR the body contains an obvious "Forwarded message" marker.
+    looks_forwarded = bool(_FORWARD_SUBJECT_RE.match(subject or "")) or (
+        "forwarded message" in body_text.lower()
+        or "begin forwarded" in body_text.lower()
+        or "-----original message-----" in body_text.lower()
+    )
+    if not looks_forwarded:
+        return None
+    m = _FORWARD_FROM_RE.search(body_text)
+    if not m:
+        return None
+    name  = (m.group(1) or "").strip()
+    email = (m.group(2) or m.group(3) or "").strip().lower()
+    if not email or "@" not in email:
+        return None
+    return email, name
+
+
+def _promote_forwarded_sender(msg: dict) -> Optional[dict]:
+    """If immediate sender is internal AND we can find an external original
+    sender inside the body, rewrite msg["from"] in place so downstream sees
+    the customer. Returns a dict describing what happened (for logging /
+    audit) or None if nothing was rewritten."""
+    frm_email, frm_name = _sender_info(msg)
+    if not frm_email or "@" not in frm_email:
+        return None
+    domain = frm_email.split("@", 1)[1].lower()
+    if domain not in _skip_domains():
+        return None    # not an internal sender, nothing to promote
+
+    subject = (msg.get("subject") or "").strip()
+    body_text = _get_body_text(msg)
+    found = _extract_forwarded_sender(subject, body_text)
+    if not found:
+        return None
+    orig_email, orig_name = found
+    orig_domain = orig_email.split("@", 1)[1].lower()
+    if orig_domain in _skip_domains():
+        return None    # original also internal → not a real customer forward
+
+    # Rewrite the msg in place. Keep a breadcrumb of who forwarded.
+    msg["from"] = {"emailAddress": {"address": orig_email,
+                                    "name": orig_name or ""}}
+    msg["_forwarded_by"] = {"email": frm_email, "name": frm_name}
+    return {"forwarded_by": frm_email, "original_sender": orig_email}
+
+
 def _get_body_text(msg: dict) -> str:
     body = msg.get("body") or {}
     content = body.get("content") or ""
@@ -409,6 +490,12 @@ def extract_lead(msg: dict) -> Optional[dict]:
     """
     if not isinstance(msg, dict):
         return None
+
+    # v2026-08 — mailbox mode: if an internal Procam employee forwarded a
+    # customer email to the CRM inbox, rewrite msg["from"] to the ORIGINAL
+    # external sender so the rest of the pipeline (skip check, dedup,
+    # AI extract, Lead attribution) treats the customer as the source.
+    _promote_forwarded_sender(msg)
 
     subject = (msg.get("subject") or "").strip()
     from_email, from_name = _sender_info(msg)
