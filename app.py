@@ -3051,29 +3051,88 @@ def api_email_inbox_detail(evt_id):
 
 @app.route('/api/email/inbox/<int:evt_id>/retry', methods=['POST'])
 def api_email_inbox_retry(evt_id):
-    """Re-process a specific email. Safe — idempotent on internetMessageId."""
+    """Re-process a specific email.
+
+    Modes:
+      * default    — idempotent; skips if a Lead already exists for the
+                     message (returns 'already ingested').
+      * ?upgrade=1 — if a Lead already exists, RE-RUN parser + AI enricher
+                     over the same message and UPDATE the existing Lead's
+                     enriched fields (email_extracted_json, procam_vertical,
+                     pic, etc.). Safe backfill for leads created before the
+                     enricher deploy.
+    """
     if session.get('role') != 'admin':
         return jsonify(ok=False, error='admin only'), 403
     evt = EmailEvent.query.get_or_404(evt_id)
     if not evt.internet_message_id or not evt.mailbox:
         return jsonify(ok=False, error='cannot retry; no message id / mailbox'), 400
+
+    upgrade = request.args.get('upgrade', '').lower() in ('1', 'true', 'yes')
+
     try:
         from email_ingest.graph_client import GraphClient
         from email_ingest.webhook import _get_message
         from email_ingest.single_message import process_single_message
+        from email_ingest import parser as email_parser
+        from email_ingest import enrich as enrich_mod
+
         graph = GraphClient()
-        # Re-fetch by internetMessageId → Graph message id via search.
-        # Simpler: assume the id captured earlier is still valid.
-        result = process_single_message(
-            graph, mailbox=evt.mailbox,
-            msg=_get_message(graph, evt.mailbox, evt.internet_message_id),
+        msg = _get_message(graph, evt.mailbox, evt.internet_message_id)
+
+        if not upgrade:
+            result = process_single_message(graph, mailbox=evt.mailbox, msg=msg)
+            evt.status = ('lead_created' if result['status'] == 'created'
+                          else result['status'])
+            evt.reason = result.get('reason')
+            evt.lead_id = result.get('lead_id') or evt.lead_id
+            db.session.commit()
+            return jsonify(ok=True, result=result)
+
+        # ── Upgrade path: find the existing lead, re-run enricher, update.
+        imid = msg.get('internetMessageId') or msg.get('id')
+        lead = (Lead.query.filter_by(email_message_id=imid).first()
+                or (Lead.query.get(evt.lead_id) if evt.lead_id else None))
+        if lead is None:
+            # Nothing to upgrade — fall through to normal creation.
+            result = process_single_message(graph, mailbox=evt.mailbox, msg=msg)
+            evt.status = ('lead_created' if result['status'] == 'created'
+                          else result['status'])
+            evt.reason = result.get('reason')
+            evt.lead_id = result.get('lead_id') or evt.lead_id
+            db.session.commit()
+            return jsonify(ok=True, result=result, upgraded=False)
+
+        # Re-parse + re-enrich the message from scratch.
+        email_parser._promote_forwarded_sender(msg)  # respect forward mode
+        extracted = email_parser.extract_lead(msg)
+        if not extracted or extracted.get('skip_reason'):
+            return jsonify(ok=False,
+                           error=f"parser now says: {extracted.get('skip_reason') if extracted else 'None'}",
+                           lead_id=lead.id), 400
+        sender_email  = (extracted.get('email') or '').strip().lower()
+        sender_domain = sender_email.split('@', 1)[1] if '@' in sender_email else ''
+        forwarded_by  = extracted.get('forwarded_by') or msg.get('_forwarded_by')
+        kwargs = enrich_mod.build_enriched_lead_kwargs(
+            msg, extracted,
+            sender_email=sender_email, sender_domain=sender_domain,
+            forwarded_by=forwarded_by,
         )
-        evt.status = ('lead_created' if result['status'] == 'created'
-                      else result['status'])
-        evt.reason = result.get('reason')
-        evt.lead_id = result.get('lead_id') or evt.lead_id
+        # Merge into the existing Lead — never blank out fields the user
+        # may have already edited by hand. Only overwrite empty fields.
+        touched = []
+        for k, v in kwargs.items():
+            cur = getattr(lead, k, None)
+            if v and (not cur or k in ('email_extracted_json', 'opp_notes')):
+                setattr(lead, k, v)
+                touched.append(k)
         db.session.commit()
-        return jsonify(ok=True, result=result)
+        evt.status  = 'lead_created'
+        evt.reason  = f'upgraded existing lead {lead.id}'
+        evt.lead_id = lead.id
+        db.session.commit()
+        return jsonify(ok=True, upgraded=True, lead_id=lead.id,
+                       fields_touched=touched)
     except Exception as e:
         app.logger.exception('inbox retry failed')
         return jsonify(ok=False, error=str(e)), 500
