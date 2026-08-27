@@ -28,6 +28,14 @@ log = logging.getLogger(__name__)
 
 
 def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
+    # v2026-08 — respect EMAIL_INGESTION_MODE. In mailbox mode the
+    # webhook drives ingestion and this polled path becomes a no-op
+    # so both routes never race on the same message.
+    from . import service as _mail_service  # local import
+    if not _mail_service.poll_should_run():
+        return {"scanned": 0, "created": 0, "skipped": 0, "errors": 0,
+                "note": f"mode={_mail_service.current_mode()} — poll disabled"}
+
     """Run one pass of the email → lead ingest.
 
     Args:

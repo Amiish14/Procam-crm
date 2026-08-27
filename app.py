@@ -617,6 +617,36 @@ class Competitor(db.Model):
         }
 
 
+# ─── v2026-08 — Email ingestion visibility log (mailbox mode) ────────
+class EmailEvent(db.Model):
+    """One row per notification received in mailbox / webhook mode.
+    Powers the admin Email Inbox visibility page and troubleshooting."""
+    __tablename__ = 'email_events'
+    id                   = db.Column(db.Integer, primary_key=True)
+    received_at          = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    mailbox              = db.Column(db.String(200))
+    internet_message_id  = db.Column(db.String(400), index=True)
+    subject              = db.Column(db.String(250))
+    # received | processing | processed | lead_created | skipped | failed | rejected
+    status               = db.Column(db.String(20), default='received', index=True)
+    reason               = db.Column(db.String(300))
+    lead_id              = db.Column(db.Integer, db.ForeignKey('leads.id'),
+                                     nullable=True, index=True)
+    payload_json         = db.Column(db.Text)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'received_at': str(self.received_at)[:19],
+            'mailbox': self.mailbox,
+            'internet_message_id': self.internet_message_id,
+            'subject': self.subject,
+            'status': self.status,
+            'reason': self.reason,
+            'lead_id': self.lead_id,
+        }
+
+
 # ─────────────────── AUTH ROUTES ───────────────────
 
 @app.route('/')
@@ -2911,6 +2941,143 @@ def api_kpi_performance():
 
 with app.app_context():
     init_db()
+
+
+
+# ═════════════════════════════════════════════════════════════════════
+# v2026-08 — MAILBOX / WEBHOOK INGESTION ROUTES
+# The webhook is the primary path when EMAIL_INGESTION_MODE=mailbox.
+# Existing Azure-API poll pipeline continues untouched otherwise.
+# ═════════════════════════════════════════════════════════════════════
+from email_ingest import service as _mail_service
+
+
+@app.route('/api/email/webhook', methods=['POST', 'GET'])
+def api_email_webhook():
+    """Graph subscription callback.
+
+    * GET  — Graph subscription-validation handshake. Returns the
+             validationToken query param verbatim as text/plain.
+    * POST — Actual notification. Payload = { value: [ ...notifications ] }.
+             Processed inside handle_notification(); status recorded per
+             message on the EmailEvent table.
+    """
+    # 1. Handshake — Graph sends validationToken on subscription create.
+    token = request.args.get('validationToken')
+    if request.method == 'GET' or token:
+        from flask import Response
+        return Response(token or '', mimetype='text/plain', status=200)
+
+    # 2. Notification body.
+    if not _mail_service.webhook_should_run():
+        return jsonify(ok=False, error='mailbox mode not active'), 400
+    try:
+        from email_ingest.webhook import handle_notification
+        stats = handle_notification(request.get_json(silent=True) or {})
+        return jsonify(ok=True, stats=stats), 200
+    except Exception as e:
+        app.logger.exception('email webhook failed')
+        return jsonify(ok=False, error=str(e)), 500
+
+
+@app.route('/api/email/subscribe', methods=['POST'])
+def api_email_subscribe():
+    """Admin-only: create the Graph subscription that ties the mailbox
+    to the webhook URL. Called once after CRM_INBOX_EMAIL is configured,
+    then whenever a subscription expires (every ~3 days)."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='admin only'), 403
+    try:
+        from email_ingest import subscription as _sub
+        res = _sub.create()
+        return jsonify(ok=True, subscription=res)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+
+@app.route('/api/email/subscribe/renew/<sub_id>', methods=['POST'])
+def api_email_subscribe_renew(sub_id):
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='admin only'), 403
+    try:
+        from email_ingest import subscription as _sub
+        res = _sub.renew(sub_id)
+        return jsonify(ok=True, subscription=res)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+
+@app.route('/api/email/subscriptions')
+def api_email_subscriptions_list():
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='admin only'), 403
+    try:
+        from email_ingest import subscription as _sub
+        return jsonify(ok=True, subscriptions=_sub.list_active(),
+                       mode=_mail_service.current_mode(),
+                       mailbox=_mail_service.crm_inbox_email())
+    except Exception as e:
+        return jsonify(ok=False, error=str(e), mode=_mail_service.current_mode()), 500
+
+
+@app.route('/api/email/inbox')
+def api_email_inbox():
+    """Admin visibility of every notification received on the mailbox.
+    Filter by ?status=lead_created (or skipped / failed / ...)."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='admin only'), 403
+    q = EmailEvent.query
+    st = (request.args.get('status') or '').strip().lower()
+    if st:
+        q = q.filter_by(status=st)
+    limit = min(int(request.args.get('limit', 100)), 500)
+    rows = q.order_by(EmailEvent.received_at.desc()).limit(limit).all()
+    return jsonify(ok=True,
+                   mode=_mail_service.current_mode(),
+                   mailbox=_mail_service.crm_inbox_email(),
+                   count=len(rows),
+                   events=[r.to_dict() for r in rows])
+
+
+@app.route('/api/email/inbox/<int:evt_id>')
+def api_email_inbox_detail(evt_id):
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='admin only'), 403
+    evt = EmailEvent.query.get_or_404(evt_id)
+    out = evt.to_dict()
+    out['payload_json'] = evt.payload_json
+    return jsonify(ok=True, event=out)
+
+
+@app.route('/api/email/inbox/<int:evt_id>/retry', methods=['POST'])
+def api_email_inbox_retry(evt_id):
+    """Re-process a specific email. Safe — idempotent on internetMessageId."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='admin only'), 403
+    evt = EmailEvent.query.get_or_404(evt_id)
+    if not evt.internet_message_id or not evt.mailbox:
+        return jsonify(ok=False, error='cannot retry; no message id / mailbox'), 400
+    try:
+        from email_ingest.graph_client import GraphClient
+        from email_ingest.webhook import _get_message
+        from email_ingest.single_message import process_single_message
+        graph = GraphClient()
+        # Re-fetch by internetMessageId → Graph message id via search.
+        # Simpler: assume the id captured earlier is still valid.
+        result = process_single_message(
+            graph, mailbox=evt.mailbox,
+            msg=_get_message(graph, evt.mailbox, evt.internet_message_id),
+        )
+        evt.status = ('lead_created' if result['status'] == 'created'
+                      else result['status'])
+        evt.reason = result.get('reason')
+        evt.lead_id = result.get('lead_id') or evt.lead_id
+        db.session.commit()
+        return jsonify(ok=True, result=result)
+    except Exception as e:
+        app.logger.exception('inbox retry failed')
+        return jsonify(ok=False, error=str(e)), 500
+
 
 if __name__ == '__main__':
     app.run(debug=os.environ.get('DEBUG','false').lower()=='true',
