@@ -485,7 +485,7 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
   <div class="card" style="margin-bottom:0">
     <div class="fbar">
       <input class="fi fi-srch" id="lS" placeholder="Search Company, state, industry..." oninput="rLeads()">
-      <select class="fi" id="lSt" onchange="rLeads()"><option value="">All Stages</option><option>New</option><option>Call Done</option><option>Profile Sent</option><option>Appointment</option><option>Visit Done</option><option>RFQ Generated</option><option>Won</option><option>Lost</option><option>On Hold</option><option>Not Interested</option></select>
+      <select class="fi" id="lSt" onchange="rLeads()"><option value="">All Stages</option><option>New</option><option>Call Done</option><option>Profile Sent</option><option>Appointment</option><option>Visit Done</option><option>RFQ Generated</option><option>Quoted</option><option>Under Negotiation</option><option>Won</option><option>Lost</option><option>On Hold</option><option>Not Interested</option></select>
       <select class="fi" id="lV" onchange="rLeads()"><option value="">All Verticals</option><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option></select>
       <button class="btn btn-ghost btn-sm" onclick="clrF('l')">Clear</button>
       <span class="f-cnt" id="lCnt"></span>
@@ -503,7 +503,7 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
   <div class="card" style="margin-bottom:0">
     <div class="fbar">
       <input class="fi fi-srch" id="aS" placeholder="Search Company, state, industry..." oninput="rAll()">
-      <select class="fi" id="aSt" onchange="rAll()"><option value="">All Stages</option><option>New</option><option>Call Done</option><option>Profile Sent</option><option>Appointment</option><option>Visit Done</option><option>RFQ Generated</option><option>Won</option><option>Lost</option><option>On Hold</option><option>Not Interested</option></select>
+      <select class="fi" id="aSt" onchange="rAll()"><option value="">All Stages</option><option>New</option><option>Call Done</option><option>Profile Sent</option><option>Appointment</option><option>Visit Done</option><option>RFQ Generated</option><option>Quoted</option><option>Under Negotiation</option><option>Won</option><option>Lost</option><option>On Hold</option><option>Not Interested</option></select>
       <select class="fi" id="aAsgn" onchange="rAll()"><option value="">All Team</option></select>
       <select class="fi" id="aV" onchange="rAll()"><option value="">All Verticals</option><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option></select>
       <select class="fi" id="aSrc" onchange="rAll()"><option value="">All Sources</option><option value="manual">Manual</option><option value="import">Imported</option><option value="news">News Lead</option><option value="jul2025">Jul-2025</option><option value="manju">Manju</option><option value="new_project">Archive</option><option value="subsidiary">Subsidiary</option></select>
@@ -986,8 +986,8 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
 // ══════════════════════════════════════════════════
 //  PROCAM CRM — Frontend Application
 // ══════════════════════════════════════════════════
-const STAGES=['New','Call Done','Profile Sent','Appointment','Visit Done','RFQ Generated','Won','Lost','On Hold','Not Interested'];
-const SC={'New':'sT','Call Done':'sN','Profile Sent':'sC','Appointment':'sP','Visit Done':'sR','RFQ Generated':'sA','Won':'sW','Lost':'sL','On Hold':'sV','Not Interested':'sL',
+const STAGES=['New','Call Done','Profile Sent','Appointment','Visit Done','RFQ Generated','Quoted','Under Negotiation','Won','Lost','On Hold','Not Interested'];
+const SC={'New':'sT','Call Done':'sN','Profile Sent':'sC','Appointment':'sP','Visit Done':'sR','RFQ Generated':'sA','Quoted':'sQ','Under Negotiation':'sU','Won':'sW','Lost':'sL','On Hold':'sV','Not Interested':'sL',
           /* legacy pass-through */ 'New':'sN','Call Done':'sC','Profile Sent':'sP','Appointment':'sA','Visit Done':'sV','RFQ Generated':'sR'};
 const SBK={jul2025:'srcJ',manju:'srcM',new_project:'srcN',subsidiary:'srcS',import:'srcI',manual:'srcMn',news:'srcI'};
 const SBL={jul2025:'Jul-25',manju:'Manju',new_project:'Arch.',subsidiary:'Subsid.',import:'Import',manual:'Manual',news:'News'};
@@ -1048,13 +1048,13 @@ async function init(){
 }
 
 // ── NAV ──
-const PG_TITLES={dash:'Overview',pipeline:'Sales Pipeline','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard'};
+const PG_TITLES={dash:'Overview',pipeline:'Sales Pipeline','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated','inb-quoted':'Quoted','inb-negot':'Under Negotiation','inb-quoted':'Quoted','inb-negot':'Under Negotiation',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard'};
 // Legacy 6-stage inbox nav ids alias into the unified Sales Pipeline
 // page pre-filtered to the corresponding stage. Preserves any old
 // bookmarked deep-link.
 const LEGACY_INBOX_ALIAS={
   'inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent',
-  'inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated',
+  'inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated','inb-quoted':'Quoted','inb-negot':'Under Negotiation','inb-quoted':'Quoted','inb-negot':'Under Negotiation',
 };
 // Mobile off-canvas sidebar drawer.
 function sbToggle(force){
@@ -1268,7 +1268,7 @@ function dashRenderCharts(st){
   const GREY = ['#E5E7EB','#D1D5DB','#CBD1D9','#9CA3AF','#6B7280','#4B5563','#374151','#1F2430'];
   const stageLabels = Object.keys(st.distributions.stages || {});
   const stageData   = stageLabels.map(k => st.distributions.stages[k]);
-  const stageCols   = stageLabels.map((s,i) => s==='Won'?'#059669':(s==='Lost'||s==='Not Interested')?'#B91C1C':(s==='RFQ Generated'?'#C72435':GREY[i%GREY.length]));
+  const stageCols   = stageLabels.map((s,i) => s==='Won'?'#059669':(s==='Lost'||s==='Not Interested')?'#B91C1C':((s==='RFQ Generated'||s==='Quoted'||s==='Under Negotiation')?'#C72435':GREY[i%GREY.length]));
 
   if (cCh.s) cCh.s.destroy();
   cCh.s = new Chart(g('cSt'), {type:'bar',
@@ -1430,7 +1430,7 @@ async function rDash(){
     g('sbProf').textContent=(st.inbox['Profile Sent']||0)    + (st.inbox['Qualified']||0);
     g('sbAppt').textContent=(st.inbox['Appointment']||0);
     g('sbVisit').textContent=(st.inbox['Visit Done']||0)     + (st.inbox['Proposal Due']||0);
-    g('sbRfq').textContent =(st.inbox['RFQ Generated']||0)   + (st.inbox['Negotiation Due']||0) + (st.inbox['Decision Taken']||0);
+    g('sbRfq').textContent =(st.inbox['RFQ Generated']||0)   + (st.inbox['Quoted']||0) + (st.inbox['Under Negotiation']||0) + (st.inbox['Negotiation Due']||0) + (st.inbox['Decision Taken']||0);
   }
   // Charts — mono palette: --red for the primary bar, greys for stacks
   const STAGES_FULL=STAGES;

@@ -25,17 +25,26 @@ except Exception:
 # Decision Taken → Won  (Won triggers PM handoff)
 # At any Decision point a deal can also go to Lost / On Hold / Not Interested.
 STAGES_PIPELINE = ['New', 'Call Done', 'Profile Sent', 'Appointment',
-                   'Visit Done', 'RFQ Generated']
+                   'Visit Done', 'RFQ Generated', 'Quoted', 'Under Negotiation']
 STAGES_TERMINAL = ['Won', 'Lost', 'On Hold', 'Not Interested']
 STAGES_ALL      = STAGES_PIPELINE + STAGES_TERMINAL
+# v2026-08 — extended pipeline. Normal flow is RFQ Generated → Quoted →
+# Under Negotiation → Won. Direct Quoted → Won and any-stage → Lost /
+# On Hold / Not Interested remain allowed via api_lead_decision().
 STAGE_NEXT = {
-    'New':            'Call Done',
-    'Call Done':      'Profile Sent',
-    'Profile Sent':   'Appointment',
-    'Appointment':    'Visit Done',
-    'Visit Done':     'RFQ Generated',
-    'RFQ Generated':  'Won',
+    'New':               'Call Done',
+    'Call Done':         'Profile Sent',
+    'Profile Sent':      'Appointment',
+    'Appointment':       'Visit Done',
+    'Visit Done':        'RFQ Generated',
+    'RFQ Generated':     'Quoted',
+    'Quoted':            'Under Negotiation',
+    'Under Negotiation': 'Won',
 }
+# Stages that can jump straight to a terminal Won without going through
+# Under Negotiation (spec Part A1 — "some customers award without formal
+# negotiation").
+STAGE_DIRECT_WIN = {'Quoted', 'Under Negotiation'}
 # Legacy stage names → new stage names. Applied automatically when a
 # lead's stage doesn't match STAGES_ALL. Ensures 9,500+ existing leads
 # keep working through the new pipeline without a manual migration.
@@ -1675,9 +1684,9 @@ def api_dashboard_summary():
         'active_pipeline':  _cnt(lambda l: l.stage in active_stages),
         'intro_emailed':    _cnt(lambda l: l.intro_mail_date is not None),
         'calls_done':       _cnt(lambda l: l.phone_call_date is not None),
-        'profile_sent':     _cnt(lambda l: l.stage in ('Profile Sent','Appointment','Visit Done','RFQ Generated','Won')),
+        'profile_sent':     _cnt(lambda l: l.stage in ('Profile Sent','Appointment','Visit Done','RFQ Generated','Quoted','Under Negotiation','Won')),
         'appointments':     _cnt(lambda l: l.meeting_date is not None),
-        'visits':           _cnt(lambda l: l.stage in ('Visit Done','RFQ Generated','Won')),
+        'visits':           _cnt(lambda l: l.stage in ('Visit Done','RFQ Generated','Quoted','Under Negotiation','Won')),
         'rfq_stage':        _cnt(lambda l: l.stage == 'RFQ Generated'),
         'rfqs_generated':   _cnt(lambda l: l.rfq_date is not None),
         'opportunities':    _cnt(lambda l: bool(l.opp_number)),
@@ -1736,7 +1745,7 @@ def api_dashboard_summary():
         if l.phone_call_date:        p['calls']  += 1
         if l.intro_mail_date:        p['profile'] += 1
         if l.meeting_date:           p['appts']  += 1
-        if l.stage in ('Visit Done','RFQ Generated','Won'):
+        if l.stage in ('Visit Done','RFQ Generated','Quoted','Under Negotiation','Won'):
             p['visits'] += 1
         if l.rfq_date:               p['rfqs']   += 1
         if l.stage == terminal_won:  p['won']    += 1;  p['won_value']      += float(l.cost_million or 0)
@@ -1752,11 +1761,11 @@ def api_dashboard_summary():
         ('lead',         lambda l: True),
         ('call',         lambda l: l.phone_call_date is not None or l.stage != 'New'),
         ('profile_sent', lambda l: l.intro_mail_date is not None or
-                                     l.stage in ('Profile Sent','Appointment','Visit Done','RFQ Generated','Won')),
+                                     l.stage in ('Profile Sent','Appointment','Visit Done','RFQ Generated','Quoted','Under Negotiation','Won')),
         ('appointment',  lambda l: l.meeting_date is not None or
-                                     l.stage in ('Appointment','Visit Done','RFQ Generated','Won')),
-        ('visit',        lambda l: l.stage in ('Visit Done','RFQ Generated','Won')),
-        ('rfq',          lambda l: l.rfq_date is not None or l.stage in ('RFQ Generated','Won')),
+                                     l.stage in ('Appointment','Visit Done','RFQ Generated','Quoted','Under Negotiation','Won')),
+        ('visit',        lambda l: l.stage in ('Visit Done','RFQ Generated','Quoted','Under Negotiation','Won')),
+        ('rfq',          lambda l: l.rfq_date is not None or l.stage in ('RFQ Generated','Quoted','Under Negotiation','Won')),
         ('won',          lambda l: l.stage == terminal_won),
     ]
     funnel = []
@@ -2736,7 +2745,7 @@ def _kpi_actual_for(kpi_key, scope_type, scope_key, period_start, period_end):
         return q.filter(Lead.meeting_date.isnot(None)).count()
     if kpi_key == 'visits':
         return q.filter(Lead.stage.in_(
-            ('Visit Done','RFQ Generated','Won'))).count()
+            ('Visit Done','RFQ Generated','Quoted','Under Negotiation','Won'))).count()
     if kpi_key == 'rfqs_generated':
         return q.filter(Lead.rfq_date.isnot(None)).count()
     if kpi_key == 'new_leads':
