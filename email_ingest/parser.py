@@ -346,36 +346,82 @@ _FORWARD_FROM_RE = re.compile(
     r"\s*$"
 )
 
+# Fallback for mobile/iOS/Apple Mail style:
+#   On Wed, Aug 27, 2026 at 3:45 PM, John Doe <john@customer.com> wrote:
+# Captures just the address; name is deliberately anonymous (AI extractor
+# will fill in a proper contact_name from the body).
+_FORWARD_WROTE_RE = re.compile(
+    r"(?is)\bon\b[^<\n\r]{5,140}?"
+    r"<\s*([^>\s]+@[^>\s]+)\s*>"
+    r"\s*wrote:"
+)
+
+# Generic e-mail address (used only as a last-resort fallback).
+_ANY_EMAIL_RE = re.compile(
+    r"([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})"
+)
+
 # Subject prefixes that mark a forward. English + common client variants.
 _FORWARD_SUBJECT_RE = re.compile(r"^\s*(fw|fwd|fwd\.|fw\.|f/w)\s*:\s*", re.I)
 
 
 def _extract_forwarded_sender(subject: str, body_text: str) -> Optional[Tuple[str, str]]:
-    """If the message looks like a forward and the body contains an original
-    From: header, return (email, name). Else None.
+    """If the message looks like a forward, return (email, name) of the
+    original external sender.
 
-    Picks the FIRST From: header in the body (the outermost forward, closest
-    to the top). If someone forwards a forward, we still surface the deepest
-    original sender because that's the customer we want to attribute to."""
+    Tries three strategies in order:
+      1. Strict "From: ..." header line at start-of-line (Outlook / Gmail
+         desktop / plain forwards).
+      2. "On <date>, <name> <email> wrote:" (iOS Mail / mobile Outlook).
+      3. Fallback: first non-internal email address anywhere in the body.
+
+    Any of the three succeeding is enough. The message qualifies as a
+    forward if the subject is prefixed with Fw/Fwd OR the body contains
+    an obvious forward marker."""
     if not body_text:
         return None
-    # Signal 1 or 2 must hold. Either the subject is prefixed with Fwd/FW,
-    # OR the body contains an obvious "Forwarded message" marker.
+    lowered = body_text.lower()
     looks_forwarded = bool(_FORWARD_SUBJECT_RE.match(subject or "")) or (
-        "forwarded message" in body_text.lower()
-        or "begin forwarded" in body_text.lower()
-        or "-----original message-----" in body_text.lower()
+        "forwarded message" in lowered
+        or "begin forwarded" in lowered
+        or "-----original message-----" in lowered
+        or " wrote:" in lowered                # iOS / mobile reply-forward
+        or "sent from my " in lowered          # mobile signature is a hint
     )
     if not looks_forwarded:
         return None
+
+    # Strategy 1 — strict From: header
     m = _FORWARD_FROM_RE.search(body_text)
-    if not m:
-        return None
-    name  = (m.group(1) or "").strip()
-    email = (m.group(2) or m.group(3) or "").strip().lower()
-    if not email or "@" not in email:
-        return None
-    return email, name
+    if m:
+        name  = (m.group(1) or "").strip()
+        email = (m.group(2) or m.group(3) or "").strip().lower()
+        if email and "@" in email:
+            return email, name
+
+    # Strategy 2 — "On <date>, <name> <email> wrote:"
+    m = _FORWARD_WROTE_RE.search(body_text)
+    if m:
+        email = (m.group(1) or "").strip().lower()
+        if email and "@" in email:
+            return email, ""
+
+    # Strategy 3 — first non-internal email in the body
+    skip = _skip_domains()
+    for match in _ANY_EMAIL_RE.finditer(body_text):
+        email = match.group(1).lower()
+        if "@" not in email:
+            continue
+        domain = email.split("@", 1)[1]
+        if domain in skip:
+            continue    # internal — skip
+        # Also skip anything that looks like a Microsoft / Google infra
+        # address in headers — noreply, mailer-daemon, calendar.
+        if _NOREPLY_RE.search(email):
+            continue
+        return email, ""
+
+    return None
 
 
 def _promote_forwarded_sender(msg: dict) -> Optional[dict]:
