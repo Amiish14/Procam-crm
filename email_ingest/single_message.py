@@ -105,28 +105,45 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
                             'reason': f'existing lead: same domain <{DEDUP_DOMAIN_WINDOW_DAYS}d',
                             'lead_id': None, 'internet_message_id': imid}
 
-        # ── Create Lead — reuses model fields shared with existing routes.
-        message_body = extracted.get('body') or extracted.get('body_text') or None
-        if forwarded_by and message_body:
+        # ── Build Lead payload — using the actual Lead schema field names.
+        contact_name = (extracted.get('contact_name')
+                        or extracted.get('name')
+                        or (sender_email.split('@', 1)[0] if sender_email else 'Unknown'))
+        subject_line = extracted.get('subject') or msg.get('subject') or ''
+        body_text    = (extracted.get('body_text')
+                        or extracted.get('body')
+                        or msg.get('bodyPreview') or '')
+        # Company must be non-null on the schema. If parser couldn't infer
+        # one, fall back to sender_domain, then to a placeholder — the
+        # sales rep can rename later; better a lead than a hard rollback.
+        company = (extracted.get('company')
+                   or (sender_domain.split('.')[0].title() if sender_domain else '')
+                   or 'Unknown Sender')
+
+        notes_parts = []
+        if forwarded_by:
             who = forwarded_by.get('email') if isinstance(forwarded_by, dict) else str(forwarded_by)
-            message_body = (
+            notes_parts.append(
                 f"[Forwarded to CRM by {who} on "
-                f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}]\n\n"
-                + message_body
+                f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}]"
             )
+        if subject_line:
+            notes_parts.append(f"Subject: {subject_line}")
+        if body_text:
+            notes_parts.append(body_text)
+        notes = "\n\n".join(notes_parts) if notes_parts else None
 
         try:
             lead = Lead(
                 source              = 'email',
-                stage               = 'New',
-                name                = extracted.get('name')    or (sender_email or 'Unknown'),
-                email               = extracted.get('email')   or None,
-                mobile              = extracted.get('phone')   or None,
-                company             = extracted.get('company') or None,
-                subject             = extracted.get('subject') or msg.get('subject'),
-                message             = message_body,
+                stage               = 'New Opportunity',
+                company             = company,
+                pic                 = contact_name,
+                email               = extracted.get('email') or None,
+                phone               = extracted.get('phone') or None,
+                notes               = notes,
                 email_message_id    = imid,
-                ai_summary_json     = extracted.get('ai_summary_json'),
+                email_extracted_json= extracted.get('ai_summary_json'),
                 created_at          = datetime.utcnow(),
             )
             db.session.add(lead)
