@@ -582,7 +582,14 @@ def extract_lead(msg: dict) -> Optional[dict]:
     # Threshold 0.5 (from 0.4): emails below this don't reach AI (cost gate).
     # Anything with a real logistics signal (RFQ + cargo, or phone + route, etc.)
     # clears 0.5 easily; weak-signal emails get filtered here for free.
-    if score < 0.5:
+    # v2026-08 — forwarded-by-internal emails are already vetted by a
+    # Procam employee, so don't second-guess them with confidence scores.
+    is_internal_forward = bool(msg.get("_forwarded_by"))
+    if not is_internal_forward and score < 0.5:
         payload["skip_reason"] = "low confidence"
+
+    # Surface the forwarded-by breadcrumb so downstream steps can record it.
+    if is_internal_forward:
+        payload["forwarded_by"] = msg.get("_forwarded_by")
 
     return payload

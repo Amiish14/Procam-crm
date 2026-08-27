@@ -77,28 +77,44 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
             log.exception('AI extractor failed silently — continuing on regex')
 
         # ── DB-level dedup (email + recent domain) ─────────────────────
+        # v2026-08 — when a Procam employee EXPLICITLY forwards a lead to
+        # the CRM inbox, honour their intent: always create the lead even
+        # if that customer already exists in the system. Same customer can
+        # legitimately raise multiple RFQs; the sales team can merge later
+        # in the UI if it's actually the same enquiry.
+        forwarded_by = extracted.get('forwarded_by') or msg.get('_forwarded_by')
         sender_email  = (extracted.get('email') or '').strip().lower()
         sender_domain = sender_email.split('@', 1)[1] if '@' in sender_email else ''
 
-        if sender_email:
-            if db.session.query(Lead.id).filter(
-                    db.func.lower(Lead.email) == sender_email).first():
-                return {'status': 'skipped', 'reason': 'existing lead: same email',
-                        'lead_id': None, 'internet_message_id': imid}
+        if not forwarded_by:
+            if sender_email:
+                if db.session.query(Lead.id).filter(
+                        db.func.lower(Lead.email) == sender_email).first():
+                    return {'status': 'skipped', 'reason': 'existing lead: same email',
+                            'lead_id': None, 'internet_message_id': imid}
 
-        if sender_domain:
-            cutoff = datetime.utcnow() - timedelta(days=DEDUP_DOMAIN_WINDOW_DAYS)
-            recent_hit = db.session.query(Lead.id).filter(
-                Lead.email.isnot(None),
-                Lead.email.op('ILIKE')(f'%@{sender_domain}'),
-                Lead.created_at >= cutoff,
-            ).first()
-            if recent_hit:
-                return {'status': 'skipped',
-                        'reason': f'existing lead: same domain <{DEDUP_DOMAIN_WINDOW_DAYS}d',
-                        'lead_id': None, 'internet_message_id': imid}
+            if sender_domain:
+                cutoff = datetime.utcnow() - timedelta(days=DEDUP_DOMAIN_WINDOW_DAYS)
+                recent_hit = db.session.query(Lead.id).filter(
+                    Lead.email.isnot(None),
+                    Lead.email.op('ILIKE')(f'%@{sender_domain}'),
+                    Lead.created_at >= cutoff,
+                ).first()
+                if recent_hit:
+                    return {'status': 'skipped',
+                            'reason': f'existing lead: same domain <{DEDUP_DOMAIN_WINDOW_DAYS}d',
+                            'lead_id': None, 'internet_message_id': imid}
 
         # ── Create Lead — reuses model fields shared with existing routes.
+        message_body = extracted.get('body') or extracted.get('body_text') or None
+        if forwarded_by and message_body:
+            who = forwarded_by.get('email') if isinstance(forwarded_by, dict) else str(forwarded_by)
+            message_body = (
+                f"[Forwarded to CRM by {who} on "
+                f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}]\n\n"
+                + message_body
+            )
+
         try:
             lead = Lead(
                 source              = 'email',
@@ -108,7 +124,7 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
                 mobile              = extracted.get('phone')   or None,
                 company             = extracted.get('company') or None,
                 subject             = extracted.get('subject') or msg.get('subject'),
-                message             = extracted.get('body')    or None,
+                message             = message_body,
                 email_message_id    = imid,
                 ai_summary_json     = extracted.get('ai_summary_json'),
                 created_at          = datetime.utcnow(),
