@@ -1256,19 +1256,22 @@ window.CRMToast = (function(){
 
 <!-- MY PERFORMANCE / Target vs Actual -->
 <div class="page" id="pg-perf">
-  <div class="pg-hd">
-    <div><div class="pg-ttl">Performance · Target vs Actual</div>
-         <div class="pg-sub" id="perfSub">Live actuals from CRM · targets configured in KPI Settings</div></div>
-    <div style="display:flex;gap:.6rem;align-items:center;">
-      <div style="font-size:.8rem;color:#6B7280;">Composite:</div>
-      <div id="perfComp" style="font-family:Barlow;font-weight:800;font-size:1.6rem;color:#C72435;">—</div>
+  <div class="pg-hd" style="align-items:flex-end;">
+    <div style="flex:1;min-width:0;">
+      <div class="pg-ttl">Performance</div>
+      <div class="pg-sub" id="perfSub">Live actuals from CRM — targets configured in KPI Settings</div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:10.5px;font-weight:700;color:var(--p-text-2);text-transform:uppercase;letter-spacing:.05em;">Composite score</div>
+      <div id="perfComp" style="font-family:var(--p-font-display);font-weight:800;font-size:32px;color:var(--p-red);letter-spacing:-0.024em;line-height:1;margin-top:4px;">—</div>
     </div>
   </div>
-  <div class="krow" id="perfRings" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));"></div>
-  <div class="card" style="padding:1rem;margin-top:.5rem;">
+  <div id="perfRings" style="margin:20px 0;"></div>
+  <div class="card">
+    <div class="card-hd"><div class="card-ttl">All Targets</div></div>
     <div class="tw"><table>
       <thead><tr><th>KPI</th><th>Scope</th><th>Period</th>
-      <th>Target</th><th>Actual</th><th>Achievement</th><th>Time Elapsed</th><th>Status</th></tr></thead>
+      <th style="text-align:right;">Target</th><th style="text-align:right;">Actual</th><th>Achievement</th><th style="text-align:right;">Elapsed</th><th>Status</th></tr></thead>
       <tbody id="perfTb"></tbody></table></div>
   </div>
 </div>
@@ -2861,54 +2864,127 @@ async function saveKpiTarget(){
 // ═══════════════════════════════════════════════════════════════════
 //   MY PERFORMANCE · Target vs Actual  (Phase 2)
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// PERFORMANCE · Target vs Actual — premium redesign
+// ═══════════════════════════════════════════════════════════════════
+function _perfFmtPct(n){
+  if (n == null || !isFinite(n)) return '—';
+  if (n >= 1000) return '999%+';
+  return Math.round(n) + '%';
+}
+function _perfFmtNum(n){
+  if (n == null) return '—';
+  const num = Number(n);
+  if (!isFinite(num)) return String(n);
+  if (Math.abs(num) >= 10_000_000) return (num/10_000_000).toFixed(1) + ' Cr';
+  if (Math.abs(num) >= 100_000)    return (num/100_000).toFixed(1) + ' L';
+  return num.toLocaleString('en-IN', {maximumFractionDigits: 1});
+}
+function _perfStatusColor(status){
+  return status === 'green' ? 'var(--p-success)' :
+         status === 'amber' ? 'var(--p-warning)' : 'var(--p-danger)';
+}
+function _perfStatusSoft(status){
+  return status === 'green' ? 'var(--p-success-soft)' :
+         status === 'amber' ? 'var(--p-warning-soft)' : 'var(--p-danger-soft)';
+}
+
 async function rPerf(){
-  const p = await api('/api/kpi/performance');
+  const perfComp = g('perfComp');
+  const p = await api('/api/kpi/performance').catch(()=>null);
   const rows = (p && p.rows) || [];
-  g('perfComp').textContent = (p && p.composite_score != null) ? p.composite_score + '%' : '—';
-  g('perfComp').style.color = !rows.length ? '#9CA3AF'
-    : (p.composite_score >= 100 ? '#059669' : p.composite_score >= 80 ? '#B45309' : '#B91C1C');
 
-  // Achievement rings (one per KPI target)
-  g('perfRings').innerHTML = rows.length ? rows.map(r => {
-    const col = r.status === 'green' ? '#059669' : r.status === 'amber' ? '#B45309' : '#B91C1C';
-    const pct = Math.min(100, Math.max(0, r.achievement_pct || 0));
-    const deg = pct * 3.6;
-    const pace = r.achievement_pct - r.time_elapsed_pct;
-    const paceLbl = pace >= 0 ? `+${pace.toFixed(0)}% ahead` : `${pace.toFixed(0)}% behind`;
-    return `<div class="kpi" style="padding:1rem;">
-      <div style="display:flex;align-items:center;gap:.75rem;">
-        <div style="width:64px;height:64px;border-radius:50%;
-          background:conic-gradient(${col} ${deg}deg, #F3F4F6 0);
-          display:flex;align-items:center;justify-content:center;font-family:Barlow;font-weight:700;color:${col};font-size:.85rem;">
-          ${Math.round(r.achievement_pct)}%
-        </div>
-        <div style="flex:1;">
-          <div class="kl">${e(r.name)}</div>
-          <div style="font-family:Barlow;font-weight:700;font-size:1.1rem;color:#111827;">
-            ${Number(r.actual).toLocaleString('en-IN')} / ${Number(r.target).toLocaleString('en-IN')}
+  // ── Composite score — clamped display; readable "GREEN N/M targets on track"
+  const comp = p && p.composite_score != null ? p.composite_score : null;
+  const greens = rows.filter(r => r.status === 'green').length;
+  if (perfComp) {
+    perfComp.textContent = comp != null ? _perfFmtPct(comp) : '—';
+    perfComp.style.color = comp == null ? 'var(--p-text-3)'
+      : comp >= 100 ? 'var(--p-success)'
+      : comp >=  80 ? 'var(--p-warning)' : 'var(--p-danger)';
+    perfComp.style.fontFamily = 'var(--p-font-display)';
+    perfComp.style.fontWeight = '800';
+    perfComp.style.letterSpacing = '-0.02em';
+  }
+
+  // ── KPI cards
+  const rings = g('perfRings');
+  if (rings) {
+    rings.style.display = 'grid';
+    rings.style.gridTemplateColumns = 'repeat(auto-fill, minmax(320px, 1fr))';
+    rings.style.gap = '14px';
+    rings.innerHTML = rows.length ? rows.map(r => {
+      const status  = (r.status || 'red').toLowerCase();
+      const col     = _perfStatusColor(status);
+      const softBg  = _perfStatusSoft(status);
+      const pct     = Math.max(0, r.achievement_pct || 0);
+      const capped  = Math.min(100, pct);
+      const pace    = pct - (r.time_elapsed_pct || 0);
+      const paceLbl = pace >= 0 ? '+' + Math.round(pace) + '% ahead' :
+                                  Math.round(pace) + '% behind';
+      const paceCol = pace >= 0 ? 'var(--p-success)' : 'var(--p-warning)';
+      return `
+        <div class="k" style="padding:16px 18px;position:relative;overflow:hidden;">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:11px;font-weight:600;color:var(--p-text-2);text-transform:uppercase;letter-spacing:.05em;">${e(r.name)}</div>
+              <div style="font-family:var(--p-font-display);font-weight:700;font-size:22px;color:var(--p-ink);letter-spacing:-0.02em;margin-top:6px;line-height:1.1;">
+                ${_perfFmtNum(r.actual)}
+                <span style="color:var(--p-text-3);font-size:14px;font-weight:600;">/ ${_perfFmtNum(r.target)}</span>
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <div title="${pct.toFixed(1)}%" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:${softBg};color:${col};font-weight:700;font-size:12px;letter-spacing:-0.005em;">
+                ${_perfFmtPct(pct)}
+              </div>
+            </div>
           </div>
-          <div class="ks" style="color:${pace >= 0 ? '#059669' : '#B45309'};">${paceLbl}</div>
-        </div>
-      </div>
-    </div>`;
-  }).join('') : '<div style="grid-column:1/-1;text-align:center;padding:2rem;color:#9CA3AF;">No KPI targets in your scope. Ask admin to configure targets in <strong>KPI Settings</strong>.</div>';
+          <div style="margin-top:14px;height:6px;border-radius:999px;background:var(--p-surface-3);overflow:hidden;">
+            <div style="height:100%;width:${capped}%;background:${col};border-radius:999px;transition:width .6s cubic-bezier(.16,.84,.36,1);"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:11.5px;font-weight:600;">
+            <span style="color:var(--p-text-2);">Time elapsed <span style="color:var(--p-ink-2);">${Math.round(r.time_elapsed_pct||0)}%</span></span>
+            <span style="color:${paceCol};">${paceLbl}</span>
+          </div>
+        </div>`;
+    }).join('') : `
+      <div class="crm-empty" style="grid-column:1/-1;">
+        <div class="icon">📊</div>
+        <div class="title">No KPI targets yet</div>
+        <div class="msg">Ask an admin to configure targets in KPI Settings. Actuals stream in automatically once targets are set.</div>
+      </div>`;
+  }
 
-  // Detail table
-  g('perfTb').innerHTML = rows.length ? rows.map(r => {
-    const col = r.status === 'green' ? '#059669' : r.status === 'amber' ? '#B45309' : '#B91C1C';
-    const bar = `<div style="background:#F3F4F6;height:6px;border-radius:4px;overflow:hidden;">
-      <div style="background:${col};height:100%;width:${Math.min(100, r.achievement_pct)}%;"></div></div>`;
-    return `<tr>
-      <td><strong>${e(r.name)}</strong> <span class="mono" style="color:#9CA3AF;">${e(r.kpi_key)}</span></td>
-      <td>${e(r.scope_type)}${r.scope_key ? ' · '+e(r.scope_key) : ''}</td>
-      <td class="tddate">${e(r.period_start)} → ${e(r.period_end)}</td>
-      <td class="mono">${Number(r.target).toLocaleString('en-IN')}</td>
-      <td class="mono" style="font-weight:600;">${Number(r.actual).toLocaleString('en-IN')}</td>
-      <td style="min-width:160px;">${bar}<div style="font-size:.72rem;margin-top:.2rem;color:${col};font-weight:600;">${r.achievement_pct}%</div></td>
-      <td>${r.time_elapsed_pct}%</td>
-      <td><span style="padding:.15rem .5rem;border-radius:10px;font-size:.72rem;font-weight:600;background:${col};color:#fff;">${r.status.toUpperCase()}</span></td>
-    </tr>`;
-  }).join('') : '<tr><td colspan="8" style="text-align:center;padding:2rem;color:#9CA3AF;">No targets in your scope.</td></tr>';
+  // ── Detail table
+  const tb = g('perfTb');
+  if (tb) {
+    tb.innerHTML = rows.length ? rows.map(r => {
+      const status = (r.status || 'red').toLowerCase();
+      const col    = _perfStatusColor(status);
+      const softBg = _perfStatusSoft(status);
+      const pct    = Math.max(0, r.achievement_pct || 0);
+      const capped = Math.min(100, pct);
+      const badge  = status === 'green' ? 'sW' : status === 'amber' ? 'sR' : 'sL';
+      return `<tr>
+        <td>
+          <div class="td-m">${e(r.name)}</div>
+          <div class="td-s mono">${e(r.kpi_key)}</div>
+        </td>
+        <td style="color:var(--p-text-2);">${e(r.scope_type)}${r.scope_key ? ' · '+e(r.scope_key) : ''}</td>
+        <td class="tddate">${e(r.period_start)} → ${e(r.period_end)}</td>
+        <td class="tbl-num" style="font-family:var(--p-font-num);">${_perfFmtNum(r.target)}</td>
+        <td class="tbl-num" style="font-family:var(--p-font-num);color:var(--p-ink);font-weight:700;">${_perfFmtNum(r.actual)}</td>
+        <td style="min-width:180px;">
+          <div style="height:6px;border-radius:999px;background:var(--p-surface-3);overflow:hidden;">
+            <div style="height:100%;width:${capped}%;background:${col};border-radius:999px;"></div>
+          </div>
+          <div style="font-size:11px;margin-top:4px;font-weight:600;color:${col};" title="${pct.toFixed(1)}%">${_perfFmtPct(pct)}</div>
+        </td>
+        <td class="tbl-num" style="color:var(--p-text-2);">${Math.round(r.time_elapsed_pct||0)}%</td>
+        <td><span class="b ${badge}">${status.toUpperCase()}</span></td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="8" style="text-align:center;padding:56px 20px;color:var(--p-text-2);"><div style="font-family:var(--p-font-display);font-weight:700;color:var(--p-ink);margin-bottom:4px;">Nothing here yet</div><div style="font-size:13px;">Once targets exist for your scope, they will show up here with real-time actuals.</div></td></tr>';
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
