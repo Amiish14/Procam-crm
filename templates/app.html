@@ -364,6 +364,8 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
   <div class="sbi" onclick="nav('leads')" data-p="leads"><span class="ic">📋</span>My Leads<span class="sb-cnt" id="sbN">0</span></div>
   <div class="sbi" onclick="nav('outreach')" data-p="outreach"><span class="ic">✉️</span>AI Outreach</div>
   <div class="sbi" onclick="nav('contacts')" data-p="contacts"><span class="ic">🌐</span>Global CRM</div>
+  <div class="sbi" onclick="nav('accounts')" data-p="accounts"><span class="ic">🏢</span>Accounts<span class="sb-cnt" id="sbAcc">0</span></div>
+  <div class="sbi" onclick="nav('projects')" data-p="projects"><span class="ic">🏗️</span>Project Intelligence<span class="sb-cnt" id="sbPrj">0</span></div>
   <div class="sbi" onclick="nav('pwchange')" data-p="pwchange"><span class="ic">🔑</span>Change Password</div>
   <div class="sb-sec admin-only">Administration</div>
   <div class="sbi admin-only" onclick="nav('all')" data-p="all"><span class="ic">🗂️</span>All Leads</div>
@@ -2677,6 +2679,560 @@ async function doChangePw(){
   if(r.ok){g('cpwMsg').style.color='#065F46';g('cpwMsg').textContent='Password changed successfully ✓';[g('cpwCur'),g('cpwNew'),g('cpwCfm')].forEach(el=>el.value='');}
   else{g('cpwMsg').style.color='var(--red)';g('cpwMsg').textContent=r.error||'Error';}
 }
+
+// ═════════════════════════════════════════════════════════════════════
+// PRE-SALES INTELLIGENCE LAYER · Accounts + Project Intelligence
+// See docs/PRE_SALES_INTELLIGENCE_ARCHITECTURE.md
+// ═════════════════════════════════════════════════════════════════════
+PG_TITLES['accounts'] = 'Accounts';
+PG_TITLES['projects'] = 'Project Intelligence';
+
+const ACCT = { list: [], filtered: [], vocab: null, current: null };
+const PRJ  = { list: [], filtered: [], vocab: null, current: null };
+
+// ── Fetch helpers ────────────────────────────────────────────────────
+async function acctFetchVocab(){
+  if (ACCT.vocab) return ACCT.vocab;
+  try { const r=await api('/api/accounts/vocab'); ACCT.vocab=r; return r; }
+  catch(e){ return {account_types:[],dev_stages:[],activity_kinds:[]}; }
+}
+async function prjFetchVocab(){
+  if (PRJ.vocab) return PRJ.vocab;
+  try { const r=await api('/api/projects/vocab'); PRJ.vocab=r; return r; }
+  catch(e){ return {stages:[],update_types:[],account_roles:[],source_types:[]}; }
+}
+
+// ── ACCOUNTS list + filters ─────────────────────────────────────────
+async function rAccounts(){
+  const v = await acctFetchVocab();
+  const p = g('pg-accounts'); if (!p) return;
+  const bar = `
+    <div class="pg-hd">
+      <div><div class="pg-ttl">Accounts</div>
+      <div class="pg-sub">Organisations Procam has or wants a commercial relationship with — pre-sales layer</div></div>
+      <button class="btn btn-red" onclick="acctOpenCreate()">+ New Account</button>
+    </div>
+    <div class="card" style="padding:.65rem .85rem;margin-bottom:.6rem;">
+      <div style="display:flex;flex-wrap:wrap;gap:.45rem;align-items:end;">
+        <input class="fi fi-srch" id="acQ" placeholder="Search account name…" oninput="acctFilter()" style="min-width:220px;flex:1;">
+        <select class="fi" id="acStg" onchange="acctFilter()"><option value="">All Dev Stages</option>${v.dev_stages.map(s=>`<option>${e(s)}</option>`).join('')}</select>
+        <select class="fi" id="acPri" onchange="acctFilter()"><option value="">All Priority</option><option>High</option><option>Medium</option><option>Low</option></select>
+        <button class="btn btn-ghost btn-sm" onclick="acctResetFilters()">Reset</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl">All Accounts</div><span class="f-cnt" id="acCnt">0</span></div>
+      <div class="tw"><table>
+        <thead><tr><th>#</th><th>Account</th><th>Dev Stage</th><th>Tags</th><th>PIC</th>
+          <th>Priority</th><th>Last Activity</th><th>Next Action</th><th></th></tr></thead>
+        <tbody id="acTb"></tbody></table></div>
+    </div>`;
+  p.innerHTML = bar;
+  try {
+    const r = await api('/api/accounts');
+    ACCT.list = r.accounts || [];
+  } catch(err){ ACCT.list = []; }
+  acctFilter();
+  const nav=document.querySelector('[data-p="accounts"] .sb-cnt');
+  if(nav) nav.textContent = ACCT.list.length;
+}
+function acctFilter(){
+  const q=(g('acQ')?.value||'').toLowerCase();
+  const st=g('acStg')?.value||'';
+  const pri=g('acPri')?.value||'';
+  ACCT.filtered = ACCT.list.filter(a =>
+    (!q || (a.name||'').toLowerCase().includes(q)) &&
+    (!st || a.dev_stage === st) &&
+    (!pri || a.priority === pri)
+  );
+  const tb=g('acTb'); if(!tb) return;
+  g('acCnt').textContent = ACCT.filtered.length + ' account(s)';
+  if (!ACCT.filtered.length) {
+    tb.innerHTML = '<tr><td colspan="9" style="padding:2rem;text-align:center;color:#6b7280;">No accounts match your filters.</td></tr>';
+    return;
+  }
+  tb.innerHTML = ACCT.filtered.slice(0,500).map((a,i)=>`
+    <tr onclick="acctOpen(${a.id})" style="cursor:pointer;">
+      <td>${i+1}</td>
+      <td><div class="td-m">${e(a.name)}</div>${a.industry?`<div class="td-s">${e(a.industry)}</div>`:''}</td>
+      <td>${a.dev_stage?`<span class="b sA">${e(a.dev_stage)}</span>`:'—'}</td>
+      <td>${(a.tags||[]).map(t=>`<span class="b sN" style="margin-right:2px;">${e(t)}</span>`).join('') || '—'}</td>
+      <td>${e(a.pic||'—')}</td>
+      <td>${e(a.priority||'Medium')}</td>
+      <td>${e(a.last_activity_at||'—')}</td>
+      <td>${e(a.next_action_at||'—')}</td>
+      <td onclick="event.stopPropagation()" style="white-space:nowrap;">
+        <button class="btn btn-ghost btn-xs" onclick="acctOpen(${a.id})">Open</button>
+      </td>
+    </tr>`).join('');
+}
+function acctResetFilters(){ ['acQ','acStg','acPri'].forEach(id=>{const el=g(id); if(el) el.value='';}); acctFilter(); }
+
+// ── ACCOUNT create / detail modal ────────────────────────────────────
+async function acctOpenCreate(){
+  const v = await acctFetchVocab();
+  openModal(`
+    <div class="pg-hd" style="border:0;"><div class="pg-ttl">New Account</div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem;padding:.5rem;">
+      <label>Name*<input class="fi" id="naNm" style="width:100%;"></label>
+      <label>Industry<input class="fi" id="naInd" style="width:100%;"></label>
+      <label>Country<input class="fi" id="naCty" value="India" style="width:100%;"></label>
+      <label>State<input class="fi" id="naSt" style="width:100%;"></label>
+      <label>City<input class="fi" id="naCi" style="width:100%;"></label>
+      <label>Website<input class="fi" id="naWeb" style="width:100%;"></label>
+      <label>Dev Stage<select class="fi" id="naStg" style="width:100%;">${v.dev_stages.map(s=>`<option>${e(s)}</option>`).join('')}</select></label>
+      <label>Priority<select class="fi" id="naPri" style="width:100%;"><option>High</option><option selected>Medium</option><option>Low</option></select></label>
+      <label style="grid-column:1/-1;">Relationship Tags
+        <div id="naTags" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px;border:1px solid #e5e7eb;border-radius:6px;">
+          ${v.account_types.map(t=>`<label style="cursor:pointer;font-size:12px;background:#f3f4f6;padding:3px 8px;border-radius:999px;">
+            <input type="checkbox" value="${e(t)}" style="margin-right:3px;">${e(t)}</label>`).join('')}
+        </div></label>
+      <label style="grid-column:1/-1;"><input type="checkbox" id="naStrat"> Strategic Account</label>
+      <label style="grid-column:1/-1;">Notes<textarea class="fi" id="naNotes" rows="3" style="width:100%;"></textarea></label>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;padding:.5rem;">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-red" onclick="acctSubmit()">Create</button>
+    </div>`);
+}
+async function acctSubmit(){
+  const name = g('naNm').value.trim();
+  if (!name){ alert('Name required'); return; }
+  const tags = Array.from(document.querySelectorAll('#naTags input:checked')).map(c=>c.value);
+  const body = {
+    name,
+    industry: g('naInd').value.trim(),
+    country: g('naCty').value.trim(),
+    state:   g('naSt').value.trim(),
+    city:    g('naCi').value.trim(),
+    website: g('naWeb').value.trim(),
+    dev_stage: g('naStg').value,
+    priority: g('naPri').value,
+    strategic: g('naStrat').checked,
+    tags,
+    notes: g('naNotes').value.trim(),
+  };
+  try {
+    const r = await fetch('/api/accounts', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if (!j.ok) { alert('Could not create: ' + (j.error||'unknown')); return; }
+    closeModal();
+    await rAccounts();
+    acctOpen(j.id);
+  } catch(e){ alert('Network error creating account'); }
+}
+async function acctOpen(id){
+  try {
+    const r = await api(`/api/accounts/${id}`);
+    if (!r.ok) return;
+    ACCT.current = r.account;
+    const acts = await api(`/api/accounts/${id}/activities`);
+    const hist = await api(`/api/accounts/${id}/history`);
+    renderAcctDetail(r.account, acts.activities || [], hist);
+  } catch(e){ alert('Could not load account'); }
+}
+function renderAcctDetail(a, activities, hist){
+  openModal(`
+    <div class="pg-hd" style="border:0;"><div>
+      <div class="pg-ttl">${e(a.name)}</div>
+      <div class="pg-sub">${e(a.industry||'—')} · ${e(a.state||'')} ${e(a.country||'')}</div>
+    </div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:.5rem;padding:.5rem;">
+      <div class="k"><div class="kL">Dev Stage</div><div class="kV">${e(a.dev_stage||'—')}</div></div>
+      <div class="k"><div class="kL">PIC</div><div class="kV">${e(a.pic||'—')}</div></div>
+      <div class="k"><div class="kL">Priority</div><div class="kV">${e(a.priority||'—')}</div></div>
+      <div class="k"><div class="kL">Win Rate</div><div class="kV">${(a.win_rate_pct||0).toFixed(1)}%</div></div>
+      <div class="k"><div class="kL">Leads</div><div class="kV">${a.lead_count||0}</div></div>
+      <div class="k"><div class="kL">Opps</div><div class="kV">${a.opp_total||0}</div></div>
+      <div class="k"><div class="kL">Won</div><div class="kV">${a.opp_won||0}</div></div>
+      <div class="k"><div class="kL">Last Activity</div><div class="kV">${e(a.last_activity_at||'—')}</div></div>
+    </div>
+    <div style="display:flex;gap:6px;margin:.5rem;flex-wrap:wrap;">
+      ${(a.tags||[]).map(t=>`<span class="b sN">${e(t)}</span>`).join('')}
+    </div>
+    <div style="display:flex;gap:6px;margin:.5rem;">
+      <button class="btn btn-red btn-sm" onclick="acctLogActivity(${a.id})">+ Log Activity</button>
+      <button class="btn btn-ghost btn-sm" onclick="acctChangeStage(${a.id})">Change Stage</button>
+      <button class="btn btn-ghost btn-sm" onclick="acctReassign(${a.id})">Reassign PIC</button>
+      <button class="btn btn-ghost btn-sm" onclick="acctConvert(${a.id})">Convert → Opportunity</button>
+    </div>
+    <h4 style="margin:1rem .5rem .3rem;">Activity Timeline</h4>
+    <div style="max-height:220px;overflow-y:auto;padding:.5rem;">
+      ${activities.length ? activities.map(x=>`
+        <div style="padding:8px;border-bottom:1px solid #eef0f3;">
+          <div style="font-size:12px;color:#6b7280;">${e(x.occurred_at)} · ${e(x.performed_by)} · ${e(x.kind)}</div>
+          <div style="font-weight:500;">${e(x.subject||'—')}</div>
+          ${x.body?`<div style="font-size:13px;color:#374151;">${e(x.body)}</div>`:''}
+          ${x.next_action?`<div style="font-size:12px;color:#cc1e2e;margin-top:2px;">Next: ${e(x.next_action)}${x.next_action_at?` · by ${e(x.next_action_at)}`:''}</div>`:''}
+        </div>`).join('') : '<div style="color:#6b7280;padding:12px;">No activities yet. Log the first interaction.</div>'}
+    </div>
+    <h4 style="margin:1rem .5rem .3rem;">PIC History</h4>
+    <div style="padding:.5rem;font-size:13px;">
+      ${(hist.pic_history||[]).map(h=>`<div>${e(h.at)} · ${e(h.previous_pic||'(none)')} → ${e(h.new_pic)} by ${e(h.assigned_by)} — ${e(h.reason||'')}</div>`).join('') || '—'}
+    </div>
+    <h4 style="margin:1rem .5rem .3rem;">Stage History</h4>
+    <div style="padding:.5rem;font-size:13px;">
+      ${(hist.stage_history||[]).map(h=>`<div>${e(h.at)} · ${e(h.from||'(none)')} → ${e(h.to)} by ${e(h.changed_by)} — ${e(h.note||'')}</div>`).join('') || '—'}
+    </div>
+    <div style="display:flex;justify-content:flex-end;padding:.5rem;">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+    </div>`);
+}
+async function acctLogActivity(id){
+  const v = await acctFetchVocab();
+  const kind = prompt('Activity kind (' + v.activity_kinds.slice(0,6).join(' / ') + '…):', 'Meeting');
+  if (!kind) return;
+  const subject = prompt('Subject / summary:', ''); if (subject === null) return;
+  const body_text = prompt('Details (optional):', '');
+  const next_action = prompt('Next action (optional):', '');
+  const next_at = next_action ? prompt('Next action date (YYYY-MM-DD, optional):', '') : '';
+  try {
+    const r = await fetch(`/api/accounts/${id}/activities`, {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({kind, subject, body: body_text, next_action, next_action_at: next_at})});
+    if ((await r.json()).ok) acctOpen(id);
+  } catch(e){ alert('Could not log activity'); }
+}
+async function acctChangeStage(id){
+  const v = await acctFetchVocab();
+  const stg = prompt('New dev stage:\n' + v.dev_stages.join('\n'));
+  if (!stg) return;
+  const note = prompt('Note (optional):', '');
+  try {
+    const r = await fetch(`/api/accounts/${id}/stage`, {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({new_stage: stg, note})});
+    const j = await r.json();
+    if (j.ok) { await rAccounts(); acctOpen(id); }
+    else alert('Failed: '+(j.error||'unknown'));
+  } catch(e){ alert('Network error'); }
+}
+async function acctReassign(id){
+  const pic = prompt('New PIC (emp_code):');
+  if (!pic) return;
+  const reason = prompt('Reason for reassignment:', '');
+  try {
+    const r = await fetch(`/api/accounts/${id}/assign`, {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({new_pic: pic, reason})});
+    const j = await r.json();
+    if (j.ok) { await rAccounts(); acctOpen(id); }
+    else alert('Failed: '+(j.error||'unknown'));
+  } catch(e){ alert('Network error'); }
+}
+async function acctConvert(id){
+  const title = prompt('Opportunity title:');
+  if (!title) return;
+  const value = prompt('Estimated value (INR, optional):', '');
+  try {
+    const r = await fetch(`/api/accounts/${id}/convert`, {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({title, source_type:'Account Development', value_inr: value?parseFloat(value):null})});
+    const j = await r.json();
+    if (j.ok) { alert('Opportunity #'+j.opportunity_id+' created.'); closeModal(); }
+    else alert('Failed: '+(j.error||'unknown'));
+  } catch(e){ alert('Network error'); }
+}
+
+// ── PROJECTS list + filters ─────────────────────────────────────────
+async function rProjects(){
+  const v = await prjFetchVocab();
+  const p = g('pg-projects'); if (!p) return;
+  p.innerHTML = `
+    <div class="pg-hd">
+      <div><div class="pg-ttl">Project Intelligence</div>
+      <div class="pg-sub">Future projects being tracked — from announcement through RFQ</div></div>
+      <button class="btn btn-red" onclick="prjOpenCreate()">+ New Project</button>
+    </div>
+    <div class="card" style="padding:.65rem .85rem;margin-bottom:.6rem;">
+      <div style="display:flex;flex-wrap:wrap;gap:.45rem;align-items:end;">
+        <input class="fi fi-srch" id="prQ" placeholder="Search project name…" oninput="prjFilter()" style="min-width:220px;flex:1;">
+        <select class="fi" id="prStg" onchange="prjFilter()"><option value="">All Stages</option>${v.stages.map(s=>`<option>${e(s)}</option>`).join('')}</select>
+        <select class="fi" id="prPri" onchange="prjFilter()"><option value="">All Priority</option><option>High</option><option>Medium</option><option>Low</option></select>
+        <button class="btn btn-ghost btn-sm" onclick="prjResetFilters()">Reset</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl">All Projects</div><span class="f-cnt" id="prCnt">0</span></div>
+      <div class="tw"><table>
+        <thead><tr><th>#</th><th>Project</th><th>Stage</th><th>Location</th><th>Vertical</th>
+          <th>Priority</th><th>PIC</th><th>Last Update</th><th></th></tr></thead>
+        <tbody id="prTb"></tbody></table></div>
+    </div>`;
+  try {
+    const r = await api('/api/projects');
+    PRJ.list = r.projects || [];
+  } catch(err){ PRJ.list = []; }
+  prjFilter();
+  const nav=document.querySelector('[data-p="projects"] .sb-cnt');
+  if(nav) nav.textContent = PRJ.list.length;
+}
+function prjFilter(){
+  const q=(g('prQ')?.value||'').toLowerCase();
+  const st=g('prStg')?.value||'';
+  const pri=g('prPri')?.value||'';
+  PRJ.filtered = PRJ.list.filter(x =>
+    (!q || (x.name||'').toLowerCase().includes(q)) &&
+    (!st || x.stage === st) &&
+    (!pri || x.priority === pri)
+  );
+  const tb=g('prTb'); if(!tb) return;
+  g('prCnt').textContent = PRJ.filtered.length + ' project(s)';
+  if (!PRJ.filtered.length) {
+    tb.innerHTML = '<tr><td colspan="9" style="padding:2rem;text-align:center;color:#6b7280;">No projects yet. Create your first one.</td></tr>';
+    return;
+  }
+  tb.innerHTML = PRJ.filtered.slice(0,500).map((x,i)=>`
+    <tr onclick="prjOpen(${x.id})" style="cursor:pointer;">
+      <td>${i+1}</td>
+      <td><div class="td-m">${e(x.name)}</div>${x.project_code?`<div class="td-s">${e(x.project_code)}</div>`:''}</td>
+      <td><span class="b sA">${e(x.stage||'—')}</span></td>
+      <td>${e(x.state||'')} ${e(x.location||'')}</td>
+      <td>${e(x.procam_vertical||'—')}</td>
+      <td>${e(x.priority||'—')}</td>
+      <td>${e(x.pic||'—')}</td>
+      <td>${e(x.last_update_at||'—')}</td>
+      <td onclick="event.stopPropagation()" style="white-space:nowrap;">
+        <button class="btn btn-ghost btn-xs" onclick="prjOpen(${x.id})">Open</button>
+      </td>
+    </tr>`).join('');
+}
+function prjResetFilters(){ ['prQ','prStg','prPri'].forEach(id=>{const el=g(id); if(el) el.value='';}); prjFilter(); }
+
+async function prjOpenCreate(){
+  const v = await prjFetchVocab();
+  openModal(`
+    <div class="pg-hd" style="border:0;"><div class="pg-ttl">New Project Intelligence Record</div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem;padding:.5rem;">
+      <label style="grid-column:1/-1;">Name*<input class="fi" id="pnNm" style="width:100%;"></label>
+      <label>Project Type<input class="fi" id="pnType" style="width:100%;" placeholder="Power / Refinery / Steel…"></label>
+      <label>Industry<input class="fi" id="pnInd" style="width:100%;"></label>
+      <label>State<input class="fi" id="pnSt" style="width:100%;"></label>
+      <label>Location<input class="fi" id="pnLoc" style="width:100%;"></label>
+      <label>Est. Value (₹)<input type="number" class="fi" id="pnVal" style="width:100%;"></label>
+      <label>Capacity<input class="fi" id="pnCap" style="width:100%;" placeholder="1200 MW"></label>
+      <label>Stage<select class="fi" id="pnStg" style="width:100%;">${v.stages.map(s=>`<option>${e(s)}</option>`).join('')}</select></label>
+      <label>Priority<select class="fi" id="pnPri" style="width:100%;"><option>High</option><option selected>Medium</option><option>Low</option></select></label>
+      <label>Procam Vertical<input class="fi" id="pnVert" style="width:100%;" placeholder="Heavy Transport"></label>
+      <label>Source<input class="fi" id="pnSrc" style="width:100%;" placeholder="Business Standard / Referral"></label>
+      <label style="grid-column:1/-1;">Source URL<input class="fi" id="pnSrcUrl" style="width:100%;"></label>
+      <label style="grid-column:1/-1;">Description<textarea class="fi" id="pnDesc" rows="3" style="width:100%;"></textarea></label>
+      <label style="grid-column:1/-1;">Logistics Potential<textarea class="fi" id="pnPot" rows="2" style="width:100%;"></textarea></label>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;padding:.5rem;">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-red" onclick="prjSubmit()">Create</button>
+    </div>`);
+}
+async function prjSubmit(){
+  const name = g('pnNm').value.trim();
+  if (!name){ alert('Name required'); return; }
+  const body = {
+    name,
+    project_type: g('pnType').value.trim(),
+    industry: g('pnInd').value.trim(),
+    state:    g('pnSt').value.trim(),
+    location: g('pnLoc').value.trim(),
+    estimated_value: g('pnVal').value || null,
+    project_capacity: g('pnCap').value.trim(),
+    stage: g('pnStg').value,
+    priority: g('pnPri').value,
+    procam_vertical: g('pnVert').value.trim(),
+    source: g('pnSrc').value.trim(),
+    source_url: g('pnSrcUrl').value.trim(),
+    description: g('pnDesc').value.trim(),
+    logistics_potential: g('pnPot').value.trim(),
+  };
+  try {
+    const r = await fetch('/api/projects', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if (!j.ok) { alert('Could not create'); return; }
+    closeModal();
+    await rProjects();
+    prjOpen(j.id);
+  } catch(e){ alert('Network error'); }
+}
+async function prjOpen(id){
+  try {
+    const r = await api(`/api/projects/${id}`);
+    if (!r.ok) return;
+    PRJ.current = r.project;
+    renderPrjDetail(r.project);
+  } catch(e){ alert('Could not load project'); }
+}
+function renderPrjDetail(p){
+  openModal(`
+    <div class="pg-hd" style="border:0;"><div>
+      <div class="pg-ttl">${e(p.name)}</div>
+      <div class="pg-sub">${e(p.project_type||'—')} · ${e(p.state||'')} · ${e(p.location||'')}</div>
+    </div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:.5rem;padding:.5rem;">
+      <div class="k"><div class="kL">Stage</div><div class="kV">${e(p.stage||'—')}</div></div>
+      <div class="k"><div class="kL">Priority</div><div class="kV">${e(p.priority||'—')}</div></div>
+      <div class="k"><div class="kL">PIC</div><div class="kV">${e(p.pic||'—')}</div></div>
+      <div class="k"><div class="kL">Vertical</div><div class="kV">${e(p.procam_vertical||'—')}</div></div>
+      <div class="k"><div class="kL">Est. Value</div><div class="kV">₹${(p.estimated_value||0).toLocaleString('en-IN')}</div></div>
+      <div class="k"><div class="kL">Capacity</div><div class="kV">${e(p.project_capacity||'—')}</div></div>
+      <div class="k"><div class="kL">RFQs</div><div class="kV">${p.rfq_count||0}</div></div>
+      <div class="k"><div class="kL">Last Update</div><div class="kV">${e(p.last_update_at||'—')}</div></div>
+    </div>
+    <div style="display:flex;gap:6px;margin:.5rem;">
+      <button class="btn btn-red btn-sm" onclick="prjAddUpdate(${p.id})">+ Intelligence Update</button>
+      <button class="btn btn-ghost btn-sm" onclick="prjChangeStage(${p.id})">Change Stage</button>
+      <button class="btn btn-ghost btn-sm" onclick="prjLinkAccount(${p.id})">Link Account</button>
+      <button class="btn btn-ghost btn-sm" onclick="prjConvert(${p.id})">Convert → Opportunity</button>
+    </div>
+    <h4 style="margin:1rem .5rem .3rem;">Description</h4>
+    <div style="padding:.5rem;font-size:13.5px;">${e(p.description||'—')}</div>
+    <h4 style="margin:1rem .5rem .3rem;">Logistics Potential</h4>
+    <div style="padding:.5rem;font-size:13.5px;">${e(p.logistics_potential||'—')}</div>
+    <h4 style="margin:1rem .5rem .3rem;">Linked Accounts</h4>
+    <div style="padding:.5rem;font-size:13px;">
+      ${(p.accounts||[]).length ? p.accounts.map(a=>`<div><span class="b sN">${e(a.role)}</span> ${e(a.name)}${a.is_primary?' (primary)':''}</div>`).join('') : '—'}
+    </div>
+    <h4 style="margin:1rem .5rem .3rem;">RFQs Generated</h4>
+    <div style="padding:.5rem;font-size:13px;">
+      ${(p.rfqs||[]).length ? p.rfqs.map(o=>`<div>#${o.id} ${e(o.opp_number||'-')} · ${e(o.title)} · ${e(o.stage)} · ₹${(o.value||0).toLocaleString('en-IN')}</div>`).join('') : 'No RFQs yet.'}
+    </div>
+    <h4 style="margin:1rem .5rem .3rem;">Intelligence Timeline</h4>
+    <div style="max-height:220px;overflow-y:auto;padding:.5rem;">
+      ${(p.updates||[]).length ? p.updates.map(u=>`
+        <div style="padding:8px;border-bottom:1px solid #eef0f3;">
+          <div style="font-size:12px;color:#6b7280;">${e(u.update_date)} · ${e(u.update_type)} · ${e(u.updated_by)}</div>
+          <div style="font-size:13.5px;">${e(u.summary)}</div>
+          ${u.source?`<div style="font-size:12px;color:#374151;">Source: ${e(u.source)}${u.source_url?` (<a href="${e(u.source_url)}" target="_blank">link</a>)`:''}</div>`:''}
+          ${u.next_action?`<div style="font-size:12px;color:#cc1e2e;margin-top:2px;">Next: ${e(u.next_action)}${u.next_review_at?` · by ${e(u.next_review_at)}`:''}</div>`:''}
+        </div>`).join('') : '<div style="color:#6b7280;padding:12px;">No updates yet.</div>'}
+    </div>
+    <div style="display:flex;justify-content:flex-end;padding:.5rem;">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+    </div>`);
+}
+async function prjAddUpdate(id){
+  const v = await prjFetchVocab();
+  const type = prompt('Update type ('+v.update_types.slice(0,6).join(' / ')+'…):', 'Announcement');
+  if (!type) return;
+  const summary = prompt('Summary:'); if (!summary) return;
+  const source = prompt('Source (optional):', '');
+  const source_url = prompt('Source URL (optional):', '');
+  const next_action = prompt('Next action (optional):', '');
+  const next_at = next_action ? prompt('Next review date (YYYY-MM-DD, optional):', '') : '';
+  try {
+    const r = await fetch(`/api/projects/${id}/updates`, {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({summary, update_type: type, source, source_url, next_action, next_review_at: next_at})});
+    if ((await r.json()).ok) prjOpen(id);
+  } catch(e){ alert('Network error'); }
+}
+async function prjChangeStage(id){
+  const v = await prjFetchVocab();
+  const stg = prompt('New stage:\n' + v.stages.join('\n'));
+  if (!stg) return;
+  const note = prompt('Note (optional):', '');
+  try {
+    const r = await fetch(`/api/projects/${id}/stage`, {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({new_stage: stg, note})});
+    const j = await r.json();
+    if (j.ok) { await rProjects(); prjOpen(id); }
+    else alert('Failed: '+(j.error||'unknown'));
+  } catch(e){ alert('Network error'); }
+}
+async function prjLinkAccount(id){
+  const v = await prjFetchVocab();
+  const acctId = prompt('Account ID (from the Accounts page):');
+  if (!acctId) return;
+  const role = prompt('Role on project ('+v.account_roles.slice(0,5).join(' / ')+'…):', 'Project Owner');
+  if (!role) return;
+  try {
+    const r = await fetch(`/api/projects/${id}/accounts`, {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({account_id: parseInt(acctId), role, is_primary: role==='Project Owner'})});
+    if ((await r.json()).ok) prjOpen(id);
+    else alert('Failed to link');
+  } catch(e){ alert('Network error'); }
+}
+async function prjConvert(id){
+  const title = prompt('Opportunity title:');
+  if (!title) return;
+  const value = prompt('Estimated value (INR, optional):', '');
+  try {
+    const r = await fetch(`/api/projects/${id}/convert`, {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({title, source_type:'Project Intelligence', value_inr: value?parseFloat(value):null})});
+    const j = await r.json();
+    if (j.ok) { alert('Opportunity #'+j.opportunity_id+' created.'); closeModal(); prjOpen(id); }
+    else alert('Failed: '+(j.error||'unknown'));
+  } catch(e){ alert('Network error'); }
+}
+
+// ── Modal helpers (only define if not already present) ────────────────
+if (typeof openModal !== 'function') {
+  window.openModal = function(html) {
+    let m = g('preSalesModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.id = 'preSalesModal';
+      m.style.cssText = 'position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;';
+      m.innerHTML = '<div id="preSalesModalCard" style="background:#fff;width:min(880px,96%);max-height:92vh;overflow-y:auto;border-radius:12px;padding:12px;box-shadow:0 24px 60px rgba(0,0,0,.25);"></div>';
+      m.onclick = (e)=>{ if (e.target === m) closeModal(); };
+      document.body.appendChild(m);
+    }
+    g('preSalesModalCard').innerHTML = html;
+    m.style.display = 'flex';
+  };
+  window.closeModal = function() { const m=g('preSalesModal'); if(m) m.style.display='none'; };
+}
+
+// Ensure a small css helper class exists for the "kv" tiles
+(function(){
+  if (document.getElementById('preSalesCss')) return;
+  const s = document.createElement('style');
+  s.id = 'preSalesCss';
+  s.textContent = `
+    .k {background:#fafbfc;border:1px solid #eef0f3;border-radius:8px;padding:8px 10px;}
+    .k .kL {font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;font-weight:600;margin-bottom:3px;}
+    .k .kV {font-size:14px;color:#111827;font-weight:600;}
+    .sb-cnt {margin-left:auto;font-size:11px;color:#6b7280;}
+    .b.sN {display:inline-block;padding:2px 8px;border-radius:999px;background:#f3f4f6;color:#374151;font-size:11px;}
+    .b.sA {display:inline-block;padding:2px 8px;border-radius:999px;background:rgba(204,30,46,.10);color:#991B1B;font-size:11px;font-weight:600;}
+  `;
+  document.head.appendChild(s);
+})();
+
+// Extend PG_TITLES already covered above.
+// Register the new render functions with nav()
+const _origNav = nav;
+window.nav = function(p) {
+  if (p === 'accounts') { document.querySelectorAll('.page').forEach(el=>el.classList.toggle('on',el.id==='pg-accounts'));
+    document.querySelectorAll('.sbi').forEach(el=>el.classList.toggle('on',el.dataset?.p===p));
+    const t=g('topPgTtl'); if(t) t.textContent='Accounts';
+    return rAccounts();
+  }
+  if (p === 'projects') { document.querySelectorAll('.page').forEach(el=>el.classList.toggle('on',el.id==='pg-projects'));
+    document.querySelectorAll('.sbi').forEach(el=>el.classList.toggle('on',el.dataset?.p===p));
+    const t=g('topPgTtl'); if(t) t.textContent='Project Intelligence';
+    return rProjects();
+  }
+  return _origNav(p);
+};
+
+// Ensure the pages exist in the DOM even before first nav.
+(function ensurePreSalesPages(){
+  if (!g('pg-accounts')) {
+    const el = document.createElement('div');
+    el.id = 'pg-accounts'; el.className = 'page';
+    document.querySelector('main')?.appendChild(el) ||
+      document.body.appendChild(el);
+  }
+  if (!g('pg-projects')) {
+    const el = document.createElement('div');
+    el.id = 'pg-projects'; el.className = 'page';
+    document.querySelector('main')?.appendChild(el) ||
+      document.body.appendChild(el);
+  }
+})();
+
 
 // BOOT
 window.onerror = function(msg, src, line, col, err){
