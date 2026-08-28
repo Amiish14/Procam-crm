@@ -2265,11 +2265,28 @@ function renderEmailSummaryCard(l){
       ? `<div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px">${x.special_requirements.map(r=>`<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text-2)">${e(r)}</span>`).join('')}</div>` : '';
     const summary = x.one_line_summary ? `<div style="margin-top:14px;padding:12px 14px;background:var(--surface-2);border-left:3px solid var(--red);border-radius:0 var(--r) var(--r) 0;font-size:13.5px;color:var(--ink);font-weight:500;line-height:1.5">${e(x.one_line_summary)}</div>` : '';
     const next = x.next_action_suggested ? `<div style="margin-top:10px;font-size:12.5px;color:var(--text-2)"><span style="text-transform:uppercase;letter-spacing:.06em;font-size:10.5px;font-weight:600;color:var(--text-3)">Suggested next action · </span>${e(x.next_action_suggested)}</div>` : '';
+    /* v2026-08 — classification, needs-review, forwarded-by additions */
+    const classPill = x.classification ? `<span title="Classified from employee-forwarder hint" style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10.5px;font-weight:700;background:var(--p-red-soft);color:var(--p-red);letter-spacing:.02em;text-transform:uppercase;">${e(x.classification)}</span>` : '';
+    const reviewBanner = x.needs_review ? `<div style="margin-bottom:14px;padding:10px 14px;background:var(--p-warning-soft);border-left:3px solid var(--p-warning);border-radius:0 var(--rd) var(--rd) 0;font-size:12.5px;color:#7C4A03;font-weight:500;line-height:1.5;">
+      <strong>Needs review · </strong>
+      ${x.extraction_notes ? e(x.extraction_notes) : 'Some customer details could not be confidently extracted from the forwarded email. Please verify the highlighted fields before contacting.'}
+    </div>` : '';
+    const forwardedBy = l.notes && /Forwarded to CRM by ([^\s\]]+@[^\s\]]+)/.test(l.notes) ?
+      `<div style="font-size:11.5px;color:var(--p-text-2);margin-bottom:8px;">Forwarded to CRM by <strong>${e(l.notes.match(/Forwarded to CRM by ([^\s\]]+@[^\s\]]+)/)[1])}</strong></div>` : '';
+    const employeeNote = x.employee_note ? `<div style="font-size:12px;color:var(--p-text-2);margin-bottom:10px;padding:8px 12px;background:var(--p-surface-3);border-radius:var(--rd);">Employee note · <span style="color:var(--p-ink-2);">${e(x.employee_note)}</span></div>` : '';
+    const modelChip = x._ai_model ? `<span title="Model used to extract this record" style="display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;background:var(--p-surface-3);color:var(--p-text-2);font-weight:500;letter-spacing:.02em;">${e(x._ai_model)}</span>` : '';
+
     body = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border-2)">
-        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:var(--red)">Lead Summary · from inbound email</div>
-        <div style="display:flex;gap:6px">${urgencyPill}${reqPill}${vertPill}</div>
+      ${reviewBanner}
+      ${forwardedBy}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border-2);gap:12px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:var(--red)">Lead Summary · from inbound email</div>
+          ${classPill}
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${urgencyPill}${reqPill}${vertPill}${modelChip}</div>
       </div>
+      ${employeeNote}
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px 24px">
         ${cell('Contact', x.contact_name)}
         ${cell('Designation', x.designation)}
@@ -2308,10 +2325,21 @@ function renderEmailSummaryCard(l){
       </div>
     </div>` : '';
 
+  /* v2026-08 — collapsible original email under the clean summary. */
+  const rawText = (l && l.notes) ? String(l.notes) : '';
+  const rawHtml = rawText ? `
+    <details style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border-2);">
+      <summary style="cursor:pointer;font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:var(--p-text-2);outline:none;user-select:none;">
+        Show original email
+      </summary>
+      <pre style="margin:10px 0 0;padding:12px 14px;background:var(--p-surface-3);border-radius:var(--rd);font-family:'Inter','JetBrains Mono',monospace;font-size:12px;color:var(--p-ink-2);white-space:pre-wrap;word-wrap:break-word;line-height:1.55;max-height:280px;overflow-y:auto;">${e(rawText)}</pre>
+    </details>` : '';
+
   return `
     <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r-lg);padding:20px 22px;margin-bottom:20px;box-shadow:var(--sh-1)">
       ${body}
       ${attsHtml}
+      ${rawHtml}
     </div>`;
 }
 

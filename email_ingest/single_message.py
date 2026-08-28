@@ -21,6 +21,7 @@ from typing import Optional
 
 from . import parser as email_parser
 from . import ai_extractor
+from . import ai_router                                              # noqa
 from . import attachments as attachments_mod
 from . import enrich as enrich_mod
 

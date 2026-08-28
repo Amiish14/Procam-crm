@@ -16,7 +16,7 @@ import json
 import logging
 from typing import Optional
 
-from . import ai_extractor
+from . import ai_router as ai_extractor    # router prefers Groq, falls back to Anthropic
 from . import parser as email_parser
 
 log = logging.getLogger(__name__)
@@ -51,12 +51,19 @@ def _merge_ai(extracted: dict, msg: dict) -> tuple[dict, Optional[dict]]:
         cargo_qty            = None,
         procam_vertical      = None,
         requirement_type     = ("RFQ" if signals.get("rfq") else None),
-        urgency              = signals.get("urgency"),
+        urgency               = signals.get("urgency"),
         target_date          = None,
         special_requirements = [],
         one_line_summary     = "",
         next_action_suggested= None,
         is_business_lead     = True,
+        # v2026-08 — classification + validation additions
+        classification       = None,
+        classification_source= None,
+        employee_note        = None,
+        needs_review         = False,
+        confidence           = None,
+        _ai_model            = None,
     )
     if ai_data:
         for k, v in ai_data.items():
@@ -69,7 +76,13 @@ def _apply_overrides_and_defaults(merged: dict, extracted: dict,
                                   sender_email: str) -> dict:
     """Authoritative overrides + guaranteed-populated defaults so the summary
     card is never blank."""
-    if sender_email:
+    # v2026-08 — never let an internal Procam address masquerade as the
+    # customer email. If the immediate sender is on our domain the parser
+    # should have promoted a customer sender from the body; if it couldn't,
+    # leave email_primary as-is (may be null) and flag needs_review.
+    _internal = sender_email and (sender_email.lower().endswith('@procamgroup.in')
+                                  or sender_email.lower().endswith('@procamlogistics.com'))
+    if sender_email and not _internal:
         merged["email_primary"] = sender_email
         dom_company = email_parser._company_from_domain(sender_email) or ""
         ai_company  = (merged.get("company") or "").strip()
@@ -77,6 +90,10 @@ def _apply_overrides_and_defaults(merged: dict, extracted: dict,
         if dom_company and (not ai_company
                             or not ai_company.lower().startswith(stem[:4])):
             merged["company"] = dom_company
+    elif _internal:
+        merged["needs_review"] = True
+        merged["extraction_notes"] = ((merged.get("extraction_notes") or '') +
+            ' | Immediate sender is a Procam address; could not identify external customer.').strip(' |')
 
     # Drop AI-hallucinated phones that don't actually appear in the body.
     body_norm = ((extracted.get("body_text") or "").lower()).replace(" ", "")
