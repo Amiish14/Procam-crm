@@ -2692,56 +2692,89 @@ async function doChangePw(){
   var sb    = document.getElementById('sbEl');
   if (!mount || !sb) return;
 
-  var SECTION_ICON = {
-    'workspace':      '📊',
-    'administration': '🔧',
-  };
+  /* ── Task-based groups.
+     Add a new tool → drop one entry in the right array. Add a new group →
+     append to TOPNAV_GROUPS. `adminOnly` on either the group or an item
+     hides it from non-admin users. */
+  var TOPNAV_GROUPS = [
+    { title: 'Overview',          icon: '📊',
+      items: [
+        { page: 'dash',      label: 'Dashboard',       ic: '📊' },
+        { page: 'perf',      label: 'My Performance',  ic: '📈' },
+        { page: 'scorecard', label: 'Team Scorecard',  ic: '🏆' },
+      ]},
+    { title: 'Sales Pipeline',    icon: '🎯',
+      items: [
+        { page: 'pipeline',  label: 'Sales Pipeline',  ic: '🚦', countId: 'sbPip' },
+        { page: 'leads',     label: 'My Leads',        ic: '📋', countId: 'sbN'   },
+        { page: 'all',       label: 'All Leads',       ic: '🗂️', adminOnly: true },
+        { page: 'opp',       label: 'Opportunities',   ic: '🎯', countId: 'sbOp', adminOnly: true },
+      ]},
+    { title: 'Accounts & Projects', icon: '🏢',
+      items: [
+        { page: 'accounts',  label: 'Accounts',            ic: '🏢', countId: 'sbAcc' },
+        { page: 'projects',  label: 'Project Intelligence',ic: '🏗️', countId: 'sbPrj' },
+        { page: 'contacts',  label: 'Global CRM',          ic: '🌐' },
+      ]},
+    { title: 'Intelligence',      icon: '🧠',
+      items: [
+        { page: 'news',      label: 'Market Intelligence', ic: '📰', countId: 'sbNews', adminOnly: true },
+        { page: 'outreach',  label: 'AI Outreach',         ic: '✉️' },
+      ]},
+    { title: 'Team & Admin',      icon: '👥',
+      items: [
+        { page: 'team',      label: 'Team',            ic: '👥', adminOnly: true },
+        { page: 'assign',    label: 'Assign',          ic: '⚡', adminOnly: true },
+        { page: 'employees', label: 'Employees',       ic: '🔐', adminOnly: true },
+        { page: 'kpi',       label: 'KPI Settings',    ic: '🎯', adminOnly: true },
+        { page: 'upload',    label: 'Upload',          ic: '⬆️', adminOnly: true },
+        { page: 'pwchange',  label: 'Change Password', ic: '🔑' },
+      ]},
+  ];
 
-  // Build ordered list of (section title, items) from the sidebar.
-  var groups = [];
-  var current = null;
-  Array.prototype.slice.call(sb.children).forEach(function(node){
-    if (!node.classList) return;
-    if (node.classList.contains('sb-logo')) return;                  // skip logo
-    if (node.classList.contains('sb-sec')) {
-      current = {title: node.textContent.trim(), items: [], adminOnly: node.classList.contains('admin-only')};
-      groups.push(current);
-    } else if (node.classList.contains('sbi')) {
-      if (!current) {                                                // no section header yet
-        current = {title: 'Workspace', items: [], adminOnly: false};
-        groups.push(current);
-      }
-      current.items.push({
-        page:      node.dataset.p,
-        label:     node.textContent.replace(/^\s*\S+/, '').replace(/\d+$/,'').trim(),   // strip leading emoji + trailing counter
-        raw:       node.innerHTML,
-        adminOnly: node.classList.contains('admin-only'),
-      });
-    }
-  });
-
-  // Small brand mark at the leftmost edge of the topnav.
+  /* Small Procam brand at the leftmost edge of the topnav. */
   var brand = document.createElement('span');
   brand.className = 'topnav-brand';
   brand.innerHTML = '<img src="https://www.procamlogistics.com/public/frontend/assets/img/logo.png" alt="Procam"> CRM';
   mount.parentNode.insertBefore(brand, mount);
 
-  // Render horizontal top-nav
-  mount.innerHTML = groups.map(function(g){
-    var admClass = g.adminOnly ? ' admin-only' : '';
-    var items = g.items.map(function(it){
-      return '<a href="#" class="topnav-item'+(it.adminOnly?' admin-only':'')+
-             '" data-p="'+ (it.page||'') +
-             '" onclick="event.preventDefault(); nav(\''+(it.page||'')+'\'); topnavCloseAll();">'+
-             it.raw + '</a>';
-    }).join('');
-    return '<div class="topnav-group'+admClass+'">'+
-           '<button class="topnav-head" type="button">'+
-             (SECTION_ICON[g.title.toLowerCase()]||'')+' '+g.title+
-             ' <span class="topnav-caret">▾</span></button>'+
-           '<div class="topnav-drop">'+items+'</div>'+
+  function itemHTML(it){
+    var cnt = it.countId ? ' <span class="sb-cnt" id="tn_'+it.countId+'">0</span>' : '';
+    var admin = it.adminOnly ? ' admin-only' : '';
+    return '<a href="#" class="topnav-item'+admin+'" data-p="'+it.page+'"'+
+           ' onclick="event.preventDefault(); nav(\''+it.page+'\'); topnavCloseAll();">'+
+             '<span class="ic">'+it.ic+'</span>'+it.label+cnt+
+           '</a>';
+  }
+
+  mount.innerHTML = TOPNAV_GROUPS.map(function(g){
+    /* Group is hidden if ALL its items are admin-only and user isn't admin
+       (handled by CSS via .admin-only). If ANY item is visible the group
+       stays. Attach adminOnly at the group level only when every child is. */
+    var allAdmin = g.items.every(function(x){ return x.adminOnly; });
+    var groupCls = allAdmin ? ' admin-only' : '';
+    return '<div class="topnav-group'+groupCls+'">'+
+             '<button class="topnav-head" type="button">'+
+               '<span class="ic">'+g.icon+'</span>'+g.title+
+               ' <span class="topnav-caret">▾</span></button>'+
+             '<div class="topnav-drop">'+g.items.map(itemHTML).join('')+'</div>'+
            '</div>';
   }).join('');
+
+  /* Mirror the live counts from the (still-present but hidden) sidebar. */
+  function syncCounts(){
+    ['sbPip','sbN','sbOp','sbAcc','sbPrj','sbNews'].forEach(function(id){
+      var src = document.getElementById(id);
+      var dst = document.getElementById('tn_'+id);
+      if (src && dst) dst.textContent = src.textContent;
+    });
+  }
+  syncCounts();
+  var mo = new MutationObserver(syncCounts);
+  ['sbPip','sbN','sbOp','sbAcc','sbPrj','sbNews'].forEach(function(id){
+    var el = document.getElementById(id);
+    if (el) mo.observe(el, {childList:true, subtree:true, characterData:true});
+  });
 
   // Dropdown open/close on click (mobile) + hover (desktop)
   window.topnavCloseAll = function() {
