@@ -775,6 +775,195 @@ canvas { max-width: 100%; }
 
 <!-- ─── Small runtime helpers (toast, skeleton, empty-state factory) ─── -->
 <script>
+// ═════════════════════════════════════════════════════════════════════
+// PROCAM CRM · Shared UI primitives — v1
+// (Employee name resolver · FormModal · Combobox · Empty-state helper)
+// Replaces window.prompt() chains and unresolved employee codes across
+// Accounts / Projects / Assign / AI Outreach flows.
+// ═════════════════════════════════════════════════════════════════════
+
+/* Employees cache — map emp_code → { name, vertical, department } so any
+   renderer can call CRM.empName('EMP12010') → 'Nilesh Kumar Sinha'. */
+window.CRM = window.CRM || {};
+CRM._empsByCode = {};
+CRM._empsPromise = null;
+CRM.ensureEmployees = function(){
+  if (CRM._empsPromise) return CRM._empsPromise;
+  CRM._empsPromise = fetch('/api/employees').then(r=>r.json()).then(function(list){
+    (Array.isArray(list) ? list : []).forEach(function(e){
+      CRM._empsByCode[e.emp_code] = e;
+    });
+    return CRM._empsByCode;
+  }).catch(function(){ return {}; });
+  return CRM._empsPromise;
+};
+CRM.empName  = function(code){ var e = CRM._empsByCode[code]; return e && e.name ? e.name : (code || '—'); };
+CRM.empChip  = function(code){
+  if (!code) return '<span style="color:var(--p-text-3)">—</span>';
+  var name = CRM.empName(code);
+  if (name === code) return '<span class="mono" style="color:var(--p-text-2);font-size:12px;">'+e(code)+'</span>';
+  return '<span style="color:var(--p-ink-2);font-weight:500;">'+e(name)+'</span>'
+       + '<span class="mono" style="color:var(--p-text-3);font-size:11px;margin-left:6px;">'+e(code)+'</span>';
+};
+CRM.empOptions = function(){
+  return Object.values(CRM._empsByCode)
+    .filter(function(e){ return e.is_active !== false; })
+    .sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); })
+    .map(function(e){ return {value: e.emp_code, label: e.name + '  ·  ' + e.emp_code}; });
+};
+CRM.ensureEmployees();
+
+/* ── FormModal — the single approved way to collect input from the user.
+   Replaces every window.prompt() chain in the app.
+   Usage:
+      CRM.Form.open({
+        title: 'Log Activity',
+        subtitle: 'Adani Group',
+        fields: [
+          { name:'kind',    label:'Type',    kind:'select', options:['Meeting','Call'], required:true },
+          { name:'subject', label:'Subject', kind:'text',   required:true },
+          { name:'body',    label:'Details', kind:'textarea' },
+          { name:'next',    label:'Next action',       kind:'text' },
+          { name:'next_at', label:'Next action date',  kind:'date' },
+        ],
+        submitLabel: 'Log activity',
+        onSubmit: async function(values, ctx){
+          await fetch(...);
+          CRMToast.success('Activity logged');
+        },
+      });
+*/
+CRM.Form = {
+  open: function(opts){
+    var self = this;
+    var host = document.getElementById('crmFormModal');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'crmFormModal';
+      host.style.cssText = 'position:fixed;inset:0;z-index:9500;background:rgba(11,13,18,.46);backdrop-filter:blur(6px) saturate(1.15);display:none;align-items:center;justify-content:center;padding:20px;';
+      host.innerHTML = '<div id="crmFormModalCard"></div>';
+      host.addEventListener('click', function(ev){ if (ev.target === host && opts.dismissOnBackdrop !== false) self.close(); });
+      document.addEventListener('keydown', function(ev){
+        if (ev.key === 'Escape' && host.style.display === 'flex') self.close();
+      });
+      document.body.appendChild(host);
+    }
+    var w   = opts.width || 520;
+    var fld = (opts.fields || []).map(function(f, i){
+      var id = 'ff_'+i;
+      var reqStar = f.required ? ' <span style="color:var(--p-red);">*</span>' : '';
+      var help = f.help ? '<div style="font-size:11.5px;color:var(--p-text-2);margin-top:3px;">'+e(f.help)+'</div>' : '';
+      var control;
+      if (f.kind === 'textarea') {
+        control = '<textarea id="'+id+'" '+(f.required?'required':'')+' rows="'+(f.rows||3)+'" style="width:100%;padding:10px 12px;border:1px solid var(--p-border);border-radius:var(--rd);font-family:var(--p-font);font-size:13px;resize:vertical;line-height:1.5;">'+e(f.value||'')+'</textarea>';
+      } else if (f.kind === 'select') {
+        var opts_ = (f.options||[]).map(function(o){
+          var value = (typeof o === 'string') ? o : o.value;
+          var label = (typeof o === 'string') ? o : o.label;
+          var sel = (value === (f.value||'')) ? ' selected' : '';
+          return '<option value="'+e(value)+'"'+sel+'>'+e(label)+'</option>';
+        }).join('');
+        control = '<select id="'+id+'" '+(f.required?'required':'')+' class="fi" style="width:100%;height:38px;">'+
+          (f.placeholder?'<option value="">'+e(f.placeholder)+'</option>':'')+
+          opts_+'</select>';
+      } else if (f.kind === 'combobox') {
+        control = '<input id="'+id+'" list="'+id+'_list" '+(f.required?'required':'')+
+                  ' placeholder="'+e(f.placeholder||'Search…')+'" value="'+e(f.value||'')+
+                  '" class="fi" style="width:100%;">'+
+                  '<datalist id="'+id+'_list">'+
+                  (f.options||[]).map(function(o){
+                    var value = (typeof o === 'string') ? o : o.value;
+                    var label = (typeof o === 'string') ? o : o.label;
+                    return '<option value="'+e(value)+'">'+e(label)+'</option>';
+                  }).join('')+'</datalist>';
+      } else {
+        var type = f.kind || 'text';
+        control = '<input id="'+id+'" type="'+e(type)+'" '+(f.required?'required':'')+
+                  ' value="'+e(f.value==null?'':f.value)+'" placeholder="'+e(f.placeholder||'')+
+                  '" class="fi" style="width:100%;">';
+      }
+      var span = f.span || 'full';
+      var col  = span === 'half' ? 'span 1' : 'span 2';
+      return '<label style="grid-column:'+col+';display:block;">'+
+               '<span style="display:block;font-size:11.5px;color:var(--p-text-2);font-weight:600;margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em;">'+e(f.label)+reqStar+'</span>'+
+               control + help +
+             '</label>';
+    }).join('');
+
+    var subtitle = opts.subtitle ? '<div style="font-size:12.5px;color:var(--p-text-2);margin-top:2px;">'+e(opts.subtitle)+'</div>' : '';
+    var body = '<div style="background:var(--p-surface);border-radius:var(--rd-lg);border:1px solid var(--p-border);box-shadow:var(--el-4);width:'+w+'px;max-width:calc(100vw - 40px);max-height:90vh;overflow:hidden;display:flex;flex-direction:column;">'+
+      '<div style="padding:18px 22px;border-bottom:1px solid var(--p-divider);display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-shrink:0;">'+
+        '<div><div style="font-family:var(--p-font-display);font-weight:700;font-size:16px;color:var(--p-ink);letter-spacing:-0.014em;">'+e(opts.title||'Untitled')+'</div>'+subtitle+'</div>'+
+        '<button type="button" onclick="CRM.Form.close()" aria-label="Close" style="background:transparent;border:0;color:var(--p-text-2);cursor:pointer;padding:4px;border-radius:6px;line-height:0;">'+
+          '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'+
+        '</button>'+
+      '</div>'+
+      '<form id="crmFormEl" style="padding:20px 22px;display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;overflow-y:auto;">'+
+        fld +
+        (opts.footerNote ? '<div style="grid-column:1/-1;font-size:12px;color:var(--p-text-2);margin-top:-4px;">'+e(opts.footerNote)+'</div>' : '') +
+      '</form>'+
+      '<div style="padding:14px 22px;border-top:1px solid var(--p-divider);display:flex;justify-content:flex-end;gap:8px;flex-shrink:0;background:var(--p-surface-2);">'+
+        '<button type="button" class="btn btn-ghost" onclick="CRM.Form.close()">Cancel</button>'+
+        '<button type="button" class="btn btn-red" id="crmFormSubmit">'+e(opts.submitLabel||'Save')+'</button>'+
+      '</div>'+
+    '</div>';
+    document.getElementById('crmFormModalCard').innerHTML = body;
+    host.style.display = 'flex';
+
+    /* Wire submit */
+    var submitBtn = document.getElementById('crmFormSubmit');
+    var frm       = document.getElementById('crmFormEl');
+    var busy = false;
+    async function trigger(){
+      if (busy) return;
+      var values = {};
+      var missing = [];
+      (opts.fields || []).forEach(function(f, i){
+        var el = document.getElementById('ff_'+i);
+        var v  = el ? el.value : '';
+        if (f.kind !== 'textarea') v = (v||'').trim();
+        if (f.required && !v) missing.push(f.label);
+        values[f.name] = v;
+      });
+      if (missing.length) {
+        CRMToast.error('Please fill: ' + missing.join(', '));
+        return;
+      }
+      busy = true;
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Working…';
+      try {
+        var result = await opts.onSubmit(values, {close: self.close.bind(self)});
+        if (result !== false) self.close();
+      } catch(err) {
+        console.error('FormModal submit failed', err);
+        CRMToast.error('Could not save. Please try again.');
+      } finally {
+        busy = false;
+        if (document.getElementById('crmFormSubmit')) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = opts.submitLabel || 'Save';
+        }
+      }
+    }
+    submitBtn.addEventListener('click', trigger);
+    frm.addEventListener('submit', function(ev){ ev.preventDefault(); trigger(); });
+    /* Focus first input */
+    setTimeout(function(){
+      var f = frm.querySelector('input,textarea,select');
+      if (f) f.focus();
+    }, 60);
+  },
+  close: function(){
+    var host = document.getElementById('crmFormModal');
+    if (host) host.style.display = 'none';
+  },
+};
+
+
+// ═════════════════════════════════════════════════════════════════════
+// TOAST — unchanged public API; visual polish now inherits design tokens
+// ═════════════════════════════════════════════════════════════════════
 window.CRMToast = (function(){
   function ensure(){
     var box = document.getElementById('crmToast');
@@ -3489,6 +3678,7 @@ async function prjFetchVocab(){
 // ── ACCOUNTS list + filters ─────────────────────────────────────────
 async function rAccounts(){
   const v = await acctFetchVocab();
+  await CRM.ensureEmployees();          /* so PIC codes render as names */
   const p = g('pg-accounts'); if (!p) return;
   const bar = `
     <div class="pg-hd">
@@ -3532,7 +3722,14 @@ function acctFilter(){
   const tb=g('acTb'); if(!tb) return;
   g('acCnt').textContent = ACCT.filtered.length + ' account(s)';
   if (!ACCT.filtered.length) {
-    tb.innerHTML = '<tr><td colspan="9" style="padding:2rem;text-align:center;color:#6b7280;">No accounts match your filters.</td></tr>';
+    tb.innerHTML = `<tr><td colspan="9" style="padding:0;">
+      <div class="crm-empty">
+        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01"/><path d="M16 6h.01"/><path d="M12 6h.01"/><path d="M12 10h.01"/><path d="M12 14h.01"/><path d="M16 10h.01"/><path d="M16 14h.01"/><path d="M8 10h.01"/><path d="M8 14h.01"/></svg></div>
+        <div class="title">No accounts match your filters</div>
+        <div class="msg">Try broadening the dev stage or priority filter, or search by a different account name.</div>
+        <button class="btn btn-ghost btn-sm" onclick="acctResetFilters()">Reset filters</button>
+      </div>
+    </td></tr>`;
     return;
   }
   tb.innerHTML = ACCT.filtered.slice(0,500).map((a,i)=>`
@@ -3540,8 +3737,8 @@ function acctFilter(){
       <td>${i+1}</td>
       <td><div class="td-m">${e(a.name)}</div>${a.industry?`<div class="td-s">${e(a.industry)}</div>`:''}</td>
       <td>${a.dev_stage?`<span class="b sA">${e(a.dev_stage)}</span>`:'—'}</td>
-      <td>${(a.tags||[]).map(t=>`<span class="b sN" style="margin-right:2px;">${e(t)}</span>`).join('') || '—'}</td>
-      <td>${e(a.pic||'—')}</td>
+      <td>${(a.tags||[]).map(t=>`<span class="b sN" style="margin-right:2px;">${e(t)}</span>`).join('') || '<span style="color:var(--p-text-3);">—</span>'}</td>
+      <td>${a.pic ? CRM.empChip(a.pic) : '<span style="color:var(--p-text-3);">Unassigned</span>'}</td>
       <td>${e(a.priority||'Medium')}</td>
       <td>${e(a.last_activity_at||'—')}</td>
       <td>${e(a.next_action_at||'—')}</td>
@@ -3650,13 +3847,34 @@ function renderAcctDetail(a, activities, hist){
           ${x.next_action?`<div style="font-size:12px;color:#cc1e2e;margin-top:2px;">Next: ${e(x.next_action)}${x.next_action_at?` · by ${e(x.next_action_at)}`:''}</div>`:''}
         </div>`).join('') : '<div style="color:#6b7280;padding:12px;">No activities yet. Log the first interaction.</div>'}
     </div>
-    <h4 style="margin:1rem .5rem .3rem;">PIC History</h4>
-    <div style="padding:.5rem;font-size:13px;">
-      ${(hist.pic_history||[]).map(h=>`<div>${e(h.at)} · ${e(h.previous_pic||'(none)')} → ${e(h.new_pic)} by ${e(h.assigned_by)} — ${e(h.reason||'')}</div>`).join('') || '—'}
+    <h4 style="margin:1rem .5rem .3rem;font-family:var(--p-font-display);font-weight:700;color:var(--p-ink);letter-spacing:-0.005em;">PIC History</h4>
+    <div style="padding:.5rem;">
+      ${(hist.pic_history||[]).length
+        ? (hist.pic_history||[]).map(h=>`
+          <div style="padding:10px 12px;border-left:2px solid var(--p-border);margin-bottom:8px;">
+            <div style="font-size:13px;color:var(--p-ink-2);">
+              PIC ${h.previous_pic ? 'reassigned to' : 'assigned to'} <strong>${e(CRM.empName(h.new_pic))}</strong>
+              ${h.previous_pic ? ' from <strong>'+e(CRM.empName(h.previous_pic))+'</strong>' : ''}
+            </div>
+            <div style="font-size:11.5px;color:var(--p-text-2);margin-top:2px;">
+              ${e(h.at)} · by ${e(CRM.empName(h.assigned_by))}${h.reason?' · '+e(h.reason):''}
+            </div>
+          </div>`).join('')
+        : '<div style="color:var(--p-text-3);padding:6px;">No assignment history yet.</div>'}
     </div>
-    <h4 style="margin:1rem .5rem .3rem;">Stage History</h4>
-    <div style="padding:.5rem;font-size:13px;">
-      ${(hist.stage_history||[]).map(h=>`<div>${e(h.at)} · ${e(h.from||'(none)')} → ${e(h.to)} by ${e(h.changed_by)} — ${e(h.note||'')}</div>`).join('') || '—'}
+    <h4 style="margin:1rem .5rem .3rem;font-family:var(--p-font-display);font-weight:700;color:var(--p-ink);letter-spacing:-0.005em;">Stage History</h4>
+    <div style="padding:.5rem;">
+      ${(hist.stage_history||[]).length
+        ? (hist.stage_history||[]).map(h=>`
+          <div style="padding:10px 12px;border-left:2px solid var(--p-border);margin-bottom:8px;">
+            <div style="font-size:13px;color:var(--p-ink-2);">
+              Stage ${h.from ? 'changed from <strong>'+e(h.from)+'</strong> to <strong>'+e(h.to)+'</strong>' : 'set to <strong>'+e(h.to)+'</strong>'}
+            </div>
+            <div style="font-size:11.5px;color:var(--p-text-2);margin-top:2px;">
+              ${e(h.at)} · by ${e(CRM.empName(h.changed_by))}${h.note?' · '+e(h.note):''}
+            </div>
+          </div>`).join('')
+        : '<div style="color:var(--p-text-3);padding:6px;">No stage changes yet.</div>'}
     </div>
     <div style="display:flex;justify-content:flex-end;padding:.5rem;">
       <button class="btn btn-ghost" onclick="closeModal()">Close</button>
@@ -3664,63 +3882,102 @@ function renderAcctDetail(a, activities, hist){
 }
 async function acctLogActivity(id){
   const v = await acctFetchVocab();
-  const kind = prompt('Activity kind (' + v.activity_kinds.slice(0,6).join(' / ') + '…):', 'Meeting');
-  if (!kind) return;
-  const subject = prompt('Subject / summary:', ''); if (subject === null) return;
-  const body_text = prompt('Details (optional):', '');
-  const next_action = prompt('Next action (optional):', '');
-  const next_at = next_action ? prompt('Next action date (YYYY-MM-DD, optional):', '') : '';
-  try {
-    const r = await fetch(`/api/accounts/${id}/activities`, {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({kind, subject, body: body_text, next_action, next_action_at: next_at})});
-    if ((await r.json()).ok) acctOpen(id);
-  } catch(e){ alert('Could not log activity'); }
+  const acct = ACCT.current || {};
+  CRM.Form.open({
+    title: 'Log Activity', subtitle: acct.name || 'Account',
+    submitLabel: 'Log activity', width: 560,
+    fields: [
+      { name:'kind',    label:'Type',    kind:'select', required:true, options: v.activity_kinds, span:'half' },
+      { name:'occurred',label:'When',    kind:'date',   value: new Date().toISOString().slice(0,10), span:'half' },
+      { name:'subject', label:'Subject / summary', kind:'text', required:true },
+      { name:'body',    label:'Details', kind:'textarea', rows: 4 },
+      { name:'next',    label:'Next action',       kind:'text', span:'half' },
+      { name:'next_at', label:'Next action date',  kind:'date', span:'half' },
+    ],
+    onSubmit: async function(vals){
+      const r = await fetch(`/api/accounts/${id}/activities`, {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({kind: vals.kind, subject: vals.subject, body: vals.body,
+                              next_action: vals.next, next_action_at: vals.next_at})});
+      const j = await r.json();
+      if (!j.ok) { CRMToast.error(j.error||'Could not log activity'); return false; }
+      CRMToast.success('Activity logged');
+      acctOpen(id);
+    },
+  });
 }
 async function acctChangeStage(id){
   const v = await acctFetchVocab();
-  const stg = prompt('New dev stage:\n' + v.dev_stages.join('\n'));
-  if (!stg) return;
-  const note = prompt('Note (optional):', '');
-  try {
-    const r = await fetch(`/api/accounts/${id}/stage`, {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({new_stage: stg, note})});
-    const j = await r.json();
-    if (j.ok) { await rAccounts(); acctOpen(id); }
-    else alert('Failed: '+(j.error||'unknown'));
-  } catch(e){ alert('Network error'); }
+  const acct = ACCT.current || {};
+  CRM.Form.open({
+    title: 'Change Development Stage', subtitle: acct.name || 'Account',
+    submitLabel: 'Update stage',
+    fields: [
+      { name:'stage', label:'New stage', kind:'select', required:true, options: v.dev_stages, value: acct.dev_stage },
+      { name:'note',  label:'Note',      kind:'textarea', rows: 3, help: 'Optional context for the stage change.' },
+    ],
+    onSubmit: async function(vals){
+      const r = await fetch(`/api/accounts/${id}/stage`, {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({new_stage: vals.stage, note: vals.note})});
+      const j = await r.json();
+      if (!j.ok) { CRMToast.error(j.error||'Failed'); return false; }
+      CRMToast.success('Stage updated');
+      await rAccounts(); acctOpen(id);
+    },
+  });
 }
 async function acctReassign(id){
-  const pic = prompt('New PIC (emp_code):');
-  if (!pic) return;
-  const reason = prompt('Reason for reassignment:', '');
-  try {
-    const r = await fetch(`/api/accounts/${id}/assign`, {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({new_pic: pic, reason})});
-    const j = await r.json();
-    if (j.ok) { await rAccounts(); acctOpen(id); }
-    else alert('Failed: '+(j.error||'unknown'));
-  } catch(e){ alert('Network error'); }
+  await CRM.ensureEmployees();
+  const acct = ACCT.current || {};
+  CRM.Form.open({
+    title: 'Reassign PIC', subtitle: acct.name || 'Account',
+    submitLabel: 'Reassign',
+    fields: [
+      { name:'pic',    label:'New PIC', kind:'select', required:true,
+        options: CRM.empOptions(), value: acct.pic || '',
+        help: 'Historical activity, timeline and stage history stay with the account.' },
+      { name:'reason', label:'Reason', kind:'textarea', rows: 3 },
+    ],
+    onSubmit: async function(vals){
+      const r = await fetch(`/api/accounts/${id}/assign`, {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({new_pic: vals.pic, reason: vals.reason})});
+      const j = await r.json();
+      if (!j.ok) { CRMToast.error(j.error||'Failed'); return false; }
+      CRMToast.success('PIC reassigned');
+      await rAccounts(); acctOpen(id);
+    },
+  });
 }
 async function acctConvert(id){
-  const title = prompt('Opportunity title:');
-  if (!title) return;
-  const value = prompt('Estimated value (INR, optional):', '');
-  try {
-    const r = await fetch(`/api/accounts/${id}/convert`, {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({title, source_type:'Account Development', value_inr: value?parseFloat(value):null})});
-    const j = await r.json();
-    if (j.ok) { alert('Opportunity #'+j.opportunity_id+' created.'); closeModal(); }
-    else alert('Failed: '+(j.error||'unknown'));
-  } catch(e){ alert('Network error'); }
+  const acct = ACCT.current || {};
+  CRM.Form.open({
+    title: 'Convert to Opportunity', subtitle: acct.name || 'Account',
+    submitLabel: 'Create opportunity',
+    fields: [
+      { name:'title', label:'Opportunity title', kind:'text', required:true,
+        value: acct.name ? `RFQ from ${acct.name}` : '' },
+      { name:'value', label:'Estimated value (₹)', kind:'number', span:'half',
+        help: 'Optional. Leave blank if unknown.' },
+    ],
+    onSubmit: async function(vals){
+      const r = await fetch(`/api/accounts/${id}/convert`, {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({title: vals.title, source_type:'Account Development',
+                              value_inr: vals.value ? parseFloat(vals.value) : null})});
+      const j = await r.json();
+      if (!j.ok) { CRMToast.error(j.error||'Failed'); return false; }
+      CRMToast.success('Opportunity #'+j.opportunity_id+' created');
+      closeModal();
+    },
+  });
 }
 
 // ── PROJECTS list + filters ─────────────────────────────────────────
 async function rProjects(){
   const v = await prjFetchVocab();
+  await CRM.ensureEmployees();
   const p = g('pg-projects'); if (!p) return;
   p.innerHTML = `
     <div class="pg-hd">
@@ -3763,7 +4020,14 @@ function prjFilter(){
   const tb=g('prTb'); if(!tb) return;
   g('prCnt').textContent = PRJ.filtered.length + ' project(s)';
   if (!PRJ.filtered.length) {
-    tb.innerHTML = '<tr><td colspan="9" style="padding:2rem;text-align:center;color:#6b7280;">No projects yet. Create your first one.</td></tr>';
+    tb.innerHTML = `<tr><td colspan="9" style="padding:0;">
+      <div class="crm-empty">
+        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="8" rx="1"/><path d="M17 14v7"/><path d="M7 14v7"/><path d="M17 3v3"/><path d="M7 3v3"/></svg></div>
+        <div class="title">No projects tracked yet</div>
+        <div class="msg">Add project intelligence to capture leads that haven't reached RFQ stage — announced projects, EPC tenders, upcoming procurement.</div>
+        <button class="btn btn-red btn-sm" onclick="prjOpenCreate()">+ New Project</button>
+      </div>
+    </td></tr>`;
     return;
   }
   tb.innerHTML = PRJ.filtered.slice(0,500).map((x,i)=>`
@@ -3772,10 +4036,10 @@ function prjFilter(){
       <td><div class="td-m">${e(x.name)}</div>${x.project_code?`<div class="td-s">${e(x.project_code)}</div>`:''}</td>
       <td><span class="b sA">${e(x.stage||'—')}</span></td>
       <td>${e(x.state||'')} ${e(x.location||'')}</td>
-      <td>${e(x.procam_vertical||'—')}</td>
+      <td>${x.procam_vertical ? e(x.procam_vertical) : '<span style="color:var(--p-text-3);">—</span>'}</td>
       <td>${e(x.priority||'—')}</td>
-      <td>${e(x.pic||'—')}</td>
-      <td>${e(x.last_update_at||'—')}</td>
+      <td>${x.pic ? CRM.empChip(x.pic) : '<span style="color:var(--p-text-3);">Unassigned</span>'}</td>
+      <td>${x.last_update_at ? e(x.last_update_at) : '<span style="color:var(--p-text-3);">—</span>'}</td>
       <td onclick="event.stopPropagation()" style="white-space:nowrap;">
         <button class="btn btn-ghost btn-xs" onclick="prjOpen(${x.id})">Open</button>
       </td>
@@ -3894,60 +4158,122 @@ function renderPrjDetail(p){
 }
 async function prjAddUpdate(id){
   const v = await prjFetchVocab();
-  const type = prompt('Update type ('+v.update_types.slice(0,6).join(' / ')+'…):', 'Announcement');
-  if (!type) return;
-  const summary = prompt('Summary:'); if (!summary) return;
-  const source = prompt('Source (optional):', '');
-  const source_url = prompt('Source URL (optional):', '');
-  const next_action = prompt('Next action (optional):', '');
-  const next_at = next_action ? prompt('Next review date (YYYY-MM-DD, optional):', '') : '';
-  try {
-    const r = await fetch(`/api/projects/${id}/updates`, {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({summary, update_type: type, source, source_url, next_action, next_review_at: next_at})});
-    if ((await r.json()).ok) prjOpen(id);
-  } catch(e){ alert('Network error'); }
+  const prj = PRJ.current || {};
+  CRM.Form.open({
+    title: 'Add Intelligence Update', subtitle: prj.name || 'Project',
+    submitLabel: 'Add update', width: 620,
+    fields: [
+      { name:'type',    label:'Update type', kind:'select', required:true, options: v.update_types, span:'half' },
+      { name:'date',    label:'Update date', kind:'date', value: new Date().toISOString().slice(0,10), span:'half' },
+      { name:'summary', label:'Summary',     kind:'textarea', rows: 3, required:true },
+      { name:'source',  label:'Source',      kind:'text', span:'half', placeholder:'Business Standard / Referral / Meeting notes' },
+      { name:'source_url', label:'Source URL', kind:'text', span:'half' },
+      { name:'next_action', label:'Next action', kind:'text' },
+      { name:'next_review', label:'Next review date', kind:'date', span:'half' },
+    ],
+    onSubmit: async function(vals){
+      const r = await fetch(`/api/projects/${id}/updates`, {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({summary: vals.summary, update_type: vals.type,
+                              update_date: vals.date,
+                              source: vals.source, source_url: vals.source_url,
+                              next_action: vals.next_action, next_review_at: vals.next_review})});
+      const j = await r.json();
+      if (!j.ok) { CRMToast.error(j.error||'Could not add update'); return false; }
+      CRMToast.success('Intelligence update added');
+      prjOpen(id);
+    },
+  });
 }
 async function prjChangeStage(id){
   const v = await prjFetchVocab();
-  const stg = prompt('New stage:\n' + v.stages.join('\n'));
-  if (!stg) return;
-  const note = prompt('Note (optional):', '');
-  try {
-    const r = await fetch(`/api/projects/${id}/stage`, {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({new_stage: stg, note})});
-    const j = await r.json();
-    if (j.ok) { await rProjects(); prjOpen(id); }
-    else alert('Failed: '+(j.error||'unknown'));
-  } catch(e){ alert('Network error'); }
+  const prj = PRJ.current || {};
+  CRM.Form.open({
+    title: 'Change Project Stage', subtitle: prj.name || 'Project',
+    submitLabel: 'Update stage',
+    fields: [
+      { name:'stage', label:'New stage', kind:'select', required:true,
+        options: v.stages, value: prj.stage },
+      { name:'note',  label:'Note',      kind:'textarea', rows: 3 },
+    ],
+    onSubmit: async function(vals){
+      const r = await fetch(`/api/projects/${id}/stage`, {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({new_stage: vals.stage, note: vals.note})});
+      const j = await r.json();
+      if (!j.ok) { CRMToast.error(j.error||'Failed'); return false; }
+      CRMToast.success('Stage updated');
+      await rProjects(); prjOpen(id);
+    },
+  });
 }
 async function prjLinkAccount(id){
   const v = await prjFetchVocab();
-  const acctId = prompt('Account ID (from the Accounts page):');
-  if (!acctId) return;
-  const role = prompt('Role on project ('+v.account_roles.slice(0,5).join(' / ')+'…):', 'Project Owner');
-  if (!role) return;
-  try {
-    const r = await fetch(`/api/projects/${id}/accounts`, {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({account_id: parseInt(acctId), role, is_primary: role==='Project Owner'})});
-    if ((await r.json()).ok) prjOpen(id);
-    else alert('Failed to link');
-  } catch(e){ alert('Network error'); }
+  const prj = PRJ.current || {};
+  /* Ensure we have accounts loaded for the picker */
+  if (!ACCT.list || !ACCT.list.length) {
+    try { const r = await api('/api/accounts'); ACCT.list = r.accounts || []; } catch(e){}
+  }
+  const accountOptions = ACCT.list.map(function(a){ return {value: String(a.id), label: a.name + ' — #'+a.id}; });
+  CRM.Form.open({
+    title: 'Link Account to Project', subtitle: prj.name || 'Project',
+    submitLabel: 'Link account',
+    fields: [
+      { name:'account', label:'Account', kind:'combobox', required:true, options: accountOptions,
+        placeholder:'Type account name…',
+        help: 'Search by name. Pick the account row that matches — the ID is filled in automatically.' },
+      { name:'role',    label:'Role on project', kind:'select', required:true,
+        options: v.account_roles, value:'Project Owner' },
+      { name:'note',    label:'Note (optional)', kind:'textarea', rows: 2 },
+    ],
+    onSubmit: async function(vals){
+      /* Combobox value is `id — name` ; extract numeric id */
+      let acctId = null;
+      const rawVal = (vals.account||'').trim();
+      /* If exact match on option value */
+      const opt = accountOptions.find(function(o){ return o.value === rawVal; });
+      if (opt) acctId = parseInt(opt.value, 10);
+      /* Else look up by exact label prefix */
+      if (!acctId) {
+        const acct = ACCT.list.find(function(a){ return a.name.toLowerCase() === rawVal.toLowerCase(); });
+        if (acct) acctId = acct.id;
+      }
+      /* Else if pure numeric input */
+      if (!acctId && /^\d+$/.test(rawVal)) acctId = parseInt(rawVal, 10);
+      if (!acctId) { CRMToast.error('Could not identify the account. Pick from the list.'); return false; }
+      const r = await fetch(`/api/projects/${id}/accounts`, {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({account_id: acctId, role: vals.role,
+                              is_primary: vals.role === 'Project Owner',
+                              note: vals.note})});
+      const j = await r.json();
+      if (!j.ok) { CRMToast.error(j.error||'Failed to link'); return false; }
+      CRMToast.success('Account linked');
+      prjOpen(id);
+    },
+  });
 }
 async function prjConvert(id){
-  const title = prompt('Opportunity title:');
-  if (!title) return;
-  const value = prompt('Estimated value (INR, optional):', '');
-  try {
-    const r = await fetch(`/api/projects/${id}/convert`, {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({title, source_type:'Project Intelligence', value_inr: value?parseFloat(value):null})});
-    const j = await r.json();
-    if (j.ok) { alert('Opportunity #'+j.opportunity_id+' created.'); closeModal(); prjOpen(id); }
-    else alert('Failed: '+(j.error||'unknown'));
-  } catch(e){ alert('Network error'); }
+  const prj = PRJ.current || {};
+  CRM.Form.open({
+    title: 'Convert to Opportunity', subtitle: prj.name || 'Project',
+    submitLabel: 'Create opportunity',
+    fields: [
+      { name:'title', label:'Opportunity title', kind:'text', required:true,
+        value: prj.name ? `RFQ from ${prj.name}` : '' },
+      { name:'value', label:'Estimated value (₹)', kind:'number', span:'half' },
+    ],
+    onSubmit: async function(vals){
+      const r = await fetch(`/api/projects/${id}/convert`, {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({title: vals.title, source_type:'Project Intelligence',
+                              value_inr: vals.value ? parseFloat(vals.value) : null})});
+      const j = await r.json();
+      if (!j.ok) { CRMToast.error(j.error||'Failed'); return false; }
+      CRMToast.success('Opportunity #'+j.opportunity_id+' created');
+      closeModal(); prjOpen(id);
+    },
+  });
 }
 
 // ── Modal helpers (only define if not already present) ────────────────
