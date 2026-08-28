@@ -2720,6 +2720,12 @@ async function doChangePw(){
     }
   });
 
+  // Small brand mark at the leftmost edge of the topnav.
+  var brand = document.createElement('span');
+  brand.className = 'topnav-brand';
+  brand.innerHTML = '<img src="https://www.procamlogistics.com/public/frontend/assets/img/logo.png" alt="Procam"> CRM';
+  mount.parentNode.insertBefore(brand, mount);
+
   // Render horizontal top-nav
   mount.innerHTML = groups.map(function(g){
     var admClass = g.adminOnly ? ' admin-only' : '';
@@ -2762,46 +2768,63 @@ async function doChangePw(){
   var s = document.createElement('style');
   s.id = 'crmTopnavCss';
   s.textContent = `
+    /* Brand mark at the far left of the topbar */
+    .topnav-brand {
+      display: none; align-items: center; gap: 8px;
+      padding: 0 6px 0 0; margin-right: 8px;
+      border-right: 1px solid #eef0f3;
+      color: #cc1e2e; font-weight: 700; font-size: 15px;
+      letter-spacing: .01em; white-space: nowrap;
+    }
+    body.has-topnav .topnav-brand { display: inline-flex; }
+    .topnav-brand img { height: 26px; width: auto; display: block; }
+
     .topnav { display: none; }
     body.has-topnav .topnav {
-      display: flex; align-items: center; gap: 2px; flex: 1;
-      margin: 0 12px; min-width: 0; overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
+      display: flex; align-items: center; gap: 4px; flex: 1;
+      margin: 0 12px; min-width: 0; overflow: visible;
     }
-    body.has-topnav .topnav::-webkit-scrollbar { display: none; }
     .topnav-group { position: relative; flex-shrink: 0; }
     .topnav-head {
       background: transparent; border: 0; cursor: pointer;
-      color: #f3f4f6; font-size: 13.5px; font-weight: 600;
-      padding: 8px 12px; border-radius: 6px; letter-spacing: .01em;
+      color: #111827; font-size: 13.5px; font-weight: 600;
+      padding: 8px 14px; border-radius: 8px; letter-spacing: -.005em;
       display: inline-flex; align-items: center; gap: 6px;
       transition: background .12s, color .12s;
     }
     .topnav-head:hover, .topnav-group.open .topnav-head {
-      background: rgba(255,255,255,.12); color: #fff;
+      background: rgba(204,30,46,.08); color: #cc1e2e;
     }
-    .topnav-caret { font-size: 10px; opacity: .7; }
+    .topnav-caret {
+      font-size: 10px; color: #9ca3af; margin-left: 2px;
+      transition: transform .15s;
+    }
+    .topnav-group.open .topnav-caret { transform: rotate(180deg); color: #cc1e2e; }
+
     .topnav-drop {
-      display: none; position: absolute; top: 100%; left: 0; z-index: 500;
-      background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
-      box-shadow: 0 20px 40px rgba(0,0,0,.14);
-      padding: 6px; min-width: 220px; margin-top: 4px;
+      display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 500;
+      background: #fff; border: 1px solid #eef0f3; border-radius: 12px;
+      box-shadow: 0 20px 40px rgba(0,0,0,.12), 0 4px 8px rgba(0,0,0,.06);
+      padding: 6px; min-width: 240px;
     }
-    .topnav-group:hover .topnav-drop, .topnav-group.open .topnav-drop { display: block; }
+    .topnav-group:hover .topnav-drop,
+    .topnav-group.open  .topnav-drop { display: block; }
+
     .topnav-item {
-      display: flex; align-items: center; gap: 8px;
-      padding: 8px 10px; border-radius: 6px;
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px; border-radius: 8px;
       color: #111827; font-size: 13px; text-decoration: none;
-      white-space: nowrap;
+      white-space: nowrap; font-weight: 500;
     }
-    .topnav-item:hover { background: rgba(204,30,46,.08); color: #cc1e2e; }
-    .topnav-item .ic { font-size: 15px; }
+    .topnav-item:hover { background: rgba(204,30,46,.06); color: #cc1e2e; }
+    .topnav-item .ic { font-size: 15px; width: 20px; text-align: center; }
     .topnav-item .sb-cnt {
       margin-left: auto; font-size: 11px; color: #6b7280;
       background: #f3f4f6; padding: 1px 8px; border-radius: 999px;
+      font-weight: 600;
     }
 
-    /* Desktop: hide the sidebar column, keep drawer available for mobile */
+    /* Desktop: hide sidebar entirely, use topnav */
     @media (min-width: 901px) {
       body.has-topnav .sb { display: none !important; }
       body.has-topnav .sb-hamb { display: none !important; }
@@ -2810,10 +2833,9 @@ async function doChangePw(){
       body.has-topnav .top-title { display: none; }
     }
     @media (max-width: 900px) {
-      body.has-topnav .topnav { display: none; }
+      body.has-topnav .topnav, body.has-topnav .topnav-brand { display: none !important; }
     }
 
-    /* Hide admin-only entries for non-admin roles */
     body:not(.role-admin) .topnav-item.admin-only,
     body:not(.role-admin) .topnav-group.admin-only { display: none; }
   `;
