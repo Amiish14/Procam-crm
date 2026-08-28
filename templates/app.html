@@ -2692,43 +2692,71 @@ async function doChangePw(){
   var sb    = document.getElementById('sbEl');
   if (!mount || !sb) return;
 
+  /* ── Minimalist stroke-icon set (inspired by Lucide, 16×16, currentColor).
+     Named icons keep the config below readable while giving professional
+     line-based visuals. Adding a new icon = drop one entry here. */
+  var ICONS = {
+    dashboard:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>',
+    trending_up:    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>',
+    trophy:         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>',
+    git_branch:     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>',
+    clipboard_list: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>',
+    layers:         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>',
+    target:         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>',
+    building:       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01"/><path d="M16 6h.01"/><path d="M12 6h.01"/><path d="M12 10h.01"/><path d="M12 14h.01"/><path d="M16 10h.01"/><path d="M16 14h.01"/><path d="M8 10h.01"/><path d="M8 14h.01"/></svg>',
+    construction:   '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="8" rx="1"/><path d="M17 14v7"/><path d="M7 14v7"/><path d="M17 3v3"/><path d="M7 3v3"/><path d="M10 14 2.3 6.3"/><path d="m14 6 7.7 7.7"/><path d="m8 6 8 8"/></svg>',
+    globe:          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+    newspaper:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/></svg>',
+    sparkles:       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.6L19.5 10.5l-5.6 1.9L12 18l-1.9-5.6L4.5 10.5l5.6-1.9L12 3z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>',
+    users:          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+    zap:            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+    user_lock:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+    upload:         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
+    key:            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-6 6"/><path d="m18 5 3 3"/></svg>',
+    brain:          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.142 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.142 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/></svg>',
+    briefcase:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>',
+    send:           '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
+    settings:       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>',
+  };
+  function ic(k){ return ICONS[k] || ICONS.dashboard; }
+
   /* ── Task-based groups.
      Add a new tool → drop one entry in the right array. Add a new group →
      append to TOPNAV_GROUPS. `adminOnly` on either the group or an item
      hides it from non-admin users. */
   var TOPNAV_GROUPS = [
-    { title: 'Overview',          icon: '📊',
+    { title: 'Overview',            icon: 'dashboard',
       items: [
-        { page: 'dash',      label: 'Dashboard',       ic: '📊' },
-        { page: 'perf',      label: 'My Performance',  ic: '📈' },
-        { page: 'scorecard', label: 'Team Scorecard',  ic: '🏆' },
+        { page: 'dash',      label: 'Dashboard',            ic: 'dashboard'    },
+        { page: 'perf',      label: 'My Performance',       ic: 'trending_up'  },
+        { page: 'scorecard', label: 'Team Scorecard',       ic: 'trophy'       },
       ]},
-    { title: 'Sales Pipeline',    icon: '🎯',
+    { title: 'Sales Pipeline',      icon: 'target',
       items: [
-        { page: 'pipeline',  label: 'Sales Pipeline',  ic: '🚦', countId: 'sbPip' },
-        { page: 'leads',     label: 'My Leads',        ic: '📋', countId: 'sbN'   },
-        { page: 'all',       label: 'All Leads',       ic: '🗂️', adminOnly: true },
-        { page: 'opp',       label: 'Opportunities',   ic: '🎯', countId: 'sbOp', adminOnly: true },
+        { page: 'pipeline',  label: 'Sales Pipeline',       ic: 'git_branch',    countId: 'sbPip' },
+        { page: 'leads',     label: 'My Leads',             ic: 'clipboard_list',countId: 'sbN'   },
+        { page: 'all',       label: 'All Leads',            ic: 'layers',        adminOnly: true },
+        { page: 'opp',       label: 'Opportunities',        ic: 'target',        countId: 'sbOp', adminOnly: true },
       ]},
-    { title: 'Accounts & Projects', icon: '🏢',
+    { title: 'Accounts & Projects', icon: 'briefcase',
       items: [
-        { page: 'accounts',  label: 'Accounts',            ic: '🏢', countId: 'sbAcc' },
-        { page: 'projects',  label: 'Project Intelligence',ic: '🏗️', countId: 'sbPrj' },
-        { page: 'contacts',  label: 'Global CRM',          ic: '🌐' },
+        { page: 'accounts',  label: 'Accounts',             ic: 'building',      countId: 'sbAcc' },
+        { page: 'projects',  label: 'Project Intelligence', ic: 'construction',  countId: 'sbPrj' },
+        { page: 'contacts',  label: 'Global CRM',           ic: 'globe'         },
       ]},
-    { title: 'Intelligence',      icon: '🧠',
+    { title: 'Intelligence',        icon: 'brain',
       items: [
-        { page: 'news',      label: 'Market Intelligence', ic: '📰', countId: 'sbNews', adminOnly: true },
-        { page: 'outreach',  label: 'AI Outreach',         ic: '✉️' },
+        { page: 'news',      label: 'Market Intelligence',  ic: 'newspaper',     countId: 'sbNews', adminOnly: true },
+        { page: 'outreach',  label: 'AI Outreach',          ic: 'send'          },
       ]},
-    { title: 'Team & Admin',      icon: '👥',
+    { title: 'Team & Admin',        icon: 'users',
       items: [
-        { page: 'team',      label: 'Team',            ic: '👥', adminOnly: true },
-        { page: 'assign',    label: 'Assign',          ic: '⚡', adminOnly: true },
-        { page: 'employees', label: 'Employees',       ic: '🔐', adminOnly: true },
-        { page: 'kpi',       label: 'KPI Settings',    ic: '🎯', adminOnly: true },
-        { page: 'upload',    label: 'Upload',          ic: '⬆️', adminOnly: true },
-        { page: 'pwchange',  label: 'Change Password', ic: '🔑' },
+        { page: 'team',      label: 'Team',                 ic: 'users',         adminOnly: true },
+        { page: 'assign',    label: 'Assign',               ic: 'zap',           adminOnly: true },
+        { page: 'employees', label: 'Employees',            ic: 'user_lock',     adminOnly: true },
+        { page: 'kpi',       label: 'KPI Settings',         ic: 'settings',      adminOnly: true },
+        { page: 'upload',    label: 'Upload',               ic: 'upload',        adminOnly: true },
+        { page: 'pwchange',  label: 'Change Password',      ic: 'key'           },
       ]},
   ];
 
@@ -2743,20 +2771,20 @@ async function doChangePw(){
     var admin = it.adminOnly ? ' admin-only' : '';
     return '<a href="#" class="topnav-item'+admin+'" data-p="'+it.page+'"'+
            ' onclick="event.preventDefault(); nav(\''+it.page+'\'); topnavCloseAll();">'+
-             '<span class="ic">'+it.ic+'</span>'+it.label+cnt+
+             '<span class="ic">'+ic(it.ic)+'</span>'+
+             '<span class="lbl">'+it.label+'</span>'+cnt+
            '</a>';
   }
 
   mount.innerHTML = TOPNAV_GROUPS.map(function(g){
-    /* Group is hidden if ALL its items are admin-only and user isn't admin
-       (handled by CSS via .admin-only). If ANY item is visible the group
-       stays. Attach adminOnly at the group level only when every child is. */
     var allAdmin = g.items.every(function(x){ return x.adminOnly; });
     var groupCls = allAdmin ? ' admin-only' : '';
     return '<div class="topnav-group'+groupCls+'">'+
              '<button class="topnav-head" type="button">'+
-               '<span class="ic">'+g.icon+'</span>'+g.title+
-               ' <span class="topnav-caret">▾</span></button>'+
+               '<span class="ic">'+ic(g.icon)+'</span>'+
+               '<span class="lbl">'+g.title+'</span>'+
+               '<svg class="topnav-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>'+
+             '</button>'+
              '<div class="topnav-drop">'+g.items.map(itemHTML).join('')+'</div>'+
            '</div>';
   }).join('');
@@ -2820,16 +2848,18 @@ async function doChangePw(){
     .topnav-group { position: relative; flex-shrink: 0; }
     .topnav-head {
       background: transparent; border: 0; cursor: pointer;
-      color: #111827; font-size: 13.5px; font-weight: 600;
-      padding: 8px 14px; border-radius: 8px; letter-spacing: -.005em;
-      display: inline-flex; align-items: center; gap: 6px;
+      color: #374151; font-size: 13px; font-weight: 600;
+      padding: 8px 12px; border-radius: 8px; letter-spacing: -.005em;
+      display: inline-flex; align-items: center; gap: 8px;
       transition: background .12s, color .12s;
     }
+    .topnav-head .ic { display: inline-flex; color: #6b7280; }
     .topnav-head:hover, .topnav-group.open .topnav-head {
-      background: rgba(204,30,46,.08); color: #cc1e2e;
+      background: rgba(204,30,46,.06); color: #cc1e2e;
     }
+    .topnav-head:hover .ic, .topnav-group.open .topnav-head .ic { color: #cc1e2e; }
     .topnav-caret {
-      font-size: 10px; color: #9ca3af; margin-left: 2px;
+      color: #9ca3af; margin-left: 2px;
       transition: transform .15s;
     }
     .topnav-group.open .topnav-caret { transform: rotate(180deg); color: #cc1e2e; }
@@ -2845,16 +2875,18 @@ async function doChangePw(){
 
     .topnav-item {
       display: flex; align-items: center; gap: 10px;
-      padding: 8px 12px; border-radius: 8px;
-      color: #111827; font-size: 13px; text-decoration: none;
+      padding: 8px 10px; border-radius: 8px;
+      color: #374151; font-size: 13px; text-decoration: none;
       white-space: nowrap; font-weight: 500;
     }
+    .topnav-item .ic { display: inline-flex; color: #9ca3af; width: 18px; justify-content: center; }
+    .topnav-item .lbl { flex: 1; }
     .topnav-item:hover { background: rgba(204,30,46,.06); color: #cc1e2e; }
-    .topnav-item .ic { font-size: 15px; width: 20px; text-align: center; }
+    .topnav-item:hover .ic { color: #cc1e2e; }
     .topnav-item .sb-cnt {
       margin-left: auto; font-size: 11px; color: #6b7280;
       background: #f3f4f6; padding: 1px 8px; border-radius: 999px;
-      font-weight: 600;
+      font-weight: 600; letter-spacing: .02em;
     }
 
     /* Desktop: hide sidebar entirely, use topnav */
