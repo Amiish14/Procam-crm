@@ -24,4 +24,6 @@ from flask import Blueprint
 bp = Blueprint('presales', __name__)
 
 # Import routes so the @bp.route decorators register.
-from presales import routes                                        # noqa: E402, F401
+from presales import routes             # Phase 1 — Accounts       # noqa: E402, F401
+from presales import routes_projects    # Phase 2/3/4 — Projects   # noqa: E402, F401
+from presales import routes_dashboard   # Phase 5/6 — Dashboard + Reports  # noqa: E402, F401
