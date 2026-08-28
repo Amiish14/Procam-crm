@@ -339,6 +339,7 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
 <div class="top">
   <button class="sb-hamb" id="sbHamb" onclick="sbToggle()" aria-label="Menu">☰</button>
   <div class="top-title" id="topPgTtl">Overview</div>
+  <nav id="topnav" class="topnav" aria-label="Primary"></nav>
   <div class="top-r">
     <div class="news-bell admin-only" onclick="nav('news')" id="newsBell" title="Market Intelligence">Intelligence<div class="news-dot" id="newsDot" style="display:none"></div></div>
     <div class="top-chip">
@@ -2679,6 +2680,162 @@ async function doChangePw(){
   if(r.ok){g('cpwMsg').style.color='#065F46';g('cpwMsg').textContent='Password changed successfully ✓';[g('cpwCur'),g('cpwNew'),g('cpwCfm')].forEach(el=>el.value='');}
   else{g('cpwMsg').style.color='var(--red)';g('cpwMsg').textContent=r.error||'Error';}
 }
+
+// ═════════════════════════════════════════════════════════════════════
+// TOPNAV — mirrors Procam TMS / Nabros TMS horizontal navigation
+// Transforms the existing sidebar (.sb .sb-sec + .sbi) into hover
+// dropdowns mounted into #topnav, then hides the sidebar on desktop
+// (keeps it as a drawer for mobile via the existing hamburger).
+// ═════════════════════════════════════════════════════════════════════
+(function buildCrmTopnav(){
+  var mount = document.getElementById('topnav');
+  var sb    = document.getElementById('sbEl');
+  if (!mount || !sb) return;
+
+  var SECTION_ICON = {
+    'workspace':      '📊',
+    'administration': '🔧',
+  };
+
+  // Build ordered list of (section title, items) from the sidebar.
+  var groups = [];
+  var current = null;
+  Array.prototype.slice.call(sb.children).forEach(function(node){
+    if (!node.classList) return;
+    if (node.classList.contains('sb-logo')) return;                  // skip logo
+    if (node.classList.contains('sb-sec')) {
+      current = {title: node.textContent.trim(), items: [], adminOnly: node.classList.contains('admin-only')};
+      groups.push(current);
+    } else if (node.classList.contains('sbi')) {
+      if (!current) {                                                // no section header yet
+        current = {title: 'Workspace', items: [], adminOnly: false};
+        groups.push(current);
+      }
+      current.items.push({
+        page:      node.dataset.p,
+        label:     node.textContent.replace(/^\s*\S+/, '').replace(/\d+$/,'').trim(),   // strip leading emoji + trailing counter
+        raw:       node.innerHTML,
+        adminOnly: node.classList.contains('admin-only'),
+      });
+    }
+  });
+
+  // Render horizontal top-nav
+  mount.innerHTML = groups.map(function(g){
+    var admClass = g.adminOnly ? ' admin-only' : '';
+    var items = g.items.map(function(it){
+      return '<a href="#" class="topnav-item'+(it.adminOnly?' admin-only':'')+
+             '" data-p="'+ (it.page||'') +
+             '" onclick="event.preventDefault(); nav(\''+(it.page||'')+'\'); topnavCloseAll();">'+
+             it.raw + '</a>';
+    }).join('');
+    return '<div class="topnav-group'+admClass+'">'+
+           '<button class="topnav-head" type="button">'+
+             (SECTION_ICON[g.title.toLowerCase()]||'')+' '+g.title+
+             ' <span class="topnav-caret">▾</span></button>'+
+           '<div class="topnav-drop">'+items+'</div>'+
+           '</div>';
+  }).join('');
+
+  // Dropdown open/close on click (mobile) + hover (desktop)
+  window.topnavCloseAll = function() {
+    document.querySelectorAll('.topnav-group.open').forEach(function(g){ g.classList.remove('open'); });
+  };
+  mount.addEventListener('click', function(e){
+    var head = e.target.closest('.topnav-head');
+    if (!head) return;
+    var group = head.parentNode;
+    var wasOpen = group.classList.contains('open');
+    topnavCloseAll();
+    if (!wasOpen) group.classList.add('open');
+    e.stopPropagation();
+  });
+  document.addEventListener('click', topnavCloseAll);
+
+  // On desktop: hide sidebar, show topnav
+  document.body.classList.add('has-topnav');
+})();
+
+// Topnav + hide-sidebar-on-desktop CSS
+(function(){
+  if (document.getElementById('crmTopnavCss')) return;
+  var s = document.createElement('style');
+  s.id = 'crmTopnavCss';
+  s.textContent = `
+    .topnav { display: none; }
+    body.has-topnav .topnav {
+      display: flex; align-items: center; gap: 2px; flex: 1;
+      margin: 0 12px; min-width: 0; overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    body.has-topnav .topnav::-webkit-scrollbar { display: none; }
+    .topnav-group { position: relative; flex-shrink: 0; }
+    .topnav-head {
+      background: transparent; border: 0; cursor: pointer;
+      color: #f3f4f6; font-size: 13.5px; font-weight: 600;
+      padding: 8px 12px; border-radius: 6px; letter-spacing: .01em;
+      display: inline-flex; align-items: center; gap: 6px;
+      transition: background .12s, color .12s;
+    }
+    .topnav-head:hover, .topnav-group.open .topnav-head {
+      background: rgba(255,255,255,.12); color: #fff;
+    }
+    .topnav-caret { font-size: 10px; opacity: .7; }
+    .topnav-drop {
+      display: none; position: absolute; top: 100%; left: 0; z-index: 500;
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+      box-shadow: 0 20px 40px rgba(0,0,0,.14);
+      padding: 6px; min-width: 220px; margin-top: 4px;
+    }
+    .topnav-group:hover .topnav-drop, .topnav-group.open .topnav-drop { display: block; }
+    .topnav-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; border-radius: 6px;
+      color: #111827; font-size: 13px; text-decoration: none;
+      white-space: nowrap;
+    }
+    .topnav-item:hover { background: rgba(204,30,46,.08); color: #cc1e2e; }
+    .topnav-item .ic { font-size: 15px; }
+    .topnav-item .sb-cnt {
+      margin-left: auto; font-size: 11px; color: #6b7280;
+      background: #f3f4f6; padding: 1px 8px; border-radius: 999px;
+    }
+
+    /* Desktop: hide the sidebar column, keep drawer available for mobile */
+    @media (min-width: 901px) {
+      body.has-topnav .sb { display: none !important; }
+      body.has-topnav .sb-hamb { display: none !important; }
+      body.has-topnav .content { margin-left: 0 !important; }
+      body.has-topnav .shell { grid-template-columns: 1fr !important; }
+      body.has-topnav .top-title { display: none; }
+    }
+    @media (max-width: 900px) {
+      body.has-topnav .topnav { display: none; }
+    }
+
+    /* Hide admin-only entries for non-admin roles */
+    body:not(.role-admin) .topnav-item.admin-only,
+    body:not(.role-admin) .topnav-group.admin-only { display: none; }
+  `;
+  document.head.appendChild(s);
+})();
+
+// Reflect current role on body for CSS toggles
+(function(){
+  var role = (document.getElementById('tRole')||{}).textContent || '';
+  var isAdmin = /admin/i.test(role) ||
+                Array.prototype.some.call(document.querySelectorAll('.admin-only'), function(el){
+                  return getComputedStyle(el).display !== 'none';
+                });
+  if (isAdmin) document.body.classList.add('role-admin');
+  // Watch for role update after init() populates it.
+  var mo = new MutationObserver(function(){
+    var r = (document.getElementById('tRole')||{}).textContent || '';
+    if (/admin/i.test(r)) document.body.classList.add('role-admin');
+  });
+  if (document.getElementById('tRole')) mo.observe(document.getElementById('tRole'), {childList:true, subtree:true, characterData:true});
+})();
+
 
 // ═════════════════════════════════════════════════════════════════════
 // PRE-SALES INTELLIGENCE LAYER · Accounts + Project Intelligence
