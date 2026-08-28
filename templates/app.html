@@ -4002,19 +4002,16 @@ window.nav = function(p) {
 };
 
 // Ensure the pages exist in the DOM even before first nav.
+// Must sit INSIDE .content (same scroll container as every other page)
+// otherwise the first render lands below the fold and looks broken.
 (function ensurePreSalesPages(){
-  if (!g('pg-accounts')) {
-    const el = document.createElement('div');
-    el.id = 'pg-accounts'; el.className = 'page';
-    document.querySelector('main')?.appendChild(el) ||
-      document.body.appendChild(el);
-  }
-  if (!g('pg-projects')) {
-    const el = document.createElement('div');
-    el.id = 'pg-projects'; el.className = 'page';
-    document.querySelector('main')?.appendChild(el) ||
-      document.body.appendChild(el);
-  }
+  var host = document.querySelector('.content') || document.body;
+  ['pg-accounts', 'pg-projects'].forEach(function(id){
+    if (g(id)) return;
+    var el = document.createElement('div');
+    el.id = id; el.className = 'page';
+    host.appendChild(el);
+  });
 })();
 
 
