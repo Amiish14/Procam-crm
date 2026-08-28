@@ -340,6 +340,12 @@ class Contact(db.Model):
     assigned_to = db.Column(db.String(100))
     notes       = db.Column(db.Text)
     created_at  = db.Column(db.DateTime, default=datetime.utcnow)
+    # ── v2026-08 · Pre-Sales Phase 1 extensions ────────────────────
+    account_id            = db.Column(db.Integer, db.ForeignKey('companies.id'),
+                                      nullable=True, index=True)
+    is_active             = db.Column(db.Boolean, default=True)
+    relationship_strength = db.Column(db.String(20), nullable=True)   # Strong / Warm / Cold
+    decision_role         = db.Column(db.String(40), nullable=True)   # Decision Maker / Influencer / User / Procurement
 
     def to_dict(self):
         return {
@@ -408,6 +414,16 @@ class Company(db.Model):
     is_active     = db.Column(db.Boolean, default=True)
     created_at    = db.Column(db.DateTime, default=datetime.utcnow)
     created_by    = db.Column(db.String(20))
+    # ── v2026-08 · Pre-Sales Phase 1 extensions ────────────────────
+    # Nullable & default-safe so every legacy Company row loads unchanged.
+    dev_stage         = db.Column(db.String(60), nullable=True)
+    pic_emp_code      = db.Column(db.String(20), nullable=True, index=True)
+    strategic_flag    = db.Column(db.Boolean, default=False)
+    priority          = db.Column(db.String(20), default='Medium')
+    last_activity_at  = db.Column(db.DateTime, nullable=True, index=True)
+    next_action_at    = db.Column(db.Date, nullable=True, index=True)
+    parent_account_id = db.Column(db.Integer, db.ForeignKey('companies.id'),
+                                  nullable=True)
     __table_args__ = (Index('ix_company_name_lower',
                             db.func.lower(name)),)
 
@@ -476,6 +492,13 @@ class Opportunity(db.Model):
     # Free-text so it works standalone; may hold TMS project code (e.g. PRO2402...)
     won_project_ref = db.Column(db.String(60), index=True)
     won_project_at  = db.Column(db.DateTime)
+    # ── v2026-08 · Pre-Sales Phase 1 source attribution ─────────────
+    # Captures where this Opportunity came from. Nullable — legacy rows
+    # have None and continue to behave as before.
+    source_type       = db.Column(db.String(40), nullable=True, index=True)
+    source_account_id = db.Column(db.Integer, db.ForeignKey('companies.id'),
+                                  nullable=True, index=True)
+    source_project_id = db.Column(db.Integer, nullable=True, index=True)     # FK added in Phase 2
     created_at    = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at    = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -3136,6 +3159,20 @@ def api_email_inbox_retry(evt_id):
     except Exception as e:
         app.logger.exception('inbox retry failed')
         return jsonify(ok=False, error=str(e)), 500
+
+
+# ═════════════════════════════════════════════════════════════════════
+# v2026-08 — Pre-Sales Intelligence Layer (Phase 1)
+# Adds Account Master + Assignment history + Activity timeline via the
+# presales/ package. See docs/PRE_SALES_INTELLIGENCE_ARCHITECTURE.md.
+# ═════════════════════════════════════════════════════════════════════
+try:
+    from presales import bp as _presales_bp
+    from presales import models as _presales_models  # noqa: F401 — register tables
+    app.register_blueprint(_presales_bp)
+    app.logger.info('Pre-Sales blueprint registered (accounts / activities).')
+except Exception as _e:                                              # pragma: no cover
+    app.logger.exception('Pre-Sales blueprint failed to register: %s', _e)
 
 
 if __name__ == '__main__':
