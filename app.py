@@ -901,6 +901,13 @@ def _apply_dashboard_filters(q, args):
     if _oppst: q = q.filter(Lead.opp_stage == _oppst)
     if _src:   q = q.filter(Lead.source == _src)
     if _lost:  q = q.filter(Lead.lost_reason == _lost)
+    # v2026-08 — scope=mailbox filters to leads that came in via the
+    # mailbox ingest (leads@procamgroup.in). Historical imports and
+    # manual entries are hidden. scope=all (or unset) = everything.
+    _scope = (args.get('scope') or '').strip().lower()
+    if _scope == 'mailbox':
+        q = q.filter(Lead.source == 'email',
+                     Lead.email_message_id.isnot(None))
     # Date range uses onboarded_date (creation cohort). Later phases can
     # switch based on `date_field` param — kept simple for now.
     if _from:
@@ -945,6 +952,12 @@ def api_leads():
     if ind:    q = q.filter_by(industry=ind)
     if src:    q = q.filter_by(source=src)
     if asgn and session.get('role')=='admin': q = q.filter_by(assigned_to=asgn)
+    # v2026-08 — scope=mailbox restricts to leads that landed via the
+    # leads@procamgroup.in mailbox pipeline. Hides imports + manual + others.
+    scope = (request.args.get('scope') or '').strip().lower()
+    if scope == 'mailbox':
+        q = q.filter(Lead.source == 'email',
+                     Lead.email_message_id.isnot(None))
     leads = q.order_by(Lead.created_at.desc()).limit(limit).all()
     if srch:
         leads = [l for l in leads if srch in (l.company+l.project+l.state+l.industry+l.pic+'').lower()]
