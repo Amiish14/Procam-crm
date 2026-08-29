@@ -24,22 +24,26 @@ except Exception:
 # New Opportunity → Qualified → Proposal Due → Negotiation Due →
 # Decision Taken → Won  (Won triggers PM handoff)
 # At any Decision point a deal can also go to Lost / On Hold / Not Interested.
-STAGES_PIPELINE = ['New', 'Call Done', 'Profile Sent', 'Appointment',
+STAGES_PIPELINE = ['New', 'Call Done', 'Profile Sent',
+                   'Business Discussion', 'Appointment',
                    'Visit Done', 'RFQ Generated', 'Quoted', 'Under Negotiation']
 STAGES_TERMINAL = ['Won', 'Lost', 'On Hold', 'Not Interested']
 STAGES_ALL      = STAGES_PIPELINE + STAGES_TERMINAL
-# v2026-08 — extended pipeline. Normal flow is RFQ Generated → Quoted →
-# Under Negotiation → Won. Direct Quoted → Won and any-stage → Lost /
-# On Hold / Not Interested remain allowed via api_lead_decision().
+# v2026-08 — extended pipeline. Normal flow now is
+#   Profile Sent → Business Discussion → Appointment → Visit Done →
+#   RFQ Generated → Quoted → Under Negotiation → Won.
+# Direct Quoted/Under Negotiation → Won and any-stage → Lost / On Hold /
+# Not Interested remain allowed via api_lead_decision().
 STAGE_NEXT = {
-    'New':               'Call Done',
-    'Call Done':         'Profile Sent',
-    'Profile Sent':      'Appointment',
-    'Appointment':       'Visit Done',
-    'Visit Done':        'RFQ Generated',
-    'RFQ Generated':     'Quoted',
-    'Quoted':            'Under Negotiation',
-    'Under Negotiation': 'Won',
+    'New':                 'Call Done',
+    'Call Done':           'Profile Sent',
+    'Profile Sent':        'Business Discussion',
+    'Business Discussion': 'Appointment',
+    'Appointment':         'Visit Done',
+    'Visit Done':          'RFQ Generated',
+    'RFQ Generated':       'Quoted',
+    'Quoted':              'Under Negotiation',
+    'Under Negotiation':   'Won',
 }
 # Stages that can jump straight to a terminal Won without going through
 # Under Negotiation (spec Part A1 — "some customers award without formal
@@ -243,6 +247,18 @@ class Lead(db.Model):
     created_at       = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at       = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # ── v2026-08 · CRM enhancement pack ─────────────────────────────
+    # Additional company / commercial fields — nullable so legacy rows
+    # continue to load unchanged. See docs / migration script for details.
+    website           = db.Column(db.String(200), nullable=True)
+    subsidiaries      = db.Column(db.Text, nullable=True)             # comma-separated / free-text list of SPVs, subsidiaries
+    estimated_value_inr = db.Column(db.Numeric(15, 2), nullable=True) # opportunity size (₹)
+    quoted_amount_inr   = db.Column(db.Numeric(15, 2), nullable=True) # actual quoted amount (₹)
+    # relevance ∈ {'Relevant', 'Not Relevant', 'Undecided'} — lets users
+    # keep an operational pipeline clean without hard-deleting records.
+    relevance         = db.Column(db.String(20), nullable=True,
+                                  default='Undecided', index=True)
+
     # Email ingest (source=email) — dedup key from Microsoft Graph internetMessageId
     email_message_id = db.Column(db.String(255), unique=True, index=True, nullable=True)
     # Structured JSON extracted from the email by Claude Haiku (see email_ingest/ai_extractor.py).
@@ -279,6 +295,12 @@ class Lead(db.Model):
             'onboarded_date': sd(self.onboarded_date),
             'week_tag': self.week_tag or '',
             'created_at': str(self.created_at)[:10] if self.created_at else '',
+            # v2026-08 · CRM enhancement pack
+            'website':          self.website or '',
+            'subsidiaries':     self.subsidiaries or '',
+            'estimated_value':  float(self.estimated_value_inr) if self.estimated_value_inr else None,
+            'quoted_amount':    float(self.quoted_amount_inr) if self.quoted_amount_inr else None,
+            'relevance':        self.relevance or 'Undecided',
             # AI-extracted structured summary (populated only for source=email leads
             # that went through Claude Haiku). Renders as the "Lead Summary" card
             # at the top of the lead detail modal.
@@ -958,6 +980,19 @@ def api_leads():
     if scope == 'mailbox':
         q = q.filter(Lead.source == 'email',
                      Lead.email_message_id.isnot(None))
+    # v2026-08 — Relevance filter: Relevant / Not Relevant / Undecided.
+    # Also accept `hide_irrelevant=1` to suppress Not-Relevant rows.
+    relv = (request.args.get('relevance') or '').strip()
+    if relv:
+        q = q.filter(Lead.relevance == relv)
+    if request.args.get('hide_irrelevant') in ('1', 'true', 'yes'):
+        q = q.filter((Lead.relevance == None) | (Lead.relevance != 'Not Relevant'))
+    ctry = (request.args.get('country') or '').strip()
+    if ctry:
+        q = q.filter(Lead.country == ctry)
+    cty = (request.args.get('city') or '').strip()
+    if cty:
+        q = q.filter(Lead.city == cty)
     leads = q.order_by(Lead.created_at.desc()).limit(limit).all()
     if srch:
         leads = [l for l in leads if srch in (l.company+l.project+l.state+l.industry+l.pic+'').lower()]
@@ -992,7 +1027,13 @@ def api_create_lead():
         notes           = d.get('notes',''),
         history         = d.get('history',''),
         week_tag        = d.get('week_tag',''),
-        onboarded_date  = date.today()
+        onboarded_date  = date.today(),
+        # v2026-08 — CRM enhancement pack
+        website           = (d.get('website') or '').strip() or None,
+        subsidiaries      = (d.get('subsidiaries') or '').strip() or None,
+        estimated_value_inr = _to_dec(d.get('estimated_value')),
+        quoted_amount_inr   = _to_dec(d.get('quoted_amount')),
+        relevance         = d.get('relevance') or 'Undecided',
     )
     db.session.add(lead)
     db.session.commit()
@@ -1014,10 +1055,14 @@ def api_update_lead(lid):
         'stage':'stage','procam_vertical':'procam_vertical','notes':'notes',
         'email_sent_flag':'email_sent_flag','week_tag':'week_tag',
         'opp_number':'opp_number','opp_stage':'opp_stage','opp_notes':'opp_notes',
+        # v2026-08 — CRM enhancement pack
+        'website':'website', 'subsidiaries':'subsidiaries', 'relevance':'relevance',
     }
     for k,v in fields_map.items():
         if k in d: setattr(lead, v, d[k])
     if 'cost' in d: lead.cost_million = float(d['cost'] or 0)
+    if 'estimated_value' in d: lead.estimated_value_inr = _to_dec(d['estimated_value'])
+    if 'quoted_amount'   in d: lead.quoted_amount_inr   = _to_dec(d['quoted_amount'])
     date_fields = {'followup':'followup_date','phone_call_date':'phone_call_date',
                    'intro_mail_date':'intro_mail_date','meeting_date':'meeting_date',
                    'rfq_date':'rfq_date','opp_close_date':'opp_close_date'}
@@ -1037,6 +1082,42 @@ def api_update_lead(lid):
     # Auto-create/update contact
     _auto_save_contact(lead)
     return jsonify({'ok': True})
+
+def _to_dec(v):
+    """Best-effort parse of a numeric string / number to Decimal — returns
+    None on empty / invalid input so the DB gets a proper null."""
+    if v is None or v == '' or v is False:
+        return None
+    try:
+        from decimal import Decimal
+        d = Decimal(str(v).replace(',', '').strip())
+        return d if d != 0 or str(v).strip() in ('0', '0.0') else d
+    except Exception:
+        return None
+
+
+# v2026-08 — Mark a lead's business relevance without a full update.
+# Body: {"relevance": "Relevant" | "Not Relevant" | "Undecided", "note": "…"}
+@app.route('/api/leads/<int:lid>/relevance', methods=['POST'])
+@require_auth
+def api_lead_relevance(lid):
+    lead = Lead.query.get_or_404(lid)
+    if session.get('role') != 'admin' and lead.assigned_to != session['emp_code']:
+        return jsonify({'ok': False, 'error': 'Not your lead'}), 403
+    d = request.get_json(silent=True) or {}
+    val = (d.get('relevance') or '').strip()
+    if val not in ('Relevant', 'Not Relevant', 'Undecided'):
+        return jsonify({'ok': False,
+                        'error': 'relevance must be Relevant / Not Relevant / Undecided'}), 400
+    lead.relevance = val
+    if d.get('note'):
+        # Prepend the reason to notes so the audit trail is preserved.
+        stamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
+        lead.notes = f'[{stamp} · {session.get("emp_code")}: marked {val}] {d["note"]}\n\n' + (lead.notes or '')
+    lead.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'ok': True, 'relevance': lead.relevance})
+
 
 @app.route('/api/leads/<int:lid>', methods=['DELETE'])
 @require_auth
@@ -1199,6 +1280,11 @@ def api_lead_advance(lid):
         lead.meeting_date = lead.meeting_date or today
     elif nxt == 'RFQ Generated':
         lead.rfq_date = lead.rfq_date or today
+    # v2026-08 — capture quoted amount when advancing INTO Quoted
+    if nxt == 'Quoted':
+        q = _to_dec(data.get('quoted_amount'))
+        if q is not None:
+            lead.quoted_amount_inr = q
     db.session.commit()
     return jsonify({'ok': True, 'stage': lead.stage, 'lead': lead.to_dict()})
 

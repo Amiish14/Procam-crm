@@ -1149,8 +1149,11 @@ window.CRMToast = (function(){
   <div class="card" style="margin-bottom:0">
     <div class="fbar">
       <input class="fi fi-srch" id="lS" placeholder="Search Company, state, industry..." oninput="rLeads()">
-      <select class="fi" id="lSt" onchange="rLeads()"><option value="">All Stages</option><option>New</option><option>Call Done</option><option>Profile Sent</option><option>Appointment</option><option>Visit Done</option><option>RFQ Generated</option><option>Quoted</option><option>Under Negotiation</option><option>Won</option><option>Lost</option><option>On Hold</option><option>Not Interested</option></select>
+      <select class="fi" id="lSt" onchange="rLeads()"><option value="">All Stages</option><option>New</option><option>Call Done</option><option>Profile Sent</option><option>Business Discussion</option><option>Appointment</option><option>Visit Done</option><option>RFQ Generated</option><option>Quoted</option><option>Under Negotiation</option><option>Won</option><option>Lost</option><option>On Hold</option><option>Not Interested</option></select>
       <select class="fi" id="lV" onchange="rLeads()"><option value="">All Verticals</option><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option></select>
+      <select class="fi" id="lRel" onchange="rLeads()"><option value="">All Relevance</option><option>Relevant</option><option>Undecided</option><option>Not Relevant</option></select>
+      <input class="fi" id="lCt" placeholder="Country" oninput="rLeads()" style="width:120px;">
+      <input class="fi" id="lCi" placeholder="City"    oninput="rLeads()" style="width:120px;">
       <button class="btn btn-ghost btn-sm" onclick="clrF('l')">Clear</button>
       <span class="f-cnt" id="lCnt"></span>
     </div>
@@ -1167,9 +1170,12 @@ window.CRMToast = (function(){
   <div class="card" style="margin-bottom:0">
     <div class="fbar">
       <input class="fi fi-srch" id="aS" placeholder="Search Company, state, industry..." oninput="rAll()">
-      <select class="fi" id="aSt" onchange="rAll()"><option value="">All Stages</option><option>New</option><option>Call Done</option><option>Profile Sent</option><option>Appointment</option><option>Visit Done</option><option>RFQ Generated</option><option>Quoted</option><option>Under Negotiation</option><option>Won</option><option>Lost</option><option>On Hold</option><option>Not Interested</option></select>
+      <select class="fi" id="aSt" onchange="rAll()"><option value="">All Stages</option><option>New</option><option>Call Done</option><option>Profile Sent</option><option>Business Discussion</option><option>Appointment</option><option>Visit Done</option><option>RFQ Generated</option><option>Quoted</option><option>Under Negotiation</option><option>Won</option><option>Lost</option><option>On Hold</option><option>Not Interested</option></select>
       <select class="fi" id="aAsgn" onchange="rAll()"><option value="">All Team</option></select>
       <select class="fi" id="aV" onchange="rAll()"><option value="">All Verticals</option><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option></select>
+      <select class="fi" id="aRel" onchange="rAll()"><option value="">All Relevance</option><option>Relevant</option><option>Undecided</option><option>Not Relevant</option></select>
+      <input class="fi" id="aCt" placeholder="Country" oninput="rAll()" style="width:120px;">
+      <input class="fi" id="aCi" placeholder="City"    oninput="rAll()" style="width:120px;">
       <select class="fi" id="aSrc" onchange="rAll()"><option value="">All Sources</option><option value="manual">Manual</option><option value="import">Imported</option><option value="news">News Lead</option><option value="jul2025">Jul-2025</option><option value="manju">Manju</option><option value="new_project">Archive</option><option value="subsidiary">Subsidiary</option></select>
       <button class="btn btn-ghost btn-sm" onclick="clrF('a')">Clear</button>
       <span class="f-cnt" id="aCnt"></span>
@@ -1653,8 +1659,8 @@ window.CRMToast = (function(){
 // ══════════════════════════════════════════════════
 //  PROCAM CRM — Frontend Application
 // ══════════════════════════════════════════════════
-const STAGES=['New','Call Done','Profile Sent','Appointment','Visit Done','RFQ Generated','Quoted','Under Negotiation','Won','Lost','On Hold','Not Interested'];
-const SC={'New':'sT','Call Done':'sN','Profile Sent':'sC','Appointment':'sP','Visit Done':'sR','RFQ Generated':'sA','Quoted':'sQ','Under Negotiation':'sU','Won':'sW','Lost':'sL','On Hold':'sV','Not Interested':'sL',
+const STAGES=['New','Call Done','Profile Sent','Business Discussion','Appointment','Visit Done','RFQ Generated','Quoted','Under Negotiation','Won','Lost','On Hold','Not Interested'];
+const SC={'New':'sT','Call Done':'sN','Profile Sent':'sC','Business Discussion':'sB','Appointment':'sP','Visit Done':'sR','RFQ Generated':'sA','Quoted':'sQ','Under Negotiation':'sU','Won':'sW','Lost':'sL','On Hold':'sV','Not Interested':'sL',
           /* legacy pass-through */ 'New':'sN','Call Done':'sC','Profile Sent':'sP','Appointment':'sA','Visit Done':'sV','RFQ Generated':'sR'};
 const SBK={jul2025:'srcJ',manju:'srcM',new_project:'srcN',subsidiary:'srcS',import:'srcI',manual:'srcMn',news:'srcI'};
 const SBL={jul2025:'Jul-25',manju:'Manju',new_project:'Arch.',subsidiary:'Subsid.',import:'Import',manual:'Manual',news:'News'};
@@ -1784,13 +1790,14 @@ async function init(){
 }
 
 // ── NAV ──
-const PG_TITLES={dash:'Overview',pipeline:'Sales Pipeline','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated','inb-quoted':'Quoted','inb-negot':'Under Negotiation','inb-quoted':'Quoted','inb-negot':'Under Negotiation',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard'};
+const PG_TITLES={dash:'Overview',pipeline:'Sales Pipeline','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-biz':'Business Discussion','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated','inb-quoted':'Quoted','inb-negot':'Under Negotiation',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard'};
 // Legacy 6-stage inbox nav ids alias into the unified Sales Pipeline
 // page pre-filtered to the corresponding stage. Preserves any old
 // bookmarked deep-link.
 const LEGACY_INBOX_ALIAS={
   'inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent',
-  'inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated','inb-quoted':'Quoted','inb-negot':'Under Negotiation','inb-quoted':'Quoted','inb-negot':'Under Negotiation',
+  'inb-biz':'Business Discussion',
+  'inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated','inb-quoted':'Quoted','inb-negot':'Under Negotiation',
 };
 // Mobile off-canvas sidebar drawer.
 function sbToggle(force){
@@ -2254,8 +2261,9 @@ function refreshCurrentInbox(){
 
 // ── LEADS TABLE ──
 async function rLeads(){
-  const s=(g('lS')?.value||'').toLowerCase(),st=g('lSt')?.value||'',v=g('lV')?.value||'';
-  let leads=await api('/api/leads?'+qp({stage:st,vertical:v,q:s,limit:300}));
+  const s=(g('lS')?.value||'').toLowerCase(),st=g('lSt')?.value||'',v=g('lV')?.value||'',
+        rel=g('lRel')?.value||'', ct=g('lCt')?.value||'', ci=g('lCi')?.value||'';
+  let leads=await api('/api/leads?'+qp({stage:st,vertical:v,q:s,relevance:rel,country:ct,city:ci,limit:300}));
   if(!Array.isArray(leads))leads=[];
   g('lCnt').textContent=leads.length+' leads';
   g('lTb').innerHTML=leads.length?leads.map((l,i)=>`<tr onclick="openLd(${l.id})">
@@ -2273,8 +2281,9 @@ async function rLeads(){
 }
 
 async function rAll(){
-  const s=(g('aS')?.value||'').toLowerCase(),st=g('aSt')?.value||'',as=g('aAsgn')?.value||'',v=g('aV')?.value||'',src=g('aSrc')?.value||'';
-  let leads=await api('/api/leads?'+qp({stage:st,assigned:as,vertical:v,source:src,q:s,limit:300}));
+  const s=(g('aS')?.value||'').toLowerCase(),st=g('aSt')?.value||'',as=g('aAsgn')?.value||'',v=g('aV')?.value||'',src=g('aSrc')?.value||'',
+        rel=g('aRel')?.value||'', ct=g('aCt')?.value||'', ci=g('aCi')?.value||'';
+  let leads=await api('/api/leads?'+qp({stage:st,assigned:as,vertical:v,source:src,q:s,relevance:rel,country:ct,city:ci,limit:300}));
   if(!Array.isArray(leads))leads=[];
   g('aCnt').textContent=leads.length+' leads';
   g('aTb').innerHTML=leads.length?leads.map((l,i)=>`<tr onclick="openLd(${l.id})">
@@ -2484,8 +2493,52 @@ async function saveLd(){
 
 function closeLd(ev){if(ev&&ev.target!==g('ldMob'))return;g('ldMob').style.display='none';activeId=null;}
 async function newLead(){
-  const r=await api('/api/leads',{method:'POST',body:JSON.stringify({company:'New Lead',stage:'New Opportunity',assigned_to:ME.emp_code})});
-  if(r.ok){openLd(r.id);}
+  // v2026-08 — full-fidelity New Lead capture (was: create-stub-then-open).
+  // Collects company, contact, project, location, financial + relevance in one
+  // shot so nothing is lost between click and DB row.
+  CRM.Form.open({
+    title: 'New Lead',
+    subtitle: 'Capture a manual lead — email intake stays automatic',
+    width: 640,
+    fields: [
+      { name:'company',     label:'Company',      kind:'text',     required:true,  span:'full' },
+      { name:'website',     label:'Website',      kind:'text',     placeholder:'https://…',                                 span:'half' },
+      { name:'country',     label:'Country',      kind:'text',     placeholder:'India',                                     span:'half' },
+      { name:'city',        label:'City',         kind:'text',                                                              span:'half' },
+      { name:'state',       label:'State',        kind:'text',                                                              span:'half' },
+      { name:'subsidiaries',label:'Subsidiaries / SPVs', kind:'textarea', rows:2,
+        help:'One per line, or comma-separated — the search engine matches on any.',                                         span:'full' },
+      { name:'pic',         label:'Contact person', kind:'text',                                                            span:'half' },
+      { name:'designation', label:'Designation',  kind:'text',                                                              span:'half' },
+      { name:'email',       label:'Email',        kind:'text',     placeholder:'name@company.com',                          span:'half' },
+      { name:'phone',       label:'Phone',        kind:'text',                                                              span:'half' },
+      { name:'industry',    label:'Industry',     kind:'text',                                                              span:'half' },
+      { name:'procam_vertical', label:'Procam vertical', kind:'select',
+        options:['','General Transport','Heavy Cargo','Project Freight','Freight Forwarding','Warehousing','Installation'], span:'half' },
+      { name:'project',     label:'Project / requirement', kind:'textarea', rows:2,                                         span:'full' },
+      { name:'estimated_value', label:'Estimated value (INR)', kind:'number',                                               span:'half' },
+      { name:'quoted_amount',   label:'Quoted amount (INR, optional)', kind:'number',                                       span:'half' },
+      { name:'relevance',   label:'Relevance',    kind:'select',
+        options:['Undecided','Relevant','Not Relevant'], value:'Undecided',                                                 span:'half' },
+      { name:'stage',       label:'Starting stage', kind:'select',
+        options:['New','Call Done','Profile Sent','Business Discussion','Appointment','Visit Done','RFQ Generated','Quoted','Under Negotiation'],
+        value:'New',                                                                                                        span:'half' },
+      { name:'notes',       label:'Notes',        kind:'textarea', rows:3,                                                  span:'full' },
+    ],
+    submitLabel:'Create lead',
+    onSubmit: async function(v){
+      var body = Object.assign({}, v, { assigned_to: ME.emp_code });
+      var r = await api('/api/leads', { method:'POST', body:JSON.stringify(body) });
+      if (r && r.ok){
+        CRM.Form.close();
+        if (typeof CRMToast !== 'undefined') CRMToast.success('Lead created');
+        openLd(r.id);
+        if (typeof rLeads === 'function') try{ rLeads(); }catch(_){ }
+      } else {
+        if (typeof CRMToast !== 'undefined') CRMToast.error((r && r.error) || 'Could not create lead');
+      }
+    },
+  });
 }
 function orFromLd(){if(!activeId)return;const id=activeId;closeLd();nav('outreach');setTimeout(()=>{g('orId').value=id;loadOR();},150);}
 
@@ -2715,20 +2768,25 @@ async function newsAction(action){
 //   so counts and rows reconcile with everything else in the CRM.
 // ═══════════════════════════════════════════════════════════════════
 const PIP_STAGES = [
-  {key:'New',           label:'New',           tone:'#6B7280'},
-  {key:'Call Done',     label:'Call Done',     tone:'#3B82F6'},
-  {key:'Profile Sent',  label:'Profile Sent',  tone:'#8B5CF6'},
-  {key:'Appointment',   label:'Appointment',   tone:'#F59E0B'},
-  {key:'Visit Done',    label:'Visit Done',    tone:'#F97316'},
-  {key:'RFQ Generated', label:'RFQ Generated', tone:'#C72435'},
-  {key:'Won',           label:'Won',           tone:'#059669', terminal:true},
-  {key:'Lost',          label:'Lost',          tone:'#B91C1C', terminal:true},
-  {key:'On Hold',       label:'On Hold',       tone:'#B45309', terminal:true},
-  {key:'Not Interested',label:'Not Interested',tone:'#374151', terminal:true},
+  {key:'New',                 label:'New',                 tone:'#6B7280'},
+  {key:'Call Done',           label:'Call Done',           tone:'#3B82F6'},
+  {key:'Profile Sent',        label:'Profile Sent',        tone:'#8B5CF6'},
+  {key:'Business Discussion', label:'Business Discussion', tone:'#7C3AED'},
+  {key:'Appointment',         label:'Appointment',         tone:'#F59E0B'},
+  {key:'Visit Done',          label:'Visit Done',          tone:'#F97316'},
+  {key:'RFQ Generated',       label:'RFQ Generated',       tone:'#C72435'},
+  {key:'Quoted',              label:'Quoted',              tone:'#0EA5E9'},
+  {key:'Under Negotiation',   label:'Under Negotiation',   tone:'#DB2777'},
+  {key:'Won',                 label:'Won',                 tone:'#059669', terminal:true},
+  {key:'Lost',                label:'Lost',                tone:'#B91C1C', terminal:true},
+  {key:'On Hold',             label:'On Hold',             tone:'#B45309', terminal:true},
+  {key:'Not Interested',      label:'Not Interested',      tone:'#374151', terminal:true},
 ];
 const STAGE_NEXT_MAP = {
-  'New':'Call Done','Call Done':'Profile Sent','Profile Sent':'Appointment',
-  'Appointment':'Visit Done','Visit Done':'RFQ Generated','RFQ Generated':'Won',
+  'New':'Call Done','Call Done':'Profile Sent',
+  'Profile Sent':'Business Discussion','Business Discussion':'Appointment',
+  'Appointment':'Visit Done','Visit Done':'RFQ Generated',
+  'RFQ Generated':'Quoted','Quoted':'Under Negotiation','Under Negotiation':'Won',
 };
 const pipelineState = {
   stage: '', q: '', vertical: '', industry: '', state: '', pic: '',
@@ -2963,6 +3021,16 @@ function openAdv(lid){
     'Profile Sent':  `<div style="font-size:.78rem;color:#6B7280;margin-bottom:.35rem;">Profile / intro email sent</div>
                       <input class="fmc" id="advDate" type="date" value="${today}" style="margin-bottom:.4rem;">
                       <textarea class="fmc" id="advNote" rows="2" placeholder="Recipient, email reference, remarks…"></textarea>`,
+    'Business Discussion': `<div style="font-size:.78rem;color:#6B7280;margin-bottom:.35rem;">Opportunity / requirement discussion in progress</div>
+                      <input class="fmc" id="advDate" type="date" value="${today}" style="margin-bottom:.4rem;">
+                      <textarea class="fmc" id="advNote" rows="2" placeholder="Discussion summary, stakeholder, next step…"></textarea>`,
+    'Quoted':        `<div style="font-size:.78rem;color:#6B7280;margin-bottom:.35rem;">Quotation shared with customer</div>
+                      <input class="fmc" id="advDate" type="date" value="${today}" style="margin-bottom:.4rem;">
+                      <input class="fmc" id="advAmt"  type="number" step="0.01" placeholder="Quoted amount (INR)" style="margin-bottom:.4rem;">
+                      <textarea class="fmc" id="advNote" rows="2" placeholder="Quote reference, validity, remarks…"></textarea>`,
+    'Under Negotiation': `<div style="font-size:.78rem;color:#6B7280;margin-bottom:.35rem;">Commercial negotiation in progress</div>
+                      <input class="fmc" id="advDate" type="date" value="${today}" style="margin-bottom:.4rem;">
+                      <textarea class="fmc" id="advNote" rows="2" placeholder="Counter-offer, competitor, blocker…"></textarea>`,
     'Appointment':   `<div style="font-size:.78rem;color:#6B7280;margin-bottom:.35rem;">Schedule appointment</div>
                       <input class="fmc" id="advDate" type="date" value="${today}" style="margin-bottom:.4rem;">
                       <textarea class="fmc" id="advNote" rows="2" placeholder="Meeting mode, location / link, contact…"></textarea>`,
@@ -2982,6 +3050,8 @@ async function confirmAdvance(){
   const body = {
     note: (g('advNote')||{}).value || '',
     event_date: (g('advDate')||{}).value || '',
+    // v2026-08 — Quoted amount goes with the Quoted transition; server picks it up.
+    quoted_amount: (g('advAmt')||{}).value || undefined,
   };
   const r = await api(`/api/leads/${_advLid}/advance`, {method:'POST', body: JSON.stringify(body)});
   if (r && r.ok) {
