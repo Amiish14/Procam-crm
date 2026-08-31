@@ -1572,6 +1572,9 @@ window.CRMToast = (function(){
     <div class="mbdy" id="ldBdy"></div>
     <div class="mft">
       <button class="btn btn-ghost" onclick="orFromLd()">Draft email</button>
+      <button class="btn btn-ghost" onclick="deleteLd()"
+              style="color:var(--red);margin-left:auto;"
+              title="Permanently delete this lead">🗑 Delete</button>
       <button class="btn btn-ghost" onclick="closeLd()">Cancel</button>
       <button class="btn btn-red" onclick="saveLd()">Save</button>
     </div>
@@ -2492,6 +2495,28 @@ async function saveLd(){
 }
 
 function closeLd(ev){if(ev&&ev.target!==g('ldMob'))return;g('ldMob').style.display='none';activeId=null;}
+
+async function deleteLd(){
+  if (!activeId) return;
+  const co = (g('ldTtl')||{}).textContent || 'this lead';
+  const reason = prompt(`Delete "${co}" and every related attachment?\n\nThis cannot be undone.\n\nType a short reason (audit trail):`, '');
+  if (reason === null) return;              // user pressed Cancel
+  if (!reason.trim()){
+    if (!confirm('No reason given — delete anyway?')) return;
+  }
+  const r = await api(`/api/leads/${activeId}`, {method:'DELETE', body: JSON.stringify({reason})});
+  if (r && r.ok){
+    toast(`Lead deleted ✓`, 'ok');
+    closeLd();
+    // Refresh whichever list is visible.
+    try { rLeads(); } catch(_){}
+    try { rAll();   } catch(_){}
+    try { rDash();  } catch(_){}
+    try { rPipeline(); } catch(_){}
+  } else {
+    toast((r && r.error) || 'Delete failed', 'err');
+  }
+}
 async function newLead(){
   // v2026-08 — full-fidelity New Lead capture (was: create-stub-then-open).
   // Collects company, contact, project, location, financial + relevance in one

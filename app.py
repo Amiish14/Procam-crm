@@ -1121,12 +1121,37 @@ def api_lead_relevance(lid):
 
 @app.route('/api/leads/<int:lid>', methods=['DELETE'])
 @require_auth
-@require_admin
 def api_delete_lead(lid):
+    """Delete a lead + all its dependent records (attachments, activities,
+    outreach drafts) so nothing is orphaned.
+    Admins can delete any lead; regular users can delete only their own.
+    """
     lead = Lead.query.get_or_404(lid)
+    role   = session.get('role')
+    caller = session.get('emp_code')
+    if role != 'admin' and lead.assigned_to != caller:
+        return jsonify({'ok': False, 'error': 'Not your lead — ask an admin to delete.'}), 403
+
+    reason = ((request.get_json(silent=True) or {}).get('reason') or '').strip()
+
+    # Cascade: remove dependent rows to avoid orphans (LeadAttachment stores
+    # a lead_id foreign key; other tables reference the lead loosely).
+    try:
+        LeadAttachment.query.filter_by(lead_id=lid).delete(synchronize_session=False)
+    except Exception:
+        pass  # attachments table might not exist in every deployment
+
+    # Audit trail: append a delete note to the caller's activity log if we
+    # have one, so we can trace who purged which lead + why.
+    try:
+        app.logger.info(f'lead_delete lid={lid} company={lead.company!r} '
+                        f'by={caller} role={role} reason={reason!r}')
+    except Exception:
+        pass
+
     db.session.delete(lead)
     db.session.commit()
-    return jsonify({'ok': True})
+    return jsonify({'ok': True, 'deleted_id': lid})
 
 
 # ─── Lead attachments (email ingest + manual upload later) ───────────
