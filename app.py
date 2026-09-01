@@ -4,6 +4,8 @@
 # ============================================================
 
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, abort
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 from flask_sqlalchemy import SQLAlchemy
@@ -122,16 +124,23 @@ if db_url.startswith('postgres://'):
     db_url = db_url.replace('postgres://', 'postgresql://', 1)
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+# v2026-09-01 — SECURITY: default Secure=True; only local dev may override.
+app.config['SESSION_COOKIE_SECURE'] = (
+    os.environ.get('SESSION_COOKIE_SECURE', 'true').strip().lower() == 'true'
+)
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-# On https://procamlogictech.com nginx sets X-Forwarded-Proto=https so cookies
-# get the Secure flag; on plain-http local dev they don't.
-app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+from datetime import timedelta as _td
+app.config['PERMANENT_SESSION_LIFETIME'] = _td(hours=8)
+app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024   # 20 MB
 # URL_PREFIX lets the app-side templates render CRM-prefixed asset URLs even
 # outside of a request context (e.g. when computing an email link).
 app.config['APPLICATION_ROOT'] = os.environ.get('URL_PREFIX', '/')
 
 db = SQLAlchemy(app)
+
+limiter = Limiter(app=app, key_func=get_remote_address,
+                  default_limits=[], storage_uri='memory://')
 
 # Ensure the email-lead attachment storage directory exists. Overridable via
 # EMAIL_INGEST_STORAGE_ROOT so local dev doesn't have to write to /var/www.
@@ -701,6 +710,7 @@ def index():
     return redirect(url_for('dashboard'))
 
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5/minute;20/hour", methods=['POST'])
 def login():
     if request.method == 'POST':
         data = request.get_json()
@@ -735,7 +745,7 @@ def change_password():
     db.session.commit()
     return jsonify({'ok': True})
 
-@app.route('/logout')
+@app.route('/logout', methods=['POST'])
 def logout():
     session.clear()
     return redirect(url_for('login'))
@@ -2356,6 +2366,7 @@ def api_lead_history(lid):
 # ---------- AI Outreach (Claude) ----------
 @app.route('/api/outreach/generate', methods=['POST'])
 @require_auth
+@limiter.limit("20/hour")
 def api_outreach_generate():
     api_key = os.environ.get('ANTHROPIC_API_KEY')
     if not api_key:
@@ -2876,8 +2887,12 @@ def init_db():
         # if the admin never logged in yet. Password is NEVER exposed in source.
         pcm = Employee.query.filter_by(emp_code='PCM001').first()
         if not pcm:
-            initial_pw = (os.environ.get('ADMIN_INITIAL_PASSWORD')
-                          or 'admin@Procam25')
+            initial_pw = os.environ.get('ADMIN_INITIAL_PASSWORD')
+            if not initial_pw or len(initial_pw) < 12:
+                raise RuntimeError(
+                    "ADMIN_INITIAL_PASSWORD must be set in .env (>=12 chars) "
+                    "before first boot. Refusing to seed PCM001 with a default."
+                )
             pcm = Employee(
                 emp_code='PCM001', name='Procam Super Admin',
                 email='admin@procamgroup.in', mobile='',
@@ -3100,6 +3115,7 @@ from email_ingest import service as _mail_service
 
 
 @app.route('/api/email/webhook', methods=['POST', 'GET'])
+@limiter.limit("120/minute")
 def api_email_webhook():
     """Graph subscription callback.
 
@@ -3110,10 +3126,12 @@ def api_email_webhook():
              message on the EmailEvent table.
     """
     # 1. Handshake — Graph sends validationToken on subscription create.
-    token = request.args.get('validationToken')
-    if request.method == 'GET' or token:
-        from flask import Response
-        return Response(token or '', mimetype='text/plain', status=200)
+    token = (request.args.get('validationToken') or '')[:1024]
+    if request.method == 'GET':
+        if token:
+            from flask import Response
+            return Response(token, mimetype='text/plain', status=200)
+        return ('', 400)
 
     # 2. Notification body.
     if not _mail_service.webhook_should_run():

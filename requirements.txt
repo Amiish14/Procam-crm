@@ -1,11 +1,13 @@
 Flask==3.0.0
 Flask-SQLAlchemy==3.1.1
+Flask-Limiter==3.5.0
 SQLAlchemy==2.0.36
-Werkzeug==3.0.1
-gunicorn==21.2.0
+Werkzeug>=3.0.6,<4
+Jinja2>=3.1.6,<4
+gunicorn>=22.0.0,<24
 psycopg2-binary==2.9.10
 openpyxl==3.1.2
-requests==2.31.0
+requests>=2.32.4,<3
 python-dotenv==1.0.0
 # CRM v3.1 additions
 anthropic==0.34.2      # AI Outreach (Claude)

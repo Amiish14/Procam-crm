@@ -65,6 +65,20 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
     if not mailbox:
         raise RuntimeError("EMAIL_INGEST_MAILBOX env var is required.")
 
+    # v2026-09-01 — hard lockdown: leads@procamgroup.in is the ONLY
+    # sanctioned source of leads. If a one-off backfill is attempted
+    # against a different mailbox (typo, forgotten env from an old
+    # deploy, an admin trying to import a personal inbox), refuse to
+    # run rather than silently seeding leads from the wrong stream.
+    from . import service as _mail_service
+    expected = (_mail_service.crm_inbox_email() or '').strip().lower()
+    if expected and mailbox.strip().lower() != expected:
+        raise RuntimeError(
+            f"EMAIL_INGEST_MAILBOX ({mailbox!r}) does not match "
+            f"CRM_INBOX_EMAIL ({expected!r}). Only the sanctioned leads "
+            f"mailbox is allowed as a source. Refusing to ingest."
+        )
+
     mark_as_read = (
         os.environ.get("EMAIL_INGEST_MARK_AS_READ", "false").lower() == "true"
     )

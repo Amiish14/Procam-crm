@@ -1009,7 +1009,9 @@ window.CRMToast = (function(){
       <span class="top-urole" id="tRole"></span>
     </div>
     <span class="admin-bdg admin-only" id="adminBdg" style="display:none">Admin</span>
-    <button class="logout-btn" onclick="location.href=crmUrl('/logout')">Sign out</button>
+    <form method="POST" action="" id="logoutForm" style="display:inline;margin:0;padding:0">
+      <button type="button" class="logout-btn" onclick="(function(){var f=document.getElementById('logoutForm');f.action=crmUrl('/logout');f.submit();})()">Sign out</button>
+    </form>
   </div>
 </div>
 

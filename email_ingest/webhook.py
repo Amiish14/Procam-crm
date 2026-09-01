@@ -12,6 +12,7 @@ Flow:
      (RECEIVED / PROCESSED / LEAD_CREATED / SKIPPED / FAILED).
 """
 from __future__ import annotations
+import hmac
 import os
 import logging
 from datetime import datetime
@@ -77,21 +78,29 @@ def handle_notification(payload: dict) -> dict:
     from app import app, db, EmailEvent   # type: ignore
 
     secret_expected = os.environ.get('EMAIL_WEBHOOK_SECRET', '')
-    mailbox         = os.environ.get('CRM_INBOX_EMAIL')
+    # Use service.crm_inbox_email() so the fallback (leads@procamgroup.in)
+    # applies even if the env var is unset — matches how the subscription
+    # was created.
+    from . import service as _mail
+    mailbox = _mail.crm_inbox_email()
     if not mailbox:
         log.error('CRM_INBOX_EMAIL not set — cannot process webhook.')
         return {'error': 'not configured'}
+    mailbox_lc = mailbox.strip().lower()
 
     notifications = payload.get('value', []) if isinstance(payload, dict) else []
     if not notifications:
         return {'processed': 0, 'note': 'empty payload'}
 
     graph = GraphClient()
-    stats = {'processed': 0, 'created': 0, 'skipped': 0, 'failed': 0}
+    stats = {'processed': 0, 'created': 0, 'skipped': 0, 'failed': 0,
+             'rejected_mailbox': 0}
 
     with app.app_context():
         for n in notifications:
-            if secret_expected and n.get('clientState') != secret_expected:
+            import hmac as _hmac
+            if secret_expected and not _hmac.compare_digest(
+                    (n.get('clientState') or ''), secret_expected):
                 log.warning('webhook: clientState mismatch — rejecting one item')
                 stats['failed'] += 1
                 _log_event(db, EmailEvent, None, mailbox, 'rejected',
@@ -99,6 +108,26 @@ def handle_notification(payload: dict) -> dict:
                 continue
 
             resource = n.get('resource') or ''
+
+            # v2026-09-01 — Hard mailbox lockdown. Every notification MUST
+            # be for the configured leads mailbox. If Graph ever pushes us
+            # a notification for a different mailbox (rogue subscription,
+            # accidental extra sub, someone replaying a payload), reject
+            # it without a Graph fetch so a stray inbox can never seed a
+            # Lead. The resource string looks like:
+            #   /users/leads@procamgroup.in/mailFolders('Inbox')/messages
+            # or (rarely) with a numeric object-id in place of the UPN.
+            # We match on the address substring, case-insensitive.
+            if f'/users/{mailbox_lc}/' not in resource.lower():
+                log.warning('webhook: rejecting notification for wrong '
+                            'mailbox — resource=%r expected mailbox=%s',
+                            resource, mailbox)
+                stats['rejected_mailbox'] += 1
+                _log_event(db, EmailEvent, None, mailbox, 'rejected',
+                           reason=f'wrong mailbox: {resource[:120]}',
+                           payload=n)
+                continue
+
             msg_ref  = n.get('resourceData', {}).get('id')
             if not msg_ref:
                 log.warning('webhook: no resourceData.id in notification')
