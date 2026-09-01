@@ -32,23 +32,33 @@ AZURE_API   = 'azure_api'
 MAILBOX     = 'mailbox'
 VALID_MODES = {AZURE_API, MAILBOX}
 
+# v2026-08-31 — cut-over: leads@procamgroup.in is the sole source of
+# opportunities. Everything scans through the webhook now; the daily
+# 09:00 IST poll is retired. Default flipped to 'mailbox' so a fresh
+# deploy is safe-by-default even if .env forgets to set it.
+DEFAULT_MODE = MAILBOX
+DEFAULT_INBOX = 'leads@procamgroup.in'
+
 
 def current_mode() -> str:
-    """The active ingestion mode. Defaults to 'azure_api' for back-compat."""
-    m = (os.environ.get('EMAIL_INGESTION_MODE') or AZURE_API).strip().lower()
-    return m if m in VALID_MODES else AZURE_API
+    """The active ingestion mode. Defaults to mailbox (webhook-only)."""
+    m = (os.environ.get('EMAIL_INGESTION_MODE') or DEFAULT_MODE).strip().lower()
+    return m if m in VALID_MODES else DEFAULT_MODE
 
 
 def crm_inbox_email() -> str | None:
-    """Shared mailbox address to watch. Optional until it's provisioned."""
+    """Shared mailbox address to watch. Falls back to the canonical leads
+    address so a fresh deploy without a CRM_INBOX_EMAIL env still knows
+    where to subscribe."""
     v = (os.environ.get('CRM_INBOX_EMAIL') or '').strip()
-    return v or None
+    return v or DEFAULT_INBOX
 
 
 def poll_should_run() -> bool:
-    """The scheduled poll job (existing behaviour) is disabled when the
-    mailbox / webhook mode is active — otherwise both would compete on the
-    same message and dedup would waste cycles."""
+    """Legacy 09:00 IST poll — disabled by default now that the mailbox +
+    webhook route is authoritative. Set EMAIL_INGESTION_MODE=azure_api on
+    the process running scripts/email_ingest.py if a one-off backfill is
+    ever needed (e.g. for a historical import)."""
     return current_mode() == AZURE_API
 
 
