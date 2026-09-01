@@ -26,6 +26,13 @@ STORAGE_ROOT = os.environ.get(
     "/var/www/procam-crm/uploads/email_leads",
 )
 
+ALLOWED_EXTS = {'.pdf', '.png', '.jpg', '.jpeg', '.gif', '.tiff', '.bmp',
+                '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+                '.txt', '.csv', '.zip'}
+DENIED_EXTS = {'.svg', '.html', '.htm', '.xhtml', '.js', '.mjs', '.hta',
+               '.phtml', '.php', '.pht', '.exe', '.msi', '.bat', '.cmd',
+               '.ps1', '.sh', '.jar', '.docm', '.xlsm', '.pptm'}
+
 
 def _sanitize(name: str) -> str:
     """Sanitize a filename for safe filesystem storage."""
@@ -70,6 +77,11 @@ def save_attachments_for_lead(graph, mailbox: str, message_id: str, lead_id: int
             ctype = a.get("contentType") or "application/octet-stream"
             att_id = a.get("id") or ""
             is_inline = bool(a.get("isInline"))
+
+            ext = os.path.splitext(name)[1].lower()
+            if ext in DENIED_EXTS or (ext and ext not in ALLOWED_EXTS):
+                log.info("Skip disallowed attachment ext=%s name=%s", ext, name)
+                continue
 
             if size > MAX_ATTACHMENT_BYTES:
                 log.info("Skip oversize attachment lead=%s name=%s size=%d",

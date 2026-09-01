@@ -781,6 +781,18 @@ def require_admin(f):
         return f(*args, **kwargs)
     return decorated
 
+def _require_lead_access(lid):
+    """Return the Lead if the current user can access it, else 403.
+    Admin sees all. Non-admin can only touch leads assigned to them.
+    v2026-09-01 — closes the `and lead.assigned_to and` short-circuit
+    that granted access to any unassigned lead."""
+    lead = Lead.query.get_or_404(lid)
+    if session.get('role') != 'admin':
+        my_code = session.get('emp_code')
+        if lead.assigned_to != my_code:
+            abort(403, 'Not your lead')
+    return lead
+
 @app.route('/api/me')
 @require_auth
 def api_me():
@@ -1013,6 +1025,10 @@ def api_leads():
 def api_create_lead():
     d = request.get_json()
     emp = Employee.query.filter_by(emp_code=session['emp_code']).first()
+    requested = d.get('assigned_to') or session['emp_code']
+    if requested != session['emp_code'] and session.get('role') != 'admin':
+        return jsonify({'error': 'Only admin can assign leads to another rep'}), 403
+    assigned_to = requested
     lead = Lead(
         source          = d.get('source','manual'),
         company         = d.get('company','').strip(),
@@ -1032,7 +1048,7 @@ def api_create_lead():
         linkedin        = d.get('linkedin',''),
         stage           = d.get('stage','New'),
         procam_vertical = d.get('procam_vertical',''),
-        assigned_to     = d.get('assigned_to', session['emp_code']),
+        assigned_to     = assigned_to,
         assigned_name   = d.get('assigned_name', emp.name if emp else ''),
         notes           = d.get('notes',''),
         history         = d.get('history',''),
@@ -1052,10 +1068,7 @@ def api_create_lead():
 @app.route('/api/leads/<int:lid>', methods=['PUT'])
 @require_auth
 def api_update_lead(lid):
-    lead = Lead.query.get_or_404(lid)
-    # Check ownership unless admin
-    if session.get('role') != 'admin' and lead.assigned_to != session['emp_code']:
-        return jsonify({'error': 'Not your lead'}), 403
+    lead = _require_lead_access(lid)
     d = request.get_json()
     fields_map = {
         'company':'company','project':'project','industry':'industry',
@@ -1111,9 +1124,7 @@ def _to_dec(v):
 @app.route('/api/leads/<int:lid>/relevance', methods=['POST'])
 @require_auth
 def api_lead_relevance(lid):
-    lead = Lead.query.get_or_404(lid)
-    if session.get('role') != 'admin' and lead.assigned_to != session['emp_code']:
-        return jsonify({'ok': False, 'error': 'Not your lead'}), 403
+    lead = _require_lead_access(lid)
     d = request.get_json(silent=True) or {}
     val = (d.get('relevance') or '').strip()
     if val not in ('Relevant', 'Not Relevant', 'Undecided'):
@@ -1136,11 +1147,9 @@ def api_delete_lead(lid):
     outreach drafts) so nothing is orphaned.
     Admins can delete any lead; regular users can delete only their own.
     """
-    lead = Lead.query.get_or_404(lid)
+    lead = _require_lead_access(lid)
     role   = session.get('role')
     caller = session.get('emp_code')
-    if role != 'admin' and lead.assigned_to != caller:
-        return jsonify({'ok': False, 'error': 'Not your lead — ask an admin to delete.'}), 403
 
     reason = ((request.get_json(silent=True) or {}).get('reason') or '').strip()
 
@@ -1169,9 +1178,7 @@ def api_delete_lead(lid):
 @require_auth
 def api_lead_attachments(lid):
     # Ownership: same rule as elsewhere — admins see all; others only their own
-    lead = Lead.query.get_or_404(lid)
-    if session.get('role') != 'admin' and lead.assigned_to and lead.assigned_to != session.get('emp_code'):
-        return jsonify({'error': 'Not your lead'}), 403
+    lead = _require_lead_access(lid)
     atts = (LeadAttachment.query
             .filter_by(lead_id=lid)
             .order_by(LeadAttachment.uploaded_at.desc())
@@ -1183,18 +1190,19 @@ def api_lead_attachments(lid):
 @require_auth
 def api_lead_attachment_download(lid, aid):
     from flask import send_file
-    lead = Lead.query.get_or_404(lid)
-    if session.get('role') != 'admin' and lead.assigned_to and lead.assigned_to != session.get('emp_code'):
-        return jsonify({'error': 'Not your lead'}), 403
+    lead = _require_lead_access(lid)
     att = LeadAttachment.query.filter_by(id=aid, lead_id=lid).first_or_404()
     if not os.path.exists(att.storage_path):
         abort(404, description=f"File missing on disk: {att.storage_path}")
-    return send_file(
+    resp = send_file(
         att.storage_path,
         as_attachment=True,
         download_name=att.filename,
-        mimetype=att.content_type or 'application/octet-stream',
+        mimetype='application/octet-stream',
     )
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
 
 @app.route('/api/leads/bulk-assign', methods=['POST'])
 @require_auth
@@ -1215,6 +1223,8 @@ def api_bulk_assign():
 @require_auth
 def api_import_leads():
     """Bulk import from Excel parse results."""
+    if session.get('role') != 'admin':
+        return jsonify({'error': 'Admin only'}), 403
     rows = request.get_json()
     emp = Employee.query.filter_by(emp_code=session['emp_code']).first()
     added = 0; updated = 0
@@ -1283,7 +1293,7 @@ def api_lead_advance(lid):
     Also accepts explicit 'to_stage' in body to jump straight to a stage
     (used by the pipeline stepper buttons: Call Done, Profile Sent, etc.)
     """
-    lead = Lead.query.get_or_404(lid)
+    lead = _require_lead_access(lid)
     # Auto-migrate legacy stage names to the new pipeline
     if lead.stage in LEGACY_STAGE_MAP:
         lead.stage = LEGACY_STAGE_MAP[lead.stage]
@@ -1328,7 +1338,7 @@ def api_lead_advance(lid):
 @require_auth
 def api_lead_decision(lid):
     """Record a terminal decision: Won / Lost / On Hold / Not Interested."""
-    lead = Lead.query.get_or_404(lid)
+    lead = _require_lead_access(lid)
     data = request.get_json() or {}
     outcome = (data.get('outcome') or '').strip()
     if outcome not in DECISION_OUTCOMES:
@@ -1378,7 +1388,7 @@ def api_lead_assign_opp(lid):
     Auto-generates the next OPP-YYYY-NNNN number, links back to the lead,
     stamps opp_number on the Lead so the pipeline card shows the link.
     """
-    lead = Lead.query.get_or_404(lid)
+    lead = _require_lead_access(lid)
     data = request.get_json() or {}
     # Auto-migrate legacy stage names so the RFQ check works for old leads too
     if lead.stage in LEGACY_STAGE_MAP:
@@ -1501,6 +1511,7 @@ def api_config_loss_reasons():
 @app.route('/api/leads/<int:lid>/competitors', methods=['GET'])
 @require_auth
 def api_competitors_list(lid):
+    _require_lead_access(lid)
     return jsonify([c.to_dict() for c in
                     Competitor.query.filter_by(lead_id=lid)
                                     .order_by(Competitor.added_at.desc()).all()])
@@ -1509,7 +1520,7 @@ def api_competitors_list(lid):
 @app.route('/api/leads/<int:lid>/competitors', methods=['POST'])
 @require_auth
 def api_competitors_add(lid):
-    Lead.query.get_or_404(lid)   # 404 if lead missing
+    _require_lead_access(lid)   # 404 if lead missing / 403 if not yours
     d = request.get_json() or {}
     name = (d.get('name') or '').strip()
     if not name:
@@ -1533,6 +1544,7 @@ def api_competitors_add(lid):
 @require_auth
 def api_competitors_delete(cid):
     c = Competitor.query.get_or_404(cid)
+    _require_lead_access(c.lead_id)
     db.session.delete(c)
     db.session.commit()
     return jsonify({'ok': True})
@@ -2050,6 +2062,15 @@ def api_dashboard_records():
 def api_dashboard_options():
     """Lightweight — filter-bar picklists without running the summary."""
     _, allowed = _scope_for_current_session()
+    pic_list = [{'emp_code': e.emp_code, 'name': e.name}
+                for e in Employee.query
+                         .filter(Employee.emp_code.in_(allowed))
+                         .filter_by(is_active=True)
+                         .order_by(Employee.name).all()]
+    if session.get('role') != 'admin':
+        # Non-admin only sees themselves (still exposes their own emp_code, which they know).
+        my_code = session.get('emp_code')
+        pic_list = [p for p in pic_list if p['emp_code'] == my_code]
     return jsonify({
         'verticals':  sorted({v[0] for v in db.session.query(Lead.procam_vertical)
                               .filter(Lead.procam_vertical.isnot(None)).distinct()}),
@@ -2059,11 +2080,7 @@ def api_dashboard_options():
                               .filter(Lead.state.isnot(None)).distinct()}),
         'stages':     STAGES_ALL,
         'lost_reasons': LOST_REASONS,
-        'pic':        [{'emp_code': e.emp_code, 'name': e.name}
-                        for e in Employee.query
-                                 .filter(Employee.emp_code.in_(allowed))
-                                 .filter_by(is_active=True)
-                                 .order_by(Employee.name).all()],
+        'pic':        pic_list,
     })
 
 
@@ -2152,6 +2169,10 @@ def api_create_company():
 @require_auth
 def api_update_company(cid):
     c = Company.query.get_or_404(cid)
+    if session.get('role') != 'admin':
+        creator = getattr(c, 'created_by', None)
+        if creator and creator != session.get('emp_code'):
+            return jsonify({'error': 'Forbidden — only admin or creator can edit'}), 403
     d = request.get_json(force=True) or {}
     for f in ('name', 'industry', 'website', 'country', 'state', 'city',
               'address', 'phone', 'email', 'linkedin', 'tier', 'notes'):
@@ -2197,6 +2218,10 @@ def api_create_agent():
 @require_auth
 def api_update_agent(aid):
     a = OverseasAgent.query.get_or_404(aid)
+    if session.get('role') != 'admin':
+        creator = getattr(a, 'created_by', None)
+        if creator and creator != session.get('emp_code'):
+            return jsonify({'error': 'Forbidden — only admin or creator can edit'}), 403
     d = request.get_json(force=True) or {}
     for f in ('name', 'country', 'city', 'website', 'contact_person',
               'phone', 'email', 'address', 'notes'):
@@ -2253,6 +2278,9 @@ def api_create_opportunity():
             if not v: return None
             try: return datetime.strptime(v, '%Y-%m-%d').date()
             except (ValueError, TypeError): return None
+        requested_owner = d.get('owner_emp_code') or session.get('emp_code')
+        if requested_owner != session.get('emp_code') and session.get('role') != 'admin':
+            return jsonify({'error': 'Only admin can assign opportunity ownership to another rep'}), 403
         opp = Opportunity(
             opp_number=opp_no, lead_id=d.get('lead_id'),
             company_id=d.get('company_id'), title=d.get('title'),
@@ -2260,7 +2288,7 @@ def api_create_opportunity():
             value_inr=d.get('value_inr'), currency=d.get('currency', 'INR'),
             probability=d.get('probability', 50),
             expected_close_date=_to_date(d.get('expected_close_date')),
-            owner_emp_code=d.get('owner_emp_code') or session.get('emp_code'),
+            owner_emp_code=requested_owner,
             rfq_received_date=_to_date(d.get('rfq_received_date')),
             notes=d.get('notes'))
         db.session.add(opp)
@@ -2268,7 +2296,8 @@ def api_create_opportunity():
             db.session.commit()
         except Exception as e:
             db.session.rollback()
-            return jsonify({'error': f'Could not create: {e}'}), 500
+            app.logger.exception('Unhandled error in api_create_opportunity')
+            return jsonify({'error': 'Internal server error'}), 500
     return jsonify(opp.to_dict()), 201
 
 
@@ -2279,6 +2308,10 @@ def api_update_opportunity(oid):
     if session.get('role') != 'admin' and o.owner_emp_code != session.get('emp_code'):
         return jsonify({'error': 'Forbidden'}), 403
     d = request.get_json(force=True) or {}
+    # owner_emp_code is a privileged transfer — admin only.
+    if 'owner_emp_code' in d and d['owner_emp_code'] != o.owner_emp_code:
+        if session.get('role') != 'admin':
+            return jsonify({'error': 'Only admin can transfer opportunity ownership'}), 403
     for f in ('title', 'stage', 'value_inr', 'currency', 'probability',
               'owner_emp_code', 'notes', 'lost_reason'):
         if f in d: setattr(o, f, d[f])
@@ -2297,7 +2330,7 @@ def api_update_opportunity(oid):
 @app.route('/api/leads/<int:lid>/activities', methods=['GET'])
 @require_auth
 def api_lead_activities(lid):
-    Lead.query.get_or_404(lid)
+    _require_lead_access(lid)
     acts = (LeadActivity.query.filter_by(lead_id=lid)
             .order_by(LeadActivity.occurred_at.desc()).all())
     return jsonify([a.to_dict() for a in acts])
@@ -2306,7 +2339,7 @@ def api_lead_activities(lid):
 @app.route('/api/leads/<int:lid>/activities', methods=['POST'])
 @require_auth
 def api_add_activity(lid):
-    Lead.query.get_or_404(lid)
+    _require_lead_access(lid)
     d = request.get_json(force=True) or {}
     if not d.get('kind'):
         return jsonify({'error': 'kind required (call/email/meeting/rfq/note/visit)'}), 400
@@ -2326,7 +2359,7 @@ def api_add_activity(lid):
 @app.route('/api/leads/<int:lid>/stage-history', methods=['GET'])
 @require_auth
 def api_lead_stage_history(lid):
-    Lead.query.get_or_404(lid)
+    _require_lead_access(lid)
     hist = (LeadStageHistory.query.filter_by(lead_id=lid)
             .order_by(LeadStageHistory.changed_at.desc()).all())
     return jsonify([h.to_dict() for h in hist])
@@ -2338,7 +2371,7 @@ def api_lead_history(lid):
     """Combined activity + stage-history timeline for the Sales Pipeline
     drawer. Returns a chronologically-sorted single feed so the frontend
     can render one list instead of two."""
-    Lead.query.get_or_404(lid)
+    _require_lead_access(lid)
     acts = (LeadActivity.query.filter_by(lead_id=lid)
             .order_by(LeadActivity.occurred_at.desc()).all())
     hist = (LeadStageHistory.query.filter_by(lead_id=lid)
@@ -2440,7 +2473,8 @@ def api_outreach_generate():
             messages=[{'role': 'user', 'content': prompt}])
         text = ''.join(b.text for b in resp.content if hasattr(b, 'text')).strip()
     except Exception as e:
-        return jsonify({'error': f'Anthropic call failed: {e}'}), 502
+        app.logger.exception('Unhandled error in api_outreach_generate')
+        return jsonify({'error': 'Internal server error'}), 502
 
     subject, body = '', text
     if channel == 'email' and text.lower().startswith('subject:'):
@@ -2544,7 +2578,8 @@ def api_leads_import_preview():
     try:
         headers, rows = _parse_upload(f)
     except Exception as e:
-        return jsonify({'error': f'Could not parse: {e}'}), 400
+        app.logger.exception('Unhandled error in api_leads_import_preview')
+        return jsonify({'error': 'Could not parse uploaded file'}), 400
     mapping = _fuzzy_map_headers(headers)
     preview = []
     errors = []
@@ -3142,7 +3177,7 @@ def api_email_webhook():
         return jsonify(ok=True, stats=stats), 200
     except Exception as e:
         app.logger.exception('email webhook failed')
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error='Internal server error'), 500
 
 
 @app.route('/api/email/subscribe', methods=['POST'])
@@ -3157,7 +3192,8 @@ def api_email_subscribe():
         res = _sub.create()
         return jsonify(ok=True, subscription=res)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        app.logger.exception('Unhandled error in api_email_subscribe')
+        return jsonify(ok=False, error='Internal server error'), 500
 
 
 @app.route('/api/email/subscribe/renew/<sub_id>', methods=['POST'])
@@ -3169,7 +3205,8 @@ def api_email_subscribe_renew(sub_id):
         res = _sub.renew(sub_id)
         return jsonify(ok=True, subscription=res)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        app.logger.exception('Unhandled error in api_email_subscribe_renew')
+        return jsonify(ok=False, error='Internal server error'), 500
 
 
 @app.route('/api/email/subscriptions')
@@ -3182,7 +3219,8 @@ def api_email_subscriptions_list():
                        mode=_mail_service.current_mode(),
                        mailbox=_mail_service.crm_inbox_email())
     except Exception as e:
-        return jsonify(ok=False, error=str(e), mode=_mail_service.current_mode()), 500
+        app.logger.exception('Unhandled error in api_email_subscriptions_list')
+        return jsonify(ok=False, error='Internal server error', mode=_mail_service.current_mode()), 500
 
 
 @app.route('/api/email/inbox')
@@ -3300,7 +3338,7 @@ def api_email_inbox_retry(evt_id):
                        fields_touched=touched)
     except Exception as e:
         app.logger.exception('inbox retry failed')
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error='Internal server error'), 500
 
 
 # ═════════════════════════════════════════════════════════════════════
