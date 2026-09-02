@@ -266,6 +266,29 @@ def test_external_reply_chain_is_not_mistaken_for_a_forward():
     assert kw["email"] == "buyer@externaltrading.com"
 
 
+# ── 4. Company name comes from the organisation, not the mail relay ───
+def test_company_ignores_bulk_sending_subdomains():
+    from email_ingest.parser import _company_from_domain as C
+    assert C("publishing@email.mckinsey.com") == "Mckinsey"
+    assert C("executive_education@mail.exed.hbs.edu") == "Hbs"
+    assert C("shrm.membership@e.shrm.org") == "Shrm"
+    assert C("info@email.meetup.com") == "Meetup"
+
+
+def test_company_handles_multi_part_public_suffixes():
+    from email_ingest.parser import _company_from_domain as C
+    assert C("raibin.wilson@savas.co.in") == "Savas"
+    assert C("someone@example.ac.uk") == "Example"
+
+
+def test_company_unchanged_for_ordinary_domains():
+    from email_ingest.parser import _company_from_domain as C
+    assert C("gaurav.tandon@jakson.com") == "Jakson"
+    assert C("dhiraj.ubale@siemens.com") == "Siemens"
+    assert C("mithilesh.mishra@hlag.com") == "Hlag"
+    assert C("someone@gmail.com") == ""          # personal domains stay blank
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):

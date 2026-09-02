@@ -87,7 +87,7 @@ def _apply_overrides_and_defaults(merged: dict, extracted: dict,
         merged["email_primary"] = sender_email
         dom_company = email_parser._company_from_domain(sender_email) or ""
         ai_company  = (merged.get("company") or "").strip()
-        stem = (sender_email.split("@", 1)[1].split(".")[0] or "").lower()
+        stem = email_parser._domain_root(sender_email)
         if dom_company and (not ai_company
                             or not ai_company.lower().startswith(stem[:4])):
             merged["company"] = dom_company

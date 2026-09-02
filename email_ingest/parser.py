@@ -306,6 +306,65 @@ def _urgency(subject: str, text: str) -> str:
     return "low"
 
 
+# Subdomains that bulk/transactional mail is sent from. They are never the
+# company name — "email.mckinsey.com" is McKinsey, not "Email".
+_SENDING_SUBDOMAINS = {
+    "mail", "email", "emails", "e", "em", "mailer", "mailers", "smtp",
+    "mx", "news", "newsletter", "newsletters", "info", "reply", "replies",
+    "noreply", "no-reply", "notify", "notifications", "alerts", "updates",
+    "marketing", "campaign", "campaigns", "go", "click", "clicks", "links",
+    "link", "track", "tracking", "send", "sender", "sg", "mkt", "cp",
+    "comms", "connect", "engage", "messages", "messaging", "events",
+    "read", "t", "m", "n", "u", "s", "www",
+}
+
+# Second-level labels that are part of a public suffix rather than a name:
+# savas.co.in, example.ac.uk, foo.com.au → the name is the label BEFORE these.
+_PUBLIC_SUFFIX_SLD = {
+    "co", "com", "net", "org", "edu", "gov", "ac", "gob", "or", "ne", "go",
+}
+
+
+def _domain_root(email_or_domain: str) -> str:
+    """The registrable name out of an address or domain, lowercased.
+
+    Strips bulk-mail sending subdomains and multi-part public suffixes, so
+    the answer is the organisation rather than whatever host relayed the
+    message::
+
+        email.mckinsey.com   → mckinsey
+        mail.exed.hbs.edu    → hbs
+        e.shrm.org           → shrm
+        raibin@savas.co.in   → savas
+        gaurav@jakson.com    → jakson
+
+    Returns "" for personal-mail domains and anything unparseable.
+    """
+    if not email_or_domain:
+        return ""
+    domain = email_or_domain.strip().lower()
+    if "@" in domain:
+        domain = domain.split("@", 1)[1]
+    domain = domain.strip().strip(".")
+    if not domain or domain in PERSONAL_DOMAINS:
+        return ""
+
+    labels = [l for l in domain.split(".") if l]
+    # Drop leading sending subdomains (mail.email.foo.com → foo.com), but
+    # never strip away the whole name.
+    while len(labels) > 2 and labels[0] in _SENDING_SUBDOMAINS:
+        labels.pop(0)
+    if len(labels) > 2 and labels[0] in _SENDING_SUBDOMAINS:
+        labels.pop(0)
+    if len(labels) < 2:
+        return labels[0] if labels else ""
+
+    # foo.co.in / foo.ac.uk → the name sits one label further left.
+    if len(labels) >= 3 and labels[-2] in _PUBLIC_SUFFIX_SLD:
+        return labels[-3]
+    return labels[-2]
+
+
 def _company_from_domain(email: str) -> str:
     if not email or "@" not in email:
         return ""
@@ -314,7 +373,7 @@ def _company_from_domain(email: str) -> str:
         domain = domain[4:]
     if domain in PERSONAL_DOMAINS:
         return ""
-    root = domain.split(".", 1)[0]
+    root = _domain_root(domain)
     if not root:
         return ""
     return root.title()

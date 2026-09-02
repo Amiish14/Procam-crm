@@ -287,7 +287,8 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     from email_ingest.parser import _company_from_domain
                     dom_company = _company_from_domain(sender_email) or ""
                     ai_company = (merged.get("company") or "").strip()
-                    stem = (sender_email.split("@", 1)[1].split(".")[0] or "").lower()
+                    from email_ingest.parser import _domain_root
+                    stem = _domain_root(sender_email)
                     if dom_company and (not ai_company or
                                         not ai_company.lower().startswith(stem[:4])):
                         merged["company"] = dom_company
