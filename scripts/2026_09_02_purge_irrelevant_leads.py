@@ -127,14 +127,20 @@ def is_internal_thread(lead) -> bool:
 
 
 def is_bulk_sender(lead) -> bool:
-    """no-reply@, newsletter@, updates@, marketing@ … — bulk regardless
-    of which domain sent it."""
-    e = (lead.email or '').strip().lower()
-    if '@' not in e:
+    """Promotional local parts — newsletter@, marketing@, promo@ …
+
+    v2026-09-02 — this now defers to email_ingest.blocklist, the same rule
+    ingestion uses. It previously used the parser's wider regex, which also
+    matched no-reply@ / noreply@ and consequently deleted ~100 genuine
+    leads from procurement portals (SuperProcure load tenders, SAP Ariba
+    "new business lead", JustDial customer enquiries). Purge and ingest
+    must never disagree about what counts as junk.
+    """
+    try:
+        from email_ingest import blocklist
+        return bool(blocklist.check(lead.email or ''))
+    except Exception:                                            # noqa: BLE001
         return False
-    local = e.split('@', 1)[0]
-    return bool(email_parser._BULK_LOCAL_RE.match(local)
-                or email_parser._NOREPLY_RE.search(e))
 
 
 def base_query(args):
