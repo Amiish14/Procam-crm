@@ -19,11 +19,14 @@ Two write modes:
                 older code path (e.g. ones showing an internal Procam
                 address as the contact).
 
-Selection:
-    --only-regex   only leads whose opp_notes says ai_used=false (default)
-    --all          every source='email' lead
-    --ids 1,2,3    exactly these
-    --since DATE   created on/after YYYY-MM-DD
+Selection (default: leads that actually arrived via the leads mailbox AND
+whose opp_notes says ai_used=false):
+    --all            include leads already enriched by AI
+    --any-mailbox    include leads ingested before the leads@ cutover. Their
+                     messages live in the OLD mailbox, so Graph cannot fetch
+                     them and every one fails — only useful with --ids.
+    --ids 1,2,3      exactly these
+    --since DATE     created on/after YYYY-MM-DD
     --limit N
 
 Examples:
@@ -40,7 +43,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import app, db, Lead                              # noqa: E402
+from app import app, db, Lead, EmailEvent                  # noqa: E402
 from email_ingest import service as mail_service           # noqa: E402
 from email_ingest import parser as email_parser            # noqa: E402
 from email_ingest import enrich as enrich_mod              # noqa: E402
@@ -61,6 +64,16 @@ def ai_used(lead) -> bool:
         return False
 
 
+def mailbox_lead_ids() -> set:
+    """Leads that arrived through the leads mailbox — i.e. have an
+    EmailEvent. Anything else was ingested from the pre-cutover mailbox and
+    its message cannot be fetched from leads@, so re-enriching it would
+    fail 100% of the time."""
+    return {row[0] for row in
+            db.session.query(EmailEvent.lead_id)
+            .filter(EmailEvent.lead_id.isnot(None)).distinct().all()}
+
+
 def select(args):
     q = Lead.query.filter(Lead.source == 'email',
                           Lead.email_message_id.isnot(None))
@@ -73,7 +86,18 @@ def select(args):
     if args.ids:
         want = {int(x) for x in args.ids.replace(' ', '').split(',') if x}
         rows = [l for l in rows if l.id in want]
-    elif not args.all:
+        return rows[:args.limit] if args.limit else rows
+
+    if not args.any_mailbox:
+        reachable = mailbox_lead_ids()
+        before = len(rows)
+        rows = [l for l in rows if l.id in reachable]
+        skipped = before - len(rows)
+        if skipped:
+            print(f'skipping    : {skipped} leads ingested before the '
+                  f'leads@ cutover (their messages are in the old mailbox '
+                  f'and cannot be fetched)')
+    if not args.all:
         rows = [l for l in rows if not ai_used(l)]
     return rows[:args.limit] if args.limit else rows
 
@@ -86,6 +110,8 @@ def main():
     ap.add_argument('--overwrite', action='store_true',
                     help='also replace company/pic/email/phone')
     ap.add_argument('--all', action='store_true', help='not just ai_used=false')
+    ap.add_argument('--any-mailbox', action='store_true',
+                    help='include pre-cutover leads (their fetches will fail)')
     ap.add_argument('--ids')
     ap.add_argument('--since', metavar='YYYY-MM-DD')
     ap.add_argument('--limit', type=int)
@@ -110,13 +136,22 @@ def main():
 
         graph = GraphClient()
         out = Counter()
+        consecutive_fail = 0
+        FAIL_ABORT = 25
 
         for lead in leads:
             try:
                 msg = _get_message(graph, mailbox, lead.email_message_id)
+                consecutive_fail = 0
             except Exception as e:                          # noqa: BLE001
                 out['fetch failed'] += 1
+                consecutive_fail += 1
                 print(f'#{lead.id:<6} FETCH-FAIL  {str(e)[:90]}')
+                if consecutive_fail >= FAIL_ABORT:
+                    print(f'\n!! {FAIL_ABORT} consecutive fetch failures — '
+                          f'aborting. These messages are not in {mailbox}. '
+                          f'Narrow the selection with --since or --ids.')
+                    break
                 continue
 
             extracted = email_parser.extract_lead(msg)
