@@ -138,6 +138,8 @@ def main():
         out = Counter()
         consecutive_fail = 0
         FAIL_ABORT = 25
+        consecutive_regex = 0
+        REGEX_ABORT = 5
 
         for lead in leads:
             try:
@@ -183,7 +185,24 @@ def main():
                     touched.append(k)
 
             merged = json.loads(kwargs['email_extracted_json'])
-            out['ai' if merged.get('_ai_model') else 'regex only'] += 1
+            got_ai = bool(merged.get('_ai_model'))
+            out['ai' if got_ai else 'regex only'] += 1
+
+            # If every extractor has gone quiet (daily quota spent, no
+            # credit), the rest of this run would be Graph fetches producing
+            # nothing. Stop and say so, rather than churning hundreds of
+            # leads into the same regex-only result they already had.
+            if not got_ai:
+                consecutive_regex += 1
+                if consecutive_regex >= REGEX_ABORT and not ai_router.is_enabled():
+                    print(f'\n!! No AI extractor is answering (quota spent or '
+                          f'no credit) — stopping after {consecutive_regex} '
+                          f'regex-only results.\n   Re-run once quota is '
+                          f'available; this script only picks leads that still '
+                          f'have ai_used=false, so nothing is lost.')
+                    break
+            else:
+                consecutive_regex = 0
             summary = (merged.get('one_line_summary') or '')[:54]
             print('#%-6s %-30s %-22s %s' % (
                 lead.id, (kwargs.get('email') or '(no contact)')[:30],
