@@ -49,7 +49,7 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
     'already ingested' is the ONLY reason a message is ever skipped.
     """
     # Local imports keep this module import-safe under all circumstances.
-    from app import app, db, Lead, LeadAttachment  # type: ignore
+    from app import app, db, Lead, LeadAttachment, EmailEvent  # type: ignore
 
     imid = _internet_message_id(msg)
 
@@ -61,6 +61,19 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
             if hit:
                 return {'status': 'skipped', 'reason': 'already ingested',
                         'lead_id': hit[0], 'internet_message_id': imid}
+
+            # ── Respect a purge ───────────────────────────────────────
+            # Deleting a Lead removes the email_message_id that dedup keys
+            # on, so without this a re-poll or replay resurrects every
+            # newsletter the team just cleared out. The purge marks the
+            # EmailEvent 'lead_deleted'; that verdict is permanent.
+            purged = (db.session.query(EmailEvent.id)
+                      .filter(EmailEvent.internet_message_id == imid,
+                              EmailEvent.status == 'lead_deleted').first())
+            if purged:
+                return {'status': 'skipped',
+                        'reason': 'previously purged as irrelevant',
+                        'lead_id': None, 'internet_message_id': imid}
 
         # ── Parse + AI-extract ────────────────────────────────────────
         # CAPTURE EVERYTHING. Every message in the leads inbox becomes a
