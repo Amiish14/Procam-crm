@@ -38,7 +38,7 @@ misconfiguration can open a second one:
 |---|---|
 | [service.py](../email_ingest/service.py) | `crm_inbox_email()` is the single authority for the address; falls back to the canonical value when the env var is missing |
 | [subscription.py](../email_ingest/subscription.py) | `create()` refuses to subscribe to any mailbox other than the sanctioned one |
-| [webhook.py](../email_ingest/webhook.py) | Every notification's `resource` must name the sanctioned mailbox, checked *before* any Graph fetch. Rejections are logged as `EmailEvent(status='rejected')` |
+| [webhook.py](../email_ingest/webhook.py) | Every notification must be for the sanctioned mailbox — see below. Rejections are logged as `EmailEvent(status='rejected')` |
 | [pipeline.py](../email_ingest/pipeline.py) | The retired poll path refuses to run when `EMAIL_INGEST_MAILBOX` disagrees with `CRM_INBOX_EMAIL` |
 
 To verify what is actually connected:
@@ -46,6 +46,37 @@ To verify what is actually connected:
 ```
 GET /api/email/subscriptions      # admin — lists live Graph subscriptions
 ```
+
+### How the webhook checks the mailbox
+
+Graph does **not** name the mailbox in a notification the way the
+subscription was created. It sends either form, with varying case and
+sometimes no leading slash:
+
+```
+/users/leads@procamgroup.in/mailFolders('Inbox')/messages   ← UPN
+Users/9a0b6a4e-0423-4e71-94b3-a77b849f2d05/Messages/AAMk…   ← object id
+```
+
+So the check is two-stage:
+
+1. **Cheap:** parse the user segment out of `resource` and compare it
+   against both the mailbox's UPN and its directory object id (resolved
+   once via `GET /users/{upn}?$select=id`, then cached).
+2. **Authoritative:** fetch the message scoped to the sanctioned mailbox
+   (`/users/leads@procamgroup.in/messages/{id}`). Graph returns 404 for a
+   message id belonging to any other mailbox, so a successful fetch
+   *proves* the message is in the leads inbox.
+
+A stage-1 mismatch is only logged, never a rejection on its own — the
+fetch decides. Rejection requires both to fail.
+
+> **2026-09-02 outage.** An earlier version did stage 1 only, matching the
+> UPN as a substring. Because Graph sends the object-id form, *every*
+> notification was rejected and no leads were ingested at all. Fixed, with
+> a regression test in `tests/test_webhook_mailbox_lockdown.py`. Events
+> lost in that window are recoverable with
+> `scripts/2026_09_02_replay_rejected_events.py`.
 
 ## 3. The forward is a container; the lead is inside it
 
@@ -137,6 +168,7 @@ switched to capture-everything too.
 
 ```
 python3 tests/test_forwarded_leads.py
+python3 tests/test_webhook_mailbox_lockdown.py
 ```
 
 Covers: Outlook/Gmail/Apple Mail/HTML forward shapes, original-sender

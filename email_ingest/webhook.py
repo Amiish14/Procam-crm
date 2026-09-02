@@ -15,6 +15,7 @@ from __future__ import annotations
 import hmac
 import os
 import logging
+import re
 from datetime import datetime
 
 from .graph_client import GraphClient
@@ -26,6 +27,46 @@ log = logging.getLogger(__name__)
 _SELECT = ("$select=id,internetMessageId,subject,from,toRecipients,"
            "ccRecipients,receivedDateTime,conversationId,body,bodyPreview,"
            "hasAttachments")
+
+# Graph writes the mailbox into a notification's `resource` in more than one
+# shape, and not the shape the subscription was created with:
+#     /users/leads@procamgroup.in/mailFolders('Inbox')/messages   (UPN)
+#     Users/9a0b6a4e-0423-.../Messages/AAMkAGVj...                (object id)
+# — varying case, sometimes without the leading slash. So parse out the user
+# segment and compare it against every identifier the mailbox is known by.
+_RESOURCE_USER_RE = re.compile(r"(?i)^/?users/([^/]+)/")
+
+_MAILBOX_ID_CACHE: dict = {}
+
+
+def _resource_user_segment(resource: str) -> str:
+    """The mailbox identifier out of a notification `resource`, lowercased."""
+    m = _RESOURCE_USER_RE.match((resource or '').strip())
+    return (m.group(1) or '').strip().lower() if m else ''
+
+
+def _mailbox_identifiers(graph: GraphClient, mailbox: str) -> set:
+    """Every identifier Graph may use for the sanctioned mailbox: its UPN
+    and its directory object id. The object id is resolved once and cached
+    for the life of the process."""
+    upn = (mailbox or '').strip().lower()
+    ids = {upn} if upn else set()
+    if upn and upn not in _MAILBOX_ID_CACHE:
+        obj_id = ''
+        try:
+            resp = graph._request('GET', f'/users/{mailbox}?$select=id')
+            if resp.status_code < 400:
+                obj_id = (resp.json().get('id') or '').strip().lower()
+            else:
+                log.warning('could not resolve object id for %s: HTTP %s',
+                            mailbox, resp.status_code)
+        except Exception:
+            log.exception('could not resolve object id for %s', mailbox)
+        _MAILBOX_ID_CACHE[upn] = obj_id
+    obj_id = _MAILBOX_ID_CACHE.get(upn)
+    if obj_id:
+        ids.add(obj_id)
+    return ids
 
 
 def _get_message(graph: GraphClient, mailbox: str, message_id: str) -> dict:
@@ -86,7 +127,6 @@ def handle_notification(payload: dict) -> dict:
     if not mailbox:
         log.error('CRM_INBOX_EMAIL not set — cannot process webhook.')
         return {'error': 'not configured'}
-    mailbox_lc = mailbox.strip().lower()
 
     notifications = payload.get('value', []) if isinstance(payload, dict) else []
     if not notifications:
@@ -109,24 +149,25 @@ def handle_notification(payload: dict) -> dict:
 
             resource = n.get('resource') or ''
 
-            # v2026-09-01 — Hard mailbox lockdown. Every notification MUST
-            # be for the configured leads mailbox. If Graph ever pushes us
-            # a notification for a different mailbox (rogue subscription,
-            # accidental extra sub, someone replaying a payload), reject
-            # it without a Graph fetch so a stray inbox can never seed a
-            # Lead. The resource string looks like:
-            #   /users/leads@procamgroup.in/mailFolders('Inbox')/messages
-            # or (rarely) with a numeric object-id in place of the UPN.
-            # We match on the address substring, case-insensitive.
-            if f'/users/{mailbox_lc}/' not in resource.lower():
-                log.warning('webhook: rejecting notification for wrong '
-                            'mailbox — resource=%r expected mailbox=%s',
-                            resource, mailbox)
-                stats['rejected_mailbox'] += 1
-                _log_event(db, EmailEvent, None, mailbox, 'rejected',
-                           reason=f'wrong mailbox: {resource[:120]}',
-                           payload=n)
-                continue
+            # v2026-09-02 — Mailbox lockdown. Every notification must be for
+            # the sanctioned leads mailbox, so a rogue or accidental extra
+            # subscription can never seed a Lead.
+            #
+            # The cheap check compares the resource's user segment against
+            # the mailbox's UPN *and* its directory object id, because Graph
+            # uses either (see _RESOURCE_USER_RE above). A mismatch is NOT
+            # a rejection on its own — an earlier version matched only the
+            # UPN as a substring and silently rejected every real
+            # notification. Instead we fall through to the fetch, which is
+            # scoped to the sanctioned mailbox: Graph 404s a message id
+            # belonging to any other mailbox, and that is the real
+            # guarantee. Cheap check first, authoritative check second.
+            seg = _resource_user_segment(resource)
+            resource_matches = bool(seg and seg in _mailbox_identifiers(graph, mailbox))
+            if not resource_matches:
+                log.warning('webhook: resource %r does not name %s — '
+                            'verifying with a scoped fetch',
+                            resource[:160], mailbox)
 
             msg_ref  = n.get('resourceData', {}).get('id')
             if not msg_ref:
@@ -139,14 +180,25 @@ def handle_notification(payload: dict) -> dict:
             evt = _log_event(db, EmailEvent, None, mailbox, 'received',
                              reason=None, payload=n)
 
-            # Fetch + process
+            # Fetch + process. The fetch is scoped to the sanctioned
+            # mailbox, so success here proves the message really is in it.
             try:
                 msg = _get_message(graph, mailbox, msg_ref)
             except Exception as e:
-                log.exception('webhook: fetch %s failed', msg_ref)
-                evt.status = 'failed'; evt.reason = f'fetch: {e}'
+                if not resource_matches:
+                    # Didn't name our mailbox AND isn't in it — genuinely
+                    # someone else's message. This is the lockdown firing.
+                    log.warning('webhook: rejecting notification for a '
+                                'different mailbox — resource=%r', resource[:160])
+                    evt.status = 'rejected'
+                    evt.reason = f'wrong mailbox: {resource[:120]}'
+                    stats['rejected_mailbox'] += 1
+                else:
+                    log.exception('webhook: fetch %s failed', msg_ref)
+                    evt.status = 'failed'
+                    evt.reason = f'fetch: {e}'
+                    stats['failed'] += 1
                 db.session.commit()
-                stats['failed'] += 1
                 continue
 
             evt.internet_message_id = msg.get('internetMessageId') or msg.get('id')
