@@ -94,6 +94,8 @@ def main():
                     help='force a mapping; repeatable')
     ap.add_argument('--overwrite', action='store_true',
                     help='replace an email an employee already has')
+    ap.add_argument('--include-inactive', action='store_true',
+                    help='also consider deactivated employees')
     args = ap.parse_args()
 
     addresses = load_addresses(args.file)
@@ -105,11 +107,20 @@ def main():
         forced[code.strip().upper()] = addr.strip()
 
     with app.app_context():
-        emps = Employee.query.filter_by(is_active=True).order_by(Employee.emp_code).all()
+        q = Employee.query
+        if not args.include_inactive:
+            q = q.filter_by(is_active=True)
+        emps = q.order_by(Employee.emp_code).all()
         by_code = {e.emp_code.upper(): e for e in emps}
-        taken = {(e.email or '').strip().lower() for e in emps if e.email}
+        by_email = {(e.email or '').strip().lower(): e for e in emps if e.email}
+        taken = set(by_email)
 
-        print(f'addresses : {len(addresses)}   active employees: {len(emps)}')
+        total_active = Employee.query.filter_by(is_active=True).count()
+        print(f'addresses supplied : {len(addresses)}')
+        print(f'employees in scope : {len(emps)} '
+              f'({total_active} active, {Employee.query.count()} total)')
+        print(f'  already have an email : {len(taken)}')
+        print(f'  missing an email      : {len(emps) - len(taken)}')
         if not args.apply:
             print('\nPREVIEW — nothing will be written.\n')
 
@@ -132,12 +143,14 @@ def main():
         # 2. Fuzzy-match the rest.
         print('\n%-38s %-10s %-26s %5s' % ('address', 'emp_code', 'employee name', 'score'))
         print('-' * 84)
-        unmatched = []
+        unmatched, already = [], []
         for addr in addresses:
             if addr.lower() in claimed:
                 continue
-            if addr.lower() in taken:
-                out['already on an employee'] += 1
+            owner = by_email.get(addr.lower())
+            if owner is not None:
+                out['already on file'] += 1
+                already.append((addr, owner))
                 continue
             guess = name_from_email(addr)
             if not guess:
@@ -163,8 +176,19 @@ def main():
         if args.apply:
             db.session.commit()
 
+        if already:
+            print(f'\n--- ALREADY ON FILE ({len(already)}) — no action needed ---')
+            for addr, owner in already[:40]:
+                print('%-38s %-10s %s' % (addr[:38], owner.emp_code,
+                                          (owner.name or '')[:26]))
+            if len(already) > 40:
+                print(f'  ... and {len(already) - 40} more')
+
         if unmatched:
             print('\n--- UNMATCHED (nothing written for these) ---')
+            print('These are addresses with no employee to attach them to. '
+                  'Most likely they belong to staff who are not in the CRM, '
+                  'or who are deactivated (try --include-inactive).')
             print('%-38s %-26s %5s' % ('address', 'closest name', 'score'))
             print('-' * 72)
             for addr, best, sc in unmatched:
