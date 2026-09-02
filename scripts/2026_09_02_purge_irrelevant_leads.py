@@ -23,6 +23,10 @@ Selection (combine as needed; defaults to the built-in junk list):
     --domains a.com,b.org   purge these sender domains instead
     --ids 101,102           purge exactly these lead ids
     --since YYYY-MM-DD      restrict to leads created on/after this date
+    --include-internal      ALSO purge internal Procam threads that were
+                            forwarded in (an employee's own outbound mail —
+                            never a customer lead). Off by default because
+                            it is a judgement call, not junk mail.
 
 Examples:
     python scripts/2026_09_02_purge_irrelevant_leads.py                  # see what's there
@@ -90,6 +94,24 @@ def is_junk_domain(domain: str, denylist: set) -> bool:
     return any(domain == d or domain.endswith('.' + d) for d in denylist)
 
 
+def is_internal_thread(lead) -> bool:
+    """An internal Procam thread relayed into the leads inbox: either the
+    contact is a Procam address, or the ingest could not find any external
+    sender because the whole thread was internal."""
+    e = (lead.email or '').strip().lower()
+    if e and '@' in e:
+        return e.split('@', 1)[1] in email_parser._skip_domains()
+    if e:
+        return False
+    # No contact at all — check why the parser gave up.
+    try:
+        import json
+        tag = (json.loads(lead.opp_notes or '{}').get('triage_tag') or '')
+    except Exception:
+        tag = ''
+    return tag.startswith('internal domain')
+
+
 def is_bulk_sender(lead) -> bool:
     """no-reply@, newsletter@, updates@, marketing@ … — bulk regardless
     of which domain sent it."""
@@ -118,7 +140,8 @@ def select_targets(args, denylist):
         want = {int(x) for x in args.ids.replace(' ', '').split(',') if x}
         return [l for l in leads if l.id in want], leads
     targets = [l for l in leads
-               if is_junk_domain(domain_of(l), denylist) or is_bulk_sender(l)]
+               if is_junk_domain(domain_of(l), denylist) or is_bulk_sender(l)
+               or (args.include_internal and is_internal_thread(l))]
     return targets, leads
 
 
@@ -131,7 +154,9 @@ def report(leads, denylist):
     print('-' * 108)
     junk_total = 0
     for dom, rows in sorted(groups.items(), key=lambda kv: -len(kv[1])):
-        junk = is_junk_domain(dom, denylist) or all(is_bulk_sender(l) for l in rows)
+        junk = (is_junk_domain(dom, denylist)
+                or all(is_bulk_sender(l) for l in rows))
+        internal = all(is_internal_thread(l) for l in rows)
         if junk:
             junk_total += len(rows)
         sample = ''
@@ -140,11 +165,13 @@ def report(leads, denylist):
             if l.company and l.company != 'Unknown':
                 sample = l.company + ' — ' + sample
             break
-        print('%-38s %6d  %-5s %s' % (dom[:38], len(rows),
-                                      'JUNK' if junk else '', sample[:52]))
+        flag = 'JUNK' if junk else ('INTL' if internal else '')
+        print('%-38s %6d  %-5s %s' % (dom[:38], len(rows), flag, sample[:52]))
     print('-' * 108)
     print('%d leads across %d domains; %d match the junk list'
           % (len(leads), len(groups), junk_total))
+    print("JUNK = removed by --apply.  INTL = internal Procam thread, "
+          "only removed with --include-internal.")
 
 
 def purge(targets, soft):
@@ -197,6 +224,8 @@ def main():
     ap.add_argument('--domains', help='comma-separated sender domains to purge')
     ap.add_argument('--ids', help='comma-separated lead ids to purge')
     ap.add_argument('--since', metavar='YYYY-MM-DD')
+    ap.add_argument('--include-internal', action='store_true',
+                    help='also purge internal Procam threads forwarded in')
     args = ap.parse_args()
 
     denylist = set(JUNK_DOMAINS)

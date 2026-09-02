@@ -11,3 +11,8 @@ dist/
 build/
 instance/
 .pytest_cache/
+
+# Lead attachments written by the email ingest (EMAIL_INGEST_STORAGE_ROOT
+# defaults to ./uploads/email_leads). Never commit customer files.
+uploads/
+data/imports/
