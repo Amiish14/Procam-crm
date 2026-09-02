@@ -39,31 +39,53 @@ def _enforce():
     if not mailbox:
         raise RuntimeError('CRM_INBOX_EMAIL not set — cannot enforce.')
 
+    # v2026-09-02 — identify the mailbox the same way the webhook does:
+    # Graph may name it by UPN or by directory object id. A substring match
+    # on the UPN alone is what broke the webhook, and here the failure mode
+    # is worse — this function DELETES what it cannot identify, so a missed
+    # match would destroy the live subscription and silently stop ingestion.
+    from email_ingest.graph_client import GraphClient
+    from email_ingest.webhook import (_resource_user_segment,
+                                      _mailbox_identifiers)
+    graph = GraphClient()
+    known = _mailbox_identifiers(graph, mailbox)
+    # Did we actually resolve the object id, or only have the UPN? If only
+    # the UPN, we cannot safely call anything "rogue" — so we don't delete.
+    confident = len(known) > 1
+    if not confident:
+        print('  ! could not resolve the mailbox object id — will keep '
+              'unrecognised subscriptions rather than risk deleting the '
+              'live one.')
+
     subs = _sub.list_active()
     print(f'\nFound {len(subs)} active subscription(s).')
 
     ours_id = None
     for s in subs:
-        resource = (s.get('resource') or '').lower()
-        # Match on the address substring, case-insensitive.
-        if f'/users/{mailbox}/' in resource:
+        resource = s.get('resource') or ''
+        seg = _resource_user_segment(resource)
+        is_ours = bool(seg and seg in known)
+        if is_ours:
             if ours_id is None:
                 ours_id = s['id']
-                print(f'  ✓ keep {s["id"]} — {s.get("resource")}')
+                print(f'  ✓ keep {s["id"]} — {resource}')
             else:
                 # Duplicate sub for the same mailbox — delete extras so we
                 # don't get duplicate leads.
-                print(f'  x delete duplicate {s["id"]} — {s.get("resource")}')
+                print(f'  x delete duplicate {s["id"]} — {resource}')
                 try:
                     _sub.delete(s['id'])
                 except Exception as e:
                     print(f'    !! delete failed: {e}')
-        else:
-            print(f'  x delete rogue {s["id"]} — {s.get("resource")}')
+        elif confident and seg:
+            print(f'  x delete rogue {s["id"]} — {resource}')
             try:
                 _sub.delete(s['id'])
             except Exception as e:
                 print(f'    !! delete failed: {e}')
+        else:
+            print(f'  ? keeping unidentified {s["id"]} — {resource} '
+                  f'(not deleting: cannot prove it is not ours)')
 
     if ours_id:
         print(f'\nRenewing {ours_id}…')

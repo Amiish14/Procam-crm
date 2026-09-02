@@ -1,5 +1,9 @@
 venv/
+.venv/
+env/
 *.db
+*.db.bak*
+*.sqlite3.bak*
 *.sqlite3
 __pycache__/
 *.pyc
@@ -16,3 +20,8 @@ instance/
 # defaults to ./uploads/email_leads). Never commit customer files.
 uploads/
 data/imports/
+
+# Runtime state written next to the app on the server
+.leads_subscription_id
+cookies.txt
+*.log
