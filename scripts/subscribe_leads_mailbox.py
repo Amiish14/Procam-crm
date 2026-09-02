@@ -24,8 +24,35 @@ success and a clear error on failure so you can eyeball what happened.
 import sys, os, json
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# v2026-09-02 — load .env before anything reads os.environ. Under systemd
+# the unit's EnvironmentFile supplies these, but a manual run gets nothing,
+# and subscription.create() then dies with "CRM_INBOX_EMAIL env var is
+# required" *after* an --enforce has already deleted subscriptions. Loading
+# it here makes a hand-run behave identically to the timer.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
+except ImportError:                                              # pragma: no cover
+    pass
+
 from email_ingest import subscription as _sub
 from email_ingest import service as _mail
+
+
+def _preflight() -> None:
+    """Verify every env var the create path needs, BEFORE we delete or
+    modify anything. An enforce run that deletes a working subscription and
+    then cannot create its replacement takes ingestion down completely."""
+    missing = [v for v in ('CRM_INBOX_EMAIL', 'EMAIL_WEBHOOK_URL',
+                           'EMAIL_WEBHOOK_SECRET', 'MS_TENANT_ID',
+                           'MS_CLIENT_ID', 'MS_CLIENT_SECRET')
+               if not os.environ.get(v)]
+    if missing:
+        raise RuntimeError(
+            'Refusing to run: missing env var(s) ' + ', '.join(missing) +
+            '. Without these a subscription could be deleted and not '
+            'recreated, which stops ingestion entirely.')
 
 
 def _enforce():
@@ -35,6 +62,7 @@ def _enforce():
     CRM_INBOX_EMAIL. Then, for the surviving sanctioned sub, renews it if
     present or creates a fresh one if not. Safe to run daily via systemd.
     """
+    _preflight()
     mailbox = (_mail.crm_inbox_email() or '').strip().lower()
     if not mailbox:
         raise RuntimeError('CRM_INBOX_EMAIL not set — cannot enforce.')
