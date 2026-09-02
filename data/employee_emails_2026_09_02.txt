@@ -4,7 +4,7 @@
 #   scripts/2026_09_02_sync_employee_emails.py
 rp.shah@procamgroup.in
 n.lakshminarayan@procamgroup.in
-nilesh.sinha@myprocam.in
+nilesh.sinha@procamgroup.in
 francis.xavier@procamlogistics.com
 tg.ramalingam@procamgroup.in
 s.sethupathy@procamlogistics.com
