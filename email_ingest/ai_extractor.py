@@ -228,7 +228,19 @@ def _repair_json(text: str) -> Optional[str]:
     return text[first : last + 1]
 
 
+_BILLING_BLOCKED = False        # set when the account has no credit
+
+
+def _is_billing_error(err) -> bool:
+    text = str(err).lower()
+    return ('credit balance is too low' in text
+            or 'billing' in text and 'upgrade' in text
+            or 'insufficient_quota' in text)
+
+
 def is_enabled() -> bool:
+    if _BILLING_BLOCKED:
+        return False            # no credit; don't waste the round trip
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
@@ -342,6 +354,17 @@ def extract(msg: dict, regex_result: dict) -> Optional[dict]:
                 data = block.input
                 break
     except Exception as e:  # noqa: BLE001
+        if _is_billing_error(e):
+            # No credit — every further call this process makes will fail
+            # the same way. Say so once and stop trying.
+            global _BILLING_BLOCKED
+            if not _BILLING_BLOCKED:
+                log.error("Anthropic rejected the request for lack of credit "
+                          "— disabling the Anthropic extractor for this "
+                          "process. Add credit at console.anthropic.com, or "
+                          "rely on Groq.")
+            _BILLING_BLOCKED = True
+            return None
         log.warning("AI call failed for %s: %s", from_addr, e)
         return None
 

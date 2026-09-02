@@ -51,6 +51,14 @@ _MAX_BODY_CHARS = 6000
 _RATE_LIMIT_RETRIES = 4
 _RATE_LIMIT_MAX_SLEEP = 12.0
 
+# Circuit breaker. Once the daily token cap is hit, every further call in
+# this process is guaranteed to fail, so stop making them — a backfill of
+# a few hundred messages would otherwise spend a doomed round trip each.
+# Re-armed after a cool-off so a long-running process picks the quota back
+# up when it resets.
+_EXHAUSTED_UNTIL = 0.0
+_EXHAUSTED_COOLOFF = 900.0      # 15 minutes
+
 # Same schema as Anthropic version so the caller doesn't care which model ran.
 _SYSTEM_PROMPT = """You are a strict email-to-CRM extractor for Procam Group,
 an Indian project cargo / heavy transport / freight forwarding / warehousing
@@ -104,7 +112,11 @@ RULES:
 
 
 def is_enabled() -> bool:
-    return bool(os.environ.get('GROQ_API_KEY'))
+    if not os.environ.get('GROQ_API_KEY'):
+        return False
+    if _EXHAUSTED_UNTIL and time.time() < _EXHAUSTED_UNTIL:
+        return False            # quota spent; don't waste the round trip
+    return True
 
 
 def _client():
@@ -245,10 +257,13 @@ def extract(msg: dict, regex_result: dict) -> Optional[dict]:
                         # on every message. Fail fast and let the caller fall
                         # back to regex-only extraction.
                         if _is_daily_limit(je):
+                            global _EXHAUSTED_UNTIL
+                            _EXHAUSTED_UNTIL = time.time() + _EXHAUSTED_COOLOFF
                             log.warning('Groq DAILY token limit reached — '
-                                        'skipping AI extraction until it '
-                                        'resets. Leads still ingest, without '
-                                        'AI-extracted fields.')
+                                        'pausing AI extraction for %.0f min. '
+                                        'Leads still ingest, without '
+                                        'AI-extracted fields.',
+                                        _EXHAUSTED_COOLOFF / 60)
                             return None
                         wait = _retry_after_seconds(je, attempt)
                         if wait >= _RATE_LIMIT_MAX_SLEEP:
