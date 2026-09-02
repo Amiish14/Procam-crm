@@ -1743,6 +1743,22 @@ CRM.paintScopeToggle = function(){
   const paint = function(){ if (CRM.paintScopeToggle) CRM.paintScopeToggle(); };
   if (document.readyState !== 'loading') setTimeout(paint, 0);
   else document.addEventListener('DOMContentLoaded', paint);
+
+  // v2026-09-02 — /leads/<id> redirects here as ?lead=<id> (see
+  // app.py::lead_deeplink). Open that lead once the app has painted, then
+  // clean the URL so a refresh doesn't reopen it.
+  (function openLeadFromUrl(){
+    var id = parseInt(new URLSearchParams(window.location.search).get('lead') || '', 10);
+    if(!id) return;
+    var tries = 0;
+    var t = setInterval(function(){
+      if(typeof openLd === 'function'){
+        clearInterval(t);
+        try{ openLd(id); }catch(e){ console.warn('deep link failed', e); }
+        history.replaceState(null, '', window.location.pathname);
+      } else if(++tries > 40){ clearInterval(t); }
+    }, 150);
+  })();
 })();
 
 /* Endpoints that read from the leads table and therefore participate

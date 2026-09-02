@@ -752,6 +752,19 @@ def logout():
 
 # ─────────────────── MAIN APP ───────────────────
 
+@app.route('/leads/<int:lid>')
+def lead_deeplink(lid):
+    """Deep link used by notification emails.
+
+    Logged in  → straight to the app with the lead open.
+    Logged out → the login page, remembering where to go afterwards, so the
+                 recipient lands on the lead rather than a generic dashboard.
+    """
+    if 'emp_code' not in session:
+        return redirect(url_for('login', next=f'/leads/{lid}'))
+    return redirect(url_for('dashboard') + f'?lead={lid}')
+
+
 @app.route('/app')
 def dashboard():
     if 'emp_code' not in session:
@@ -1096,12 +1109,18 @@ def api_update_lead(lid):
         elif k in d and not d[k]:
             setattr(lead, v, None)
     # Reassignment — admin only
+    notify_emp = None
     if 'assigned_to' in d and session.get('role')=='admin':
+        changed = (lead.assigned_to or '') != (d['assigned_to'] or '')
         lead.assigned_to = d['assigned_to']
         emp2 = Employee.query.filter_by(emp_code=d['assigned_to']).first()
         lead.assigned_name = emp2.name if emp2 else d['assigned_to']
+        if changed:
+            notify_emp = emp2          # tell them after the commit succeeds
     lead.updated_at = datetime.utcnow()
     db.session.commit()
+    if notify_emp is not None:
+        _notify_assignment(lead, notify_emp)
     # Auto-create/update contact
     _auto_save_contact(lead)
     return jsonify({'ok': True})
@@ -1204,6 +1223,20 @@ def api_lead_attachment_download(lid, aid):
     resp.headers['Cache-Control'] = 'no-store'
     return resp
 
+def _notify_assignment(lead, employee):
+    """Email an employee that a lead is now theirs. Best-effort: a failure
+    here must never surface to the caller or roll back the assignment."""
+    if employee is None:
+        return
+    try:
+        from email_ingest import notifier
+        notifier.notify_lead_assigned(
+            lead, employee, assigned_by=session.get('name') or '')
+    except Exception:                                            # noqa: BLE001
+        app.logger.exception('assignment notification failed for lead %s',
+                             getattr(lead, 'id', '?'))
+
+
 @app.route('/api/leads/bulk-assign', methods=['POST'])
 @require_auth
 @require_admin
@@ -1217,6 +1250,8 @@ def api_bulk_assign():
     Lead.query.filter(Lead.id.in_(ids)).update(
         {'assigned_to': emp_code, 'assigned_name': emp.name}, synchronize_session=False)
     db.session.commit()
+    for lead in Lead.query.filter(Lead.id.in_(ids)).all():
+        _notify_assignment(lead, emp)
     return jsonify({'ok': True, 'count': len(ids)})
 
 @app.route('/api/leads/import', methods=['POST'])

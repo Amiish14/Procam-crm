@@ -140,6 +140,22 @@ function crmUrl(path){
   return base + '/' + path.replace(/^\//, '');
 }
 
+// v2026-09-02 — notification emails link to /leads/<id>, which bounces
+// through here as ?next=/leads/<id>. Send the user on to that target after
+// sign-in instead of the generic dashboard. Only same-origin relative
+// paths are honoured, so the parameter can't be used to redirect off-site.
+function nextTarget(){
+  try{
+    const raw = new URLSearchParams(window.location.search).get('next') || '';
+    if(!raw || !raw.startsWith('/') || raw.startsWith('//')) return null;
+    const base = window.location.pathname.replace(/\/[^/]*$/, '');
+    return base + raw;
+  }catch(e){ return null; }
+}
+function goAfterLogin(){
+  window.location.href = nextTarget() || crmUrl('app');
+}
+
 async function doLogin(){
   const btn=document.getElementById('loginBtn');
   const code=document.getElementById('empCode').value.trim().toUpperCase();
@@ -154,7 +170,7 @@ async function doLogin(){
       if(d.must_change){
         document.getElementById('pwOverlay').style.display='flex';
       } else {
-        window.location.href=crmUrl('app');
+        goAfterLogin();
       }
     } else {
       err.textContent=d.error||'Invalid username or password.';err.style.display='block';
@@ -172,7 +188,7 @@ async function doChangePassword(){
   if(nw!==cf){err.textContent='Passwords do not match.';err.style.display='block';return;}
   const r=await fetch(crmUrl('change-password'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})});
   const d=await r.json();
-  if(d.ok){window.location.href=crmUrl('app');}
+  if(d.ok){goAfterLogin();}
   else{err.textContent=d.error||'Error.';err.style.display='block';}
 }
 </script>
