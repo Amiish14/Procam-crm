@@ -1,25 +1,31 @@
 #!/usr/bin/env python
 """
-v2026-09-02 — Match supplied email addresses to Employee rows and fill in
-Employee.email.
+v2026-09-02 — Set each CRM employee's official email from the supplied list.
 
-The list arrived as a bare column of addresses with no names attached, so
-this derives a probable name from each address's local part and fuzzy-matches
-it against Employee.name:
+The list in data/employee_emails_2026_09_02.txt is the authoritative source
+of official addresses. This walks every employee in the CRM and finds the
+address that belongs to them, deriving a probable name from each address's
+local part and fuzzy-matching it against Employee.name:
 
     rp.shah@procamgroup.in          -> "rp shah"
     sahadeb.sahoo2012@gmail.com     -> "sahadeb sahoo"
-    partabsingh143procam@gmail.com  -> "partabsingh"
+    PRAVIN.CHOUDHARY@PROCAMGROUP.IN -> "pravin choudhary"
 
-Nothing is written without --apply, and only matches at or above --threshold
-are applied. Everything below it is listed as UNMATCHED for you to map by
-hand with --map, so a wrong address never lands on the wrong person — that
-would send someone else's leads to them.
+Output is employee-centric, one row per employee, showing what they have
+now and what the official list says:
+
+    SAME    already correct
+    NEW     no email on file, one found            (written by --apply)
+    CHANGE  on file differs from the official list (needs --overwrite too)
+    LOW     no confident match — map it by hand with --map
+
+Nothing is written without --apply, and a match below --threshold is never
+applied: a wrong address means someone else's leads land in the wrong inbox.
 
 Examples:
-    python scripts/2026_09_02_sync_employee_emails.py                  # preview
+    python scripts/2026_09_02_sync_employee_emails.py                    # preview
     python scripts/2026_09_02_sync_employee_emails.py --apply
-    python scripts/2026_09_02_sync_employee_emails.py --threshold 90
+    python scripts/2026_09_02_sync_employee_emails.py --apply --overwrite
     python scripts/2026_09_02_sync_employee_emails.py --map PCM042=zahid.khan@procamgroup.in --apply
 """
 import argparse
@@ -43,16 +49,15 @@ DEFAULT_LIST = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     'data', 'employee_emails_2026_09_02.txt')
 
-# Noise that appears in local parts but never in a person's name.
+# Words that appear in local parts but never in a person's name.
 _NOISE = re.compile(r'(procam|myprocam|logistics|group|mail|admin)', re.I)
 
 
 def name_from_email(addr: str) -> str:
-    """Best-effort person name from an address local part."""
     local = addr.split('@', 1)[0].lower()
-    local = re.sub(r'\d+', ' ', local)              # sahoo2012 -> sahoo
-    local = re.sub(r'[._\-+]+', ' ', local)         # rp.shah   -> rp shah
-    local = _NOISE.sub(' ', local)                  # drop company words
+    local = re.sub(r'\d+', ' ', local)
+    local = re.sub(r'[._\-+]+', ' ', local)
+    local = _NOISE.sub(' ', local)
     return re.sub(r'\s+', ' ', local).strip()
 
 
@@ -63,16 +68,13 @@ def load_addresses(path: str) -> list:
             line = line.strip()
             if not line or line.startswith('#') or '@' not in line:
                 continue
-            low = line.lower()
-            if low not in seen:
-                seen.add(low)
+            if line.lower() not in seen:
+                seen.add(line.lower())
                 out.append(line)
     return out
 
 
 def score(a: str, b: str) -> float:
-    """0-100 similarity. Uses rapidfuzz when available (it is in
-    requirements.txt), else difflib so the script still runs anywhere."""
     try:
         from rapidfuzz import fuzz
         return max(fuzz.token_set_ratio(a, b), fuzz.partial_ratio(a, b))
@@ -86,19 +88,19 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--apply', action='store_true', help='write the matches')
-    ap.add_argument('--file', default=DEFAULT_LIST, help='address list')
-    ap.add_argument('--threshold', type=float, default=85.0,
-                    help='minimum match score to apply (default 85)')
-    ap.add_argument('--map', action='append', default=[],
-                    metavar='EMPCODE=EMAIL',
-                    help='force a mapping; repeatable')
     ap.add_argument('--overwrite', action='store_true',
-                    help='replace an email an employee already has')
+                    help='also replace an email that differs from the list')
     ap.add_argument('--include-inactive', action='store_true',
-                    help='also consider deactivated employees')
+                    help='also process deactivated employees')
+    ap.add_argument('--file', default=DEFAULT_LIST)
+    ap.add_argument('--threshold', type=float, default=80.0)
+    ap.add_argument('--map', action='append', default=[],
+                    metavar='EMPCODE=EMAIL', help='force a mapping; repeatable')
     args = ap.parse_args()
 
     addresses = load_addresses(args.file)
+    guesses = [(a, name_from_email(a)) for a in addresses]
+
     forced = {}
     for pair in args.map:
         if '=' not in pair:
@@ -111,100 +113,89 @@ def main():
         if not args.include_inactive:
             q = q.filter_by(is_active=True)
         emps = q.order_by(Employee.emp_code).all()
-        by_code = {e.emp_code.upper(): e for e in emps}
-        by_email = {(e.email or '').strip().lower(): e for e in emps if e.email}
-        taken = set(by_email)
 
-        total_active = Employee.query.filter_by(is_active=True).count()
-        print(f'addresses supplied : {len(addresses)}')
-        print(f'employees in scope : {len(emps)} '
-              f'({total_active} active, {Employee.query.count()} total)')
-        print(f'  already have an email : {len(taken)}')
-        print(f'  missing an email      : {len(emps) - len(taken)}')
+        print(f'official addresses : {len(addresses)}')
+        print(f'employees in scope : {len(emps)}'
+              f'   (active {Employee.query.filter_by(is_active=True).count()}'
+              f', total {Employee.query.count()})')
         if not args.apply:
             print('\nPREVIEW — nothing will be written.\n')
 
         out = Counter()
-        claimed = set()
+        used = set()
+        rows, low = [], []
 
-        # 1. Forced mappings win outright.
-        for code, addr in forced.items():
-            emp = by_code.get(code)
-            if not emp:
-                print(f'  !! no active employee with code {code}')
-                out['bad --map code'] += 1
-                continue
-            print(f'  FORCED  {code:<10} {emp.name[:28]:<28} <- {addr}')
-            claimed.add(addr.lower())
-            out['forced'] += 1
-            if args.apply:
-                emp.email = addr
+        for emp in emps:
+            cur = (emp.email or '').strip()
+            code = emp.emp_code.upper()
 
-        # 2. Fuzzy-match the rest.
-        print('\n%-38s %-10s %-26s %5s' % ('address', 'emp_code', 'employee name', 'score'))
-        print('-' * 84)
-        unmatched, already = [], []
-        for addr in addresses:
-            if addr.lower() in claimed:
+            if code in forced:
+                best, sc = forced[code], 100.0
+            else:
+                ename = (emp.name or '').lower().strip()
+                best, sc = None, 0.0
+                for addr, guess in guesses:
+                    if addr.lower() in used or not guess:
+                        continue
+                    v = score(guess, ename)
+                    if v > sc:
+                        best, sc = addr, v
+
+            if best is None or sc < args.threshold:
+                low.append((emp, cur, best, sc))
+                out['LOW — needs manual map'] += 1
                 continue
-            owner = by_email.get(addr.lower())
-            if owner is not None:
-                out['already on file'] += 1
-                already.append((addr, owner))
-                continue
-            guess = name_from_email(addr)
-            if not guess:
-                unmatched.append((addr, None, 0))
-                continue
-            best, best_score = None, 0.0
-            for emp in emps:
-                if emp.email and not args.overwrite:
-                    continue                      # already has one; leave it
-                sc = score(guess, (emp.name or '').lower())
-                if sc > best_score:
-                    best, best_score = emp, sc
-            if best is None or best_score < args.threshold:
-                unmatched.append((addr, best, best_score))
-                continue
-            print('%-38s %-10s %-26s %5.1f' % (
-                addr[:38], best.emp_code, (best.name or '')[:26], best_score))
-            out['matched'] += 1
-            if args.apply:
-                best.email = addr
-                taken.add(addr.lower())
+
+            used.add(best.lower())
+            if cur.lower() == best.lower():
+                verdict = 'SAME'
+            elif not cur:
+                verdict = 'NEW'
+            else:
+                verdict = 'CHANGE'
+            out[verdict] += 1
+            rows.append((emp, cur, best, sc, verdict))
+
+            if args.apply and (verdict == 'NEW'
+                               or (verdict == 'CHANGE' and args.overwrite)):
+                emp.email = best
 
         if args.apply:
             db.session.commit()
 
-        if already:
-            print(f'\n--- ALREADY ON FILE ({len(already)}) — no action needed ---')
-            for addr, owner in already[:40]:
-                print('%-38s %-10s %s' % (addr[:38], owner.emp_code,
-                                          (owner.name or '')[:26]))
-            if len(already) > 40:
-                print(f'  ... and {len(already) - 40} more')
+        print('%-11s %-24s %-32s %-32s %5s  %s'
+              % ('emp_code', 'name', 'current email', 'official email', 'score', ''))
+        print('-' * 120)
+        for emp, cur, best, sc, verdict in rows:
+            print('%-11s %-24s %-32s %-32s %5.1f  %s' % (
+                emp.emp_code, (emp.name or '')[:24], (cur or '—')[:32],
+                best[:32], sc, verdict))
 
-        if unmatched:
-            print('\n--- UNMATCHED (nothing written for these) ---')
-            print('These are addresses with no employee to attach them to. '
-                  'Most likely they belong to staff who are not in the CRM, '
-                  'or who are deactivated (try --include-inactive).')
-            print('%-38s %-26s %5s' % ('address', 'closest name', 'score'))
-            print('-' * 72)
-            for addr, best, sc in unmatched:
-                print('%-38s %-26s %5.1f' % (
-                    addr[:38], (best.name if best else '-')[:26], sc))
-            out['unmatched'] += len(unmatched)
+        if low:
+            print('\n--- NO CONFIDENT MATCH (nothing written) ---')
+            print('%-11s %-24s %-32s %-28s %s'
+                  % ('emp_code', 'name', 'current email', 'closest address', 'score'))
+            print('-' * 108)
+            for emp, cur, best, sc in low:
+                print('%-11s %-24s %-32s %-28s %.1f' % (
+                    emp.emp_code, (emp.name or '')[:24], (cur or '—')[:32],
+                    (best or '—')[:28], sc))
+
+        leftover = [a for a in addresses if a.lower() not in used]
+        if leftover:
+            print(f'\n--- {len(leftover)} addresses not assigned to anyone ---')
+            print('(people not in the CRM, or deactivated — try --include-inactive)')
+            for a in leftover:
+                print('  ' + a)
 
         print('\n--- summary ---')
         for k, n in out.most_common():
             print(f'  {n:>5}  {k}')
-        missing = [e for e in emps if not e.email]
-        print(f'  {len(missing):>5}  active employees still without an email')
         if not args.apply:
-            print('\nPreview only. Add --apply to write the matched ones.')
-            print('Map the unmatched by hand, e.g.:')
-            print('  --map PCM042=zahid.khan@procamgroup.in --apply')
+            print('\nPreview only.')
+            print('  --apply              write the NEW ones')
+            print('  --apply --overwrite  also correct the CHANGE ones')
+            print('  --map PCM042=addr@x  fix a LOW row by hand')
 
 
 if __name__ == '__main__':
