@@ -1,0 +1,18 @@
+# Senders whose mail becomes a Lead as normal, but WITHOUT an AI extraction.
+#
+# These are machine-generated, templated notifications — the same shape
+# hundreds of times a day. Running the extractor on each burns the daily
+# token budget that human-written enquiries need. The lead is still created
+# with sender, company, subject, body, attachments and arrival time; only
+# the AI-derived fields (cargo type, weight, dimensions, one-line summary)
+# are skipped.
+#
+# Matching is on the sender domain or any parent of it. Remove a line to
+# start extracting that sender again — no code change or restart needed.
+#
+# Deliberately NOT listed: SAP Ariba (its mails say "new business lead" and
+# read like real opportunities). Add it if you disagree.
+superprocure.com
+alerts.superprocure.com
+alerts2.superprocure.com
+google.com

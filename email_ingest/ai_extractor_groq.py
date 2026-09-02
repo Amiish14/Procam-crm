@@ -21,6 +21,9 @@ import re
 import time
 from typing import Optional
 
+from . import ai_budget
+from . import blocklist as _blocklist
+
 log = logging.getLogger(__name__)
 
 # Groq retires models on a rolling basis, and a retired id returns 404
@@ -41,7 +44,7 @@ _MODEL_CANDIDATES = (
     'llama-3.1-8b-instant',
 )
 _RESOLVED_MODEL = None          # first candidate that answered, cached
-_MAX_BODY_CHARS = 6000
+_MAX_BODY_CHARS_DEFAULT = 3500
 
 # Groq's free tier is metered on tokens-per-minute (8k TPM at time of
 # writing) and one email costs ~4-5k, so bursts and backfills hit 429
@@ -58,6 +61,18 @@ _RATE_LIMIT_MAX_SLEEP = 12.0
 # up when it resets.
 _EXHAUSTED_UNTIL = 0.0
 _EXHAUSTED_COOLOFF = 900.0      # 15 minutes
+
+# Token budget per email. Groq's free tier meters tokens per day (200k at
+# time of writing), so these two numbers decide how many emails a day can
+# be enriched: roughly TPD / (body_tokens + max_tokens).
+#   6000 chars + 2500 out  ~= 4.0k tokens/email ~=  50 emails/day
+#   3500 chars + 1500 out  ~= 2.4k tokens/email ~=  85 emails/day
+# Both are env-tunable so the trade-off can be adjusted without a deploy.
+def _int_env(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name) or default))
+    except ValueError:
+        return default
 
 # Same schema as Anthropic version so the caller doesn't care which model ran.
 _SYSTEM_PROMPT = """You are a strict email-to-CRM extractor for Procam Group,
@@ -138,6 +153,31 @@ def list_models() -> list:
         return []
 
 
+_SKIP_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'data', 'ai_skip_senders.txt')
+
+
+def skip_extraction_for(email: str) -> bool:
+    """True for templated machine senders whose mail still becomes a Lead
+    but does not merit an AI extraction. Keeps the daily token budget for
+    human-written enquiries."""
+    addr = (email or '').strip().lower()
+    if '@' not in addr:
+        return False
+    domain = addr.split('@', 1)[1]
+    path = os.environ.get('AI_SKIP_SENDERS_FILE') or _SKIP_FILE
+    try:
+        with open(path) as fh:
+            for line in fh:
+                entry = line.split('#', 1)[0].strip().lower().lstrip('@.')
+                if entry and (domain == entry or domain.endswith('.' + entry)):
+                    return True
+    except OSError:
+        return False
+    return False
+
+
 def _candidate_models() -> tuple:
     """Models to try, best first. An explicitly configured model leads."""
     if _RESOLVED_MODEL:
@@ -195,9 +235,10 @@ def _chat(client, model: str, user: str, json_mode: bool = True):
         messages=[{'role': 'system', 'content': _SYSTEM_PROMPT},
                   {'role': 'user',   'content': user}],
         temperature=0.1,
-        # Generous: the reasoning-style models spend tokens before the JSON,
-        # and a truncated object is worse than a slightly costlier call.
-        max_tokens=2500,
+        # The reasoning-style models spend tokens before emitting JSON, so
+        # this cannot go too low or the object truncates. 1500 is enough for
+        # the schema plus a short reasoning pass.
+        max_tokens=_int_env('EMAIL_AI_MAX_TOKENS', 1500),
     )
     if json_mode:
         kw['response_format'] = {'type': 'json_object'}
@@ -225,11 +266,25 @@ def extract(msg: dict, regex_result: dict) -> Optional[dict]:
     if '<' in body and '>' in body:
         body = re.sub(r'<[^>]+>', ' ', body)
         body = re.sub(r'\s+', ' ', body)
-    body = body.strip()[:_MAX_BODY_CHARS]
+    body = body.strip()[:_int_env('EMAIL_AI_MAX_BODY_CHARS', _MAX_BODY_CHARS_DEFAULT)]
 
     user = (f'SUBJECT: {subject}\n'
             f'IMMEDIATE FROM (may be internal employee if forwarded): {from_addr}\n'
             f'BODY:\n{body}\n')
+
+    sender = (((msg or {}).get('from') or {}).get('emailAddress') or {}).get('address') or ''
+    if skip_extraction_for(sender):
+        log.info('AI extraction skipped for templated sender %s', sender)
+        return None
+
+    est = _int_env('EMAIL_AI_MAX_BODY_CHARS', _MAX_BODY_CHARS_DEFAULT) // 4 \
+        + _int_env('EMAIL_AI_MAX_TOKENS', 1500)
+    if not ai_budget.can_spend(est):
+        st = ai_budget.status()
+        log.warning('Daily AI token budget spent (%s/%s) — extraction paused. '
+                    'Leads still ingest without AI fields.',
+                    st['used'], st['budget'])
+        return None
 
     global _RESOLVED_MODEL
     client = _client()
@@ -302,6 +357,13 @@ def extract(msg: dict, regex_result: dict) -> Optional[dict]:
                   'this key can use, then set EMAIL_AI_MODEL_GROQ.',
                   ', '.join(tried))
         return None
+
+    try:
+        usage = getattr(resp, 'usage', None)
+        if usage is not None:
+            ai_budget.record(int(getattr(usage, 'total_tokens', 0) or 0))
+    except Exception:                                            # noqa: BLE001
+        pass
 
     raw = (resp.choices[0].message.content or '').strip()
     try:
