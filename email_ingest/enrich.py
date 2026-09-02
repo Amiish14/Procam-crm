@@ -73,7 +73,8 @@ def _merge_ai(extracted: dict, msg: dict) -> tuple[dict, Optional[dict]]:
 
 
 def _apply_overrides_and_defaults(merged: dict, extracted: dict,
-                                  sender_email: str) -> dict:
+                                  sender_email: str,
+                                  forwarded_by: Optional[dict] = None) -> dict:
     """Authoritative overrides + guaranteed-populated defaults so the summary
     card is never blank."""
     # v2026-08 — never let an internal Procam address masquerade as the
@@ -91,9 +92,30 @@ def _apply_overrides_and_defaults(merged: dict, extracted: dict,
                             or not ai_company.lower().startswith(stem[:4])):
             merged["company"] = dom_company
     elif _internal:
+        # The lead is captured either way — but a Procam address must never
+        # sit in the contact field. Blank it and flag for review so the
+        # sales team fills in the real prospect from the body.
+        merged["email_primary"] = None
         merged["needs_review"] = True
         merged["extraction_notes"] = ((merged.get("extraction_notes") or '') +
             ' | Immediate sender is a Procam address; could not identify external customer.').strip(' |')
+
+    # v2026-09 — the employee who forwarded the mail is a *courier*, never
+    # the lead. If the AI (or a signature block) managed to put their
+    # address or name on the contact fields, strip it back out.
+    fwd_email = ((forwarded_by or {}).get("email") or "").strip().lower()
+    fwd_name  = ((forwarded_by or {}).get("name") or "").strip().lower()
+    if fwd_email:
+        for field in ("email_primary", "email_secondary"):
+            if (merged.get(field) or "").strip().lower() == fwd_email:
+                merged[field] = None
+                merged["needs_review"] = True
+        if fwd_name and (merged.get("contact_name") or "").strip().lower() == fwd_name:
+            merged["contact_name"] = ""
+        # Company derived from the forwarder's own domain is equally wrong.
+        fwd_company = (email_parser._company_from_domain(fwd_email) or "").lower()
+        if fwd_company and (merged.get("company") or "").strip().lower() == fwd_company:
+            merged["company"] = ""
 
     # Drop AI-hallucinated phones that don't actually appear in the body.
     body_norm = ((extracted.get("body_text") or "").lower()).replace(" ", "")
@@ -168,19 +190,24 @@ def build_enriched_lead_kwargs(msg: dict, extracted: dict, *,
     created_at fields.
     """
     merged, ai_data = _merge_ai(extracted, msg)
-    merged = _apply_overrides_and_defaults(merged, extracted, sender_email)
+    merged = _apply_overrides_and_defaults(merged, extracted, sender_email,
+                                           forwarded_by=forwarded_by)
 
-    # Notes body — same convention as the poll pipeline plus the
-    # [Forwarded to CRM by …] header from mailbox mode when applicable.
+    # Notes body — the ORIGINAL customer message. The forwarding
+    # employee's covering note is kept above it, clearly labelled, so the
+    # sales team can see who relayed the lead and what they said without
+    # that text ever being mistaken for the customer's own words.
     body_notes = (extracted.get("body_text") or "")[:8000]
     if forwarded_by:
         from datetime import datetime
-        who = forwarded_by.get("email") if isinstance(forwarded_by, dict) else str(forwarded_by)
-        body_notes = (
-            f"[Forwarded to CRM by {who} on "
-            f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}]\n\n"
-            + body_notes
-        )
+        who = (forwarded_by.get("email") if isinstance(forwarded_by, dict)
+               else str(forwarded_by))
+        header = (f"[Forwarded to CRM by {who} on "
+                  f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}]")
+        note = (extracted.get("forward_note") or "").strip()
+        if note:
+            header += f"\n[Their note: {note[:500]}]"
+        body_notes = f"{header}\n\n--- Original message ---\n{body_notes}"
 
     return {
         "company":              (merged["company"] or "Unknown")[:200],
@@ -198,6 +225,9 @@ def build_enriched_lead_kwargs(msg: dict, extracted: dict, *,
             "source_subject":  extracted.get("subject", ""),
             "ai_used":         bool(ai_data),
             "forwarded_by":    forwarded_by,
+            "forward_note":    (extracted.get("forward_note") or "")[:500] or None,
+            "original_subject": extracted.get("subject", ""),
+            "outer_subject":   extracted.get("outer_subject", ""),
         }, default=str),
         "email_extracted_json": json.dumps(merged, default=str),
     }

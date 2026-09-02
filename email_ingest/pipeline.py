@@ -3,7 +3,7 @@
 The pipeline is:
     1. Fetch messages from the shared mailbox received in the lookback window
     2. Skip if the message is already ingested (dedup by internetMessageId)
-    3. Parse; skip if parser flags a skip_reason
+    3. Parse (unwrapping any forward); skip if parser flags a skip_reason
     4. Insert a Lead row with source='email', stage='New Opportunity'
     5. Optionally mark the message as read via Graph
     6. Return stats

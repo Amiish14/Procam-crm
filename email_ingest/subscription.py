@@ -54,7 +54,18 @@ def _json_or_raise(resp, context: str) -> dict:
 
 def create() -> dict:
     """Create a new subscription. Returns the Graph subscription resource."""
+    # v2026-09 — leads@procamgroup.in is the only sanctioned lead source.
+    # service.crm_inbox_email() is the single authority for that address;
+    # refuse to subscribe to anything else so a stray env var can never
+    # wire a second inbox into the CRM.
+    from . import service as _mail_service
     mailbox      = _need('CRM_INBOX_EMAIL')
+    sanctioned   = (_mail_service.crm_inbox_email() or '').strip().lower()
+    if sanctioned and mailbox.strip().lower() != sanctioned:
+        raise RuntimeError(
+            f'Refusing to subscribe to {mailbox!r}: the only sanctioned '
+            f'lead source is {sanctioned!r}.'
+        )
     webhook_url  = _need('EMAIL_WEBHOOK_URL')
     client_state = _need('EMAIL_WEBHOOK_SECRET')
 

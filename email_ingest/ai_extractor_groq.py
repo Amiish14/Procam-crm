@@ -90,8 +90,13 @@ def extract(msg: dict, regex_result: dict) -> Optional[dict]:
         log.warning('openai package not installed — Groq extractor disabled')
         return None
 
-    body = ((msg or {}).get('body') or {}).get('content') or ''
-    subject = (msg or {}).get('subject') or ''
+    # Prefer the parser's already-unwrapped text: for a forwarded lead that
+    # is the ORIGINAL customer message with the employee's covering note and
+    # the forward headers stripped, which is exactly what we want the model
+    # to reason over.
+    body = (regex_result or {}).get('body_text') or \
+        ((msg or {}).get('body') or {}).get('content') or ''
+    subject = (regex_result or {}).get('subject') or (msg or {}).get('subject') or ''
     from_addr = (((msg or {}).get('from') or {}).get('emailAddress') or {}).get('address') or ''
     # Strip HTML crudely if the body is html
     if '<' in body and '>' in body:

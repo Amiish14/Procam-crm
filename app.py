@@ -3306,12 +3306,12 @@ def api_email_inbox_retry(evt_id):
             db.session.commit()
             return jsonify(ok=True, result=result, upgraded=False)
 
-        # Re-parse + re-enrich the message from scratch.
-        email_parser._promote_forwarded_sender(msg)  # respect forward mode
+        # Re-parse + re-enrich the message from scratch. extract_lead()
+        # unwraps the forward itself, so the enricher sees the ORIGINAL
+        # customer message rather than the employee's covering note.
         extracted = email_parser.extract_lead(msg)
-        if not extracted or extracted.get('skip_reason'):
-            return jsonify(ok=False,
-                           error=f"parser now says: {extracted.get('skip_reason') if extracted else 'None'}",
+        if not extracted:
+            return jsonify(ok=False, error='parser returned nothing',
                            lead_id=lead.id), 400
         sender_email  = (extracted.get('email') or '').strip().lower()
         sender_domain = sender_email.split('@', 1)[1] if '@' in sender_email else ''

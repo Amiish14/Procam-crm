@@ -2,6 +2,13 @@
 v2026-08 — Process a single email → Lead. Reused by both the poll pipeline
 and the webhook handler so both routes end at the same DB state.
 
+v2026-09 — CAPTURE EVERYTHING. leads@procamgroup.in exists for one purpose:
+employees forward leads into it. So the mailbox itself is the filter, and
+every message that arrives becomes a Lead — no content filtering, no
+confidence threshold, no junk detection. What the pipeline DOES do is
+unwrap the forward, so the Lead is the ORIGINAL prospect inside it rather
+than the employee who pressed Forward. See docs/LEAD_INGESTION_POLICY.md.
+
 Public function:
 
     process_single_message(graph, mailbox, msg) -> dict
@@ -38,6 +45,8 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
     """Process ONE Graph message into a Lead. Idempotent — safe to call
     multiple times for the same message; only the first call creates a
     Lead. Any subsequent call returns 'skipped' with reason='already ingested'.
+
+    'already ingested' is the ONLY reason a message is ever skipped.
     """
     # Local imports keep this module import-safe under all circumstances.
     from app import app, db, Lead, LeadAttachment  # type: ignore
@@ -54,11 +63,13 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
                         'lead_id': hit[0], 'internet_message_id': imid}
 
         # ── Parse + AI-extract ────────────────────────────────────────
-        # v2026-08 — mailbox mode: CAPTURE EVERYTHING. If the parser wants
-        # to skip (auto-reply, bulk sender, low confidence, whatever), we
-        # still create the lead. The skip_reason is preserved as a
-        # 'triage_tag' inside the lead's opp_notes so the sales team can
-        # sort them in the UI. Silently dropping mail = losing business.
+        # CAPTURE EVERYTHING. Every message in the leads inbox becomes a
+        # Lead — the inbox is the filter. parser.extract_lead unwraps the
+        # forward so `extracted` describes the ORIGINAL customer message
+        # rather than the employee who forwarded it; anything the parser
+        # would have wanted to skip is kept as a 'triage_tag' in opp_notes
+        # so the sales team can sort in the UI. Silently dropping mail =
+        # losing business.
         try:
             extracted = email_parser.extract_lead(msg)
         except Exception as e:
@@ -81,6 +92,8 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
                 'skip_reason': 'parser bailed',
             }
 
+        # A parser skip reason is a LABEL, not a rejection — it rides along
+        # on the Lead so the sales team can sort, and nothing is dropped.
         triage_tag = extracted.get('skip_reason')       # None if clean
 
         forwarded_by = extracted.get('forwarded_by') or msg.get('_forwarded_by')

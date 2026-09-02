@@ -326,14 +326,42 @@ def _sender_info(msg: dict) -> Tuple[str, str]:
     return (frm.get("address") or "").strip(), (frm.get("name") or "").strip()
 
 
-# ─── v2026-08 — Internal-forward promotion ─────────────────────────────
-# In mailbox mode the CRM inbox receives forwards from Procam employees who
-# want a customer enquiry captured as a Lead. The immediate sender is then
-# internal, which the internal-domain guard below would otherwise reject.
-# _promote_forwarded_sender inspects the body for the original "From:" header
-# block, and if it finds an EXTERNAL sender, rewrites msg["from"] in place so
-# every downstream step (skip check, dedup, AI extract, Lead creation)
-# attributes to the real customer, not the employee who forwarded.
+# ─── v2026-09 — Forwarded-lead detection, splitting and promotion ──────
+# Policy (see docs/LEAD_INGESTION_POLICY.md):
+#   leads@procamgroup.in is the ONLY lead source, and the CRM imports ONLY
+#   emails that a Procam employee forwarded into it. A forward is a
+#   *container*: the lead is the ORIGINAL message inside it, never the
+#   employee who pressed Forward.
+#
+# This section provides:
+#   split_forwarded_body()   — split "employee note | original headers |
+#                              original body" out of a forwarded message
+#   analyze_forward()        — full analysis + in-place promotion of
+#                              msg['from'] to the original external sender
+#   _promote_forwarded_sender() — back-compat thin wrapper over the above
+
+# "---------- Forwarded message ----------", "-----Original Message-----",
+# "Begin forwarded message:" and the bare "Forwarded message" variants that
+# Outlook/Gmail/Apple Mail emit once HTML has been flattened to text.
+_FORWARD_BLOCK_RE = re.compile(
+    r"(?i)^[\s>*_\-]*(?:"
+    r"-{2,}\s*forwarded message\s*-{2,}"
+    r"|-{2,}\s*original message\s*-{2,}"
+    r"|begin forwarded message\s*:?"
+    r"|forwarded message\s*:?"
+    r")[\s>*_\-]*$"
+)
+
+# A single RFC-822-ish header line inside a forwarded block.
+_HEADER_LINE_RE = re.compile(
+    r"(?i)^[\s>]*(from|sent|date|to|cc|bcc|subject|reply-to|importance)"
+    r"\s*:\s*(.*)$"
+)
+
+# "Name" <addr@example.com>  /  Name <addr@example.com>  /  addr@example.com
+_ADDR_RE = re.compile(
+    r"^\s*(?:\"?([^<\"]{0,120}?)\"?\s*)?<\s*([^>\s]+@[^>\s]+?)\s*>\s*$"
+)
 
 # Matches typical Outlook / Gmail / plain-text forward header blocks:
 #   From: John Doe <john@customer.com>
@@ -348,8 +376,6 @@ _FORWARD_FROM_RE = re.compile(
 
 # Fallback for mobile/iOS/Apple Mail style:
 #   On Wed, Aug 27, 2026 at 3:45 PM, John Doe <john@customer.com> wrote:
-# Captures just the address; name is deliberately anonymous (AI extractor
-# will fill in a proper contact_name from the body).
 _FORWARD_WROTE_RE = re.compile(
     r"(?is)\bon\b[^<\n\r]{5,140}?"
     r"<\s*([^>\s]+@[^>\s]+)\s*>"
@@ -362,36 +388,159 @@ _ANY_EMAIL_RE = re.compile(
 )
 
 # Subject prefixes that mark a forward. English + common client variants.
-_FORWARD_SUBJECT_RE = re.compile(r"^\s*(fw|fwd|fwd\.|fw\.|f/w)\s*:\s*", re.I)
+_FORWARD_SUBJECT_RE = re.compile(r"^\s*(?:(?:fwd?|fw|f/w)\s*[:.]\s*)+", re.I)
+
+# Subject prefixes stripped when recovering the ORIGINAL subject.
+_SUBJECT_PREFIX_RE = re.compile(r"^\s*(?:(?:re|fwd?|fw|f/w)\s*[:.]\s*)+", re.I)
+
+
+def _parse_addr(raw: str) -> Tuple[str, str]:
+    """Parse a From:-style value into (email, display_name)."""
+    raw = (raw or "").strip().rstrip(";,")
+    if not raw:
+        return "", ""
+    m = _ADDR_RE.match(raw)
+    if m:
+        return (m.group(2) or "").strip().lower(), (m.group(1) or "").strip()
+    m2 = _ANY_EMAIL_RE.search(raw)
+    if m2:
+        email = m2.group(1).strip().lower()
+        # Anything before the address (minus brackets/quotes) is the name.
+        name = raw[: m2.start()].strip(" \"'<>(),;-")
+        return email, name
+    return "", raw.strip(" \"'")
+
+
+def split_forwarded_body(body_text: str) -> dict:
+    """Split a forwarded email body into its three parts.
+
+    Returns::
+
+        {'is_forward':    bool,
+         'forward_note':  str,   # what the employee typed above the forward
+         'original_body': str,   # the ORIGINAL message content
+         'headers':       {'from': ..., 'subject': ..., 'to': ..., ...},
+         'trigger':       'marker' | 'header' | 'wrote' | None}
+
+    `trigger` says what the split keyed off. Only 'marker' — an explicit
+    "Forwarded message" / "Original Message" block — proves a forward on
+    its own; a bare `From:` header ('header') also appears in ordinary
+    quoted reply chains, so callers must corroborate it.
+
+    When the body is not a forward, `is_forward` is False and
+    `original_body` is the untouched input.
+    """
+    out = {"is_forward": False, "trigger": None, "forward_note": "",
+           "original_body": body_text or "", "headers": {}}
+    if not body_text:
+        return out
+
+    lines = body_text.splitlines()
+
+    marker_idx = None
+    for i, line in enumerate(lines):
+        if _FORWARD_BLOCK_RE.match(line):
+            marker_idx = i
+            break
+
+    from_idx = None
+    for i, line in enumerate(lines):
+        m = _HEADER_LINE_RE.match(line)
+        if m and m.group(1).lower() == "from" and "@" in (m.group(2) or ""):
+            from_idx = i
+            break
+
+    # Where the original message's header block starts.
+    header_start = None
+    if marker_idx is not None:
+        if from_idx is not None and from_idx >= marker_idx:
+            header_start = from_idx
+        else:
+            header_start = marker_idx + 1
+        note_end = marker_idx
+        out["trigger"] = "marker"
+    elif from_idx is not None:
+        header_start = from_idx
+        note_end = from_idx
+        out["trigger"] = "header"
+    else:
+        # Last resort — Apple/iOS "On <date>, X <a@b.c> wrote:" style.
+        m = _FORWARD_WROTE_RE.search(body_text)
+        if m:
+            out["is_forward"] = True
+            out["trigger"] = "wrote"
+            out["forward_note"] = body_text[: m.start()].strip()
+            out["original_body"] = body_text[m.end():].strip() or body_text
+            out["headers"] = {"from": m.group(0)}
+            return out
+        return out
+
+    out["is_forward"] = True
+    out["forward_note"] = "\n".join(lines[:note_end]).strip()
+
+    # Consume the consecutive header lines (tolerating blank lines that the
+    # HTML→text flattener leaves between them).
+    headers: dict = {}
+    i = header_start
+    blanks = 0
+    last_header = header_start - 1
+    while i < len(lines) and i < header_start + 16:
+        line = lines[i]
+        m = _HEADER_LINE_RE.match(line)
+        if m:
+            key = m.group(1).lower()
+            val = (m.group(2) or "").strip()
+            # Only the first occurrence of each header belongs to this level
+            # of the forward; deeper nesting is left inside the body.
+            if key not in headers:
+                headers[key] = val
+            last_header = i
+            blanks = 0
+        elif not line.strip():
+            blanks += 1
+            if blanks > 2:
+                break
+        else:
+            break
+        i += 1
+
+    out["headers"] = headers
+    original = "\n".join(lines[last_header + 1:]).strip()
+    out["original_body"] = original or body_text
+    return out
 
 
 def _extract_forwarded_sender(subject: str, body_text: str) -> Optional[Tuple[str, str]]:
     """If the message looks like a forward, return (email, name) of the
     original external sender.
 
-    Tries three strategies in order:
-      1. Strict "From: ..." header line at start-of-line (Outlook / Gmail
-         desktop / plain forwards).
-      2. "On <date>, <name> <email> wrote:" (iOS Mail / mobile Outlook).
-      3. Fallback: first non-internal email address anywhere in the body.
-
-    Any of the three succeeding is enough. The message qualifies as a
-    forward if the subject is prefixed with Fw/Fwd OR the body contains
-    an obvious forward marker."""
+    Tries, in order:
+      1. The `From:` header of the split forwarded block.
+      2. Strict "From: ..." header line anywhere in the body.
+      3. "On <date>, <name> <email> wrote:" (iOS Mail / mobile Outlook).
+      4. Fallback: first non-internal, non-noreply address in the body.
+    """
     if not body_text:
         return None
     lowered = body_text.lower()
-    looks_forwarded = bool(_FORWARD_SUBJECT_RE.match(subject or "")) or (
+    split = split_forwarded_body(body_text)
+    looks_forwarded = bool(_FORWARD_SUBJECT_RE.match(subject or "")) or split["is_forward"] or (
         "forwarded message" in lowered
         or "begin forwarded" in lowered
         or "-----original message-----" in lowered
         or " wrote:" in lowered                # iOS / mobile reply-forward
-        or "sent from my " in lowered          # mobile signature is a hint
     )
     if not looks_forwarded:
         return None
 
-    # Strategy 1 — strict From: header
+    # Strategy 1 — From: header of the split block
+    hdr_from = (split.get("headers") or {}).get("from")
+    if hdr_from:
+        email, name = _parse_addr(hdr_from)
+        if email and "@" in email:
+            return email, name
+
+    # Strategy 2 — strict From: header anywhere
     m = _FORWARD_FROM_RE.search(body_text)
     if m:
         name  = (m.group(1) or "").strip()
@@ -399,14 +548,14 @@ def _extract_forwarded_sender(subject: str, body_text: str) -> Optional[Tuple[st
         if email and "@" in email:
             return email, name
 
-    # Strategy 2 — "On <date>, <name> <email> wrote:"
+    # Strategy 3 — "On <date>, <name> <email> wrote:"
     m = _FORWARD_WROTE_RE.search(body_text)
     if m:
         email = (m.group(1) or "").strip().lower()
         if email and "@" in email:
             return email, ""
 
-    # Strategy 3 — first non-internal email in the body
+    # Strategy 4 — first non-internal email in the body
     skip = _skip_domains()
     for match in _ANY_EMAIL_RE.finditer(body_text):
         email = match.group(1).lower()
@@ -415,8 +564,6 @@ def _extract_forwarded_sender(subject: str, body_text: str) -> Optional[Tuple[st
         domain = email.split("@", 1)[1]
         if domain in skip:
             continue    # internal — skip
-        # Also skip anything that looks like a Microsoft / Google infra
-        # address in headers — noreply, mailer-daemon, calendar.
         if _NOREPLY_RE.search(email):
             continue
         return email, ""
@@ -424,33 +571,126 @@ def _extract_forwarded_sender(subject: str, body_text: str) -> Optional[Tuple[st
     return None
 
 
-def _promote_forwarded_sender(msg: dict) -> Optional[dict]:
-    """If immediate sender is internal AND we can find an external original
-    sender inside the body, rewrite msg["from"] in place so downstream sees
-    the customer. Returns a dict describing what happened (for logging /
-    audit) or None if nothing was rewritten."""
+def analyze_forward(msg: dict) -> dict:
+    """Detect + unwrap a forwarded lead email.
+
+    A forwarded email is a *container*. This function pulls the original
+    message out of it and, when the original sender is external, rewrites
+    ``msg['from']`` in place so every downstream step (skip check, AI
+    extraction, dedup, Lead attribution) sees the CUSTOMER — never the
+    Procam employee who forwarded it.
+
+    The result is also cached on ``msg['_forward']``. Returns::
+
+        {'is_forward', 'promoted', 'forwarded_by', 'forwarder_is_internal',
+         'original_sender', 'original_name', 'original_subject',
+         'forward_note', 'original_body', 'reason'}
+
+    `reason` is set only when the message looks forwarded but the original
+    sender could not be resolved — the caller uses it to reject rather than
+    fall back to attributing the lead to the forwarder.
+    """
+    cached = msg.get("_forward")
+    if isinstance(cached, dict):
+        return cached
+
     frm_email, frm_name = _sender_info(msg)
-    if not frm_email or "@" not in frm_email:
-        return None
-    domain = frm_email.split("@", 1)[1].lower()
-    if domain not in _skip_domains():
-        return None    # not an internal sender, nothing to promote
-
-    subject = (msg.get("subject") or "").strip()
+    subject   = (msg.get("subject") or "").strip()
     body_text = _get_body_text(msg)
-    found = _extract_forwarded_sender(subject, body_text)
-    if not found:
-        return None
-    orig_email, orig_name = found
-    orig_domain = orig_email.split("@", 1)[1].lower()
-    if orig_domain in _skip_domains():
-        return None    # original also internal → not a real customer forward
+    skip      = _skip_domains()
+    frm_domain = frm_email.split("@", 1)[1].lower() if "@" in frm_email else ""
+    forwarder_is_internal = bool(frm_domain and frm_domain in skip)
 
-    # Rewrite the msg in place. Keep a breadcrumb of who forwarded.
+    split = split_forwarded_body(body_text)
+    subject_marks_forward = bool(_FORWARD_SUBJECT_RE.match(subject))
+    # An explicit "Forwarded message" / "Original Message" block or a
+    # Fw:/Fwd: subject proves a forward on its own. A bare "From:" header
+    # does NOT — an ordinary quoted reply chain looks identical — so for an
+    # external sender it is not enough. An INTERNAL sender writing into the
+    # leads inbox is by definition relaying someone else's mail, so any
+    # split signal (or none at all) counts as a forward for them.
+    explicit_forward = bool(subject_marks_forward or split["trigger"] == "marker")
+    is_forward = bool(explicit_forward or forwarder_is_internal)
+
+    info = {
+        "is_forward":            is_forward,
+        "promoted":              False,
+        "forwarded_by":          ({"email": frm_email, "name": frm_name}
+                                  if is_forward and frm_email else None),
+        "forwarder_is_internal": forwarder_is_internal,
+        "original_sender":       None,
+        "original_name":         "",
+        "original_subject":      "",
+        "forward_note":          split["forward_note"],
+        "original_body":         split["original_body"],
+        "reason":                None,
+    }
+
+    if not is_forward:
+        msg["_forward"] = info
+        return info
+
+    # ── Resolve the ORIGINAL sender ───────────────────────────────────
+    orig_email, orig_name = "", ""
+    hdr_from = (split.get("headers") or {}).get("from")
+    if hdr_from:
+        orig_email, orig_name = _parse_addr(hdr_from)
+    if not orig_email and (explicit_forward or split["trigger"]):
+        # The looser strategies (bare From: line, "… wrote:", first external
+        # address in the body) only run when the message actually carries a
+        # forward signal. For an internal sender with no forward structure
+        # at all, scanning the body for "some external address" would pick
+        # up whatever happens to sit in a signature — better to reject.
+        found = _extract_forwarded_sender(subject, body_text)
+        if found:
+            orig_email, orig_name = found
+
+    if not orig_email or "@" not in orig_email:
+        info["reason"] = "forwarded email: original sender not identifiable"
+        msg["_forward"] = info
+        return info
+
+    orig_domain = orig_email.split("@", 1)[1].lower()
+    if orig_domain in skip:
+        # The "original" is another internal address — an internal thread,
+        # not a customer lead. Never attribute it to the forwarder.
+        info["reason"] = ("forwarded email: original sender is also internal "
+                          f"({orig_domain})")
+        msg["_forward"] = info
+        return info
+
+    if frm_email and orig_email == frm_email.lower():
+        info["reason"] = ("forwarded email: original sender is the forwarder "
+                          "themselves")
+        msg["_forward"] = info
+        return info
+
+    # Original subject — prefer the forwarded Subject: header, else strip
+    # the Fwd:/Re: prefixes off the outer subject.
+    hdr_subject = (split.get("headers") or {}).get("subject") or ""
+    info["original_subject"] = (hdr_subject.strip()
+                                or _SUBJECT_PREFIX_RE.sub("", subject).strip())
+    info["original_sender"] = orig_email
+    info["original_name"]   = orig_name
+    info["promoted"]        = True
+
+    # Rewrite in place so downstream sees the customer, not the employee.
     msg["from"] = {"emailAddress": {"address": orig_email,
                                     "name": orig_name or ""}}
-    msg["_forwarded_by"] = {"email": frm_email, "name": frm_name}
-    return {"forwarded_by": frm_email, "original_sender": orig_email}
+    if info["forwarded_by"]:
+        msg["_forwarded_by"] = info["forwarded_by"]
+    msg["_forward"] = info
+    return info
+
+
+def _promote_forwarded_sender(msg: dict) -> Optional[dict]:
+    """Back-compat wrapper. Returns a dict describing the promotion, or
+    None when nothing was rewritten."""
+    info = analyze_forward(msg)
+    if not info.get("promoted"):
+        return None
+    return {"forwarded_by": (info.get("forwarded_by") or {}).get("email"),
+            "original_sender": info.get("original_sender")}
 
 
 def _get_body_text(msg: dict) -> str:
@@ -532,20 +772,33 @@ def extract_lead(msg: dict) -> Optional[dict]:
         signals (rfq, cargo_keywords, origin, destination, urgency),
         confidence, skip_reason
 
+    For a forwarded email the payload describes the ORIGINAL message
+    inside the forward — `subject` and `body_text` are the original
+    subject/content, and `email` / `contact_name` are the original
+    external sender. The forwarding employee is recorded separately under
+    `forwarded_by` / `forward_note` and never becomes the contact.
+
     If `skip_reason` is set, the caller should not create a lead.
     """
     if not isinstance(msg, dict):
         return None
 
-    # v2026-08 — mailbox mode: if an internal Procam employee forwarded a
-    # customer email to the CRM inbox, rewrite msg["from"] to the ORIGINAL
-    # external sender so the rest of the pipeline (skip check, dedup,
-    # AI extract, Lead attribution) treats the customer as the source.
-    _promote_forwarded_sender(msg)
+    # v2026-09 — the leads inbox receives forwards. Unwrap the container:
+    # rewrite msg["from"] to the ORIGINAL external sender so every step
+    # downstream (skip check, dedup, AI extract, Lead attribution) treats
+    # the customer as the source, not the employee who forwarded it.
+    fwd = analyze_forward(msg)
 
     subject = (msg.get("subject") or "").strip()
     from_email, from_name = _sender_info(msg)
     body_text = _get_body_text(msg)
+
+    # For a resolved forward, parse the ORIGINAL message only — the
+    # employee's covering note is kept aside so it never pollutes the
+    # signals, the AI extraction or the lead notes.
+    if fwd.get("promoted"):
+        subject   = fwd.get("original_subject") or _SUBJECT_PREFIX_RE.sub("", subject).strip()
+        body_text = fwd.get("original_body") or body_text
 
     payload = {
         "company": "",
@@ -563,6 +816,13 @@ def extract_lead(msg: dict) -> Optional[dict]:
         },
         "confidence": 0.0,
         "skip_reason": None,
+        # ── Forward metadata (consumed by the enricher) ────────────────
+        "is_forward": bool(fwd.get("is_forward")),
+        "forward_resolved": bool(fwd.get("promoted")),
+        "forward_reason": fwd.get("reason"),
+        "forwarded_by": fwd.get("forwarded_by"),
+        "forward_note": fwd.get("forward_note") or "",
+        "outer_subject": (msg.get("subject") or "").strip(),
     }
 
     reason = _should_skip(msg)
@@ -630,12 +890,8 @@ def extract_lead(msg: dict) -> Optional[dict]:
     # clears 0.5 easily; weak-signal emails get filtered here for free.
     # v2026-08 — forwarded-by-internal emails are already vetted by a
     # Procam employee, so don't second-guess them with confidence scores.
-    is_internal_forward = bool(msg.get("_forwarded_by"))
+    is_internal_forward = bool(payload.get("forward_resolved"))
     if not is_internal_forward and score < 0.5:
         payload["skip_reason"] = "low confidence"
-
-    # Surface the forwarded-by breadcrumb so downstream steps can record it.
-    if is_internal_forward:
-        payload["forwarded_by"] = msg.get("_forwarded_by")
 
     return payload
