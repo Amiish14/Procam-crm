@@ -148,6 +148,12 @@ def _is_rate_limited(err) -> bool:
     return 'rate_limit' in text or 'error code: 429' in text or '429' == text[:3]
 
 
+def _is_daily_limit(err) -> bool:
+    """Distinguish a per-day quota from a per-minute burst limit."""
+    text = str(err).lower()
+    return 'tokens per day' in text or '(tpd)' in text or 'requests per day' in text
+
+
 def _retry_after_seconds(err, attempt: int) -> float:
     """How long to wait before retrying a 429. Groq embeds the answer in the
     message ("Please try again in 360ms" / "in 2.5s"); fall back to
@@ -233,7 +239,23 @@ def extract(msg: dict, regex_result: dict) -> Optional[dict]:
                         resp = _chat(client, model, user, json_mode=False)
                         break
                     if _is_rate_limited(je) and attempt < _RATE_LIMIT_RETRIES:
+                        # A per-minute (TPM) limit clears in seconds and is
+                        # worth waiting for. A per-day (TPD) limit is not:
+                        # Groq asks for minutes, so retrying just burns time
+                        # on every message. Fail fast and let the caller fall
+                        # back to regex-only extraction.
+                        if _is_daily_limit(je):
+                            log.warning('Groq DAILY token limit reached — '
+                                        'skipping AI extraction until it '
+                                        'resets. Leads still ingest, without '
+                                        'AI-extracted fields.')
+                            return None
                         wait = _retry_after_seconds(je, attempt)
+                        if wait >= _RATE_LIMIT_MAX_SLEEP:
+                            log.warning('Groq asked to wait %.0fs — longer '
+                                        'than we will hold a request. '
+                                        'Skipping AI for this message.', wait)
+                            return None
                         log.info('Groq rate limited on %s — retrying in %.2fs '
                                  '(attempt %d/%d)', model, wait, attempt + 1,
                                  _RATE_LIMIT_RETRIES)
