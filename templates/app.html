@@ -1062,6 +1062,22 @@ window.CRMToast = (function(){
     <div class="date-stamp" id="dDate"></div>
   </div>
 
+  <!-- v2026-09-02 · MY WORK — per-employee pendency. Answers "what have I
+       done and what is still on me", scoped by role: an individual sees
+       their own leads, a vertical head their team, an admin everything. -->
+  <div class="card" id="myWorkCard" style="margin-bottom:.75rem;display:none;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+      <div>
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:var(--red)">My Work</div>
+        <div style="font-size:12.5px;color:var(--text-2);margin-top:2px;" id="mwSub"></div>
+      </div>
+      <button class="btn btn-sec btn-xs" onclick="loadMyWork()">Refresh</button>
+    </div>
+    <div id="mwTiles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px;"></div>
+    <div id="mwStages" style="margin-top:14px;"></div>
+    <div id="mwActions" style="margin-top:16px;"></div>
+  </div>
+
   <!-- Filter bar -->
   <div class="card" style="padding:.75rem 1rem;margin-bottom:.75rem;">
     <div style="display:flex;flex-wrap:wrap;gap:.55rem;align-items:end;">
@@ -1743,6 +1759,7 @@ CRM.paintScopeToggle = function(){
   const paint = function(){ if (CRM.paintScopeToggle) CRM.paintScopeToggle(); };
   if (document.readyState !== 'loading') setTimeout(paint, 0);
   else document.addEventListener('DOMContentLoaded', paint);
+  setTimeout(function(){ try{ loadMyWork(); }catch(e){} }, 300);
 
   // v2026-09-02 — /leads/<id> redirects here as ?lead=<id> (see
   // app.py::lead_deeplink). Open that lead once the app has painted, then
@@ -4575,6 +4592,74 @@ window.onunhandledrejection = function(e){
   console.error('Unhandled promise rejection:', e.reason);
 };
 init().catch(err=>console.error('init() failed:', err));
+
+/* ═══ MY WORK — per-employee pendency panel (v2026-09-02) ═══ */
+function mwTile(label, n, tone, hint){
+  const colour = tone === 'bad'  ? 'var(--red)'
+               : tone === 'warn' ? '#E65100'
+               : tone === 'good' ? '#2E7D32' : 'var(--ink)';
+  return `<div title="${e(hint||'')}" style="border:1px solid var(--border-2);border-radius:var(--r);padding:12px 14px;background:var(--surface-2);">
+    <div style="font-size:24px;font-weight:700;line-height:1.1;color:${colour}">${n}</div>
+    <div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);margin-top:4px;font-weight:600">${e(label)}</div>
+  </div>`;
+}
+
+async function loadMyWork(){
+  const card = g('myWorkCard'); if(!card) return;
+  let d;
+  try { d = await api('/api/my-work'); } catch(err){ return; }
+  if(!d || !d.ok) return;
+  card.style.display = '';
+
+  const p = d.pending || {}, done = d.done || {};
+  g('mwSub').textContent =
+    (d.scope === 'team' ? 'Across your team' : 'Your leads')
+    + ' · as of ' + (d.as_of || '');
+
+  g('mwTiles').innerHTML =
+      mwTile('Overdue follow-up', p.overdue||0, (p.overdue?'bad':'good'),
+             'Follow-up date has passed')
+    + mwTile('Due today', p.due_today||0, (p.due_today?'warn':''),
+             'Follow-up scheduled for today')
+    + mwTile('Idle 3+ days', p.untouched_3d||0, (p.untouched_3d?'warn':''),
+             'Open leads with no update in over 3 days')
+    + mwTile('Never actioned', p.never_actioned||0, (p.never_actioned?'warn':''),
+             'No call, intro mail or meeting logged yet')
+    + mwTile('Awaiting quote', p.awaiting_quote||0, (p.awaiting_quote?'warn':''),
+             'RFQ generated but not yet quoted')
+    + mwTile('In negotiation', p.in_negotiation||0, '',
+             'Quoted or under negotiation')
+    + mwTile('Needs review', p.needs_review||0, (p.needs_review?'warn':''),
+             'Email leads with no contact address extracted')
+    + mwTile('Won this month', done.won_mtd||0, 'good', 'Closed Won since the 1st')
+    + mwTile('New this month', done.new_mtd||0, '', 'Leads created since the 1st');
+
+  const stages = d.stages || [];
+  const total  = stages.reduce((a,x)=>a+x.count, 0) || 1;
+  g('mwStages').innerHTML = !stages.length ? '' :
+    `<div class="fm-s" style="margin-top:0">Open pipeline</div>` +
+    stages.map(x=>`<div class="bar-row">
+        <div class="bar-label">${e(x.stage)}</div>
+        <div class="bar-bg"><div class="bar-fill" style="width:${Math.round(100*x.count/total)}%;background:var(--red)"></div></div>
+        <div class="bar-val">${x.count}</div>
+      </div>`).join('');
+
+  const acts = d.actions || [];
+  g('mwActions').innerHTML = !acts.length
+    ? `<div class="fm-s">Needs action now</div><div style="font-size:12.5px;color:var(--text-2)">Nothing overdue or due today. </div>`
+    : `<div class="fm-s">Needs action now (${acts.length})</div>
+       <div class="table-wrap"><table>
+         <tr><th>Company</th><th>Contact</th><th>Stage</th><th>Follow-up</th><th>Idle</th></tr>
+         ${acts.map(a=>`<tr style="cursor:pointer" onclick="openLd(${a.id})">
+            <td class="td-m">${e(a.company||'—')}</td>
+            <td>${e(a.pic||'—')}</td>
+            <td>${e(a.stage||'')}</td>
+            <td>${e(a.followup||'')}</td>
+            <td>${a.days_idle==null?'':a.days_idle+'d'}</td>
+          </tr>`).join('')}
+       </table></div>`;
+}
+
 </script>
 </body>
 </html>

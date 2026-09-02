@@ -2062,6 +2062,105 @@ def api_dashboard_summary():
     })
 
 
+@app.route('/api/my-work')
+@require_auth
+def api_my_work():
+    """Each employee's own pendency — what is done and what is outstanding.
+
+    Deliberately built off lead stages and activity dates rather than the
+    kpi_targets framework: that one scores appraisals over a period, while
+    this answers "what do I need to act on today". Admins and vertical
+    heads see their whole scope; an individual sees only their own leads.
+    """
+    from datetime import timedelta as _td
+
+    scoped, _codes = _scope_for_current_session()
+    today = date.today()
+    mine = scoped.filter(Lead.stage.notin_(STAGES_TERMINAL))
+
+    def _count(q):
+        try:
+            return q.count()
+        except Exception:                                        # noqa: BLE001
+            return 0
+
+    # ── Pendency buckets ──────────────────────────────────────────────
+    stale_cut = datetime.utcnow() - _td(days=3)
+    untouched = mine.filter(db.or_(Lead.updated_at.is_(None),
+                                   Lead.updated_at < stale_cut))
+    overdue   = mine.filter(Lead.followup_date.isnot(None),
+                            Lead.followup_date < today)
+    due_today = mine.filter(Lead.followup_date == today)
+    # RFQ raised but no quote sent yet.
+    awaiting_quote = mine.filter(Lead.stage == 'RFQ Generated')
+    # Quoted / negotiating — the money already on the table.
+    in_negotiation = mine.filter(Lead.stage.in_(['Quoted', 'Under Negotiation']))
+    # Never actioned at all: no call, no mail, no meeting logged.
+    never_touched = mine.filter(Lead.phone_call_date.is_(None),
+                                Lead.intro_mail_date.is_(None),
+                                Lead.meeting_date.is_(None))
+    # Email leads still needing a human to fill in the contact.
+    needs_review = scoped.filter(Lead.source == 'email',
+                                 db.or_(Lead.email.is_(None), Lead.email == ''))
+
+    # ── Done, this month ──────────────────────────────────────────────
+    month_start = today.replace(day=1)
+    won_mtd  = scoped.filter(Lead.stage == 'Won',
+                             Lead.updated_at >= datetime.combine(
+                                 month_start, datetime.min.time()))
+    new_mtd  = scoped.filter(Lead.created_at >= datetime.combine(
+                                 month_start, datetime.min.time()))
+
+    # ── Stage-wise open pipeline ──────────────────────────────────────
+    stages = []
+    for st in STAGES_PIPELINE:
+        n = _count(scoped.filter(Lead.stage == st))
+        if n:
+            stages.append({'stage': st, 'count': n})
+
+    # ── The actual list to work through, most overdue first ───────────
+    def _row(l):
+        return {
+            'id': l.id, 'company': l.company or '', 'pic': l.pic or '',
+            'stage': l.stage or '', 'email': l.email or '',
+            'phone': l.phone or '',
+            'followup': str(l.followup_date) if l.followup_date else '',
+            'days_idle': ((datetime.utcnow() - l.updated_at).days
+                          if l.updated_at else None),
+            'assigned_name': l.assigned_name or '',
+        }
+
+    action_list = (overdue.order_by(Lead.followup_date.asc()).limit(50).all()
+                   + due_today.order_by(Lead.company.asc()).limit(25).all())
+    seen, actions = set(), []
+    for l in action_list:
+        if l.id not in seen:
+            seen.add(l.id)
+            actions.append(_row(l))
+
+    return jsonify({
+        'ok': True,
+        'scope': ('team' if session.get('role') == 'admin' else 'mine'),
+        'as_of': str(today),
+        'pending': {
+            'open_leads':      _count(mine),
+            'overdue':         _count(overdue),
+            'due_today':       _count(due_today),
+            'untouched_3d':    _count(untouched),
+            'never_actioned':  _count(never_touched),
+            'awaiting_quote':  _count(awaiting_quote),
+            'in_negotiation':  _count(in_negotiation),
+            'needs_review':    _count(needs_review),
+        },
+        'done': {
+            'won_mtd': _count(won_mtd),
+            'new_mtd': _count(new_mtd),
+        },
+        'stages':  stages,
+        'actions': actions[:50],
+    })
+
+
 @app.route('/api/dashboard/records')
 @require_auth
 def api_dashboard_records():
