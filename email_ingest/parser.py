@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Optional, Tuple, List
 
@@ -377,6 +378,35 @@ def _company_from_domain(email: str) -> str:
     if not root:
         return ""
     return root.title()
+
+
+def received_datetime(msg: dict) -> Optional[datetime]:
+    """When the message actually landed in the mailbox, as naive UTC.
+
+    Graph sends `receivedDateTime` as ISO-8601 Zulu. The CRM stores every
+    timestamp as naive UTC (see Lead.created_at), so we normalise to that.
+    Returns None when the field is missing or unparseable — callers fall
+    back to "now".
+    """
+    raw = ((msg or {}).get("receivedDateTime") or "").strip()
+    if not raw:
+        return None
+    txt = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+    dt = None
+    try:
+        dt = datetime.fromisoformat(txt)
+    except ValueError:
+        m = re.match(r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})", txt)
+        if m:
+            try:
+                dt = datetime.fromisoformat(m.group(1))
+            except ValueError:
+                dt = None
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def _sender_info(msg: dict) -> Tuple[str, str]:

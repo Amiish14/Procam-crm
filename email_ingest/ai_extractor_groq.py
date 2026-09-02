@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Optional
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,14 @@ _MODEL_CANDIDATES = (
 )
 _RESOLVED_MODEL = None          # first candidate that answered, cached
 _MAX_BODY_CHARS = 6000
+
+# Groq's free tier is metered on tokens-per-minute (8k TPM at time of
+# writing) and one email costs ~4-5k, so bursts and backfills hit 429
+# routinely. A 429 is transient — retry it rather than dropping the email
+# to regex-only extraction. Groq tells us how long to wait; we honour that,
+# capped so a webhook request never hangs.
+_RATE_LIMIT_RETRIES = 4
+_RATE_LIMIT_MAX_SLEEP = 12.0
 
 # Same schema as Anthropic version so the caller doesn't care which model ran.
 _SYSTEM_PROMPT = """You are a strict email-to-CRM extractor for Procam Group,
@@ -134,6 +143,27 @@ def _is_model_missing(err) -> bool:
             or 'decommissioned' in text or 'has been deprecated' in text)
 
 
+def _is_rate_limited(err) -> bool:
+    text = str(err).lower()
+    return 'rate_limit' in text or 'error code: 429' in text or '429' == text[:3]
+
+
+def _retry_after_seconds(err, attempt: int) -> float:
+    """How long to wait before retrying a 429. Groq embeds the answer in the
+    message ("Please try again in 360ms" / "in 2.5s"); fall back to
+    exponential backoff when it doesn't."""
+    m = re.search(r'try again in\s*([0-9.]+)\s*(ms|s)\b', str(err), re.I)
+    if m:
+        secs = float(m.group(1))
+        if m.group(2).lower() == 'ms':
+            secs /= 1000.0
+        # A hair of headroom — the window is measured server-side.
+        secs += 0.25
+    else:
+        secs = 2.0 ** attempt
+    return min(secs, _RATE_LIMIT_MAX_SLEEP)
+
+
 def _is_json_mode_unsupported(err) -> bool:
     """Some models reject response_format=json_object. We can still use
     them — the caller recovers the JSON object from the raw text."""
@@ -190,14 +220,30 @@ def extract(msg: dict, regex_result: dict) -> Optional[dict]:
     for model in _candidate_models():
         tried.append(model)
         try:
-            try:
-                resp = _chat(client, model, user, json_mode=True)
-            except Exception as je:                              # noqa: BLE001
-                if not _is_json_mode_unsupported(je):
+            resp = None
+            for attempt in range(_RATE_LIMIT_RETRIES + 1):
+                try:
+                    resp = _chat(client, model, user, json_mode=True)
+                    break
+                except Exception as je:                          # noqa: BLE001
+                    if _is_json_mode_unsupported(je):
+                        log.info('Groq model %s rejects JSON mode — retrying '
+                                 'without it (JSON is recovered from the raw '
+                                 'reply)', model)
+                        resp = _chat(client, model, user, json_mode=False)
+                        break
+                    if _is_rate_limited(je) and attempt < _RATE_LIMIT_RETRIES:
+                        wait = _retry_after_seconds(je, attempt)
+                        log.info('Groq rate limited on %s — retrying in %.2fs '
+                                 '(attempt %d/%d)', model, wait, attempt + 1,
+                                 _RATE_LIMIT_RETRIES)
+                        time.sleep(wait)
+                        continue
                     raise
-                log.info('Groq model %s rejects JSON mode — retrying without '
-                         'it (JSON is recovered from the raw reply)', model)
-                resp = _chat(client, model, user, json_mode=False)
+            if resp is None:
+                raise RuntimeError(
+                    f'Groq rate limit not cleared after '
+                    f'{_RATE_LIMIT_RETRIES} retries on {model}')
             if model != _RESOLVED_MODEL:
                 log.info('Groq extractor using model %s', model)
             _RESOLVED_MODEL = model

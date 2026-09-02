@@ -174,6 +174,34 @@ def report(leads, denylist):
           "only removed with --include-internal.")
 
 
+def _child_models():
+    """Every model with a lead_id FK. Imported lazily and defensively so a
+    schema that predates one of them still works."""
+    import app as _app
+    out = []
+    for name in ('LeadActivity', 'LeadStageHistory', 'OutreachDraft',
+                 'Opportunity', 'Competitor'):
+        m = getattr(_app, name, None)
+        if m is not None and hasattr(m, 'lead_id'):
+            out.append(m)
+    return out
+
+
+def count_orphans() -> dict:
+    """Rows in child tables pointing at a lead that no longer exists."""
+    live = {row[0] for row in db.session.query(Lead.id).all()}
+    found = {}
+    for model in _child_models():
+        try:
+            bad = [r.id for r in model.query.all()
+                   if getattr(r, 'lead_id', None) not in live]
+        except Exception:
+            continue
+        if bad:
+            found[model.__name__] = bad
+    return found
+
+
 def purge(targets, soft):
     ids = [l.id for l in targets]
     if not ids:
@@ -187,23 +215,21 @@ def purge(targets, soft):
         return
 
     # Clear every table that points at leads.id before deleting the rows.
-    from sqlalchemy import text
+    # Use the ORM models rather than raw SQL — a text() query with
+    # `IN :ids` needs an expanding bindparam and silently fails without one.
     att = LeadAttachment.query.filter(
         LeadAttachment.lead_id.in_(ids)).delete(synchronize_session=False)
     evt = EmailEvent.query.filter(EmailEvent.lead_id.in_(ids)).update(
         {EmailEvent.lead_id: None, EmailEvent.status: 'lead_deleted'},
         synchronize_session=False)
     child_rows = 0
-    for table in ('lead_activities', 'lead_stage_history', 'outreach_drafts',
-                  'opportunities', 'competitors'):
+    for model in _child_models():
         try:
-            res = db.session.execute(
-                text(f'DELETE FROM {table} WHERE lead_id IN :ids'),
-                {'ids': tuple(ids)})
-            child_rows += res.rowcount or 0
+            child_rows += model.query.filter(
+                model.lead_id.in_(ids)).delete(synchronize_session=False) or 0
         except Exception as e:                                   # noqa: BLE001
             db.session.rollback()
-            print(f'  note: could not clean {table}: {str(e)[:90]}')
+            print(f'  note: could not clean {model.__name__}: {str(e)[:90]}')
     deleted = Lead.query.filter(Lead.id.in_(ids)).delete(synchronize_session=False)
     db.session.commit()
     print(f'\nDeleted {deleted} leads, {att} attachment rows, {child_rows} '
@@ -226,6 +252,8 @@ def main():
     ap.add_argument('--since', metavar='YYYY-MM-DD')
     ap.add_argument('--include-internal', action='store_true',
                     help='also purge internal Procam threads forwarded in')
+    ap.add_argument('--clean-orphans', action='store_true',
+                    help='delete child rows left behind by an earlier purge')
     args = ap.parse_args()
 
     denylist = set(JUNK_DOMAINS)
@@ -233,6 +261,25 @@ def main():
         denylist = {d.strip().lower() for d in args.domains.split(',') if d.strip()}
 
     with app.app_context():
+        if args.clean_orphans:
+            orphans = count_orphans()
+            if not orphans:
+                print('No orphaned child rows — nothing to clean.')
+                return
+            for name, ids in orphans.items():
+                print(f'  {name}: {len(ids)} orphaned rows')
+            if not args.apply:
+                print('\nPreview only. Add --apply to delete them.')
+                return
+            for model in _child_models():
+                if model.__name__ in orphans:
+                    model.query.filter(
+                        model.id.in_(orphans[model.__name__])).delete(
+                        synchronize_session=False)
+            db.session.commit()
+            print('\nOrphaned rows deleted.')
+            return
+
         if not (args.preview or args.apply):
             report(base_query(args).all(), denylist)
             print('\nRe-run with --preview to see exactly which leads would go.')

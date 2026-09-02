@@ -129,11 +129,17 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
                 pass
 
         try:
+            # v2026-09-02 — date the Lead by when the email ARRIVED in the
+            # leads inbox, not when we happened to process it. The portal
+            # sorts on created_at, so a backfill or a replay would otherwise
+            # bunch old mail at the top under today's timestamp.
+            received = email_parser.received_datetime(msg) or datetime.utcnow()
             lead = Lead(
                 source            = 'email',
                 stage             = 'New Opportunity',
                 email_message_id  = imid,
-                created_at        = datetime.utcnow(),
+                created_at        = received,
+                onboarded_date    = received.date(),
                 **lead_kwargs,
             )
             db.session.add(lead)

@@ -182,6 +182,7 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     )
                     continue
 
+                received_at = email_parser.received_datetime(msg)
                 sender_email = (extracted.get("email") or "").strip().lower()
                 sender_domain = sender_email.split("@", 1)[1] if "@" in sender_email else ""
                 confidence = float(extracted.get("confidence") or 0.0)
@@ -375,8 +376,8 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     }),
                     email_message_id=msg_id_internet,
                     email_extracted_json=json.dumps(merged, default=str),
-                    onboarded_date=today,
-                    created_at=datetime.utcnow(),
+                    onboarded_date=(received_at.date() if received_at else today),
+                    created_at=(received_at or datetime.utcnow()),
                 )
 
                 if dry_run:
