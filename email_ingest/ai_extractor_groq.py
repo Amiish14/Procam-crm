@@ -22,7 +22,24 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = 'llama-3.3-70b-versatile'
+# Groq retires models on a rolling basis, and a retired id returns 404
+# model_not_found — which would silently drop every email back to
+# regex-only extraction. So we keep a candidate list and remember the first
+# one that actually answers. EMAIL_AI_MODEL_GROQ still wins when set, but
+# the others remain as fallback so a retirement degrades rather than breaks.
+# Ordered best-first for structured extraction. Verified against a live
+# Groq key on 2026-09-02; the Llama entries are kept last for accounts or
+# regions that still serve them.
+_MODEL_CANDIDATES = (
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
+    'qwen/qwen3.8-27b',
+    'qwen/qwen3.6-27b',
+    'llama-3.3-70b-versatile',
+    'meta-llama/llama-4-scout-17b-16e-instruct',
+    'llama-3.1-8b-instant',
+)
+_RESOLVED_MODEL = None          # first candidate that answered, cached
 _MAX_BODY_CHARS = 6000
 
 # Same schema as Anthropic version so the caller doesn't care which model ran.
@@ -81,11 +98,69 @@ def is_enabled() -> bool:
     return bool(os.environ.get('GROQ_API_KEY'))
 
 
+def _client():
+    from openai import OpenAI                                    # noqa
+    return OpenAI(api_key=os.environ['GROQ_API_KEY'],
+                  base_url='https://api.groq.com/openai/v1')
+
+
+def list_models() -> list:
+    """Model ids this API key can actually use. Diagnostic helper —
+    `python -c "from email_ingest import ai_extractor_groq as g;
+    print(g.list_models())"`."""
+    if not is_enabled():
+        return []
+    try:
+        return sorted(m.id for m in _client().models.list().data)
+    except Exception as e:                                       # noqa: BLE001
+        log.warning('Groq model listing failed: %s', e)
+        return []
+
+
+def _candidate_models() -> tuple:
+    """Models to try, best first. An explicitly configured model leads."""
+    if _RESOLVED_MODEL:
+        return (_RESOLVED_MODEL,)
+    explicit = (os.environ.get('EMAIL_AI_MODEL_GROQ') or '').strip()
+    if explicit:
+        return (explicit,) + tuple(m for m in _MODEL_CANDIDATES
+                                   if m != explicit)
+    return _MODEL_CANDIDATES
+
+
+def _is_model_missing(err) -> bool:
+    text = str(err).lower()
+    return ('model_not_found' in text or 'does not exist' in text
+            or 'decommissioned' in text or 'has been deprecated' in text)
+
+
+def _is_json_mode_unsupported(err) -> bool:
+    """Some models reject response_format=json_object. We can still use
+    them — the caller recovers the JSON object from the raw text."""
+    text = str(err).lower()
+    return 'response_format' in text or 'json_object' in text
+
+
+def _chat(client, model: str, user: str, json_mode: bool = True):
+    kw = dict(
+        model=model,
+        messages=[{'role': 'system', 'content': _SYSTEM_PROMPT},
+                  {'role': 'user',   'content': user}],
+        temperature=0.1,
+        # Generous: the reasoning-style models spend tokens before the JSON,
+        # and a truncated object is worse than a slightly costlier call.
+        max_tokens=2500,
+    )
+    if json_mode:
+        kw['response_format'] = {'type': 'json_object'}
+    return client.chat.completions.create(**kw)
+
+
 def extract(msg: dict, regex_result: dict) -> Optional[dict]:
     if not is_enabled():
         return None
     try:
-        from openai import OpenAI                                    # noqa
+        import openai                                                # noqa
     except ImportError:                                              # pragma: no cover
         log.warning('openai package not installed — Groq extractor disabled')
         return None
@@ -108,22 +183,41 @@ def extract(msg: dict, regex_result: dict) -> Optional[dict]:
             f'IMMEDIATE FROM (may be internal employee if forwarded): {from_addr}\n'
             f'BODY:\n{body}\n')
 
-    client = OpenAI(api_key=os.environ['GROQ_API_KEY'],
-                    base_url='https://api.groq.com/openai/v1')
-    model = os.environ.get('EMAIL_AI_MODEL_GROQ', _DEFAULT_MODEL)
-    try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
-                {'role': 'system', 'content': _SYSTEM_PROMPT},
-                {'role': 'user',   'content': user},
-            ],
-            response_format={'type': 'json_object'},
-            temperature=0.1,
-            max_tokens=1200,
-        )
-    except Exception as e:
-        log.warning('Groq extractor call failed: %s', e)
+    global _RESOLVED_MODEL
+    client = _client()
+    resp = None
+    tried = []
+    for model in _candidate_models():
+        tried.append(model)
+        try:
+            try:
+                resp = _chat(client, model, user, json_mode=True)
+            except Exception as je:                              # noqa: BLE001
+                if not _is_json_mode_unsupported(je):
+                    raise
+                log.info('Groq model %s rejects JSON mode — retrying without '
+                         'it (JSON is recovered from the raw reply)', model)
+                resp = _chat(client, model, user, json_mode=False)
+            if model != _RESOLVED_MODEL:
+                log.info('Groq extractor using model %s', model)
+            _RESOLVED_MODEL = model
+            break
+        except Exception as e:                                   # noqa: BLE001
+            if _is_model_missing(e):
+                # Retired or not licensed to this key — try the next one.
+                log.warning('Groq model %s unavailable, trying next: %s',
+                            model, str(e)[:140])
+                if _RESOLVED_MODEL == model:
+                    _RESOLVED_MODEL = None      # re-resolve on next call
+                continue
+            log.warning('Groq extractor call failed on %s: %s', model, e)
+            return None
+    if resp is None:
+        log.error('Groq extractor: none of the candidate models were '
+                  'available (tried %s). Run '
+                  'email_ingest.ai_extractor_groq.list_models() to see what '
+                  'this key can use, then set EMAIL_AI_MODEL_GROQ.',
+                  ', '.join(tried))
         return None
 
     raw = (resp.choices[0].message.content or '').strip()
