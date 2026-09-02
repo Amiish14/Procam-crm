@@ -3,6 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="csrf-token" content="">
+<script>
+  (function() {
+    function _getCookie(name) {
+      var v = ('; ' + document.cookie).split('; ' + name + '=');
+      return v.length === 2 ? decodeURIComponent(v.pop().split(';').shift()) : '';
+    }
+    var _origFetch = window.fetch.bind(window);
+    window.fetch = function(input, init) {
+      init = init || {};
+      var method = (init.method || 'GET').toUpperCase();
+      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+        init.headers = new Headers(init.headers || {});
+        var t = _getCookie('csrf_token');
+        if (t) init.headers.set('X-CSRFToken', t);
+      }
+      return _origFetch(input, init);
+    };
+  })();
+</script>
 <title>Procam CRM</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=Barlow+Condensed:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Inter+Tight:wght@600;700;800&display=swap" rel="stylesheet">
@@ -1025,6 +1045,7 @@ window.CRMToast = (function(){
     </div>
     <span class="admin-bdg admin-only" id="adminBdg" style="display:none">Admin</span>
     <form method="POST" action="" id="logoutForm" style="display:inline;margin:0;padding:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="button" class="logout-btn" onclick="(function(){var f=document.getElementById('logoutForm');f.action=crmUrl('/logout');f.submit();})()">Sign out</button>
     </form>
   </div>

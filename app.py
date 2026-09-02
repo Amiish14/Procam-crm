@@ -6,6 +6,8 @@
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, abort
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_wtf.csrf import CSRFProtect, generate_csrf
+from flask_talisman import Talisman
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 from flask_sqlalchemy import SQLAlchemy
@@ -141,6 +143,56 @@ db = SQLAlchemy(app)
 
 limiter = Limiter(app=app, key_func=get_remote_address,
                   default_limits=[], storage_uri='memory://')
+
+csrf = CSRFProtect(app)
+app.config['WTF_CSRF_TIME_LIMIT'] = 3600
+app.config['WTF_CSRF_SSL_STRICT'] = True
+app.config['WTF_CSRF_HEADERS'] = ['X-CSRFToken', 'X-CSRF-Token']
+
+@app.after_request
+def _set_csrf_cookie(response):
+    try:
+        response.set_cookie(
+            'csrf_token',
+            generate_csrf(),
+            secure=app.config.get('SESSION_COOKIE_SECURE', True),
+            httponly=False,
+            samesite='Lax',
+            path=app.config.get('APPLICATION_ROOT', '/'),
+        )
+    except Exception:
+        pass
+    return response
+
+Talisman(app,
+         force_https=False,   # nginx already handles this
+         strict_transport_security=True,
+         strict_transport_security_max_age=63072000,
+         strict_transport_security_include_subdomains=True,
+         session_cookie_secure=True,
+         frame_options='DENY',
+         referrer_policy='strict-origin-when-cross-origin',
+         content_security_policy={
+             'default-src': "'self'",
+             'script-src':  ["'self'", "'unsafe-inline'"],
+             'style-src':   ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://rsms.me'],
+             'font-src':    ["'self'", 'https://fonts.gstatic.com', 'https://rsms.me'],
+             'img-src':     ["'self'", 'data:', 'blob:'],
+             'connect-src': "'self'",
+             'frame-ancestors': "'none'",
+         },
+         content_security_policy_report_only=True,
+         content_security_policy_report_uri='/api/csp-report',
+)
+
+@app.route('/api/csp-report', methods=['POST'])
+@csrf.exempt
+def csp_report():
+    try:
+        app.logger.warning('CSP-VIOLATION %s', (request.get_json(force=True, silent=True) or {}))
+    except Exception:
+        pass
+    return ('', 204)
 
 # Ensure the email-lead attachment storage directory exists. Overridable via
 # EMAIL_INGEST_STORAGE_ROOT so local dev doesn't have to write to /var/www.
@@ -3487,6 +3539,11 @@ try:
     app.logger.info('Pre-Sales blueprint registered (accounts / activities).')
 except Exception as _e:                                              # pragma: no cover
     app.logger.exception('Pre-Sales blueprint failed to register: %s', _e)
+
+
+# Machine-to-machine endpoints — Microsoft Graph authenticates via clientState,
+# not CSRF. Exempt only these.
+csrf.exempt(api_email_webhook)
 
 
 if __name__ == '__main__':
