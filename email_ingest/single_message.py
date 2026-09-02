@@ -31,6 +31,7 @@ from . import ai_extractor
 from . import ai_router                                              # noqa
 from . import attachments as attachments_mod
 from . import enrich as enrich_mod
+from . import blocklist
 
 log = logging.getLogger(__name__)
 
@@ -111,6 +112,18 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
 
         forwarded_by = extracted.get('forwarded_by') or msg.get('_forwarded_by')
         sender_email  = (extracted.get('email') or '').strip().lower()
+
+        # ── Sender denylist ───────────────────────────────────────────
+        # v2026-09-02 — promotions, advertisements and newsletters never
+        # become leads. Checked against the ORIGINAL sender (the forward is
+        # already unwrapped by this point), so a newsletter relayed in by
+        # the auto-forward is blocked on its true origin, not on whoever
+        # forwarded it. Editable in data/blocked_senders.txt.
+        blocked = blocklist.check(sender_email)
+        if blocked:
+            log.info('Blocked %s [%s]', imid, blocked)
+            return {'status': 'skipped', 'reason': blocked,
+                    'lead_id': None, 'internet_message_id': imid}
         sender_domain = sender_email.split('@', 1)[1] if '@' in sender_email else ''
         # DB dedup by email / recent domain intentionally REMOVED. Users
         # explicitly asked for zero-skip behaviour; same customer emailing

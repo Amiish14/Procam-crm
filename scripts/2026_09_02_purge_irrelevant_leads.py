@@ -94,6 +94,20 @@ def is_junk_domain(domain: str, denylist: set) -> bool:
     return any(domain == d or domain.endswith('.' + d) for d in denylist)
 
 
+def live_denylist() -> set:
+    """The same list ingestion blocks on (data/blocked_senders.txt), so a
+    domain added there is both blocked going forward and purged from what
+    is already in the CRM."""
+    try:
+        from email_ingest import blocklist
+        live = blocklist.blocked_domains()
+        if live:
+            return set(live)
+    except Exception:                                            # noqa: BLE001
+        pass
+    return set(JUNK_DOMAINS)
+
+
 def is_internal_thread(lead) -> bool:
     """An internal Procam thread relayed into the leads inbox: either the
     contact is a Procam address, or the ingest could not find any external
@@ -256,7 +270,7 @@ def main():
                     help='delete child rows left behind by an earlier purge')
     args = ap.parse_args()
 
-    denylist = set(JUNK_DOMAINS)
+    denylist = live_denylist()
     if args.domains:
         denylist = {d.strip().lower() for d in args.domains.split(',') if d.strip()}
 
