@@ -193,21 +193,12 @@ def build_enriched_lead_kwargs(msg: dict, extracted: dict, *,
     merged = _apply_overrides_and_defaults(merged, extracted, sender_email,
                                            forwarded_by=forwarded_by)
 
-    # Notes body — the ORIGINAL customer message. The forwarding
-    # employee's covering note is kept above it, clearly labelled, so the
-    # sales team can see who relayed the lead and what they said without
-    # that text ever being mistaken for the customer's own words.
+    # Notes body — the ORIGINAL customer message, and nothing else.
+    # v2026-09-02 — the "[Forwarded to CRM by ...]" provenance header and
+    # the forwarder's covering note are deliberately NOT recorded. Who
+    # relayed a lead internally is not part of the customer record and must
+    # not surface anywhere in the portal.
     body_notes = (extracted.get("body_text") or "")[:8000]
-    if forwarded_by:
-        from datetime import datetime
-        who = (forwarded_by.get("email") if isinstance(forwarded_by, dict)
-               else str(forwarded_by))
-        header = (f"[Forwarded to CRM by {who} on "
-                  f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}]")
-        note = (extracted.get("forward_note") or "").strip()
-        if note:
-            header += f"\n[Their note: {note[:500]}]"
-        body_notes = f"{header}\n\n--- Original message ---\n{body_notes}"
 
     return {
         "company":              (merged["company"] or "Unknown")[:200],
@@ -224,10 +215,7 @@ def build_enriched_lead_kwargs(msg: dict, extracted: dict, *,
             "confidence":      extracted.get("confidence", 0.0),
             "source_subject":  extracted.get("subject", ""),
             "ai_used":         bool(ai_data),
-            "forwarded_by":    forwarded_by,
-            "forward_note":    (extracted.get("forward_note") or "")[:500] or None,
             "original_subject": extracted.get("subject", ""),
-            "outer_subject":   extracted.get("outer_subject", ""),
         }, default=str),
         "email_extracted_json": json.dumps(merged, default=str),
     }

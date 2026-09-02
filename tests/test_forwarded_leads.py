@@ -80,9 +80,15 @@ def test_forwarded_lead_uses_the_original_sender_not_the_forwarder():
     assert extracted["subject"] == "Requirement for ODC movement Mundra to Nagpur"
     assert extracted["forward_note"].startswith("Hi team, please log this one.")
     assert "Hi team, please log this one." not in extracted["body_text"]
-    # Provenance is kept, clearly labelled, in the notes.
-    assert f"[Forwarded to CRM by {EMPLOYEE}" in kw["notes"]
-    assert "[Their note: Hi team, please log this one." in kw["notes"]
+    # v2026-09-02 — forwarder provenance must NOT appear anywhere in the
+    # customer record: no header, no covering note, no opp_notes key.
+    assert "Forwarded to CRM by" not in kw["notes"]
+    assert EMPLOYEE not in kw["notes"]
+    assert "Their note" not in kw["notes"]
+    opp = json.loads(kw["opp_notes"])
+    assert "forwarded_by" not in opp
+    assert "forward_note" not in opp
+    assert EMPLOYEE not in kw["opp_notes"]
     # Signals come from the original message.
     assert extracted["signals"]["origin"] == "Mundra"
     assert extracted["signals"]["destination"] == "Nagpur"
