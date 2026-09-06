@@ -2,6 +2,42 @@
 
 Walk through this list after each deploy.  Each row: `[ ]` PASS / `[F]` FAIL / `[N]` N/A.
 
+## Step 0 — Automated route walk (do this first)
+
+`scripts/smoke_test_routes.py` opens every GET route in-process, impersonating
+any employee you name, and reports which ones return 5xx.  It needs no browser,
+no password, and no other user to be logged in — which matters, because during
+rollout the admin is the only account in use.
+
+    # as an admin
+    sudo -u procamapp bash -c 'cd /var/www/procam-crm && \
+        source .venv/bin/activate && \
+        python scripts/smoke_test_routes.py'
+
+    # as a salesperson — the view the team actually gets
+    sudo -u procamapp bash -c 'cd /var/www/procam-crm && \
+        source .venv/bin/activate && \
+        python scripts/smoke_test_routes.py --as EMP372011'
+
+    # full traceback for anything that failed
+    ... python scripts/smoke_test_routes.py --verbose --only '/reports/'
+
+It is **read-only**: GET only, and any endpoint whose name looks mutating
+(delete / send / purge / sweep / reset / sync …) is skipped by design.
+
+Exit code = number of routes returning 5xx, so it can gate a deploy.
+
+Legend: `OK` fine · `AUTH` permission check fired · `404` no such row (not a
+crash) · `CFG` dependency not configured on this host · `FAIL` real 5xx.
+
+- [ ] Run as admin — 0 FAIL.
+- [ ] Run as a non-admin — 0 FAIL.
+- [ ] `python -m pytest tests/ -q` — all green.
+
+Only then walk the manual checks below, which cover the things a route walk
+cannot see: layout, camera access, offline behaviour, and whether the numbers
+on the page are actually right.
+
 ## Preconditions
 
 - [ ] `python scripts/2026_09_07_crm_final.py --check` reports the

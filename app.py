@@ -3505,7 +3505,14 @@ def api_email_subscriptions_list():
         return jsonify(ok=True, subscriptions=_sub.list_active(),
                        mode=_mail_service.current_mode(),
                        mailbox=_mail_service.crm_inbox_email())
-    except Exception as e:
+    except RuntimeError as e:
+        # Graph is not configured (missing MS_* env vars).  That is a
+        # deployment state, not a crash — say so instead of "Internal
+        # server error", which sends admins hunting for a bug.
+        app.logger.warning('email subscriptions unavailable: %s', e)
+        return jsonify(ok=False, error=str(e), configured=False,
+                       mode=_mail_service.current_mode()), 503
+    except Exception:
         app.logger.exception('Unhandled error in api_email_subscriptions_list')
         return jsonify(ok=False, error='Internal server error', mode=_mail_service.current_mode()), 500
 

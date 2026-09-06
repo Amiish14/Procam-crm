@@ -808,15 +808,15 @@ def rep_accounts_by_stage():
 @bp.route('/reports/activities-by-account')
 @_require_auth
 def rep_activities_by_account():
-    from app import LeadActivity, Lead, Company
-    q = (db.session.query(Lead.company_id, func.count(LeadActivity.id))
+    # Lead.company is a plain account-name string, not a FK — unlike
+    # Opportunity.company_id.  Group on the name directly.
+    from app import LeadActivity, Lead
+    q = (db.session.query(Lead.company, func.count(LeadActivity.id))
          .join(LeadActivity, LeadActivity.lead_id == Lead.id)
-         .group_by(Lead.company_id))
-    rows = []
-    for company_id, n in q.all():
-        c = Company.query.get(company_id) if company_id else None
-        rows.append({'account': c.name if c else '(no account)',
-                     'activities': int(n)})
+         .group_by(Lead.company))
+    rows = [{'account': (name or '').strip() or '(no account)',
+             'activities': int(n)}
+            for name, n in q.all()]
     rows.sort(key=lambda r: -r['activities'])
     return _serve(rows, {
         'slug': 'activities_by_account',
