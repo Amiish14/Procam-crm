@@ -176,7 +176,7 @@ def test_survivor_name_is_tidied(dupes):
                                    stage='Won', value_inr=10))
         db.session.commit()
 
-        rows = sorted(dedup.find_groups()['lloyds metals & energy'],
+        rows = sorted(dedup.find_groups()['lloyds metals energy'],
                       key=dedup._richness, reverse=True)
         keep = rows[0]
         assert keep.id == messy.id, 'the richer record should win'
