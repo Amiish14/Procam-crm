@@ -1099,14 +1099,6 @@ window.CRMToast = (function(){
   <div class="top-title" id="topPgTtl">Overview</div>
   <nav id="topnav" class="topnav" aria-label="Primary"></nav>
   <div class="top-r">
-    <!-- v2026-08 — Lead-source scope toggle. Defaults to mailbox-only. -->
-    <button id="scopeToggle" type="button"
-            onclick="CRM.setDataScope(CRM.dataScope==='mailbox' ? 'all' : 'mailbox')"
-            style="background:transparent;border:1px solid var(--p-border);border-radius:999px;height:34px;padding:0 14px;display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--p-text);font-family:var(--p-font);transition:background var(--dur-out),border-color var(--dur-out),color var(--dur-out);"
-            title="Toggle between mailbox-only and all sources">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22 6 12 13 2 6"/></svg>
-      <span id="scopeToggleLbl">Mailbox only</span>
-    </button>
     <!-- v2026-09-04 — My Work quick-jump chip (Phase 4) -->
     <a href="/my-work" id="myWorkChip"
        style="text-decoration:none;background:transparent;border:1px solid var(--p-border);border-radius:999px;height:34px;padding:0 14px;display:inline-flex;align-items:center;gap:10px;font-size:12.5px;font-weight:600;color:var(--p-text);font-family:var(--p-font);cursor:pointer;transition:background var(--dur-out),border-color var(--dur-out),color var(--dur-out);"
@@ -1854,51 +1846,21 @@ const crmUrl = (path) => CRM_BASE + '/' + String(path).replace(/^\//, '');
    User can flip to 'all' via the "Show all sources" toggle on any list
    page. Value is remembered in localStorage. */
 window.CRM = window.CRM || {};
-CRM.dataScope = (function(){
-  try {
-    const saved = localStorage.getItem('crm_lead_scope');
-    return (saved === 'all' || saved === 'mailbox') ? saved : 'mailbox';
-  } catch(e){ return 'mailbox'; }
-})();
-CRM.setDataScope = function(s){
-  CRM.dataScope = (s === 'all') ? 'all' : 'mailbox';
-  try { localStorage.setItem('crm_lead_scope', CRM.dataScope); } catch(e){}
-  CRM.paintScopeToggle();
-  /* Force-refresh the current page so counts / filters recompute cleanly */
-  if (typeof nav === 'function') {
-    const cur = document.querySelector('.sbi.on')?.dataset?.p ||
-                document.querySelector('.topnav-item[data-p][style*="rgb"]')?.dataset?.p ||
-                'dash';
-    nav(cur);
-  }
-  if (window.CRMToast) CRMToast.info(
-    CRM.dataScope === 'mailbox'
-      ? 'Showing mailbox-forwarded leads only'
-      : 'Showing every lead source (historical + manual)');
-};
-CRM.paintScopeToggle = function(){
-  const btn = document.getElementById('scopeToggle');
-  const lbl = document.getElementById('scopeToggleLbl');
-  if (!btn || !lbl) return;
-  if (CRM.dataScope === 'mailbox') {
-    btn.style.background   = 'var(--p-red-soft)';
-    btn.style.borderColor  = 'rgba(204,30,46,.25)';
-    btn.style.color        = 'var(--p-red)';
-    lbl.textContent        = 'Mailbox only';
-    btn.title              = 'Currently showing only leads forwarded to leads@procamgroup.in. Click to show every source.';
-  } else {
-    btn.style.background   = 'transparent';
-    btn.style.borderColor  = 'var(--p-border)';
-    btn.style.color        = 'var(--p-text)';
-    lbl.textContent        = 'All sources';
-    btn.title              = 'Showing every lead source (including historical imports). Click to restrict to mailbox only.';
-  }
-};
+/* v2026-09-06 — Every lead now arrives through leads@procamgroup.in, so
+   the source toggle had nothing left to switch between and was removed
+   from the header.  The scope is pinned: lead lists, the dashboard and
+   the counts all read mailbox-sourced leads only.
+   To show historical imports and manually entered leads again, change
+   this to 'all' — the server still honours both values. */
+CRM.dataScope = 'mailbox';
+/* Kept as no-ops: older code paths and any cached page may still call
+   these, and a missing function would throw mid-render. */
+CRM.setDataScope = function(){};
+CRM.paintScopeToggle = function(){};
+try { localStorage.removeItem('crm_lead_scope'); } catch(e){}
+
 /* Paint once on load and whenever the DOM upgrades. */
 (function(){
-  const paint = function(){ if (CRM.paintScopeToggle) CRM.paintScopeToggle(); };
-  if (document.readyState !== 'loading') setTimeout(paint, 0);
-  else document.addEventListener('DOMContentLoaded', paint);
   setTimeout(function(){ try{ loadMyWork(); }catch(e){} }, 300);
 
   // v2026-09-02 — /leads/<id> redirects here as ?lead=<id> (see
@@ -4343,8 +4305,6 @@ async function doChangePw(){
     /* The right-hand cluster gives up its words too, in the same order a
        person would: the toggle label first, then the user's name. */
     @media (max-width: 1200px) {
-      #scopeToggleLbl { display: none; }
-      #scopeToggle    { padding: 0 10px; }
       .top-uname      { display: none; }
     }
     @media (max-width: 1040px) {
