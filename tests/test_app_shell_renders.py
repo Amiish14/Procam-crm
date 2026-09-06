@@ -102,3 +102,29 @@ def test_no_accidental_jinja_comment_openers():
     assert not offenders, (
         'Unclosed Jinja comment opener — put a space between the brace and '
         'the hash:\n  ' + '\n  '.join(offenders))
+
+
+def test_permission_fetch_is_prefixed():
+    """The nav's permission lookup must respect the /CRM prefix.
+
+    It once used a helper that did not exist (CRM.url), so the request went
+    to /api/access/me instead of /CRM/api/access/me, 404'd, and left the
+    permission set empty — which silently removed the Deals, Reports and
+    Access groups from everyone's navigation.
+    """
+    html = open(os.path.join(_TEMPLATES, 'app.html')).read()
+    assert "crmUrl('/api/access/me')" in html, \
+        'the /api/access/me fetch must go through crmUrl()'
+    assert 'CRM.url(' not in html, \
+        'CRM.url() does not exist — the helper is crmUrl()'
+
+
+def test_missing_permissions_do_not_empty_the_menu():
+    """An unknown permission set must show everything, not nothing.
+
+    The server enforces access independently, so failing open costs a
+    refused click; failing closed costs the user their whole menu.
+    """
+    html = open(os.path.join(_TEMPLATES, 'app.html')).read()
+    assert 'var MY_PERMS = null;' in html
+    assert 'if (MY_PERMS === null) return true;' in html

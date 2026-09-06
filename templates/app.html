@@ -4094,8 +4094,13 @@ async function doChangePw(){
 
   /* Permissions for the signed-in user.  The server enforces these
      independently — hiding a link is courtesy, not security. */
-  var MY_PERMS = new Set();
+  /* null until /api/access/me answers.  While unknown — and if the call
+     ever fails — every item shows: the server enforces access anyway, and
+     silently hiding a user's whole menu is far worse than briefly showing
+     a link they will be refused. */
+  var MY_PERMS = null;
   function mayUse(it){
+    if (MY_PERMS === null) return true;
     if (it.perm)    return MY_PERMS.has(it.perm);
     if (it.anyPerm) return it.anyPerm.some(function(p){ return MY_PERMS.has(p); });
     return true;
@@ -4141,8 +4146,9 @@ async function doChangePw(){
 
   /* Re-render once the real permission set arrives. */
   (function(){
-    var base = (window.CRM && CRM.url) ? CRM.url('') : '';
-    fetch((base || '') + '/api/access/me', {credentials:'same-origin'})
+    /* crmUrl() applies the /CRM prefix nginx serves us under.  Without it
+       this 404s and the nav loses every permission-gated group. */
+    fetch(crmUrl('/api/access/me'), {credentials:'same-origin'})
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(d){
         if(!d || !d.ok) return;
