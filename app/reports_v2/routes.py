@@ -1092,22 +1092,31 @@ def _quote_agg(field):
     if _sc is not None:
         _q = _q.filter(Quote.prepared_by_id.in_(_sc.codes))
     tally = {}
+    unattributed_value = 0.0
+    unattributed_count = 0
     for q in _q.all():
-        cid = getattr(q, 'company_id', None) or \
-              getattr(q, 'account_id', None)
-        if not cid:
-            continue
         val = getattr(q, field, None) or 0
         try:
             val = float(val)
         except Exception:
             val = 0.0
+        cid = getattr(q, 'company_id', None) or \
+              getattr(q, 'account_id', None)
+        if not cid:
+            unattributed_count += 1
+            unattributed_value += val
+            continue
         tally[cid] = tally.get(cid, 0.0) + val
     rows = []
     for cid, n in sorted(tally.items(), key=lambda kv: -kv[1]):
         c = Company.query.get(cid)
         rows.append({'account': c.name if c else '(unknown)',
                      'total': round(n, 2)})
+    if unattributed_count:
+        rows.append({
+            'account': f'(not linked to an account — {unattributed_count} '
+                       f'quote{"" if unattributed_count == 1 else "s"})',
+            'total': round(unattributed_value, 2)})
     return rows
 
 
@@ -1134,17 +1143,30 @@ def rep_won_value_by_account():
     _sc = _scope()
     if _sc is not None:
         _q = _q.filter(Opportunity.owner_emp_code.in_(_sc.codes))
+
+    # §67 — a report that silently drops rows disagrees with the database
+    # while looking correct.  Unattributed Won value is counted and shown
+    # as its own line rather than vanishing.
     tally = {}
+    unattributed_value = 0.0
+    unattributed_count = 0
     for o in _q.all():
-        if not o.company_id:
-            continue
         v = float(o.value_inr) if o.value_inr else 0.0
+        if not o.company_id:
+            unattributed_count += 1
+            unattributed_value += v
+            continue
         tally[o.company_id] = tally.get(o.company_id, 0.0) + v
     rows = []
     for cid, v in sorted(tally.items(), key=lambda kv: -kv[1]):
         c = Company.query.get(cid)
         rows.append({'account': c.name if c else '(unknown)',
                      'won_inr': round(v, 2)})
+    if unattributed_count:
+        rows.append({
+            'account': f'(not linked to an account — {unattributed_count} '
+                       f'Won deal{"" if unattributed_count == 1 else "s"})',
+            'won_inr': round(unattributed_value, 2)})
     return _serve(rows, {
         'slug': 'won_value_by_account',
         'title': 'Won Value by Account',
