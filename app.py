@@ -286,6 +286,13 @@ class Lead(db.Model):
     # review queue rather than being guessed.
     company_id       = db.Column(db.Integer, db.ForeignKey('companies.id'),
                                  nullable=True, index=True)
+    # §58 — soft delete. Archiving removes a lead from the active pipeline
+    # while keeping it, and everything linked to it, for audit and history.
+    # §54 makes this the normal action; permanent deletion is the exception.
+    is_archived      = db.Column(db.Boolean, default=False, index=True)
+    archived_at      = db.Column(db.DateTime)
+    archived_by      = db.Column(db.String(20))
+    archive_reason   = db.Column(db.String(200))
     project          = db.Column(db.String(300))
     industry         = db.Column(db.String(100))
     cost_million     = db.Column(db.Float, default=0)
@@ -3750,6 +3757,7 @@ for _mod_path, _bp_name in [
     ('app.data_quality.routes',  'data_quality_bp'),
     ('app.pic360.routes',        'pic360_bp'),
     ('app.excel_io.routes',      'excel_io_bp'),
+    ('app.bulk_admin.routes',    'bulk_admin_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])

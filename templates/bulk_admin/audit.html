@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Audit Trail — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Administration</div>
+    <h1>Audit Trail</h1>
+    <div class="crm-sub">Every archive, restore and permanent deletion —
+      who did it, when, and why. Written before the action, so it survives
+      the record it describes.</div>
+  </div>
+</div>
+
+{% if rows %}
+<div class="card"><div class="table-wrap"><table>
+  <thead><tr><th>When</th><th>Action</th><th>Record</th><th>Reason</th>
+    <th>By</th><th>Linked at the time</th></tr></thead>
+  <tbody>{% for r in rows %}
+    <tr>
+      <td>{{ r.performed_at.strftime('%Y-%m-%d %H:%M') if r.performed_at else '—' }}</td>
+      <td><span class="pill {{ 'lost' if r.action == 'delete' else ('won' if r.action == 'restore' else 'warn') }}">{{ r.action }}</span></td>
+      <td><b>{{ (r.snapshot or {}).get('company') or (r.entity_type ~ ' #' ~ r.entity_id) }}</b>
+        <div class="meta">{{ (r.snapshot or {}).get('project') or '' }}
+          {% if (r.snapshot or {}).get('stage') %}· {{ r.snapshot.stage }}{% endif %}</div></td>
+      <td>{{ r.reason or '—' }}</td>
+      <td>{{ r.performed_by }}</td>
+      <td class="meta">{% for k, v in (r.linked or {}).items() %}{% if v %}{{ v }} {{ k.replace('_',' ') }}{% if not loop.last %}, {% endif %}{% endif %}{% endfor %}</td>
+    </tr>
+  {% endfor %}</tbody>
+</table></div></div>
+{% else %}
+<div class="empty">Nothing has been archived or deleted yet.</div>
+{% endif %}
+
+</div><!-- /crm-wrap -->
+</body>
+</html>
