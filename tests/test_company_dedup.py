@@ -159,3 +159,28 @@ def test_every_merge_is_logged_and_revertible(dupes):
         assert restored.is_active is True
         assert 'merged into' not in restored.name
         assert CompanyMergeLog.query.get(target.id).reverted_at is not None
+
+
+def test_survivor_name_is_tidied(dupes):
+    """The survivor is chosen on data, not on how neatly it was typed.
+
+    A real row in the live database is "LLOYDS METALS & ENERGY LTD," —
+    that trailing comma would otherwise appear in every report.
+    """
+    with flask_app.app_context():
+        messy = Company(name='Lloyds Metals & Energy Ltd,', is_active=True)
+        clean = Company(name='Lloyds Metals & Energy Ltd', is_active=True)
+        db.session.add_all([messy, clean])
+        db.session.flush()
+        db.session.add(Opportunity(opp_number='L-1', company_id=messy.id,
+                                   stage='Won', value_inr=10))
+        db.session.commit()
+
+        rows = sorted(dedup.find_groups()['lloyds metals & energy'],
+                      key=dedup._richness, reverse=True)
+        keep = rows[0]
+        assert keep.id == messy.id, 'the richer record should win'
+        for loser in rows[1:]:
+            dedup.merge(keep, loser, dry=False)
+        db.session.commit()
+        assert Company.query.get(keep.id).name == 'Lloyds Metals & Energy Ltd'

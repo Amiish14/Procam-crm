@@ -132,6 +132,15 @@ def merge(keep, loser, dry, actor='migration'):
     if filled:
         moved['_fields_filled'] = filled
 
+    # The survivor is picked on data, not on how neatly it was typed, so
+    # tidy trailing punctuation — 'LLOYDS METALS & ENERGY LTD,' otherwise
+    # carries that comma into every report from here on.
+    tidy = keep.name.rstrip(' ,;:').strip()
+    if tidy and tidy != keep.name:
+        moved['_renamed'] = f'{keep.name} → {tidy}'
+        if not dry:
+            keep.name = tidy
+
     if not dry:
         loser.is_active = False
         loser.name = f'{loser.name} [merged into #{keep.id}]'
@@ -181,6 +190,11 @@ def main():
     ap.add_argument('--revert', type=int, metavar='MERGE_ID')
     ap.add_argument('--limit', type=int, default=0,
                     help='only process the first N groups')
+    ap.add_argument('--exclude', action='append', default=[],
+                    metavar='KEY',
+                    help='skip a group by its normalised key, e.g. '
+                         '--exclude adani (repeatable). Use when two '
+                         'similar names are genuinely different companies.')
     args = ap.parse_args()
 
     if args.revert:
@@ -197,6 +211,11 @@ def main():
                 CompanyMergeLog.__table__.create(db.engine)
 
         groups = find_groups()
+        skipped = [k for k in args.exclude if k in groups]
+        for key in skipped:
+            groups.pop(key)
+        if skipped:
+            print(f'\nExcluded by request: {", ".join(skipped)}')
         if args.limit:
             groups = dict(list(groups.items())[:args.limit])
 
@@ -217,6 +236,8 @@ def main():
                 print(f'      ← #{loser.id} "{loser.name[:30]}"  ({detail})')
                 if fields:
                     print(f'         fills blanks: {", ".join(fields)}')
+                if moved.get('_renamed'):
+                    print(f'         tidy name:    {moved["_renamed"]}')
                 total_moved += sum(v for k, v in moved.items()
                                    if not k.startswith('_'))
 
