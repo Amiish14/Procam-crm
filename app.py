@@ -937,7 +937,8 @@ def api_create_employee():
 def api_update_employee(eid):
     emp = Employee.query.get_or_404(eid)
     d = request.get_json()
-    for field in ('name','email','mobile','department','designation','vertical','role','is_active'):
+    for field in ('name','email','mobile','department','designation','vertical',
+                  'role','is_active','is_vertical_head'):
         if field in d:
             setattr(emp, field, d[field])
     if 'industries' in d:

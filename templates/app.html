@@ -1165,6 +1165,7 @@ window.CRMToast = (function(){
   <div class="sbi admin-only" onclick="nav('team')" data-p="team"><span class="ic">👥</span>Team</div>
   <div class="sbi admin-only" onclick="nav('assign')" data-p="assign"><span class="ic">⚡</span>Assign</div>
   <div class="sbi admin-only" onclick="nav('employees')" data-p="employees"><span class="ic">🔐</span>Employees</div>
+  <div class="sbi admin-only" onclick="nav('access')" data-p="access"><span class="ic">🛡️</span>Access Control</div>
   <div class="sbi admin-only" onclick="nav('kpi')"       data-p="kpi"><span class="ic">🎯</span>KPI Settings</div>
   <div class="sbi"            onclick="nav('perf')"      data-p="perf"><span class="ic">📈</span>My Performance</div>
   <div class="sbi"            onclick="nav('scorecard')" data-p="scorecard"><span class="ic">🏆</span>Team Scorecard</div>
@@ -1682,6 +1683,23 @@ window.CRMToast = (function(){
   <div id="empCnt"></div>
 </div>
 
+<!-- ACCESS CONTROL — who can see which reports -->
+<div class="page" id="pg-access">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">Access Control</div>
+    <div class="pg-sub">Who can open Reports, and how much of the company they see</div></div>
+    <button class="btn btn-ghost" onclick="rAccess()">Refresh</button>
+  </div>
+  <div class="card" style="margin-bottom:14px"><div style="padding:14px 16px;font-size:13px;line-height:1.7;color:var(--p-text-2)">
+    <b style="color:var(--p-ink)">Admin</b> &mdash; every report, whole company.<br>
+    <b style="color:var(--p-ink)">Vertical Head</b> &mdash; every report, but only their own vertical's
+    tasks, accounts, leads, deals and quotes.<br>
+    <b style="color:var(--p-ink)">Everyone else</b> &mdash; no reports; they work from My Work,
+    which shows what is assigned to them.
+  </div></div>
+  <div id="accCnt"></div>
+</div>
+
 <!-- UPLOAD -->
 <div class="page" id="pg-upload">
   <div class="pg-hd"><div><div class="pg-ttl">Upload Data</div><div class="pg-sub">Import from any format — project subscription, visiting cards, CRM exports</div></div></div>
@@ -1958,7 +1976,7 @@ async function init(){
 }
 
 // ── NAV ──
-const PG_TITLES={dash:'Overview',pipeline:'Sales Pipeline','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-biz':'Business Discussion','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated','inb-quoted':'Quoted','inb-negot':'Under Negotiation',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard'};
+const PG_TITLES={dash:'Overview',pipeline:'Sales Pipeline','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-biz':'Business Discussion','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated','inb-quoted':'Quoted','inb-negot':'Under Negotiation',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard',access:'Access Control'};
 // Legacy 6-stage inbox nav ids alias into the unified Sales Pipeline
 // page pre-filtered to the corresponding stage. Preserves any old
 // bookmarked deep-link.
@@ -1990,7 +2008,7 @@ function nav(p){
   const t=g('topPgTtl'); if(t) t.textContent=PG_TITLES[p]||'';
   const fns={dash:rDash,pipeline:rPipeline,leads:rLeads,all:rAll,outreach:rOR,contacts:rCt,news:rNews,
               team:rTeam,assign:rAssign,employees:rEmps,opp:rOpp,upload:()=>upTab('xl'),
-              kpi:rKpiAdmin,perf:rPerf,scorecard:rScorecard};
+              kpi:rKpiAdmin,perf:rPerf,scorecard:rScorecard,access:rAccess};
   if(fns[p]) try{fns[p]();}catch(err){console.error('nav error for page',p,err);}
   if(p==='inb-new')   rInbox('New','inbNew');
   if(p==='inb-call')  rInbox('Call Done','inbCall');
@@ -3685,6 +3703,121 @@ async function toggleEmp(id){
   if(r.ok){rEmps();toast(`${emp.name} ${!emp.is_active?'activated':'deactivated'} ✓`);}
 }
 
+// ── ACCESS CONTROL ──
+// Mirrors the server-side gate in app/reports_v2/routes.py: admins see the
+// whole company, vertical heads see their own vertical, everyone else gets
+// no reports at all.
+let ACCESS_SHOW_INACTIVE = false;
+
+function accessOf(emp){
+  if(emp.role === 'admin')
+    return {cls:'sL', txt:'Whole company'};
+  if(emp.is_vertical_head){
+    const v = (emp.vertical || '').trim();
+    return v ? {cls:'sW', txt:v + ' only'}
+             : {cls:'sR', txt:'No vertical set — sees only their own records'};
+  }
+  return {cls:'sN', txt:'My Work only'};
+}
+
+async function rAccess(){
+  let emps = await api('/api/employees');
+  if(!Array.isArray(emps)) emps = [];
+  const shown  = emps.filter(x => ACCESS_SHOW_INACTIVE || x.is_active);
+  const hidden = emps.length - shown.length;
+
+  const groups = {};
+  shown.forEach(x => {
+    const v = (x.vertical || '').trim() || '(no vertical)';
+    (groups[v] = groups[v] || []).push(x);
+  });
+
+  const admins = shown.filter(x => x.role === 'admin').length;
+  const heads  = shown.filter(x => x.role !== 'admin' && x.is_vertical_head).length;
+
+  let html = `<div class="card"><div style="padding:14px 16px;display:flex;
+       gap:22px;align-items:center;flex-wrap:wrap;font-size:13px">
+    <div><b style="font-size:19px;color:var(--p-ink)">${admins}</b>
+         <span style="color:var(--p-text-2)"> admins</span></div>
+    <div><b style="font-size:19px;color:var(--p-ink)">${heads}</b>
+         <span style="color:var(--p-text-2)"> vertical heads</span></div>
+    <div><b style="font-size:19px;color:var(--p-ink)">${shown.length - admins - heads}</b>
+         <span style="color:var(--p-text-2)"> without report access</span></div>
+    <label style="margin-left:auto;display:flex;align-items:center;gap:7px;
+                  cursor:pointer;color:var(--p-text-2)">
+      <input type="checkbox" ${ACCESS_SHOW_INACTIVE ? 'checked' : ''}
+             onchange="ACCESS_SHOW_INACTIVE=this.checked;rAccess()">
+      Show inactive${hidden ? ' (' + hidden + ')' : ''}
+    </label>
+  </div></div>`;
+
+  if(heads === 0 && admins > 0){
+    html += `<div class="card"><div style="padding:13px 16px;font-size:13px;
+      line-height:1.6;border-left:3px solid var(--p-warning);color:var(--p-text)">
+      <b>No vertical heads yet.</b> Only the ${admins} admin${admins===1?'':'s'}
+      can open Reports right now. Make someone a head below to give them their
+      own vertical's numbers.</div></div>`;
+  }
+
+  Object.keys(groups).sort().forEach(v => {
+    const people = groups[v].slice().sort((a,b) =>
+      (a.name || '').localeCompare(b.name || ''));
+    const vHeads = people.filter(x => x.is_vertical_head).length;
+    html += `<div class="card">
+      <div class="card-hd">
+        <div class="card-ttl">${e(v)}
+          <span style="font-weight:500;color:var(--p-text-2);font-size:12.5px">
+            · ${people.length} ${people.length === 1 ? 'person' : 'people'}</span></div>
+        <span class="b ${vHeads ? 'sW' : 'sN'}">${vHeads ? vHeads + ' head' + (vHeads===1?'':'s') : 'no head'}</span>
+      </div>
+      <table><thead><tr>
+        <th>Employee</th><th>Designation</th><th>Role</th>
+        <th>Can see</th><th style="text-align:right">Vertical head</th>
+      </tr></thead><tbody>` +
+      people.map(emp => {
+        const acc = accessOf(emp);
+        const isAdmin = emp.role === 'admin';
+        return `<tr${emp.is_active ? '' : ' style="opacity:.5"'}>
+          <td><b>${e(emp.name)}</b>
+              <span style="color:var(--p-text-3);font-size:12px"> ${e(emp.emp_code)}</span>
+              ${emp.is_active ? '' : '<span class="b sN" style="margin-left:6px">inactive</span>'}</td>
+          <td style="color:var(--p-text-2)">${e(emp.designation || '—')}</td>
+          <td>${isAdmin ? '<span class="b sL">Admin</span>'
+                        : emp.role === 'presales' ? '<span class="b sA">Pre-Sales</span>'
+                        : '<span class="b sN">' + e(emp.role || 'user') + '</span>'}</td>
+          <td><span class="b ${acc.cls}">${e(acc.txt)}</span></td>
+          <td style="text-align:right">${
+            isAdmin
+              ? '<span style="color:var(--p-text-3);font-size:12px">admin — sees all</span>'
+              : `<button class="btn btn-ghost btn-sm" onclick="toggleHead(${emp.id})">${
+                   emp.is_vertical_head ? 'Remove as head' : 'Make head'}</button>`
+          }</td>
+        </tr>`;
+      }).join('') + `</tbody></table></div>`;
+  });
+
+  g('accCnt').innerHTML = html;
+}
+
+async function toggleHead(id){
+  const emps = await api('/api/employees');
+  const emp  = Array.isArray(emps) ? emps.find(x => x.id === id) : null;
+  if(!emp) return;
+  const next = !emp.is_vertical_head;
+  if(next && !(emp.vertical || '').trim()){
+    if(!confirm(emp.name + ' has no vertical set, so as a head they would see '
+                + 'only their own records. Set their vertical first?\n\n'
+                + 'OK to continue anyway, Cancel to stop.')) return;
+  }
+  const r = await api('/api/employees/' + id, {method:'PUT',
+              body: JSON.stringify({is_vertical_head: next})});
+  if(r.ok){
+    rAccess();
+    toast(emp.name + (next ? ' is now a vertical head ✓'
+                           : ' is no longer a vertical head'), 'ok');
+  } else toast(r.error || 'Could not update', 'err');
+}
+
 // ── UPLOAD ──
 async function upTab(t){
   document.querySelectorAll('#upTabs .tab').forEach((el,i)=>el.classList.toggle('on',['xl','mn','vc'][i]===t));
@@ -3865,6 +3998,7 @@ async function doChangePw(){
         { page: 'team',      label: 'Team',                 ic: 'users',         adminOnly: true },
         { page: 'assign',    label: 'Assign',               ic: 'zap',           adminOnly: true },
         { page: 'employees', label: 'Employees',            ic: 'user_lock',     adminOnly: true },
+        { page: 'access',    label: 'Access Control',       ic: 'key',           adminOnly: true },
         { page: 'kpi',       label: 'KPI Settings',         ic: 'settings',      adminOnly: true },
         { page: 'upload',    label: 'Upload',               ic: 'upload',        adminOnly: true },
         { page: 'pwchange',  label: 'Change Password',      ic: 'key'           },
