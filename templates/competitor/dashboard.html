@@ -6,34 +6,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-<style>
-  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
-        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
-        --font:'Barlow','Inter',system-ui,sans-serif;}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:var(--font);background:var(--bg);color:var(--text);
-       font-size:14px;padding:24px 32px 60px}
-  h1{font-size:24px;font-weight:700;color:var(--ink)}
-  h3{font-size:14px;color:var(--ink);margin-bottom:10px}
-  .hero{display:flex;align-items:flex-end;justify-content:space-between;
-        margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)}
-  .btn{display:inline-block;padding:6px 12px;border:1px solid var(--border);
-       border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer;
-       font-size:13px;font-weight:600;font-family:var(--font)}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-  .card{background:var(--card);border:1px solid var(--border);border-radius:8px;
-        padding:16px}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)}
-  th{background:#F9FAFB;font-weight:600;color:var(--text-2);
-     text-transform:uppercase;font-size:11px}
-  .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
-  .kpi .tile{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px}
-  .kpi .k{font-size:11px;color:var(--text-2);text-transform:uppercase;margin-bottom:4px}
-  .kpi .v{font-size:22px;font-weight:700;color:var(--ink)}
-</style>
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
 </head>
 <body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
 
 <div class="hero">
   <div><h1>Competitor Dashboard</h1>
@@ -116,5 +93,6 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;',
   document.getElementById('kAsm').textContent = '—';
 })();
 </script>
+</div><!-- /crm-wrap -->
 </body>
 </html>

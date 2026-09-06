@@ -3,23 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <title>Quote {{ quote.quote_number }} — printable</title>
-<style>
-  body{font-family:Helvetica,Arial,sans-serif;color:#000;margin:24px 32px;font-size:12px}
-  h1{font-size:20px;margin-bottom:4px}
-  h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#666;
-     margin:18px 0 6px}
-  table{width:100%;border-collapse:collapse;margin-bottom:12px}
-  th,td{padding:6px 8px;border:1px solid #999;font-size:11px}
-  th{background:#eee;font-weight:600;text-align:left}
-  .num{text-align:right;font-variant-numeric:tabular-nums}
-  .meta td{border:0;padding:2px 6px}
-  .btn{display:inline-block;padding:6px 12px;border:1px solid #333;background:#fff;
-       cursor:pointer;font-size:12px;text-decoration:none;color:#000}
-  .totals{width:auto;margin-left:auto}
-  @media print { .noprint{display:none} }
-</style>
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
 </head>
 <body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
 
 <div class="noprint" style="margin-bottom:14px">
   <a class="btn" href="{{ url_prefix }}/quotes/{{ quote.id }}">← Back</a>
@@ -82,5 +70,6 @@
   <h2>Remarks</h2><div>{{ quote.remarks }}</div>
 {% endif %}
 
+</div><!-- /crm-wrap -->
 </body>
 </html>

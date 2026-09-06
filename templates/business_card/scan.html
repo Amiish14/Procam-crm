@@ -6,51 +6,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="csrf-token" content="{{ csrf_token() if csrf_token else '' }}">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
-        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
-        --font:'Barlow','Inter',system-ui,sans-serif;}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:var(--font);background:var(--bg);color:var(--text);
-       font-size:14px;padding:24px 32px 60px}
-  h1{font-size:24px;font-weight:700;color:var(--ink);margin-bottom:16px}
-  h2{font-size:16px;color:var(--ink);margin:20px 0 10px}
-  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;
-        padding:20px;max-width:920px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,.03)}
-  .drop{border:2px dashed var(--border);border-radius:12px;padding:40px;
-        text-align:center;background:#FAFBFC;cursor:pointer;transition:.2s}
-  .drop.dragover{border-color:var(--red);background:#FDEEF0}
-  .drop input[type="file"]{display:none}
-  .btn{display:inline-block;padding:10px 18px;border:1px solid var(--border);
-       border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer;
-       font-family:var(--font);font-size:14px;font-weight:600;text-decoration:none;
-       min-height:44px}
-  .btn.primary{background:var(--red);color:#fff;border-color:var(--red)}
-  .btn.dark{background:var(--ink);color:#fff;border-color:var(--ink)}
-  .btn:disabled{opacity:.5;cursor:not-allowed}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-  .field{display:flex;flex-direction:column;gap:4px}
-  .field label{font-size:12px;color:var(--text-2);text-transform:uppercase;
-               letter-spacing:.04em;font-weight:600}
-  .field input,.field textarea{padding:8px 10px;border:1px solid var(--border);
-               border-radius:6px;font-family:var(--font);font-size:14px;background:#fff}
-  .spinner{display:inline-block;width:22px;height:22px;border:3px solid var(--border);
-           border-top-color:var(--red);border-radius:50%;animation:spin 1s linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .dup{padding:8px 10px;background:#FDEEF0;border:1px solid #F4B0BA;
-       border-radius:6px;margin-bottom:6px;display:flex;justify-content:space-between;
-       align-items:center;font-size:13px}
-  .actions{display:flex;gap:12px;margin-top:16px;flex-wrap:wrap}
-  .err{color:#B91C1C;font-size:13px;margin-top:8px}
-  .muted{color:var(--text-2);font-size:12px}
-  @media (max-width:640px){
-    body{padding:16px}
-    .grid{grid-template-columns:1fr}
-    .card{padding:14px}
-  }
-</style>
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
 </head>
 <body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
 
 <h1>Scan Business Card</h1>
 
@@ -243,5 +203,6 @@
   };
 })();
 </script>
+</div><!-- /crm-wrap -->
 </body>
 </html>

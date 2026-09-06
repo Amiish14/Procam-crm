@@ -1,0 +1,42 @@
+{# Shared top bar for every page outside the single-page app, so the
+   modules look and navigate like one product.  Links are filtered by the
+   same permissions the server enforces, so nothing is offered that would
+   be refused. #}
+<header class="crm-top">
+  <a class="crm-brand" href="{{ url_prefix }}/app">
+    <img src="https://www.procamlogistics.com/public/frontend/assets/img/logo.png" alt="Procam"> CRM
+  </a>
+  <nav aria-label="Sections">
+    <a href="{{ url_prefix }}/my-work"
+       class="{{ 'on' if request.path.startswith('/my-work') }}">My Work</a>
+    {% if can('module.rfq') %}
+    <a href="{{ url_prefix }}/rfqs"
+       class="{{ 'on' if request.path.startswith('/rfqs') }}">RFQs</a>
+    {% endif %}
+    {% if can('module.quotes') %}
+    <a href="{{ url_prefix }}/quotes"
+       class="{{ 'on' if request.path.startswith('/quotes') }}">Quotes</a>
+    {% endif %}
+    {% if can('module.handovers') %}
+    <a href="{{ url_prefix }}/handovers"
+       class="{{ 'on' if request.path.startswith('/handovers') }}">Handovers</a>
+    {% endif %}
+    {% if can('module.competitors') %}
+    <a href="{{ url_prefix }}/competitors"
+       class="{{ 'on' if request.path.startswith('/competitors') }}">Competitors</a>
+    {% endif %}
+    {% if can('module.funnels') %}
+    <a href="{{ url_prefix }}/funnels/account-development"
+       class="{{ 'on' if request.path.startswith('/funnels') }}">Funnels</a>
+    {% endif %}
+    {% if can('reports.action') or can('reports.competitor')
+          or can('reports.accounts') %}
+    <a href="{{ url_prefix }}/reports"
+       class="{{ 'on' if request.path.startswith('/reports') }}">Reports</a>
+    {% endif %}
+  </nav>
+  <div class="spacer toolbar">
+    <a class="btn tiny ghost" href="{{ url_prefix }}/help">Help</a>
+    <a class="btn tiny" href="{{ url_prefix }}/app">Back to CRM</a>
+  </div>
+</header>

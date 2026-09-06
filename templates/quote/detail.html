@@ -5,53 +5,11 @@
 <title>Quote {{ quote.quote_number }} — Procam CRM</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
-        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
-        --success:#059669;--warning:#B45309;--danger:#B91C1C;--info:#1D4ED8;
-        --font:'Barlow','Inter',system-ui,sans-serif;}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:var(--font);background:var(--bg);color:var(--text);
-       font-size:14px;padding:24px 32px 60px}
-  a{color:inherit;text-decoration:none}
-  h1{font-size:22px;font-weight:700;color:var(--ink)}
-  h2{font-size:15px;font-weight:700;color:var(--ink);margin-bottom:12px}
-  .btn{display:inline-block;padding:7px 12px;border:1px solid var(--border);
-       border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer;
-       font-family:var(--font);font-size:13px;font-weight:600}
-  .btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
-  .btn.success{background:var(--success);color:#fff;border-color:var(--success)}
-  .btn.warning{background:var(--warning);color:#fff;border-color:var(--warning)}
-  .btn.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
-  .btn.tiny{padding:4px 8px;font-size:11px}
-  .hero{display:flex;align-items:flex-end;justify-content:space-between;
-        margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)}
-  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;
-        padding:20px;margin-bottom:20px}
-  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px 24px}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px 24px}
-  .field label{display:block;font-size:11px;text-transform:uppercase;
-       letter-spacing:.05em;color:var(--text-2);font-weight:600;margin-bottom:4px}
-  .field input,.field textarea,.field select{width:100%;padding:7px 9px;
-       border:1px solid var(--border);border-radius:6px;font-family:var(--font);
-       font-size:13px;background:#fff}
-  table{width:100%;border-collapse:collapse;background:var(--card);
-        border:1px solid var(--border);border-radius:8px;overflow:hidden}
-  th,td{padding:8px 10px;border-bottom:1px solid var(--border);font-size:12.5px}
-  th{background:#F9FAFB;font-weight:600;color:var(--text-2);
-     text-transform:uppercase;font-size:11px;letter-spacing:.05em;text-align:left}
-  tr:last-child td{border-bottom:0}
-  .num{text-align:right;font-variant-numeric:tabular-nums}
-  .pill{display:inline-block;padding:2px 8px;border-radius:10px;
-        font-size:11px;font-weight:600;background:#EEF;color:var(--ink)}
-  .toolbar{display:flex;gap:8px;flex-wrap:wrap}
-  dialog{border:0;border-radius:10px;padding:0;max-width:520px;width:92vw}
-  dialog::backdrop{background:rgba(11,13,18,.4)}
-  .modal-wrap{padding:22px 26px}
-  .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px}
-</style>
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
 </head>
 <body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
 
 <div class="hero">
   <div>
@@ -239,5 +197,6 @@ async function markLost() {
 }
 reload();
 </script>
+</div><!-- /crm-wrap -->
 </body>
 </html>

@@ -6,35 +6,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="csrf-token" content="{{ csrf_token() if csrf_token else '' }}">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
-        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
-        --font:'Barlow','Inter',system-ui,sans-serif;}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:var(--font);background:var(--bg);color:var(--text);
-       font-size:14px;padding:24px 32px 60px}
-  h1{font-size:24px;color:var(--ink);margin-bottom:14px}
-  h2{font-size:16px;color:var(--red);margin:18px 0 10px;
-     text-transform:uppercase;letter-spacing:.04em}
-  table{width:100%;border-collapse:collapse;background:var(--card);
-        border:1px solid var(--border);border-radius:8px;overflow:hidden}
-  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--border);
-        font-size:13px}
-  th{background:#F9FAFB;color:var(--text-2);text-transform:uppercase;
-     font-size:11px;letter-spacing:.05em}
-  .btn{padding:6px 12px;border:1px solid var(--border);border-radius:6px;
-       background:var(--card);color:var(--ink);cursor:pointer;font-weight:600;font-size:13px}
-  .btn.primary{background:var(--red);color:#fff;border-color:var(--red)}
-  .btn.danger{background:#fff;color:#B91C1C;border-color:#F4B0BA}
-  form{background:var(--card);border:1px solid var(--border);border-radius:8px;
-       padding:14px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  form input, form textarea, form select{padding:7px 10px;border:1px solid var(--border);
-       border-radius:6px;font-family:var(--font);font-size:13px;width:100%}
-  form .full{grid-column:span 2}
-  form button{grid-column:span 2;justify-self:start}
-</style>
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
 </head>
 <body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
 <h1>Help Admin</h1>
 <p><a href="{{ url_prefix }}/help">← Back to help</a></p>
 
@@ -134,5 +110,6 @@ async function delTooltip(id){
   if (j.ok) location.reload(); else alert(j.error || 'Failed');
 }
 </script>
+</div><!-- /crm-wrap -->
 </body>
 </html>

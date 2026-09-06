@@ -5,56 +5,11 @@
 <title>TMS Handover Queue — Procam CRM</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
-        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
-        --success:#059669;--warning:#B45309;--danger:#B91C1C;--info:#1D4ED8;
-        --font:'Barlow','Inter',system-ui,sans-serif;}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:var(--font);background:var(--bg);color:var(--text);
-       font-size:14px;padding:24px 32px 60px}
-  a{color:inherit;text-decoration:none}
-  h1{font-size:24px;font-weight:700;color:var(--ink)}
-  .hero{display:flex;align-items:flex-end;justify-content:space-between;
-        margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)}
-  .btn{display:inline-block;padding:7px 12px;border:1px solid var(--border);
-       border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer;
-       font-family:var(--font);font-size:13px;font-weight:600}
-  .btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
-  .btn.success{background:var(--success);color:#fff;border-color:var(--success)}
-  .btn.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
-  .btn.tiny{padding:4px 8px;font-size:11px}
-  .filters{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
-  .filters select{padding:7px 10px;border:1px solid var(--border);
-       border-radius:6px;font-family:var(--font);font-size:13px;background:#fff}
-  table{width:100%;border-collapse:collapse;background:var(--card);
-        border:1px solid var(--border);border-radius:8px;overflow:hidden}
-  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);
-        font-size:13px}
-  th{background:#F9FAFB;font-weight:600;color:var(--text-2);
-     text-transform:uppercase;font-size:11px;letter-spacing:.05em}
-  tr:last-child td{border-bottom:0}
-  .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
-  .pill.handover-pending{background:#FEF3C7;color:#92400E}
-  .pill.tms-project-created{background:#DBEAFE;color:#1D4ED8}
-  .pill.handover-complete{background:#D1FAE5;color:#065F46}
-  .pill.cancelled{background:#FEE2E2;color:#991B1B}
-  .num{text-align:right;font-variant-numeric:tabular-nums}
-  .empty{padding:60px 20px;text-align:center;color:var(--text-2)}
-  dialog{border:0;border-radius:10px;padding:0;max-width:560px;width:92vw}
-  dialog::backdrop{background:rgba(11,13,18,.4)}
-  .modal-wrap{padding:22px 26px}
-  .field{margin-bottom:10px}
-  .field label{display:block;font-size:11px;text-transform:uppercase;
-       letter-spacing:.05em;color:var(--text-2);font-weight:600;margin-bottom:4px}
-  .field input,.field textarea{width:100%;padding:8px 10px;
-       border:1px solid var(--border);border-radius:6px;font-family:var(--font);
-       font-size:13px}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px}
-</style>
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
 </head>
 <body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
 
 <div class="hero">
   <div>
@@ -173,5 +128,6 @@ async function cancelH(hid) {
 }
 load();
 </script>
+</div><!-- /crm-wrap -->
 </body>
 </html>

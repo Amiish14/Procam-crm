@@ -85,23 +85,38 @@ def test_nothing_was_swallowed(admin_html):
 
 
 def test_no_accidental_jinja_comment_openers():
-    """`{` followed by `#` inside CSS or JS silently eats the template."""
-    opener = '{' + '#'
+    """`{` followed by `#` inside CSS or JS silently eats the template.
+
+    A real Jinja comment is fine, including a multi-line one, so this
+    walks each file and checks every opener is closed — an opener left
+    hanging swallows everything after it.
+    """
+    opener, closer = '{' + '#', '#' + '}'
     offenders = []
     for path in glob.glob(os.path.join(_TEMPLATES, '**', '*.html'),
                           recursive=True):
-        for n, line in enumerate(open(path), 1):
-            if opener not in line:
-                continue
-            # A real Jinja comment closes on the same line, or the line is
-            # a deliberate one-line comment.
-            if ('#' + '}') in line:
-                continue
-            offenders.append(f'{os.path.relpath(path, _ROOT)}:{n}: '
-                             f'{line.strip()[:90]}')
+        text = open(path).read()
+        pos, depth, start_line = 0, 0, None
+        while True:
+            o = text.find(opener, pos)
+            c = text.find(closer, pos)
+            if o == -1 and c == -1:
+                break
+            if o != -1 and (c == -1 or o < c):
+                if depth == 0:
+                    start_line = text[:o].count('\n') + 1
+                depth += 1
+                pos = o + 2
+            else:
+                depth = max(0, depth - 1)
+                pos = c + 2
+        if depth:
+            rel = os.path.relpath(path, _ROOT)
+            offenders.append(f'{rel}:{start_line}: unclosed Jinja comment')
     assert not offenders, (
-        'Unclosed Jinja comment opener — put a space between the brace and '
-        'the hash:\n  ' + '\n  '.join(offenders))
+        'An unclosed comment opener swallows the rest of the template. '
+        'In CSS, put a space between the brace and the hash:\n  '
+        + '\n  '.join(offenders))
 
 
 def test_permission_fetch_is_prefixed():

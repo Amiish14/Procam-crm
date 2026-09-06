@@ -780,7 +780,14 @@ def _inject_url_prefix():
     def crm_url(path=''):
         return prefix + '/' + str(path).lstrip('/')
 
-    return {'url_prefix': prefix, 'crm_url': crm_url}
+    def can(perm):
+        try:
+            from app.access.service import can as _can
+            return _can(perm)
+        except Exception:
+            return False
+
+    return {'url_prefix': prefix, 'crm_url': crm_url, 'can': can}
 
 
 # ─────────────────── AUTH ROUTES ───────────────────
