@@ -434,7 +434,11 @@ button,.btn,a.btn,input[type="button"],input[type="submit"]{min-height:40px}
                     padding:4px 8px;border-radius:4px;font-size:12px;opacity:0;
                     pointer-events:none;white-space:nowrap;transition:.15s}
 #crm-fab .fab:hover .fab-label{opacity:1}
-@media(min-width:900px){#crm-fab{display:none}}
+/* NB: the space before the # is load-bearing.  An opening brace
+   immediately followed by a hash starts a Jinja comment, which would
+   swallow the template until the next matching close — that bug blanked
+   the whole dashboard once. Do not remove the space. */
+@media(min-width:900px){ #crm-fab{display:none} }
 </style>
 
 <!-- ═══════════════════════════════════════════════════════════════════
