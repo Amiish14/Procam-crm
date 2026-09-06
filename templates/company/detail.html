@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ company.name }} — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .c360-hd{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;
+    padding-bottom:18px;border-bottom:1px solid var(--p-border);
+    margin-bottom:20px}
+  .c360-id{flex:1;min-width:300px}
+  .c360-name{font-size:26px;font-weight:700;color:var(--p-ink);
+    letter-spacing:-.02em;line-height:1.2;text-wrap:balance}
+  .c360-tags{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 8px}
+  .c360-facts{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;
+    color:var(--p-text-2);margin-top:4px}
+  .c360-facts b{color:var(--p-ink);font-weight:600}
+  .tl{position:relative;padding-left:22px}
+  .tl-item{position:relative;padding:0 0 16px 0;
+    border-left:1px solid var(--p-border);margin-left:5px;padding-left:20px}
+  .tl-item:last-child{border-left-color:transparent;padding-bottom:0}
+  .tl-item::before{content:'';position:absolute;left:-5px;top:5px;
+    width:9px;height:9px;border-radius:50%;background:var(--p-surface);
+    border:2px solid var(--p-border-strong)}
+  .tl-item.lead::before{border-color:var(--p-info)}
+  .tl-item.opportunity::before{border-color:var(--p-red)}
+  .tl-when{font-size:11px;color:var(--p-text-3);
+    font-variant-numeric:tabular-nums}
+  .tl-title{font-weight:600;color:var(--p-ink);font-size:13.5px;margin:1px 0}
+  .tl-body{font-size:12.5px;color:var(--p-text-2)}
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+{% set h = data.header %}{% set k = data.kpis %}
+
+<div class="c360-hd">
+  <div class="c360-id">
+    <div class="cat">Company 360</div>
+    <div class="c360-name">{{ h.name }}</div>
+    <div class="c360-tags">
+      {% for t in h.classifications %}<span class="pill info">{{ t }}</span>
+      {% else %}<span class="pill muted">No relationship type set</span>{% endfor %}
+      {% if h.strategic %}<span class="pill won">Strategic</span>{% endif %}
+    </div>
+    <div class="c360-facts">
+      {% if h.industry %}<span>Industry <b>{{ h.industry }}</b></span>{% endif %}
+      {% if h.city or h.country %}<span>Location
+        <b>{{ [h.city, h.state, h.country]|select|join(', ') }}</b></span>{% endif %}
+      {% if h.website %}<span><a href="{{ h.website if '//' in h.website
+        else 'https://' + h.website }}" target="_blank" rel="noopener">Website ↗</a></span>{% endif %}
+      {% if h.parent %}<span>Parent
+        <a href="{{ url_prefix }}/companies/{{ h.parent.id }}"><b>{{ h.parent.name }}</b></a></span>{% endif %}
+    </div>
+    <div class="c360-facts" style="margin-top:6px">
+      <span>Account owner <b>{{ h.owner.name if h.owner else '— unassigned —' }}</b></span>
+      {% if h.relationship_stage %}<span>Stage <b>{{ h.relationship_stage }}</b></span>{% endif %}
+      {% if h.last_activity_at %}<span>Last activity <b>{{ h.last_activity_at }}</b></span>{% endif %}
+      {% if h.next_action_at %}<span>Next action <b>{{ h.next_action_at }}</b></span>{% endif %}
+    </div>
+  </div>
+  <div class="toolbar">
+    <a class="btn" href="{{ url_prefix }}/companies">← All companies</a>
+  </div>
+</div>
+
+<div class="grid3">
+  <div class="kpi"><div class="label">Opportunities</div>
+    <div class="value">{{ k.opportunities }}</div></div>
+  <div class="kpi success"><div class="label">Won</div>
+    <div class="value">{{ k.won }}</div></div>
+  <div class="kpi"><div class="label">Won value (INR)</div>
+    <div class="value">{{ '{:,.0f}'.format(k.won_value) }}</div></div>
+  <div class="kpi"><div class="label">Win rate</div>
+    <div class="value">{{ (k.win_rate ~ '%') if k.win_rate is not none else '—' }}</div></div>
+  <div class="kpi"><div class="label">Leads</div>
+    <div class="value">{{ k.leads }}</div></div>
+  <div class="kpi"><div class="label">Contacts</div>
+    <div class="value">{{ k.contacts }}</div></div>
+  <div class="kpi"><div class="label">Activities</div>
+    <div class="value">{{ k.activities }}</div></div>
+  <div class="kpi"><div class="label">RFQs</div>
+    <div class="value">{{ k.rfqs }}</div></div>
+  <div class="kpi"><div class="label">Quotes</div>
+    <div class="value">{{ k.quotes }}</div></div>
+  <div class="kpi{{ ' danger' if k.overdue_tasks else '' }}">
+    <div class="label">Overdue tasks</div>
+    <div class="value">{{ k.overdue_tasks }}</div></div>
+  <div class="kpi"><div class="label">Open tasks</div>
+    <div class="value">{{ k.open_tasks }}</div></div>
+  <div class="kpi"><div class="label">Lost</div>
+    <div class="value">{{ k.lost }}</div></div>
+</div>
+
+<div class="grid2">
+  <div>
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl">Opportunities</div>
+        <span class="b sN">{{ data.opportunities|length }}</span></div>
+      {% if data.opportunities %}
+      <div class="table-wrap"><table>
+        <thead><tr><th>Number</th><th>Stage</th><th class="num">Value</th><th>Owner</th></tr></thead>
+        <tbody>{% for o in data.opportunities[:25] %}
+          <tr><td><a href="{{ url_prefix }}/app?opp={{ o.id }}">{{ o.number or o.id }}</a></td>
+              <td><span class="pill {{ o.stage|lower }}">{{ o.stage }}</span></td>
+              <td class="num">{{ '{:,.0f}'.format(o.value_inr) if o.value_inr else '—' }}</td>
+              <td>{{ o.owner or '—' }}</td></tr>
+        {% endfor %}</tbody></table></div>
+      {% else %}<div class="empty">No opportunities recorded yet</div>{% endif %}
+    </div>
+
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl">People</div>
+        <span class="b sN">{{ data.people|length }}</span></div>
+      {% if data.people %}
+      <div class="table-wrap"><table>
+        <thead><tr><th>Name</th><th>Designation</th><th>Contact</th></tr></thead>
+        <tbody>{% for p in data.people %}
+          <tr><td><b>{{ p.name }}</b></td><td>{{ p.designation or '—' }}</td>
+              <td>{% if p.email %}<a href="mailto:{{ p.email }}">{{ p.email }}</a>{% endif %}
+                  {% if p.phone %}<div class="meta">{{ p.phone }}</div>{% endif %}</td></tr>
+        {% endfor %}</tbody></table></div>
+      {% else %}
+      <div class="empty">No contacts linked to this company yet</div>{% endif %}
+    </div>
+
+    {% if data.competitors %}
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl">Competitors encountered</div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Competitor</th><th>Status</th></tr></thead>
+        <tbody>{% for c in data.competitors %}
+          <tr><td>{{ c.competitor or '—' }}</td>
+              <td><span class="pill">{{ c.status or '—' }}</span></td></tr>
+        {% endfor %}</tbody></table></div>
+    </div>{% endif %}
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl">Relationship history</div>
+        <span class="b sN">{{ data.timeline|length }}</span></div>
+      <div class="panel">
+        {% if data.timeline %}
+        <div class="tl">{% for ev in data.timeline[:40] %}
+          <div class="tl-item {{ ev.kind|lower }}">
+            <div class="tl-when">{{ ev.at }}{% if ev.who %} · {{ ev.who }}{% endif %}</div>
+            <div class="tl-title">
+              <a href="{{ url_prefix }}{{ ev.route }}">{{ ev.title }}</a></div>
+            {% if ev.body %}<div class="tl-body">{{ ev.body }}</div>{% endif %}
+          </div>
+        {% endfor %}</div>
+        {% else %}
+        <div class="empty">Nothing recorded against this company yet.<br>
+          <span class="tiny">Activities logged against its leads will appear here.</span></div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl">Leads</div>
+        <span class="b sN">{{ data.leads|length }}</span></div>
+      {% if data.leads %}
+      <div class="table-wrap"><table>
+        <thead><tr><th>Project</th><th>Stage</th><th>Owner</th></tr></thead>
+        <tbody>{% for l in data.leads[:25] %}
+          <tr><td><a href="{{ url_prefix }}/app?lead={{ l.id }}">{{ l.project or ('Lead #' ~ l.id) }}</a></td>
+              <td><span class="pill">{{ l.stage or '—' }}</span></td>
+              <td>{{ l.assigned_to or '—' }}</td></tr>
+        {% endfor %}</tbody></table></div>
+      {% else %}<div class="empty">No leads linked yet</div>{% endif %}
+    </div>
+  </div>
+</div>
+
+</div><!-- /crm-wrap -->
+</body>
+</html>

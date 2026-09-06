@@ -3746,6 +3746,7 @@ for _mod_path, _bp_name in [
     ('app.access.routes',        'access_bp'),
     ('app.master_data.routes',   'master_data_bp'),
     ('app.data_mapping.routes',  'data_mapping_bp'),
+    ('app.company360.routes',    'company360_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])

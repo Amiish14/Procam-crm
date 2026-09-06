@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Company not found — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+  <div class="empty" style="margin-top:40px">
+    <b style="color:var(--p-ink);font-size:15px">No company with id {{ company_id }}</b>
+    <div style="margin-top:8px">It may have been merged into another record.</div>
+    <div style="margin-top:18px">
+      <a class="btn primary" href="{{ url_prefix }}/companies">All companies</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>

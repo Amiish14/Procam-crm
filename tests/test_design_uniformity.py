@@ -66,17 +66,24 @@ def test_page_uses_the_shared_stylesheet(path):
 def test_page_has_no_duplicate_component_css(path):
     """A local <style> block is how the pages drifted apart.
 
-    Page-specific rules are fine, but redefining the shared components is
-    what made every page look slightly different.
+    Page-specific rules are fine — a timeline, a chart — but redefining a
+    shared component is what made every page look slightly different.
+    Selectors are matched at a rule boundary, not as substrings: `.tl-body`
+    is its own component and must not read as a redefinition of `body`.
     """
     src = open(path).read()
-    blocks = re.findall(r'<style>(.*?)</style>', src, re.S)
-    for block in blocks:
-        for comp in ('.btn', '.card', '.pill', '.hero', '.empty', 'body{',
-                     'body {'):
-            assert comp not in block, (
-                f'{os.path.basename(path)} redefines {comp} locally — '
-                f'it belongs in static/css/crm.css')
+    shared = ('btn', 'card', 'pill', 'hero', 'empty', 'kpi', 'filters')
+    for block in re.findall(r'<style>(.*?)</style>', src, re.S):
+        for comp in shared:
+            pattern = r'(?:^|[},;\s])\.' + comp + r'\s*[{,:]'
+            hit = re.search(pattern, block, re.M)
+            assert hit is None, (
+                f'{os.path.basename(path)} redefines .{comp} locally '
+                f'({hit.group(0).strip()!r}) — it belongs in '
+                f'static/css/crm.css')
+        # a bare `body` selector, not `.tl-body`
+        assert re.search(r'(?:^|[},;])\s*body\s*[{,]', block, re.M) is None, \
+            f'{os.path.basename(path)} restyles body locally'
 
 
 def test_stylesheet_is_served():

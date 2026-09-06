@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ relationship or 'Companies' }} — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Company Master</div>
+    <h1>{{ relationship or 'All companies' }}</h1>
+    <div class="crm-sub">
+      {% if relationship %}
+        Companies classified as {{ relationship }} — a filtered view of the
+        one Company Master, not a separate list.
+      {% else %}
+        Every organisation Procam has a relationship with, held once.
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<form class="filters" method="get" action="{{ url_prefix }}/companies">
+  <input name="q" value="{{ term }}" placeholder="Search by name…"
+         style="min-width:240px">
+  <select name="relationship">
+    <option value="">All relationship types</option>
+    {% for r in relationships %}
+      <option value="{{ r }}" {{ 'selected' if r == relationship }}>{{ r }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn primary" type="submit">Filter</button>
+  {% if relationship or term %}
+    <a class="btn ghost" href="{{ url_prefix }}/companies">Clear</a>
+  {% endif %}
+  <span class="meta">{{ total }} match{{ '' if total == 1 else 'es' }}</span>
+</form>
+
+{% if companies %}
+<div class="card">
+  <div class="table-wrap"><table>
+    <thead><tr>
+      <th>Company</th><th>Relationship</th><th>Industry</th>
+      <th>Location</th><th>Owner</th>
+    </tr></thead>
+    <tbody>
+      {% for c in companies %}
+      <tr onclick="location.href='{{ url_prefix }}/companies/{{ c.id }}'"
+          style="cursor:pointer">
+        <td><b><a href="{{ url_prefix }}/companies/{{ c.id }}">{{ c.name }}</a></b>
+          {% if c.strategic_flag %}<span class="pill won" style="margin-left:6px">Strategic</span>{% endif %}</td>
+        <td>{% for t in tags.get(c.id, []) %}<span class="pill info">{{ t }}</span>
+            {% else %}<span class="meta">—</span>{% endfor %}</td>
+        <td>{{ c.industry or '—' }}</td>
+        <td>{{ [c.city, c.country]|select|join(', ') or '—' }}</td>
+        <td>{{ c.pic_emp_code or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% if total > companies|length %}
+<div class="meta">Showing the first {{ companies|length }} of {{ total }} — narrow the search to see more.</div>
+{% endif %}
+{% else %}
+<div class="empty">
+  No companies match{{ ' “' ~ term ~ '”' if term }}{{ ' as ' ~ relationship if relationship }}.
+</div>
+{% endif %}
+
+</div><!-- /crm-wrap -->
+</body>
+</html>
