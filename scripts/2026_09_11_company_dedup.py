@@ -46,31 +46,11 @@ REFERENCES = [
     ('app.models.rbac:AccountMember', 'entity_id'),
 ]
 
-_SUFFIXES = (' pvt', ' ltd', ' limited', ' private', ' inc', ' llc',
-             ' gmbh', ' corporation', ' corp', ' company', ' group',
-             ' co', ' plc', ' sa', ' nv', ' bv', ' ag')
-
-
-def norm(name):
-    """Normalise a company name for exact-duplicate detection.
-
-    Deliberately conservative: it strips punctuation and legal suffixes
-    but never guesses at abbreviations, so 'BHEL' and 'Bharat Heavy
-    Electricals' stay separate and go to review instead.
-    """
-    if not name:
-        return ''
-    s = str(name).lower().strip()
-    for ch in '.,()[]/\\-_&\'"':
-        s = s.replace(ch, ' ')
-    s = ' '.join(s.split())
-    changed = True
-    while changed:
-        changed = False
-        for suf in _SUFFIXES:
-            if s.endswith(suf):
-                s, changed = s[: -len(suf)].strip(), True
-    return ' '.join(s.split())
+# Normalisation lives in app/services/company_match.py so that this
+# migration and the Lead/Contact linking cannot drift apart — if they
+# normalised differently, a lead could be linked to a record this script
+# had already retired.
+from app.services.company_match import norm                    # noqa: E402
 
 
 def _resolve(path):

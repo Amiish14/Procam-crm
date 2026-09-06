@@ -277,7 +277,15 @@ class Lead(db.Model):
     __tablename__ = 'leads'
     id               = db.Column(db.Integer, primary_key=True)
     source           = db.Column(db.String(30), default='manual')
+    # `company` is the name as it arrived — from an email, an import or a
+    # person typing.  It is kept during the transition to company_id so
+    # nothing is lost, and because unmatched names still need displaying.
     company          = db.Column(db.String(200), nullable=False)
+    # §7 — the real link to Company Master. Populated by
+    # scripts/2026_09_12_link_companies.py; ambiguous names go to the §65
+    # review queue rather than being guessed.
+    company_id       = db.Column(db.Integer, db.ForeignKey('companies.id'),
+                                 nullable=True, index=True)
     project          = db.Column(db.String(300))
     industry         = db.Column(db.String(100))
     cost_million     = db.Column(db.Float, default=0)
@@ -423,7 +431,10 @@ class Contact(db.Model):
     id          = db.Column(db.Integer, primary_key=True)
     contact_type= db.Column(db.String(20), default='person')  # person | company | agent
     name        = db.Column(db.String(150), nullable=False)
-    company     = db.Column(db.String(200))
+    company     = db.Column(db.String(200))     # name as captured
+    # §7 — People Master links to Company Master by id, not by name.
+    company_id  = db.Column(db.Integer, db.ForeignKey('companies.id'),
+                            nullable=True, index=True)
     designation = db.Column(db.String(100))
     industry    = db.Column(db.String(100))
     email       = db.Column(db.String(120))
