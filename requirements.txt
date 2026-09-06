@@ -24,3 +24,6 @@ openai>=1.40.0,<2
 # passes ("Client.__init__() got an unexpected keyword argument 'proxies'").
 # Pinning below 0.28 keeps both the Anthropic and OpenAI clients working.
 httpx>=0.27,<0.28
+# CRM Phase 7 — quote PDF generation. Graceful fallback (print view) if
+# not installed, so this is safe to install lazily.
+reportlab>=4.0,<5

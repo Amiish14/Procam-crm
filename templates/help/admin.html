@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Help Admin — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() if csrf_token else '' }}">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
+        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
+        --font:'Barlow','Inter',system-ui,sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);
+       font-size:14px;padding:24px 32px 60px}
+  h1{font-size:24px;color:var(--ink);margin-bottom:14px}
+  h2{font-size:16px;color:var(--red);margin:18px 0 10px;
+     text-transform:uppercase;letter-spacing:.04em}
+  table{width:100%;border-collapse:collapse;background:var(--card);
+        border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--border);
+        font-size:13px}
+  th{background:#F9FAFB;color:var(--text-2);text-transform:uppercase;
+     font-size:11px;letter-spacing:.05em}
+  .btn{padding:6px 12px;border:1px solid var(--border);border-radius:6px;
+       background:var(--card);color:var(--ink);cursor:pointer;font-weight:600;font-size:13px}
+  .btn.primary{background:var(--red);color:#fff;border-color:var(--red)}
+  .btn.danger{background:#fff;color:#B91C1C;border-color:#F4B0BA}
+  form{background:var(--card);border:1px solid var(--border);border-radius:8px;
+       padding:14px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  form input, form textarea, form select{padding:7px 10px;border:1px solid var(--border);
+       border-radius:6px;font-family:var(--font);font-size:13px;width:100%}
+  form .full{grid-column:span 2}
+  form button{grid-column:span 2;justify-self:start}
+</style>
+</head>
+<body>
+<h1>Help Admin</h1>
+<p><a href="/help">← Back to help</a></p>
+
+<h2>New Article</h2>
+<form id="new-article" onsubmit="createArticle(event)">
+  <input placeholder="Slug (kebab-case)" name="slug" required>
+  <input placeholder="Section (my_work, dashboard, ...)" name="section" required>
+  <input placeholder="Title" name="title" required class="full">
+  <textarea placeholder="What it is" name="what_it_is" class="full"></textarea>
+  <textarea placeholder="When to use" name="when_to_use" class="full"></textarea>
+  <textarea placeholder="How to use" name="how_to_use" class="full"></textarea>
+  <textarea placeholder="Required fields" name="required_fields" class="full"></textarea>
+  <textarea placeholder="What happens next" name="what_happens_next" class="full"></textarea>
+  <textarea placeholder="Common mistakes" name="common_mistakes" class="full"></textarea>
+  <button class="btn primary" type="submit">Create Article</button>
+</form>
+
+<h2>Articles</h2>
+<table>
+  <thead><tr><th>Slug</th><th>Section</th><th>Title</th>
+    <th>Active?</th><th>Order</th><th></th></tr></thead>
+  <tbody>
+    {% for a in articles %}
+      <tr>
+        <td><code>{{ a.slug }}</code></td>
+        <td>{{ a.section }}</td>
+        <td>{{ a.title }}</td>
+        <td>{{ 'Yes' if a.is_active else 'No' }}</td>
+        <td>{{ a.display_order }}</td>
+        <td>
+          <a class="btn" href="/help/{{ a.slug }}">View</a>
+          <button class="btn danger" onclick="delArticle({{ a.id }})">Delete</button>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" style="color:var(--text-2)">No articles yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>New Tooltip</h2>
+<form id="new-tooltip" onsubmit="createTooltip(event)">
+  <input placeholder="Page (e.g. rfq_list)" name="page" required>
+  <input placeholder="Element key (e.g. btn_new_rfq)" name="element_key" required>
+  <textarea placeholder="Tooltip HTML" name="tooltip_html" required class="full"></textarea>
+  <button class="btn primary" type="submit">Create Tooltip</button>
+</form>
+
+<h2>Tooltips</h2>
+<table>
+  <thead><tr><th>Page</th><th>Key</th><th>Body</th><th></th></tr></thead>
+  <tbody>
+    {% for t in tooltips %}
+      <tr>
+        <td>{{ t.page }}</td>
+        <td><code>{{ t.element_key }}</code></td>
+        <td>{{ (t.tooltip_html or '')[:80] }}</td>
+        <td><button class="btn danger" onclick="delTooltip({{ t.id }})">Delete</button></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" style="color:var(--text-2)">No tooltips yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<script>
+async function createArticle(ev){
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const body = Object.fromEntries(fd.entries());
+  const r = await fetch('/api/admin/help/articles',
+    {method:'POST', headers:{'Content-Type':'application/json'},
+     body: JSON.stringify(body)});
+  const j = await r.json();
+  if (j.ok) location.reload(); else alert(j.error || 'Failed');
+}
+async function delArticle(id){
+  if (!confirm('Delete this article?')) return;
+  const r = await fetch('/api/admin/help/articles/'+id, {method:'DELETE'});
+  const j = await r.json();
+  if (j.ok) location.reload(); else alert(j.error || 'Failed');
+}
+async function createTooltip(ev){
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const body = Object.fromEntries(fd.entries());
+  const r = await fetch('/api/admin/help/tooltips',
+    {method:'POST', headers:{'Content-Type':'application/json'},
+     body: JSON.stringify(body)});
+  const j = await r.json();
+  if (j.ok) location.reload(); else alert(j.error || 'Failed');
+}
+async function delTooltip(id){
+  if (!confirm('Delete this tooltip?')) return;
+  const r = await fetch('/api/admin/help/tooltips/'+id, {method:'DELETE'});
+  const j = await r.json();
+  if (j.ok) location.reload(); else alert(j.error || 'Failed');
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Project Intelligence Funnel — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
+        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
+        --font:'Barlow','Inter',system-ui,sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);
+       font-size:14px;padding:24px 32px 60px}
+  h1{font-size:24px;font-weight:700;color:var(--ink)}
+  h3{font-size:14px;color:var(--ink);margin-bottom:10px}
+  .hero{display:flex;align-items:flex-end;justify-content:space-between;
+        margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+  .btn{display:inline-block;padding:6px 12px;border:1px solid var(--border);
+       border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer;
+       font-size:13px;font-weight:600;font-family:var(--font)}
+  .btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .filters{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:end}
+  .filters .field{flex:0 0 160px}
+  .filters .field label{display:block;font-size:10px;color:var(--text-2);
+       text-transform:uppercase;margin-bottom:3px;font-weight:600}
+  .filters .field input,.filters .field select{width:100%;padding:6px 8px;
+       border:1px solid var(--border);border-radius:6px;font-size:13px;
+       font-family:var(--font)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:8px;
+        padding:16px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)}
+  th{background:#F9FAFB;font-weight:600;color:var(--text-2);
+     text-transform:uppercase;font-size:11px}
+  .toggle{display:inline-flex;border:1px solid var(--border);border-radius:6px;
+       overflow:hidden;font-size:12px;font-weight:600}
+  .toggle button{padding:6px 12px;border:0;background:#fff;cursor:pointer;
+       color:var(--text-2);font-family:var(--font)}
+  .toggle button.active{background:var(--ink);color:#fff}
+  .funnel-svg{width:100%;height:520px}
+  .funnel-svg .stage{cursor:pointer}
+  .funnel-svg .stage-label{font-family:var(--font);font-size:12px;fill:#fff;
+       font-weight:600;pointer-events:none}
+  .funnel-svg .stage-val{font-family:var(--font);font-size:11px;fill:#fff;
+       pointer-events:none;opacity:.9}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div><h1>Project Intelligence Funnel</h1>
+    <div style="color:var(--text-2);font-size:13px;margin-top:4px">
+      Project Identified → RFQ → Won → TMS Project. Click any stage to drill in.
+    </div>
+  </div>
+  <div>
+    <div class="toggle">
+      <button id="tCount" class="active" onclick="setMode('count')">By Count</button>
+      <button id="tValue" onclick="setMode('value')">By Value</button>
+    </div>
+    <a class="btn" href="/funnels/account-development" style="margin-left:8px">Account Funnel →</a>
+  </div>
+</div>
+
+<div class="filters">
+  <div class="field"><label>PIC</label><input id="fPic"></div>
+  <div class="field"><label>Vertical</label><input id="fVert"></div>
+  <div class="field"><label>Industry</label><input id="fInd"></div>
+  <div class="field"><label>Country</label><input id="fCtry"></div>
+  <div class="field"><label>State</label><input id="fState"></div>
+  <div class="field"><label>Branch</label><input id="fBranch"></div>
+  <div class="field"><label>Project</label><input id="fProj"></div>
+  <div class="field"><label>FY</label><input id="fFy" placeholder="2025"></div>
+  <div class="field"><label>From</label><input id="fFrom" type="date"></div>
+  <div class="field"><label>To</label><input id="fTo" type="date"></div>
+  <button class="btn primary" onclick="loadData()">Apply</button>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h3>Funnel</h3>
+    <svg class="funnel-svg" id="funnel" viewBox="0 0 600 520"></svg>
+  </div>
+  <div class="card">
+    <h3>Stage detail</h3>
+    <table id="tbl"><thead><tr>
+      <th>Stage</th><th>Count</th><th>Value (₹)</th><th>Avg Days</th>
+      <th>Ageing</th><th>Conv %</th>
+    </tr></thead><tbody></tbody></table>
+  </div>
+</div>
+
+<script>
+const CSRF_TOKEN = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+async function jfetch(url){
+  const r = await fetch(url, {headers:{'X-CSRFToken':CSRF_TOKEN}});
+  return r.json();
+}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmtINR(n){if(!n) return '—';if(n>1e7) return '₹'+(n/1e7).toFixed(2)+' Cr';if(n>1e5) return '₹'+(n/1e5).toFixed(1)+' L';return '₹'+Math.round(n).toLocaleString();}
+
+let MODE = 'count';
+let STAGES = [];
+function setMode(m){
+  MODE = m;
+  document.getElementById('tCount').classList.toggle('active', m==='count');
+  document.getElementById('tValue').classList.toggle('active', m==='value');
+  drawFunnel();
+}
+async function loadData(){
+  const q = new URLSearchParams();
+  const add = (k, id) => {const v = document.getElementById(id).value.trim(); if (v) q.set(k, v);};
+  add('pic','fPic'); add('vertical','fVert'); add('industry','fInd');
+  add('country','fCtry'); add('state','fState'); add('branch','fBranch');
+  add('project','fProj'); add('financial_year','fFy');
+  add('date_from','fFrom'); add('date_to','fTo');
+  const j = await jfetch('/api/funnel/project-intelligence?' + q.toString());
+  STAGES = j.stages || [];
+  drawFunnel();
+  drawTable();
+}
+function drawFunnel(){
+  const svg = document.getElementById('funnel');
+  svg.innerHTML = '';
+  const n = STAGES.length;
+  const rowH = 500 / n;
+  const maxVal = Math.max(1, ...STAGES.map(s => MODE==='count'?s.count:s.value));
+  STAGES.forEach((s, i) => {
+    const v = MODE==='count'?s.count:s.value;
+    const wPct = 0.15 + 0.85 * (v / maxVal);
+    const w = 560 * wPct;
+    const x = (600 - w) / 2;
+    const y = 10 + i * rowH;
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('class','stage');
+    g.setAttribute('onclick', `alert('Stage: ${s.stage} — drill-through coming next iteration')`);
+    const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    rect.setAttribute('x', x); rect.setAttribute('y', y);
+    rect.setAttribute('width', w); rect.setAttribute('height', rowH - 4);
+    rect.setAttribute('fill', '#0B0D12');
+    rect.setAttribute('opacity', 0.55 + 0.05 * i);
+    rect.setAttribute('rx', 4);
+    g.appendChild(rect);
+    const t1 = document.createElementNS('http://www.w3.org/2000/svg','text');
+    t1.setAttribute('x', 300); t1.setAttribute('y', y + rowH/2 - 2);
+    t1.setAttribute('text-anchor','middle');
+    t1.setAttribute('class','stage-label');
+    t1.textContent = s.stage;
+    g.appendChild(t1);
+    const t2 = document.createElementNS('http://www.w3.org/2000/svg','text');
+    t2.setAttribute('x', 300); t2.setAttribute('y', y + rowH/2 + 12);
+    t2.setAttribute('text-anchor','middle');
+    t2.setAttribute('class','stage-val');
+    t2.textContent = MODE==='count' ? (s.count + ' records') : fmtINR(s.value);
+    g.appendChild(t2);
+    svg.appendChild(g);
+  });
+}
+function drawTable(){
+  const tbody = document.querySelector('#tbl tbody');
+  tbody.innerHTML = STAGES.map(s => `
+    <tr>
+      <td><b>${esc(s.stage)}</b></td>
+      <td>${s.count}</td>
+      <td>${fmtINR(s.value)}</td>
+      <td>${s.avg_duration_days==null?'—':s.avg_duration_days}</td>
+      <td>${esc(s.ageing_bucket)}</td>
+      <td>${s.conversion_pct_to_next==null?'—':(s.conversion_pct_to_next+'%')}</td>
+    </tr>`).join('');
+}
+loadData();
+</script>
+</body>
+</html>

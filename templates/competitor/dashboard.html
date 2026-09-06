@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Competitor Dashboard — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
+        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
+        --font:'Barlow','Inter',system-ui,sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);
+       font-size:14px;padding:24px 32px 60px}
+  h1{font-size:24px;font-weight:700;color:var(--ink)}
+  h3{font-size:14px;color:var(--ink);margin-bottom:10px}
+  .hero{display:flex;align-items:flex-end;justify-content:space-between;
+        margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+  .btn{display:inline-block;padding:6px 12px;border:1px solid var(--border);
+       border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer;
+       font-size:13px;font-weight:600;font-family:var(--font)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:8px;
+        padding:16px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)}
+  th{background:#F9FAFB;font-weight:600;color:var(--text-2);
+     text-transform:uppercase;font-size:11px}
+  .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+  .kpi .tile{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px}
+  .kpi .k{font-size:11px;color:var(--text-2);text-transform:uppercase;margin-bottom:4px}
+  .kpi .v{font-size:22px;font-weight:700;color:var(--ink)}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div><h1>Competitor Dashboard</h1>
+    <div style="color:var(--text-2);font-size:13px;margin-top:4px">
+      Cross-competitor view — encounters, wins, losses, activity.
+    </div>
+  </div>
+  <div><a class="btn" href="/competitors">All Competitors</a></div>
+</div>
+
+<div class="kpi" id="kpi">
+  <div class="tile"><div class="k">Competitors tracked</div><div class="v" id="kTot">—</div></div>
+  <div class="tile"><div class="k">Encounters (all)</div><div class="v" id="kEnc">—</div></div>
+  <div class="tile"><div class="k">Intelligence events</div><div class="v" id="kInt">—</div></div>
+  <div class="tile"><div class="k">Assessments</div><div class="v" id="kAsm">—</div></div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h3>Top competitors by encounter count</h3>
+    <canvas id="encChart" height="220"></canvas>
+  </div>
+  <div class="card">
+    <h3>Recent intelligence (last 20)</h3>
+    <table id="intelTbl"><thead><tr>
+      <th>Date</th><th>Competitor</th><th>Type</th><th>Summary</th>
+    </tr></thead><tbody></tbody></table>
+  </div>
+</div>
+
+<script>
+const CSRF_TOKEN = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+async function jfetch(url){
+  const r = await fetch(url,{headers:{'X-CSRFToken':CSRF_TOKEN}});
+  return r.json();
+}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+(async () => {
+  const j = await jfetch('/api/competitors?active_only=1');
+  const comps = j.items || [];
+  document.getElementById('kTot').textContent = comps.length;
+
+  // Encounter counts (parallel)
+  const perfs = await Promise.all(comps.slice(0,50).map(c =>
+    jfetch('/api/competitors/'+c.id+'/performance').catch(()=>({encounters:0}))));
+  const withEnc = comps.slice(0,50).map((c,i) => ({c, p: perfs[i]}));
+  withEnc.sort((a,b)=>(b.p.encounters||0)-(a.p.encounters||0));
+  const top = withEnc.slice(0,10);
+  const totalEnc = withEnc.reduce((s,x)=>s+(x.p.encounters||0),0);
+  document.getElementById('kEnc').textContent = totalEnc;
+
+  new Chart(document.getElementById('encChart').getContext('2d'), {
+    type:'bar',
+    data:{labels: top.map(x => x.c.name),
+          datasets:[{data: top.map(x => x.p.encounters||0),
+                     backgroundColor:'#C72435'}]},
+    options:{indexAxis:'y',plugins:{legend:{display:false}},
+             scales:{x:{beginAtZero:true,ticks:{precision:0}}}}
+  });
+
+  // Recent intelligence — fetch top-8 competitors, take first 3 each,
+  // merge & sort
+  const intelBatches = await Promise.all(top.slice(0,8).map(x =>
+    jfetch('/api/competitors/'+x.c.id+'/intelligence').catch(()=>({items:[]}))));
+  let intels = [];
+  intelBatches.forEach((b,i) => (b.items||[]).slice(0,5).forEach(it =>
+    intels.push(Object.assign({_comp: top[i].c.name}, it))));
+  intels.sort((a,b) => (b.event_date||'').localeCompare(a.event_date||''));
+  const tbody = document.querySelector('#intelTbl tbody');
+  tbody.innerHTML = intels.slice(0,20).map(it => `
+    <tr>
+      <td>${esc(it.event_date)}</td>
+      <td>${esc(it._comp)}</td>
+      <td>${esc(it.event_type)}</td>
+      <td>${esc(it.summary).slice(0,120)}</td>
+    </tr>`).join('') ||
+    '<tr><td colspan="4" style="text-align:center;color:var(--text-2);padding:30px">No intelligence yet.</td></tr>';
+
+  document.getElementById('kInt').textContent = intels.length;
+  document.getElementById('kAsm').textContent = '—';
+})();
+</script>
+</body>
+</html>

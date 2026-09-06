@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ article.title }} — Help — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
+        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
+        --font:'Barlow','Inter',system-ui,sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);
+       font-size:14px;padding:24px 32px 60px;line-height:1.55}
+  a{color:var(--red)}
+  h1{font-size:26px;color:var(--ink);margin-bottom:6px}
+  .sec{color:var(--text-2);font-size:12px;text-transform:uppercase;
+       letter-spacing:.04em;margin-bottom:16px}
+  .card{background:var(--card);border:1px solid var(--border);
+        border-radius:8px;padding:20px;max-width:920px}
+  .lbl{font-weight:600;color:var(--text-2);font-size:12px;
+       text-transform:uppercase;letter-spacing:.04em;margin-top:16px}
+  p{margin:6px 0 8px}
+</style>
+</head>
+<body>
+<a href="/help">← All help articles</a>
+<div class="sec">{{ article.section.replace('_', ' ').title() }}</div>
+<h1>{{ article.title }}</h1>
+
+<div class="card">
+  {% if article.what_it_is %}
+    <div class="lbl">What it is</div><p>{{ article.what_it_is }}</p>
+  {% endif %}
+  {% if article.when_to_use %}
+    <div class="lbl">When to use</div><p>{{ article.when_to_use }}</p>
+  {% endif %}
+  {% if article.how_to_use %}
+    <div class="lbl">How to use</div><p>{{ article.how_to_use }}</p>
+  {% endif %}
+  {% if article.required_fields %}
+    <div class="lbl">Required fields</div><p>{{ article.required_fields }}</p>
+  {% endif %}
+  {% if article.what_happens_next %}
+    <div class="lbl">What happens next</div><p>{{ article.what_happens_next }}</p>
+  {% endif %}
+  {% if article.common_mistakes %}
+    <div class="lbl">Common mistakes</div><p>{{ article.common_mistakes }}</p>
+  {% endif %}
+</div>
+</body>
+</html>

@@ -232,6 +232,7 @@ def api_accounts_stage(aid):
     if ids is not None and c.id not in ids:
         return jsonify(ok=False, error='forbidden'), 403
     body = request.get_json(silent=True) or {}
+    _old_stage_acct = getattr(c, 'dev_stage', None)
     try:
         svc.change_account_stage(account=c,
                                  new_stage=body.get('new_stage'),
@@ -240,6 +241,17 @@ def api_accounts_stage(aid):
         db.session.commit()
     except svc.PreSalesError as e:
         return jsonify(ok=False, error=str(e)), 400
+    # v2026-09-04 — Task engine hook (Phase 3).  Never crashes the request.
+    try:
+        from app.services.task_engine import on_state_change as _osc
+        _osc(c, 'Company', _old_stage_acct, getattr(c, 'dev_stage', None),
+             triggered_by=emp)
+        db.session.commit()
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
     return jsonify(ok=True)
 
 

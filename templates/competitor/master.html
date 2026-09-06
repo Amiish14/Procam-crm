@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Competitors — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
+        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
+        --font:'Barlow','Inter',system-ui,sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);
+       font-size:14px;padding:24px 32px 60px}
+  h1{font-size:24px;font-weight:700;color:var(--ink)}
+  .hero{display:flex;align-items:flex-end;justify-content:space-between;
+        margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+  .btn{display:inline-block;padding:8px 14px;border:1px solid var(--border);
+       border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer;
+       font-family:var(--font);font-size:13px;font-weight:600}
+  .btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .filters{display:flex;gap:10px;margin-bottom:16px}
+  .filters input,.filters select{padding:7px 10px;border:1px solid var(--border);
+       border-radius:6px;font-family:var(--font);font-size:13px;background:#fff}
+  table{width:100%;border-collapse:collapse;background:var(--card);
+        border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);
+        font-size:13px}
+  th{background:#F9FAFB;font-weight:600;color:var(--text-2);
+     text-transform:uppercase;font-size:11px;letter-spacing:.05em}
+  tr:last-child td{border-bottom:0}
+  tr:hover td{background:#FAFBFC;cursor:pointer}
+  .empty{padding:60px 20px;text-align:center;color:var(--text-2)}
+  dialog{border:0;border-radius:10px;padding:0;max-width:640px;width:92vw}
+  dialog::backdrop{background:rgba(11,13,18,.4)}
+  .modal-wrap{padding:22px 26px}
+  .modal-wrap h2{font-size:18px;margin-bottom:14px;color:var(--ink)}
+  .field{display:block;margin-bottom:10px}
+  .field label{display:block;font-size:12px;font-weight:600;color:var(--text-2);
+       margin-bottom:4px;text-transform:uppercase;letter-spacing:.03em}
+  .field input,.field textarea{width:100%;padding:8px 10px;
+       border:1px solid var(--border);border-radius:6px;font-family:var(--font);
+       font-size:13px}
+  .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px;
+       padding-top:14px;border-top:1px solid var(--border)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div>
+    <h1>Competitors</h1>
+    <div style="color:var(--text-2);font-size:13px;margin-top:4px">
+      Canonical competitor master — one row per company.
+    </div>
+  </div>
+  <div>
+    <a class="btn" href="/competitors/dashboard">Dashboard</a>
+    <a class="btn" href="/my-work">My Work</a>
+    <button class="btn primary" onclick="openCreate()">+ New Competitor</button>
+  </div>
+</div>
+
+<div class="filters">
+  <input id="fSearch" placeholder="Search by name / alias" oninput="renderTable()" style="flex:1">
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Name</th><th>Country</th><th>City</th>
+      <th>Services</th><th>Verticals</th>
+    </tr>
+  </thead>
+  <tbody id="tbody">
+    <tr><td colspan="5" class="empty">Loading…</td></tr>
+  </tbody>
+</table>
+
+<dialog id="createModal">
+  <form method="dialog" class="modal-wrap" id="createForm">
+    <h2>New Competitor</h2>
+    <div class="field"><label>Name *</label>
+      <input name="name" required></div>
+    <div class="field"><label>Aliases (comma-separated)</label>
+      <input name="aliases" placeholder="K+N, KN"></div>
+    <div class="row2">
+      <div class="field"><label>Country</label><input name="country"></div>
+      <div class="field"><label>City</label><input name="city"></div>
+    </div>
+    <div class="field"><label>Website</label><input name="website"></div>
+    <div class="field"><label>Services (comma-separated)</label>
+      <input name="services" placeholder="Freight Forwarding, Warehousing"></div>
+    <div class="field"><label>Verticals (comma-separated)</label>
+      <input name="verticals"></div>
+    <div class="field"><label>LinkedIn URL</label><input name="linkedin_url"></div>
+    <div class="field"><label>Strategic Notes</label>
+      <textarea name="strategic_notes" rows="2"></textarea></div>
+    <div class="actions">
+      <button type="button" class="btn" onclick="closeCreate()">Cancel</button>
+      <button type="button" class="btn primary" onclick="submitCreate()">Create</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const CSRF_TOKEN = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+async function jfetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({'Content-Type':'application/json',
+                                'X-CSRFToken': CSRF_TOKEN}, opts.headers || {});
+  const r = await fetch(url, opts);
+  return r.json();
+}
+function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+let ROWS = [];
+async function loadRows(){
+  const q = (document.getElementById('fSearch').value || '').trim();
+  const j = await jfetch('/api/competitors' + (q ? ('?q=' + encodeURIComponent(q)) : ''));
+  ROWS = (j && j.items) || [];
+  renderTable();
+}
+function renderTable(){
+  const tbody = document.getElementById('tbody');
+  if (!ROWS.length){
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No competitors yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = ROWS.map(r => `
+    <tr onclick="location='/competitors/${r.id}'">
+      <td><b>${escapeHtml(r.name)}</b>${r.aliases && r.aliases.length ? '<div style="font-size:11px;color:var(--text-2)">'+r.aliases.map(escapeHtml).join(', ')+'</div>' : ''}</td>
+      <td>${escapeHtml(r.country||'')}</td>
+      <td>${escapeHtml(r.city||'')}</td>
+      <td>${(r.services||[]).map(escapeHtml).join(', ')}</td>
+      <td>${(r.verticals||[]).map(escapeHtml).join(', ')}</td>
+    </tr>`).join('');
+}
+function openCreate(){document.getElementById('createModal').showModal();}
+function closeCreate(){document.getElementById('createModal').close();}
+async function submitCreate(){
+  const f = document.getElementById('createForm');
+  const fd = new FormData(f);
+  const payload = {};
+  fd.forEach((v,k)=>{if(v!==''&&v!=null) payload[k]=v;});
+  ['aliases','services','verticals'].forEach(k=>{
+    if (payload[k]) payload[k] = payload[k].split(',').map(s=>s.trim()).filter(Boolean);
+  });
+  const j = await jfetch('/api/competitors',{method:'POST',body:JSON.stringify(payload)});
+  if (j && j.item){
+    closeCreate();
+    location = '/competitors/' + j.item.id;
+  } else {
+    alert((j && j.error) || 'Create failed');
+  }
+}
+document.getElementById('fSearch').addEventListener('input', () => {
+  clearTimeout(window._t); window._t = setTimeout(loadRows, 250);
+});
+loadRows();
+</script>
+</body>
+</html>

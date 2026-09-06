@@ -1,0 +1,69 @@
+CRM Foundation (Phases 2-5) — deploy notes
+============================================
+
+Server:   Azure VM hosting Procam CRM (single-file Flask, port 8005/whatever
+          is configured in the systemd unit — check /etc/systemd/system).
+
+1.  Pull latest code
+    -----------------
+    cd /var/www/procam-crm
+    sudo -u procamapp git pull
+
+2.  Migration (idempotent — safe to re-run)
+    ----------------------------------------
+    sudo -u procamapp bash -c 'cd /var/www/procam-crm && \
+        source .venv/bin/activate && \
+        python scripts/2026_09_04_crm_foundation.py --check'
+
+    # ↑ dry-run.  Prints what WOULD change without touching the DB.
+    # If it looks right, run the real migration:
+
+    sudo -u procamapp bash -c 'cd /var/www/procam-crm && \
+        source .venv/bin/activate && \
+        python scripts/2026_09_04_crm_foundation.py'
+
+3.  Restart the app
+    ----------------
+    sudo systemctl restart procam-crm.service
+    sudo systemctl status  procam-crm.service --no-pager
+
+4.  Schedule the SLA sweeper (every 15 min)
+    ----------------------------------------
+    # /etc/systemd/system/procam-crm-sla.service
+    [Unit]
+    Description=Procam CRM — task SLA sweeper
+    After=network.target
+
+    [Service]
+    Type=oneshot
+    User=procamapp
+    WorkingDirectory=/var/www/procam-crm
+    Environment=PYTHONUNBUFFERED=1
+    ExecStart=/var/www/procam-crm/.venv/bin/python /var/www/procam-crm/scripts/task_sla_sweep.py
+
+    # /etc/systemd/system/procam-crm-sla.timer
+    [Unit]
+    Description=Procam CRM — SLA sweeper every 15 minutes
+
+    [Timer]
+    OnBootSec=5min
+    OnUnitActiveSec=15min
+    Unit=procam-crm-sla.service
+
+    [Install]
+    WantedBy=timers.target
+
+    # Enable
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now procam-crm-sla.timer
+    sudo systemctl list-timers | grep procam
+
+    # Manual invocation (equivalent, if you prefer cron):
+    #   */15 * * * * cd /var/www/procam-crm && \
+    #       source .venv/bin/activate && \
+    #       python scripts/task_sla_sweep.py
+
+5.  Smoke test
+    -----------
+    curl -I https://<host>/ProcamCRM/my-work            # 302 → /login when not signed in
+    curl -I https://<host>/ProcamCRM/notifications/api/unread  # 200 (bell feed)

@@ -24,6 +24,22 @@
   })();
 </script>
 <title>Procam CRM</title>
+<!-- ────────── Phase 14 · PWA metadata ────────── -->
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#BC1D2F">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Procam CRM">
+<link rel="apple-touch-icon" href="/static/img/pwa-192.png">
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('/sw.js').catch(function (err) {
+        console.warn('SW registration failed', err);
+      });
+    });
+  }
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=Barlow+Condensed:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Inter+Tight:wght@600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
@@ -369,6 +385,56 @@ code{font-family:'SF Mono','Menlo',monospace;font-size:12px;background:var(--sur
   .news-bell{padding:4px 8px;font-size:11px}
   .admin-bdg{display:none !important}
 }
+
+/* ────────── Phase 14 · Mobile polish ────────── */
+@media(max-width:768px){
+  .top{flex-wrap:wrap;height:auto;min-height:56px;padding:8px 12px}
+  .side{position:fixed;top:56px;left:0;bottom:0;width:220px;z-index:200;
+        transform:translateX(-100%);transition:transform .2s ease;
+        background:#fff;overflow-y:auto;box-shadow:2px 0 12px rgba(0,0,0,.1)}
+  .side.mobile-open{transform:translateX(0)}
+  #mobile-burger{display:inline-flex;align-items:center;justify-content:center;
+        width:40px;height:40px;background:transparent;border:1px solid var(--border);
+        border-radius:6px;cursor:pointer;font-size:22px;color:var(--ink)}
+  .kanban .col{min-width:260px}
+  table{font-size:12.5px}
+  .bell-panel,.notif-panel{position:fixed !important;left:0 !important;right:0 !important;
+        top:56px !important;width:100vw !important;max-width:100vw !important;
+        max-height:calc(100vh - 56px) !important;border-radius:0 !important}
+}
+@media(min-width:769px){
+  #mobile-burger{display:none !important}
+}
+@media(max-width:520px){
+  table thead{display:none}
+  table tbody tr{display:block;margin-bottom:10px;
+        background:#fff;border:1px solid var(--border);border-radius:8px;padding:8px}
+  table tbody td{display:flex;justify-content:space-between;padding:5px 6px;
+        border:none;font-size:12.5px}
+  table tbody td::before{content:attr(data-label);color:var(--text-2);
+        font-weight:600;text-transform:uppercase;font-size:10.5px;
+        letter-spacing:.04em}
+}
+button,.btn,a.btn,input[type="button"],input[type="submit"]{min-height:40px}
+@media(max-width:768px){
+  button,.btn,a.btn,input[type="button"],input[type="submit"]{min-height:44px}
+}
+
+/* ────────── Phase 14 · Floating Action Buttons ────────── */
+#crm-fab{position:fixed;right:16px;bottom:16px;z-index:180;
+         display:flex;flex-direction:column;gap:10px;align-items:flex-end}
+#crm-fab .fab{width:52px;height:52px;border-radius:50%;background:var(--red,#C72435);
+              color:#fff;border:none;box-shadow:0 4px 14px rgba(199,36,53,.35);
+              cursor:pointer;font-size:22px;display:none;align-items:center;
+              justify-content:center;text-decoration:none;line-height:1}
+#crm-fab .fab.visible{display:inline-flex}
+#crm-fab .fab.secondary{background:#0B0D12;color:#fff;
+                        box-shadow:0 4px 14px rgba(11,13,18,.35)}
+#crm-fab .fab-label{position:absolute;right:64px;background:#111;color:#fff;
+                    padding:4px 8px;border-radius:4px;font-size:12px;opacity:0;
+                    pointer-events:none;white-space:nowrap;transition:.15s}
+#crm-fab .fab:hover .fab-label{opacity:1}
+@media(min-width:900px){#crm-fab{display:none}}
 </style>
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -1037,6 +1103,31 @@ window.CRMToast = (function(){
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22 6 12 13 2 6"/></svg>
       <span id="scopeToggleLbl">Mailbox only</span>
     </button>
+    <!-- v2026-09-04 — My Work quick-jump chip (Phase 4) -->
+    <a href="/my-work" id="myWorkChip"
+       style="text-decoration:none;background:transparent;border:1px solid var(--p-border);border-radius:999px;height:34px;padding:0 14px;display:inline-flex;align-items:center;gap:10px;font-size:12.5px;font-weight:600;color:var(--p-text);font-family:var(--p-font);cursor:pointer;transition:background var(--dur-out),border-color var(--dur-out),color var(--dur-out);"
+       title="My Work — pending actions, due today, overdue">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <span>My Work</span>
+      <span id="mwPend" style="display:none;background:var(--p-red);color:#fff;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:999px;line-height:1.2;">0</span>
+      <span id="mwOver" style="display:none;background:#B45309;color:#fff;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:999px;line-height:1.2;" title="Overdue">0</span>
+    </a>
+    <!-- v2026-09-04 — Notification bell (Phase 5) -->
+    <button id="notifBell" type="button"
+      style="position:relative;background:transparent;border:1px solid var(--p-border);border-radius:999px;height:34px;width:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:var(--p-text);"
+      onclick="toggleNotifPanel(event)" aria-label="Notifications">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+      <span id="notifBadge" style="display:none;position:absolute;top:-4px;right:-4px;background:var(--p-red);color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:999px;min-width:16px;text-align:center;">0</span>
+    </button>
+    <div id="notifPanel" style="display:none;position:absolute;top:52px;right:180px;width:340px;max-height:420px;overflow:hidden;background:#fff;border:1px solid var(--p-border);border-radius:8px;box-shadow:0 12px 40px rgba(11,13,18,.14);z-index:9999;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--p-border);">
+        <strong style="font-size:13px;">Notifications</strong>
+        <a href="/notifications" style="color:var(--p-red);font-size:12px;text-decoration:none;font-weight:600;">See all →</a>
+      </div>
+      <div id="notifList" style="max-height:360px;overflow-y:auto;">
+        <div style="padding:14px;text-align:center;color:#9CA3AF;font-size:12.5px;">Loading…</div>
+      </div>
+    </div>
     <div class="news-bell admin-only" onclick="nav('news')" id="newsBell" title="Market Intelligence">Intelligence<div class="news-dot" id="newsDot" style="display:none"></div></div>
     <div class="top-chip">
       <div class="top-av" id="tAv"></div>
@@ -3741,10 +3832,20 @@ async function doChangePw(){
         { page: 'projects',  label: 'Project Intelligence', ic: 'construction',  countId: 'sbPrj' },
         { page: 'contacts',  label: 'Global CRM',           ic: 'globe'         },
       ]},
+    { title: 'Deals',               icon: 'briefcase',
+      items: [
+        { href: '/rfqs',                          label: 'RFQs',                    ic: 'clipboard_list' },
+        { href: '/quotes',                        label: 'Quotes',                  ic: 'send'          },
+        { href: '/handovers',                     label: 'Handovers',               ic: 'trophy'        },
+        { href: '/funnels/account-development',   label: 'Account Funnel',          ic: 'git_branch'    },
+        { href: '/funnels/project-intelligence',  label: 'Project Funnel',          ic: 'construction'  },
+      ]},
     { title: 'Intelligence',        icon: 'brain',
       items: [
         { page: 'news',      label: 'Market Intelligence',  ic: 'newspaper',     countId: 'sbNews', adminOnly: true },
         { page: 'outreach',  label: 'AI Outreach',          ic: 'send'          },
+        { href: '/competitors',                    label: 'Competitors',           ic: 'target'        },
+        { href: '/competitors/dashboard',          label: 'Competitor Dashboard',  ic: 'dashboard'     },
       ]},
     { title: 'Team & Admin',        icon: 'users',
       items: [
@@ -3766,6 +3867,13 @@ async function doChangePw(){
   function itemHTML(it){
     var cnt = it.countId ? ' <span class="sb-cnt" id="tn_'+it.countId+'">0</span>' : '';
     var admin = it.adminOnly ? ' admin-only' : '';
+    if (it.href) {
+      return '<a href="'+it.href+'" class="topnav-item'+admin+'"'+
+             ' onclick="topnavCloseAll();">'+
+               '<span class="ic">'+ic(it.ic)+'</span>'+
+               '<span class="lbl">'+it.label+'</span>'+cnt+
+             '</a>';
+    }
     return '<a href="#" class="topnav-item'+admin+'" data-p="'+it.page+'"'+
            ' onclick="event.preventDefault(); nav(\''+it.page+'\'); topnavCloseAll();">'+
              '<span class="ic">'+ic(it.ic)+'</span>'+
@@ -4686,6 +4794,160 @@ async function loadMyWork(){
           </tr>`).join('')}
         </tbody></table></div>`;
 }
+</script>
+
+<!-- v2026-09-04 — CRM Foundation: My Work counters + Notification bell polling. -->
+<script>
+(function(){
+  var APP = (window.crmUrl ? crmUrl('') : '');
+  function _fmt(m){ if (m<60) return m+'m ago'; if (m<1440) return Math.round(m/60)+'h ago'; return Math.round(m/1440)+'d ago'; }
+  function refreshMyWork(){
+    try {
+      fetch(APP + '/my-work.json', {credentials:'same-origin'})
+        .then(function(r){ return r.ok ? r.json() : {ok:false}; })
+        .then(function(d){
+          if (!d || !d.ok || !d.counts) return;
+          var pendEl = document.getElementById('mwPend');
+          var overEl = document.getElementById('mwOver');
+          var pend = (d.counts.action_required||0) + (d.counts.due_today||0);
+          var over = d.counts.overdue || 0;
+          if (pend > 0){ pendEl.style.display='inline-block'; pendEl.textContent = pend > 99 ? '99+' : pend; }
+          else { pendEl.style.display='none'; }
+          if (over > 0){ overEl.style.display='inline-block'; overEl.textContent = over > 99 ? '99+' : over; }
+          else { overEl.style.display='none'; }
+        })
+        .catch(function(){});
+    } catch(_e){}
+  }
+  function refreshNotif(){
+    try {
+      fetch(APP + '/notifications/api/unread', {credentials:'same-origin'})
+        .then(function(r){ return r.ok ? r.json() : {unread:0, items:[]}; })
+        .then(function(d){
+          var badge = document.getElementById('notifBadge');
+          var list  = document.getElementById('notifList');
+          if (d && d.unread > 0){
+            badge.style.display = 'inline-block';
+            badge.textContent = d.unread > 99 ? '99+' : d.unread;
+          } else if (badge) { badge.style.display = 'none'; }
+          if (!list) return;
+          if (d && d.items && d.items.length){
+            list.innerHTML = '';
+            d.items.forEach(function(n){
+              var a = document.createElement('a');
+              a.href = (typeof n.url === 'string' && n.url.charAt(0) === '/') ? n.url : '#';
+              a.style.cssText = 'display:block;padding:10px 14px;border-bottom:1px solid #F3F4F6;text-decoration:none;color:#111827;';
+              var t = document.createElement('div');
+              t.style.cssText = 'font-weight:600;font-size:12.5px;';
+              t.textContent = n.title || '';
+              a.appendChild(t);
+              if (n.body){
+                var b = document.createElement('div');
+                b.style.cssText = 'font-size:11.5px;color:#6B7280;margin-top:2px;';
+                b.textContent = n.body;
+                a.appendChild(b);
+              }
+              var s = document.createElement('div');
+              s.style.cssText = 'font-size:11px;color:#9CA3AF;margin-top:2px;';
+              s.textContent = _fmt(n.age_min);
+              a.appendChild(s);
+              list.appendChild(a);
+            });
+          } else {
+            list.innerHTML = '<div style="padding:14px;text-align:center;color:#9CA3AF;font-size:12.5px;">Nothing new.</div>';
+          }
+        })
+        .catch(function(){});
+    } catch(_e){}
+  }
+  window.toggleNotifPanel = function(ev){
+    if (ev) ev.stopPropagation();
+    var p = document.getElementById('notifPanel');
+    if (!p) return;
+    p.style.display = (p.style.display === 'block') ? 'none' : 'block';
+  };
+  document.addEventListener('click', function(e){
+    var bell = document.getElementById('notifBell');
+    var panel = document.getElementById('notifPanel');
+    if (!bell || !panel) return;
+    if (!bell.contains(e.target) && !panel.contains(e.target)) {
+      panel.style.display = 'none';
+    }
+  });
+  refreshMyWork();
+  refreshNotif();
+  setInterval(refreshMyWork, 300000);
+  setInterval(refreshNotif, 300000);
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Phase 13 & 14 · Contextual help + FAB quick actions.
+     Injected universally.  A page opts into per-element tooltips by
+     adding `data-page="X"` to <body> and `data-help-key="Y"` on
+     elements — the fetch below picks them up automatically.  The
+     floating action buttons appear on <=900px viewports only (CSS
+     media query above).
+     ═══════════════════════════════════════════════════════════════════ -->
+<div id="crm-fab" aria-hidden="true">
+  <a class="fab visible" id="fab-scan" href="/business-cards/scan"
+     title="Scan business card">📇</a>
+  <a class="fab secondary" id="fab-call"    href="#" title="Call">📞</a>
+  <a class="fab secondary" id="fab-email"   href="#" title="Email">✉️</a>
+  <a class="fab secondary" id="fab-whatsapp" href="#" title="WhatsApp">💬</a>
+</div>
+
+<script>
+(function(){
+  // ── Universal help / tooltips loader ───────────────────────────
+  try {
+    var page = document.body && document.body.getAttribute('data-page');
+    if (page){
+      fetch('/api/help/tooltips?page=' + encodeURIComponent(page),
+            {credentials:'same-origin'})
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(j){
+          if (!j || !j.tooltips) return;
+          document.querySelectorAll('[data-help-key]').forEach(function(el){
+            var k = el.getAttribute('data-help-key');
+            if (j.tooltips[k]) el.setAttribute('title', j.tooltips[k].replace(/<[^>]+>/g,''));
+          });
+        }).catch(function(){});
+    }
+  } catch (e) { /* ignore */ }
+
+  // ── FAB quick actions per page ─────────────────────────────────
+  try {
+    var phone = document.body && document.body.getAttribute('data-phone');
+    var email = document.body && document.body.getAttribute('data-email');
+    var call    = document.getElementById('fab-call');
+    var mail    = document.getElementById('fab-email');
+    var whats   = document.getElementById('fab-whatsapp');
+    function show(el, href){
+      if (!el) return;
+      if (href){ el.href = href; el.classList.add('visible'); }
+      else     { el.classList.remove('visible'); }
+    }
+    show(call,  phone ? 'tel:' + phone : null);
+    show(mail,  email ? 'mailto:' + email : null);
+    show(whats, phone ? 'https://wa.me/' + phone.replace(/[^0-9]/g,'') : null);
+  } catch (e) { /* ignore */ }
+
+  // ── Mobile burger ─────────────────────────────────────────────
+  try {
+    var top = document.querySelector('.top') || document.querySelector('header');
+    var side = document.querySelector('.side') || document.querySelector('nav');
+    if (top && side && !document.getElementById('mobile-burger')){
+      var b = document.createElement('button');
+      b.id = 'mobile-burger';
+      b.type = 'button';
+      b.setAttribute('aria-label', 'Toggle menu');
+      b.innerHTML = '&#9776;';
+      b.onclick = function(){ side.classList.toggle('mobile-open'); };
+      top.insertBefore(b, top.firstChild);
+    }
+  } catch (e) { /* ignore */ }
+})();
 </script>
 </body>
 </html>

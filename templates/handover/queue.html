@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TMS Handover Queue — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
+        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
+        --success:#059669;--warning:#B45309;--danger:#B91C1C;--info:#1D4ED8;
+        --font:'Barlow','Inter',system-ui,sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);
+       font-size:14px;padding:24px 32px 60px}
+  a{color:inherit;text-decoration:none}
+  h1{font-size:24px;font-weight:700;color:var(--ink)}
+  .hero{display:flex;align-items:flex-end;justify-content:space-between;
+        margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+  .btn{display:inline-block;padding:7px 12px;border:1px solid var(--border);
+       border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer;
+       font-family:var(--font);font-size:13px;font-weight:600}
+  .btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .btn.success{background:var(--success);color:#fff;border-color:var(--success)}
+  .btn.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
+  .btn.tiny{padding:4px 8px;font-size:11px}
+  .filters{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+  .filters select{padding:7px 10px;border:1px solid var(--border);
+       border-radius:6px;font-family:var(--font);font-size:13px;background:#fff}
+  table{width:100%;border-collapse:collapse;background:var(--card);
+        border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);
+        font-size:13px}
+  th{background:#F9FAFB;font-weight:600;color:var(--text-2);
+     text-transform:uppercase;font-size:11px;letter-spacing:.05em}
+  tr:last-child td{border-bottom:0}
+  .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+  .pill.handover-pending{background:#FEF3C7;color:#92400E}
+  .pill.tms-project-created{background:#DBEAFE;color:#1D4ED8}
+  .pill.handover-complete{background:#D1FAE5;color:#065F46}
+  .pill.cancelled{background:#FEE2E2;color:#991B1B}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .empty{padding:60px 20px;text-align:center;color:var(--text-2)}
+  dialog{border:0;border-radius:10px;padding:0;max-width:560px;width:92vw}
+  dialog::backdrop{background:rgba(11,13,18,.4)}
+  .modal-wrap{padding:22px 26px}
+  .field{margin-bottom:10px}
+  .field label{display:block;font-size:11px;text-transform:uppercase;
+       letter-spacing:.05em;color:var(--text-2);font-weight:600;margin-bottom:4px}
+  .field input,.field textarea{width:100%;padding:8px 10px;
+       border:1px solid var(--border);border-radius:6px;font-family:var(--font);
+       font-size:13px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div>
+    <h1>TMS Handover Queue</h1>
+    <div style="color:var(--text-2);font-size:13px;margin-top:4px">
+      Won deals awaiting TMS project creation.
+    </div>
+  </div>
+  <div>
+    <a class="btn" href="/my-work">My Work</a>
+    <a class="btn" href="/quotes">Quotes</a>
+  </div>
+</div>
+
+<div class="filters">
+  <select id="fStatus" onchange="load()">
+    <option value="Handover Pending">Handover Pending</option>
+    <option value="TMS Project Created">TMS Project Created</option>
+    <option value="Handover Complete">Handover Complete</option>
+    <option value="Cancelled">Cancelled</option>
+    <option value="all">All</option>
+  </select>
+</div>
+
+<table>
+  <thead><tr>
+    <th>#</th><th>Account</th><th>Vertical</th>
+    <th class="num">Won value</th>
+    <th>Opp / Quote</th>
+    <th>Status</th><th>TMS Project</th><th>Acknowledged</th><th></th>
+  </tr></thead>
+  <tbody id="tbody"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
+</table>
+
+<dialog id="hModal">
+  <form method="dialog" class="modal-wrap" id="hForm">
+    <h2 style="margin-bottom:12px">Mark as TMS Project Created</h2>
+    <input type="hidden" name="hid">
+    <div class="grid2">
+      <div class="field"><label>TMS Project ID *</label><input name="tms_project_id" required></div>
+      <div class="field"><label>TMS Job ID</label><input name="tms_job_id"></div>
+    </div>
+    <div class="field"><label>Acknowledged by (name) *</label><input name="tms_ack_by" required></div>
+    <div class="field"><label>Remarks</label><textarea name="remarks"></textarea></div>
+    <div class="actions">
+      <button type="button" class="btn" onclick="document.getElementById('hModal').close()">Cancel</button>
+      <button type="button" class="btn success" onclick="submitHandover()">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const CSRF = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+async function jf(u, o) {
+  o = o || {}; o.headers = Object.assign({'Content-Type':'application/json','X-CSRFToken': CSRF}, o.headers || {});
+  const r = await fetch(u, o); return r.json();
+}
+function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function pill(s){const c=(s||'').toLowerCase().replace(/\s+/g,'-');return `<span class="pill ${c}">${esc(s||'')}</span>`}
+async function load() {
+  const st = document.getElementById('fStatus').value;
+  const j = await jf('/api/handovers?status=' + encodeURIComponent(st));
+  const rows = (j && j.ok) ? (j.handovers || []) : [];
+  const tbody = document.getElementById('tbody');
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty">No handovers.</td></tr>'; return; }
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.id}</td>
+      <td><b>${esc(r.account_name)}</b></td>
+      <td>${esc(r.vertical)}</td>
+      <td class="num">${Number(r.won_value||0).toLocaleString()}</td>
+      <td>${r.opportunity_id ? 'Opp #' + r.opportunity_id : ''}${r.quote_id ? ' / Q#' + r.quote_id : ''}</td>
+      <td>${pill(r.status)}</td>
+      <td>${esc(r.tms_project_id || '')}</td>
+      <td>${esc(r.tms_ack_by || '')}</td>
+      <td>
+        ${r.status === 'Handover Pending'
+          ? `<button class="btn tiny primary" onclick='openH(${JSON.stringify(r)})'>Mark TMS Created</button>`
+          : ''}
+        ${r.status === 'TMS Project Created'
+          ? `<button class="btn tiny success" onclick="markComplete(${r.id})">Complete</button>`
+          : ''}
+        ${r.status !== 'Cancelled' && r.status !== 'Handover Complete'
+          ? `<button class="btn tiny danger" onclick="cancelH(${r.id})">Cancel</button>`
+          : ''}
+      </td>
+    </tr>`).join('');
+}
+function openH(r) {
+  const f = document.getElementById('hForm');
+  f.reset();
+  f.hid.value = r.id;
+  document.getElementById('hModal').showModal();
+}
+async function submitHandover() {
+  const f = document.getElementById('hForm');
+  const fd = new FormData(f);
+  const hid = fd.get('hid');
+  const p = {};
+  fd.forEach((v,k)=>{ if (k !== 'hid' && v !== '' && v != null) p[k] = v; });
+  const j = await jf('/api/handovers/' + hid, {method:'PATCH', body: JSON.stringify(p)});
+  if (j && j.ok) { document.getElementById('hModal').close(); load(); }
+  else alert((j && j.error) || 'Save failed');
+}
+async function markComplete(hid) {
+  if (!confirm('Mark this handover Complete?')) return;
+  const j = await jf('/api/handovers/' + hid,
+                     {method:'PATCH', body: JSON.stringify({status:'Handover Complete'})});
+  if (j && j.ok) load(); else alert((j && j.error) || 'Failed');
+}
+async function cancelH(hid) {
+  const reason = prompt('Cancellation reason?') || '';
+  const j = await jf('/api/handovers/' + hid + '/cancel',
+                     {method:'POST', body: JSON.stringify({reason})});
+  if (j && j.ok) load(); else alert((j && j.error) || 'Failed');
+}
+load();
+</script>
+</body>
+</html>

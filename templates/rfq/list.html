@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RFQs — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
+        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
+        --success:#059669;--warning:#B45309;--danger:#B91C1C;--info:#1D4ED8;
+        --font:'Barlow','Inter',system-ui,sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);
+       font-size:14px;padding:24px 32px 60px}
+  a{color:inherit;text-decoration:none}
+  h1{font-size:24px;font-weight:700;color:var(--ink)}
+  .hero{display:flex;align-items:flex-end;justify-content:space-between;
+        margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+  .btn{display:inline-block;padding:8px 14px;border:1px solid var(--border);
+       border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer;
+       font-family:var(--font);font-size:13px;font-weight:600}
+  .btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .btn.danger{background:var(--red);color:#fff;border-color:var(--red)}
+  .filters{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+  .filters input,.filters select{padding:7px 10px;border:1px solid var(--border);
+       border-radius:6px;font-family:var(--font);font-size:13px;background:#fff}
+  table{width:100%;border-collapse:collapse;background:var(--card);
+        border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);
+        font-size:13px}
+  th{background:#F9FAFB;font-weight:600;color:var(--text-2);
+     text-transform:uppercase;font-size:11px;letter-spacing:.05em}
+  tr:last-child td{border-bottom:0}
+  tr:hover td{background:#FAFBFC;cursor:pointer}
+  .pill{display:inline-block;padding:2px 8px;border-radius:10px;
+        font-size:11px;font-weight:600;background:#EEF;color:var(--ink)}
+  .pill.received{background:#E0F2FE;color:#075985}
+  .pill.rate-sourcing{background:#FEF3C7;color:#92400E}
+  .pill.quote-preparation{background:#FCE7F3;color:#9F1239}
+  .pill.quoted{background:#DBEAFE;color:#1D4ED8}
+  .pill.negotiation{background:#EDE9FE;color:#5B21B6}
+  .pill.won{background:#D1FAE5;color:#065F46}
+  .pill.lost{background:#FEE2E2;color:#991B1B}
+  .pill.withdrawn{background:#F3F4F6;color:#4B5563}
+  .empty{padding:60px 20px;text-align:center;color:var(--text-2)}
+  dialog{border:0;border-radius:10px;padding:0;max-width:640px;width:92vw}
+  dialog::backdrop{background:rgba(11,13,18,.4)}
+  .modal-wrap{padding:22px 26px}
+  .modal-wrap h2{font-size:18px;margin-bottom:14px;color:var(--ink)}
+  .field{display:block;margin-bottom:10px}
+  .field label{display:block;font-size:12px;font-weight:600;color:var(--text-2);
+       margin-bottom:4px;text-transform:uppercase;letter-spacing:.03em}
+  .field input,.field textarea,.field select{width:100%;padding:8px 10px;
+       border:1px solid var(--border);border-radius:6px;font-family:var(--font);
+       font-size:13px}
+  .field textarea{min-height:70px;resize:vertical}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px;
+       padding-top:14px;border-top:1px solid var(--border)}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div>
+    <h1>RFQs</h1>
+    <div style="color:var(--text-2);font-size:13px;margin-top:4px">
+      All requests for quote — filter by status, owner or account.
+    </div>
+  </div>
+  <div>
+    <a class="btn" href="/my-work">My Work</a>
+    <a class="btn" href="/app">Dashboard</a>
+    <button class="btn primary" onclick="openCreate()">+ New RFQ</button>
+  </div>
+</div>
+
+<div class="filters">
+  <input id="fSearch" placeholder="Search subject / number / cargo" oninput="renderTable()">
+  <select id="fStatus" onchange="renderTable()">
+    <option value="">All statuses</option>
+    <option>Received</option>
+    <option>Rate Sourcing</option>
+    <option>Quote Preparation</option>
+    <option>Quoted</option>
+    <option>Negotiation</option>
+    <option>Won</option>
+    <option>Lost</option>
+    <option>Withdrawn</option>
+  </select>
+  <input id="fOwner" placeholder="Owner emp_code" oninput="renderTable()">
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>RFQ #</th><th>Subject</th><th>Origin → Destination</th>
+      <th>Status</th><th>Received</th><th>Quote By</th><th>Owner</th>
+    </tr>
+  </thead>
+  <tbody id="tbody">
+    <tr><td colspan="7" class="empty">Loading…</td></tr>
+  </tbody>
+</table>
+
+<dialog id="createModal">
+  <form method="dialog" class="modal-wrap" id="createForm">
+    <h2>New RFQ</h2>
+    <div class="field"><label>Subject *</label>
+      <input name="subject" required></div>
+    <div class="row2">
+      <div class="field"><label>Origin</label><input name="origin"></div>
+      <div class="field"><label>Destination</label><input name="destination"></div>
+    </div>
+    <div class="field"><label>Cargo</label><input name="cargo"></div>
+    <div class="row2">
+      <div class="field"><label>Received Date</label>
+        <input type="date" name="received_date"></div>
+      <div class="field"><label>Quote By</label>
+        <input type="date" name="quote_by_date"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Account ID</label>
+        <input type="number" name="account_id"></div>
+      <div class="field"><label>Lead ID</label>
+        <input type="number" name="lead_id"></div>
+    </div>
+    <div class="field"><label>Description / Scope</label>
+      <textarea name="scope"></textarea></div>
+    <div class="actions">
+      <button type="button" class="btn" onclick="closeCreate()">Cancel</button>
+      <button type="button" class="btn primary" onclick="submitCreate()">Create RFQ</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const CSRF_TOKEN = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+async function jfetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({'Content-Type':'application/json',
+                                'X-CSRFToken': CSRF_TOKEN}, opts.headers || {});
+  const r = await fetch(url, opts);
+  return r.json();
+}
+
+let RFQS = [];
+async function loadRfqs() {
+  try {
+    const j = await jfetch('/api/rfqs');
+    RFQS = (j && j.ok) ? (j.rfqs || []) : [];
+  } catch (e) { RFQS = []; }
+  renderTable();
+}
+function pill(status) {
+  const cls = (status || '').toLowerCase().replace(/\s+/g, '-');
+  return `<span class="pill ${cls}">${status || ''}</span>`;
+}
+function renderTable() {
+  const s = (document.getElementById('fSearch').value || '').toLowerCase();
+  const st = document.getElementById('fStatus').value;
+  const ow = (document.getElementById('fOwner').value || '').toLowerCase();
+  const tbody = document.getElementById('tbody');
+  const rows = RFQS.filter(r => {
+    if (st && r.status !== st) return false;
+    if (ow && !(r.lead_driver||'').toLowerCase().includes(ow)) return false;
+    if (s) {
+      const hay = `${r.rfq_number} ${r.subject} ${r.cargo} ${r.origin} ${r.destination}`.toLowerCase();
+      if (!hay.includes(s)) return false;
+    }
+    return true;
+  });
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No RFQs match.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr onclick="location='/rfqs/${r.id}'">
+      <td><b>${r.rfq_number}</b></td>
+      <td>${escapeHtml(r.subject)}</td>
+      <td>${escapeHtml(r.origin || '')} → ${escapeHtml(r.destination || '')}</td>
+      <td>${pill(r.status)}</td>
+      <td>${r.received_date || ''}</td>
+      <td>${r.quote_by_date || ''}</td>
+      <td>${escapeHtml(r.lead_driver || '')}</td>
+    </tr>`).join('');
+}
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+function openCreate() { document.getElementById('createModal').showModal(); }
+function closeCreate() { document.getElementById('createModal').close(); }
+async function submitCreate() {
+  const f = document.getElementById('createForm');
+  const fd = new FormData(f);
+  const payload = {};
+  fd.forEach((v, k) => { if (v !== '' && v != null) payload[k] = v; });
+  ['account_id','lead_id'].forEach(k => {
+    if (payload[k] != null) payload[k] = parseInt(payload[k], 10);
+  });
+  const j = await jfetch('/api/rfqs', {method:'POST', body: JSON.stringify(payload)});
+  if (j && j.ok) {
+    closeCreate();
+    location = '/rfqs/' + j.rfq.id;
+  } else {
+    alert((j && j.error) || 'Create failed');
+  }
+}
+loadRfqs();
+</script>
+</body>
+</html>

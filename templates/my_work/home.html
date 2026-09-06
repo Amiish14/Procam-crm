@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>My Work — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --red:#C72435; --red-tint:#FDEEF0;
+    --ink:#0B0D12; --ink-2:#1F2430;
+    --text:#363B47; --text-2:#6B7280; --text-3:#9CA3AF;
+    --bg:#F7F8FA; --card:#FFFFFF; --border:#E5E7EB;
+    --success:#059669; --warning:#B45309; --danger:#B91C1C; --info:#1D4ED8;
+    --font:'Barlow','Inter',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);
+       font-size:14px;line-height:1.55;padding:24px 32px 60px}
+  a{color:inherit;text-decoration:none}
+  h1{font-size:26px;font-weight:700;color:var(--ink);letter-spacing:-.01em}
+  .hero{display:flex;align-items:flex-end;justify-content:space-between;
+        margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid var(--border)}
+  .hero .today{color:var(--text-2);font-size:13px;margin-top:6px}
+  .kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;
+        margin-bottom:28px}
+  .kpi{background:var(--card);border:1px solid var(--border);border-radius:8px;
+       padding:16px 18px;cursor:pointer;transition:border-color .12s,box-shadow .12s}
+  .kpi:hover{border-color:var(--ink-2);box-shadow:0 2px 8px rgba(11,13,18,.06)}
+  .kpi .label{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-2);
+              font-weight:600;margin-bottom:6px}
+  .kpi .value{font-size:30px;font-weight:800;color:var(--ink);line-height:1}
+  .kpi.warn .value{color:var(--warning)}
+  .kpi.danger .value{color:var(--danger)}
+  .kpi.info .value{color:var(--info)}
+  .kpi.success .value{color:var(--success)}
+  .buckets{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  .bucket{background:var(--card);border:1px solid var(--border);border-radius:10px;
+          padding:18px 20px}
+  .bucket h3{font-size:15px;font-weight:700;color:var(--ink);margin-bottom:14px;
+             display:flex;align-items:center;gap:8px}
+  .bucket h3 .count{background:var(--red-tint);color:var(--red);
+                     font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:12px}
+  .task-row{padding:10px 0;border-bottom:1px dashed var(--border);
+            display:flex;align-items:flex-start;gap:12px}
+  .task-row:last-child{border-bottom:none}
+  .task-row .task-body{flex:1;min-width:0}
+  .task-row .task-title{font-weight:600;font-size:13.5px;color:var(--ink);
+                        margin-bottom:2px}
+  .task-row .task-meta{font-size:11.5px;color:var(--text-2)}
+  .task-row .task-key{font-family:monospace;font-size:10.5px;color:var(--text-3);
+                      display:inline-block;margin-right:8px}
+  .task-row .badge{font-size:10.5px;font-weight:600;padding:2px 6px;
+                   border-radius:4px;background:#EEF2F7;color:var(--ink-2)}
+  .task-row .badge.overdue{background:#FEE2E2;color:var(--danger)}
+  .task-row .badge.today{background:#FEF3C7;color:var(--warning)}
+  .task-row .badge.escalated{background:#FEE2E2;color:var(--danger)}
+  .task-row .badge.returned{background:#DBEAFE;color:var(--info)}
+  .empty{color:var(--text-3);text-align:center;padding:22px;font-size:13px}
+  .top-back{display:inline-flex;align-items:center;gap:6px;color:var(--text-2);
+            font-size:13px;font-weight:500;padding:6px 12px;border:1px solid var(--border);
+            border-radius:6px;background:var(--card)}
+  .top-back:hover{color:var(--ink);border-color:var(--ink-2)}
+  @media (max-width: 1200px) {
+    .kpis{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .buckets{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+
+  <div class="hero">
+    <div>
+      <h1>My Work</h1>
+      <div class="today" id="today-line"></div>
+    </div>
+    <div>
+      <a class="top-back" href="{{ url_for('dashboard') }}">← Dashboard</a>
+    </div>
+  </div>
+
+  <div class="kpis">
+    <a class="kpi danger" href="#bucket-overdue"><div class="label">Overdue</div>
+      <div class="value">{{ counts.overdue }}</div></a>
+    <a class="kpi warn"   href="#bucket-today"><div class="label">Due Today</div>
+      <div class="value">{{ counts.due_today }}</div></a>
+    <a class="kpi info"   href="#bucket-action"><div class="label">New Assignments</div>
+      <div class="value">{{ counts.new_assignments }}</div></a>
+    <a class="kpi"        href="#bucket-action"><div class="label">Rate Sourcing</div>
+      <div class="value">{{ counts.rate_sourcing }}</div></a>
+    <a class="kpi"        href="#bucket-action"><div class="label">Quote Pending</div>
+      <div class="value">{{ counts.quote_pending }}</div></a>
+    <a class="kpi success" href="#bucket-action"><div class="label">Follow-ups Due</div>
+      <div class="value">{{ counts.followups_due }}</div></a>
+  </div>
+
+  <div class="buckets">
+
+    {% macro render_bucket(id, title, rows, cls='') %}
+      <div class="bucket" id="{{ id }}">
+        <h3>{{ title }} <span class="count">{{ rows|length }}</span></h3>
+        {% if rows %}
+          {% for t in rows %}
+            <a class="task-row" href="{{ t.action_route or '#' }}">
+              <div class="task-body">
+                <div class="task-title">{{ t.entity_display or t.entity_type }}</div>
+                <div class="task-meta">
+                  <span class="task-key">{{ t.task_key }}</span>
+                  {% if t.is_overdue %}<span class="badge overdue">Overdue</span>{% endif %}
+                  {% if t.status == 'Escalated' %}<span class="badge escalated">Escalated</span>{% endif %}
+                  {% if t.status == 'Returned'  %}<span class="badge returned">Returned</span>{% endif %}
+                  {% if t.due_at %}Due {{ t.due_at }}{% endif %}
+                </div>
+              </div>
+            </a>
+          {% endfor %}
+        {% else %}
+          <div class="empty">Nothing here.</div>
+        {% endif %}
+      </div>
+    {% endmacro %}
+
+    {{ render_bucket('bucket-action',    'Action Required',      action_required) }}
+    {{ render_bucket('bucket-today',     'Due Today',            due_today) }}
+    {{ render_bucket('bucket-overdue',   'Overdue',              overdue) }}
+    {{ render_bucket('bucket-waiting',   'Waiting for Others',   waiting_for_others) }}
+    {{ render_bucket('bucket-completed', 'Recently Completed',   recently_completed) }}
+    {{ render_bucket('bucket-exception', 'Exceptions',           exceptions) }}
+
+  </div>
+
+<script>
+(function(){
+  var d = new Date();
+  var opts = { weekday:'long', year:'numeric', month:'long', day:'numeric' };
+  var name = {{ (emp.name or '')|tojson }};
+  document.getElementById('today-line').textContent =
+    d.toLocaleDateString('en-IN', opts) + (name ? ' · ' + name : '');
+})();
+</script>
+</body>
+</html>

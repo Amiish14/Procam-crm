@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ competitor.name }} — Competitor</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
+        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
+        --font:'Barlow','Inter',system-ui,sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);
+       font-size:14px;padding:24px 32px 60px}
+  h1{font-size:24px;font-weight:700;color:var(--ink)}
+  h3{font-size:14px;color:var(--ink);margin-bottom:10px}
+  .hero{display:flex;align-items:flex-end;justify-content:space-between;
+        margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border)}
+  .btn{display:inline-block;padding:6px 12px;border:1px solid var(--border);
+       border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer;
+       font-family:var(--font);font-size:13px;font-weight:600}
+  .btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .tabs{display:flex;gap:2px;margin:14px 0 0}
+  .tab{padding:8px 16px;border:1px solid var(--border);border-bottom:0;
+       background:#F0F1F3;cursor:pointer;font-size:12px;font-weight:600;
+       color:var(--text-2);border-radius:6px 6px 0 0}
+  .tab.active{background:var(--card);color:var(--ink)}
+  .panel{background:var(--card);border:1px solid var(--border);border-radius:0 6px 6px 6px;
+         padding:20px;min-height:300px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)}
+  th{background:#F9FAFB;font-weight:600;color:var(--text-2);
+     text-transform:uppercase;font-size:11px}
+  .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+  .kpi .tile{border:1px solid var(--border);border-radius:8px;padding:14px}
+  .kpi .k{font-size:11px;color:var(--text-2);text-transform:uppercase;
+       letter-spacing:.03em;margin-bottom:4px}
+  .kpi .v{font-size:22px;font-weight:700;color:var(--ink)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px}
+  .field{margin-bottom:10px}
+  .field label{display:block;font-size:11px;color:var(--text-2);
+       text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px}
+  .field input,.field textarea,.field select{width:100%;padding:6px 10px;
+       border:1px solid var(--border);border-radius:6px;font-size:13px;
+       font-family:var(--font)}
+  .pill{display:inline-block;padding:2px 8px;border-radius:10px;
+        font-size:11px;font-weight:600;background:#EEF;color:var(--ink)}
+  .day-hdr{font-size:11px;color:var(--text-2);text-transform:uppercase;
+       letter-spacing:.05em;margin:14px 0 6px;font-weight:600}
+  .intel-item{border:1px solid var(--border);border-radius:6px;padding:10px 12px;
+       margin-bottom:6px}
+  .intel-item .meta{font-size:11px;color:var(--text-2)}
+  .empty{padding:40px 20px;text-align:center;color:var(--text-2)}
+  ul{list-style:none;padding:0}
+  li{padding:2px 0}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div>
+    <div style="font-size:12px;color:var(--text-2)"><a href="/competitors">← Competitors</a></div>
+    <h1>{{ competitor.name }}</h1>
+    <div style="color:var(--text-2);font-size:13px;margin-top:4px">
+      {{ competitor.country or '' }} {% if competitor.city %}· {{ competitor.city }}{% endif %}
+      {% if competitor.website %} · <a href="{{ competitor.website }}" target="_blank" rel="noopener">website</a>{% endif %}
+    </div>
+  </div>
+  <div><a class="btn" href="/competitors/dashboard">Dashboard</a></div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="overview">Overview</div>
+  <div class="tab" data-tab="contacts">Contacts</div>
+  <div class="tab" data-tab="intelligence">Intelligence</div>
+  <div class="tab" data-tab="assessments">Assessments</div>
+  <div class="tab" data-tab="performance">Performance</div>
+</div>
+<div class="panel" id="panel">Loading…</div>
+
+<script>
+const CID = {{ competitor.id }};
+const CSRF_TOKEN = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+async function jfetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({'Content-Type':'application/json',
+                                'X-CSRFToken': CSRF_TOKEN}, opts.headers || {});
+  const r = await fetch(url, opts);
+  return r.json();
+}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+let DATA = null;
+async function loadData(){
+  const j = await jfetch('/api/competitors/' + CID);
+  DATA = j.item;
+}
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    renderTab(t.dataset.tab);
+  });
+});
+
+async function renderTab(name){
+  if (!DATA) await loadData();
+  const p = document.getElementById('panel');
+  if (name === 'overview') return renderOverview(p);
+  if (name === 'contacts') return renderContacts(p);
+  if (name === 'intelligence') return renderIntel(p);
+  if (name === 'assessments') return renderAssess(p);
+  if (name === 'performance') return renderPerf(p);
+}
+
+function renderOverview(p){
+  const d = DATA;
+  p.innerHTML = `
+    <div class="grid3">
+      <div>
+        <h3>Company</h3>
+        <div class="field"><label>Website</label><div>${esc(d.website)||'—'}</div></div>
+        <div class="field"><label>HQ</label><div>${esc([d.city,d.country].filter(Boolean).join(', '))||'—'}</div></div>
+        <div class="field"><label>Address</label><div>${esc(d.hq_address)||'—'}</div></div>
+        <div class="field"><label>Aliases</label><div>${(d.aliases||[]).map(esc).join(', ')||'—'}</div></div>
+        <div class="field"><label>LinkedIn</label><div>${d.linkedin_url?('<a href="'+esc(d.linkedin_url)+'" target="_blank">'+esc(d.linkedin_url)+'</a>'):'—'}</div></div>
+      </div>
+      <div>
+        <h3>Offering</h3>
+        <div class="field"><label>Services</label><div>${(d.services||[]).map(s=>'<span class="pill">'+esc(s)+'</span>').join(' ')||'—'}</div></div>
+        <div class="field"><label>Verticals</label><div>${(d.verticals||[]).map(esc).join(', ')||'—'}</div></div>
+        <div class="field"><label>Geographic reach</label><div>${(d.geographic_reach||[]).map(esc).join(', ')||'—'}</div></div>
+        <div class="field"><label>Capabilities</label><div>${esc(d.capabilities)||'—'}</div></div>
+        <div class="field"><label>Equipment notes</label><div>${esc(d.equipment_notes)||'—'}</div></div>
+      </div>
+      <div>
+        <h3>Positioning</h3>
+        <div class="field"><label>Key customers (public)</label><div>${(d.key_customers_public||[]).map(esc).join(', ')||'—'}</div></div>
+        <div class="field"><label>Strengths</label><div>${esc(d.strengths)||'—'}</div></div>
+        <div class="field"><label>Weaknesses</label><div>${esc(d.weaknesses)||'—'}</div></div>
+        <div class="field"><label>Strategic notes</label><div>${esc(d.strategic_notes)||'—'}</div></div>
+      </div>
+    </div>`;
+}
+
+function renderContacts(p){
+  const rows = DATA.contacts || [];
+  p.innerHTML = `
+    <div style="display:flex;justify-content:space-between;margin-bottom:12px">
+      <h3>Public Contacts (${rows.length})</h3>
+      <button class="btn primary" onclick="addContact()">+ Add Contact</button>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Name</th><th>Designation</th><th>Dept</th>
+        <th>Location</th><th>Role</th><th>Source</th><th>LinkedIn</th><th></th>
+      </tr></thead>
+      <tbody>${rows.length ? rows.map(r => `
+        <tr>
+          <td><b>${esc(r.name)}</b></td>
+          <td>${esc(r.designation)}</td>
+          <td>${esc(r.department)}</td>
+          <td>${esc([r.city,r.country].filter(Boolean).join(', '))}</td>
+          <td>${esc(r.role_category)}</td>
+          <td>${esc(r.source)}</td>
+          <td>${r.linkedin_url?'<a href="'+esc(r.linkedin_url)+'" target="_blank">link</a>':''}</td>
+          <td><button class="btn" onclick="delContact(${r.id})">Delete</button></td>
+        </tr>`).join('') :
+        '<tr><td colspan="8" class="empty">No contacts yet.</td></tr>'}
+      </tbody>
+    </table>`;
+}
+async function addContact(){
+  const name = prompt('Full name'); if (!name) return;
+  const designation = prompt('Designation') || '';
+  const linkedin = prompt('LinkedIn URL (optional)') || '';
+  const j = await jfetch('/api/competitors/'+CID+'/contacts',{method:'POST',
+    body: JSON.stringify({name, designation, linkedin_url: linkedin,
+                          source:'Manual'})});
+  if (j.error){alert(j.error); return;}
+  await loadData(); renderTab('contacts');
+}
+async function delContact(id){
+  if (!confirm('Delete this contact?')) return;
+  await jfetch('/api/competitor-contacts/'+id,{method:'DELETE'});
+  await loadData(); renderTab('contacts');
+}
+
+function renderIntel(p){
+  const rows = DATA.intelligence || [];
+  // Group by day-bucket
+  const buckets = {};
+  const now = new Date(); now.setHours(0,0,0,0);
+  const yday = new Date(now); yday.setDate(now.getDate()-1);
+  const wk = new Date(now); wk.setDate(now.getDate()-7);
+  const mo = new Date(now); mo.setDate(now.getDate()-30);
+  rows.forEach(r => {
+    const d = r.event_date ? new Date(r.event_date) : null;
+    let key = 'Older';
+    if (d){
+      if (d >= now) key = 'Today';
+      else if (d >= yday) key = 'Yesterday';
+      else if (d >= wk) key = 'This Week';
+      else if (d >= mo) key = 'This Month';
+    }
+    (buckets[key] = buckets[key] || []).push(r);
+  });
+  const order = ['Today','Yesterday','This Week','This Month','Older'];
+  p.innerHTML = `
+    <div style="display:flex;justify-content:space-between;margin-bottom:12px">
+      <h3>Intelligence Timeline (${rows.length})</h3>
+      <button class="btn primary" onclick="addIntel()">+ Log Event</button>
+    </div>
+    ${rows.length ? order.map(k => {
+      if (!buckets[k]) return '';
+      return `<div class="day-hdr">${k}</div>` + buckets[k].map(r => `
+        <div class="intel-item">
+          <div><span class="pill">${esc(r.event_type)}</span>
+               <b>${esc(r.event_date)}</b> — ${esc(r.summary)}</div>
+          <div class="meta">
+            ${r.source ? 'Source: '+esc(r.source)+' ' : ''}
+            ${r.source_url ? '<a href="'+esc(r.source_url)+'" target="_blank">link</a>' : ''}
+          </div>
+        </div>`).join('');
+      }).join('') : '<div class="empty">No intelligence logged.</div>'}
+  `;
+}
+async function addIntel(){
+  const event_type = prompt('Event type (e.g. Project Won, Senior Appointment, LinkedIn Update)');
+  if (!event_type) return;
+  const summary = prompt('Summary'); if (!summary) return;
+  const source = prompt('Source (LinkedIn / News / …)') || '';
+  const source_url = prompt('Source URL') || '';
+  const event_date = prompt('Event date (YYYY-MM-DD)') || '';
+  const j = await jfetch('/api/competitors/'+CID+'/intelligence',{method:'POST',
+    body: JSON.stringify({event_type, summary, source, source_url, event_date})});
+  if (j.error){alert(j.error); return;}
+  await loadData(); renderTab('intelligence');
+}
+
+function renderAssess(p){
+  const rows = DATA.assessments || [];
+  const axes = ['pricing','fleet_assets','engineering','heavy_transport',
+                'project_logistics','freight_forwarding','warehousing',
+                'global_network','local_presence','customer_relationships',
+                'response_speed'];
+  const latest = rows[0];
+  p.innerHTML = `
+    <div style="display:flex;justify-content:space-between;margin-bottom:12px">
+      <h3>Assessments (${rows.length})</h3>
+      <button class="btn primary" onclick="addAssess()">+ New Assessment</button>
+    </div>
+    <div class="grid2">
+      <div>
+        <h3>Latest capability radar</h3>
+        ${latest ? '<canvas id="radar" height="280"></canvas>' :
+          '<div class="empty">No assessment yet.</div>'}
+      </div>
+      <div>
+        <h3>Score trend</h3>
+        ${rows.length > 1 ? '<canvas id="trend" height="280"></canvas>' :
+          '<div class="empty">Need at least 2 assessments to show a trend.</div>'}
+      </div>
+    </div>`;
+  if (latest){
+    new Chart(document.getElementById('radar').getContext('2d'), {
+      type:'radar',
+      data:{labels: axes.map(a => a.replace(/_/g,' ')),
+            datasets:[{label:'Latest ('+latest.assessment_date+')',
+                       data: axes.map(a => latest[a] || 0),
+                       backgroundColor:'rgba(199,36,53,.15)',
+                       borderColor:'#C72435',pointBackgroundColor:'#C72435'}]},
+      options:{scales:{r:{min:0,max:5,ticks:{stepSize:1}}},
+               plugins:{legend:{display:false}}}
+    });
+  }
+  if (rows.length > 1){
+    const sorted = rows.slice().sort((a,b) =>
+      (a.assessment_date||'').localeCompare(b.assessment_date||''));
+    new Chart(document.getElementById('trend').getContext('2d'), {
+      type:'line',
+      data:{labels: sorted.map(r => r.assessment_date),
+            datasets: axes.map((a, i) => ({
+              label: a.replace(/_/g,' '),
+              data: sorted.map(r => r[a] || null),
+              borderWidth:1.4, fill:false, tension:.2
+            }))},
+      options:{scales:{y:{min:0,max:5}},plugins:{legend:{position:'bottom',labels:{font:{size:10}}}}}
+    });
+  }
+}
+async function addAssess(){
+  const axes = ['pricing','fleet_assets','engineering','heavy_transport',
+                'project_logistics','freight_forwarding','warehousing',
+                'global_network','local_presence','customer_relationships',
+                'response_speed'];
+  const payload = {assessment_date: (new Date()).toISOString().slice(0,10)};
+  for (const a of axes){
+    const v = prompt('Score 1-5 for ' + a + ' (blank = skip)');
+    if (v === null) return;
+    if (v !== '') payload[a] = parseInt(v, 10);
+  }
+  const j = await jfetch('/api/competitors/'+CID+'/assessments',{method:'POST',
+    body: JSON.stringify(payload)});
+  if (j.error){alert(j.error); return;}
+  await loadData(); renderTab('assessments');
+}
+
+async function renderPerf(p){
+  p.innerHTML = 'Loading…';
+  const j = await jfetch('/api/competitors/'+CID+'/performance');
+  p.innerHTML = `
+    <div class="kpi">
+      <div class="tile"><div class="k">Encounters</div><div class="v">${j.encounters}</div></div>
+      <div class="tile"><div class="k">Win %</div><div class="v">${j.win_pct}%</div></div>
+      <div class="tile"><div class="k">Loss %</div><div class="v">${j.loss_pct}%</div></div>
+      <div class="tile"><div class="k">Avg Price Δ</div><div class="v">${j.avg_price_delta==null?'—':j.avg_price_delta}</div></div>
+    </div>
+    <div class="grid3">
+      <div><h3>Customers (${(j.accounts||[]).length})</h3><ul>${(j.accounts||[]).map(x=>'<li>'+esc(x)+'</li>').join('')||'—'}</ul></div>
+      <div><h3>Industries (${(j.industries||[]).length})</h3><ul>${(j.industries||[]).map(x=>'<li>'+esc(x)+'</li>').join('')||'—'}</ul></div>
+      <div><h3>Verticals (${(j.verticals||[]).length})</h3><ul>${(j.verticals||[]).map(x=>'<li>'+esc(x)+'</li>').join('')||'—'}</ul></div>
+      <div><h3>Services (${(j.services||[]).length})</h3><ul>${(j.services||[]).map(x=>'<li>'+esc(x)+'</li>').join('')||'—'}</ul></div>
+      <div><h3>Geographies (${(j.geographies||[]).length})</h3><ul>${(j.geographies||[]).map(x=>'<li>'+esc(x)+'</li>').join('')||'—'}</ul></div>
+    </div>`;
+}
+
+(async () => { await loadData(); renderTab('overview'); })();
+</script>
+</body>
+</html>

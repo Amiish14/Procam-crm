@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Quotes — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
+        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
+        --success:#059669;--warning:#B45309;--danger:#B91C1C;--info:#1D4ED8;
+        --font:'Barlow','Inter',system-ui,sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);
+       font-size:14px;padding:24px 32px 60px}
+  a{color:inherit;text-decoration:none}
+  h1{font-size:24px;font-weight:700;color:var(--ink)}
+  .hero{display:flex;align-items:flex-end;justify-content:space-between;
+        margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+  .btn{display:inline-block;padding:8px 14px;border:1px solid var(--border);
+       border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer;
+       font-family:var(--font);font-size:13px;font-weight:600}
+  .btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .filters{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+  .filters input,.filters select{padding:7px 10px;border:1px solid var(--border);
+       border-radius:6px;font-family:var(--font);font-size:13px;background:#fff}
+  table{width:100%;border-collapse:collapse;background:var(--card);
+        border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);
+        font-size:13px}
+  th{background:#F9FAFB;font-weight:600;color:var(--text-2);
+     text-transform:uppercase;font-size:11px;letter-spacing:.05em}
+  tr:last-child td{border-bottom:0}
+  tr:hover td{background:#FAFBFC;cursor:pointer}
+  .pill{display:inline-block;padding:2px 8px;border-radius:10px;
+        font-size:11px;font-weight:600;background:#EEF;color:var(--ink)}
+  .pill.draft{background:#F3F4F6;color:#4B5563}
+  .pill.awaiting-approval{background:#FEF3C7;color:#92400E}
+  .pill.approved{background:#DBEAFE;color:#1D4ED8}
+  .pill.submitted{background:#EDE9FE;color:#5B21B6}
+  .pill.under-negotiation{background:#FCE7F3;color:#9F1239}
+  .pill.won{background:#D1FAE5;color:#065F46}
+  .pill.lost{background:#FEE2E2;color:#991B1B}
+  .pill.superseded,.pill.withdrawn{background:#E5E7EB;color:#4B5563}
+  .empty{padding:60px 20px;text-align:center;color:var(--text-2)}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  dialog{border:0;border-radius:10px;padding:0;max-width:560px;width:92vw}
+  dialog::backdrop{background:rgba(11,13,18,.4)}
+  .modal-wrap{padding:22px 26px}
+  .field{display:block;margin-bottom:10px}
+  .field label{display:block;font-size:12px;font-weight:600;color:var(--text-2);
+       margin-bottom:4px;text-transform:uppercase;letter-spacing:.03em}
+  .field input,.field textarea,.field select{width:100%;padding:8px 10px;
+       border:1px solid var(--border);border-radius:6px;font-family:var(--font);
+       font-size:13px}
+  .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px;
+       padding-top:14px;border-top:1px solid var(--border)}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div>
+    <h1>Quotes</h1>
+    <div style="color:var(--text-2);font-size:13px;margin-top:4px">All quotes across all deals.</div>
+  </div>
+  <div>
+    <a class="btn" href="/rfqs">RFQs</a>
+    <a class="btn" href="/my-work">My Work</a>
+    <button class="btn primary" onclick="document.getElementById('m').showModal()">+ New Quote</button>
+  </div>
+</div>
+
+<div class="filters">
+  <input id="fSearch" placeholder="Search subject / number" oninput="render()">
+  <select id="fStatus" onchange="render()">
+    <option value="">All statuses</option>
+    <option>Draft</option><option>Awaiting Approval</option>
+    <option>Approved</option><option>Submitted</option>
+    <option>Under Negotiation</option><option>Won</option>
+    <option>Lost</option><option>Superseded</option><option>Withdrawn</option>
+  </select>
+  <input id="fRfq" type="number" placeholder="RFQ ID" oninput="render()">
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Quote #</th><th>Subject</th><th>Status</th>
+      <th>Rev</th><th class="num">Total</th><th>Currency</th>
+      <th>Prepared by</th><th>Date</th>
+    </tr>
+  </thead>
+  <tbody id="tbody"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
+</table>
+
+<dialog id="m">
+  <form method="dialog" class="modal-wrap" id="createForm">
+    <h2 style="margin-bottom:12px">New quote</h2>
+    <div class="field"><label>Subject</label><input name="subject"></div>
+    <div class="field"><label>RFQ ID (optional — copies lines)</label>
+      <input type="number" name="rfq_id"></div>
+    <div class="field"><label>Currency</label>
+      <input name="currency" value="INR"></div>
+    <div class="field"><label>Validity until</label>
+      <input type="date" name="validity_until"></div>
+    <div class="actions">
+      <button type="button" class="btn" onclick="document.getElementById('m').close()">Cancel</button>
+      <button type="button" class="btn primary" onclick="submitCreate()">Create</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const CSRF = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+async function jf(u, o) {
+  o = o || {}; o.headers = Object.assign({'Content-Type':'application/json','X-CSRFToken': CSRF}, o.headers || {});
+  const r = await fetch(u, o); return r.json();
+}
+let QS = [];
+async function load() {
+  const j = await jf('/api/quotes'); QS = (j && j.ok) ? (j.quotes || []) : [];
+  render();
+}
+function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function pill(s){const c=(s||'').toLowerCase().replace(/\s+/g,'-');return `<span class="pill ${c}">${esc(s||'')}</span>`}
+function render() {
+  const s = (document.getElementById('fSearch').value || '').toLowerCase();
+  const st = document.getElementById('fStatus').value;
+  const rfq = document.getElementById('fRfq').value;
+  const rows = QS.filter(q => {
+    if (st && q.status !== st) return false;
+    if (rfq && String(q.rfq_id||'') !== String(rfq)) return false;
+    if (s) {
+      const hay = `${q.quote_number} ${q.subject}`.toLowerCase();
+      if (!hay.includes(s)) return false;
+    }
+    return true;
+  });
+  const tbody = document.getElementById('tbody');
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty">No quotes.</td></tr>'; return; }
+  tbody.innerHTML = rows.map(q => `
+    <tr onclick="location='/quotes/${q.id}'">
+      <td><b>${q.quote_number}</b></td>
+      <td>${esc(q.subject)}</td>
+      <td>${pill(q.status)}</td>
+      <td>v${q.revision_number}</td>
+      <td class="num">${Number(q.total_amount||0).toLocaleString()}</td>
+      <td>${esc(q.currency)}</td>
+      <td>${esc(q.prepared_by_id)}</td>
+      <td>${q.quote_date || ''}</td>
+    </tr>`).join('');
+}
+async function submitCreate() {
+  const f = document.getElementById('createForm');
+  const fd = new FormData(f); const p = {};
+  fd.forEach((v,k)=>{ if (v!=='' && v!=null) p[k]=v; });
+  if (p.rfq_id) p.rfq_id = parseInt(p.rfq_id, 10);
+  const j = await jf('/api/quotes', {method:'POST', body: JSON.stringify(p)});
+  if (j && j.ok) location = '/quotes/' + j.quote.id;
+  else alert((j && j.error) || 'Create failed');
+}
+load();
+</script>
+</body>
+</html>

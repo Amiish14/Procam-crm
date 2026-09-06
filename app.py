@@ -139,6 +139,13 @@ app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024   # 20 MB
 # outside of a request context (e.g. when computing an email link).
 app.config['APPLICATION_ROOT'] = os.environ.get('URL_PREFIX', '/')
 
+# v2026-09-04 — Make `app.py` also act as the parent package for the
+# sibling `app/` directory, so `from app.models.rbac import Role`
+# resolves correctly while `from app import db, Company, ...` keeps
+# working for the ~30 scripts and presales/* modules that already use it.
+# Trick: adding __path__ to a module makes Python treat it as a package.
+__path__ = [os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app')]
+
 db = SQLAlchemy(app)
 
 limiter = Limiter(app=app, key_func=get_remote_address,
@@ -759,6 +766,24 @@ class EmailEvent(db.Model):
 def index():
     if 'emp_code' not in session:
         return redirect(url_for('login'))
+    # v2026-09-04 — role-aware default landing.  Admins go to the
+    # classic dashboard; everyone else lands on /my-work.  An
+    # individual's preference (Employee.default_landing_page)
+    # overrides the role default.
+    try:
+        emp = Employee.query.filter_by(emp_code=session['emp_code']).first()
+        pref = getattr(emp, 'default_landing_page', None) if emp else None
+        role = (emp.role if emp else session.get('role')) or ''
+        if pref in ('my_work', 'dashboard'):
+            target = pref
+        elif role in ('admin', 'procam_admin'):
+            target = 'dashboard'
+        else:
+            target = 'my_work'
+        if target == 'my_work':
+            return redirect('/my-work')
+    except Exception:
+        pass
     return redirect(url_for('dashboard'))
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -1085,6 +1110,24 @@ def api_leads():
         leads = [l for l in leads if srch in (l.company+l.project+l.state+l.industry+l.pic+'').lower()]
     return jsonify([l.to_dict() for l in leads])
 
+# v2026-09-04 — Task Engine hook helper (Phase 3).  Never raises;
+# wrapped so a broken engine can't break the parent request.
+def _fire_task_hook(entity, entity_type, old_state, new_state):
+    try:
+        from app.services.task_engine import on_state_change as _osc
+        emp = Employee.query.filter_by(emp_code=session.get('emp_code')).first() \
+              if session.get('emp_code') else None
+        _osc(entity, entity_type, old_state, new_state, triggered_by=emp)
+    except Exception:
+        try:
+            app.logger.exception('task_engine hook failed for %s#%s %s→%s',
+                                 entity_type,
+                                 getattr(entity, 'id', '?'),
+                                 old_state, new_state)
+        except Exception:
+            pass
+
+
 @app.route('/api/leads', methods=['POST'])
 @require_auth
 def api_create_lead():
@@ -1128,6 +1171,12 @@ def api_create_lead():
     )
     db.session.add(lead)
     db.session.commit()
+    # v2026-09-04 — Task engine: lead created
+    _fire_task_hook(lead, 'Lead', None, '__created__')
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
     return jsonify({'ok': True, 'id': lead.id})
 
 @app.route('/api/leads/<int:lid>', methods=['PUT'])
@@ -1381,6 +1430,7 @@ def api_lead_advance(lid):
     (used by the pipeline stepper buttons: Call Done, Profile Sent, etc.)
     """
     lead = _require_lead_access(lid)
+    _old_stage_advance = lead.stage
     # Auto-migrate legacy stage names to the new pipeline
     if lead.stage in LEGACY_STAGE_MAP:
         lead.stage = LEGACY_STAGE_MAP[lead.stage]
@@ -1418,6 +1468,12 @@ def api_lead_advance(lid):
         if q is not None:
             lead.quoted_amount_inr = q
     db.session.commit()
+    # v2026-09-04 — Task engine: lead stage change
+    _fire_task_hook(lead, 'Lead', _old_stage_advance, lead.stage)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
     return jsonify({'ok': True, 'stage': lead.stage, 'lead': lead.to_dict()})
 
 
@@ -1426,6 +1482,7 @@ def api_lead_advance(lid):
 def api_lead_decision(lid):
     """Record a terminal decision: Won / Lost / On Hold / Not Interested."""
     lead = _require_lead_access(lid)
+    _old_stage_decision = lead.stage
     data = request.get_json() or {}
     outcome = (data.get('outcome') or '').strip()
     if outcome not in DECISION_OUTCOMES:
@@ -1458,6 +1515,28 @@ def api_lead_decision(lid):
                 opp.lost_reason = reason or outcome
                 opp.probability = 0
     db.session.commit()
+    # v2026-09-04 — Task engine: lead decision (Won / Lost / On Hold / Not Interested)
+    _fire_task_hook(lead, 'Lead', _old_stage_decision, lead.stage)
+    if lead.opp_number:
+        try:
+            _opp = Opportunity.query.filter_by(opp_number=lead.opp_number).first()
+            if _opp:
+                _fire_task_hook(_opp, 'Opportunity', _old_stage_decision, outcome)
+                # v2026-09-05 — Phase 8: auto-queue WonHandover on Won.
+                if outcome == 'Won':
+                    try:
+                        from app.quote.routes import _autocreate_handover
+                        _autocreate_handover(_opp)
+                    except Exception:
+                        app.logger.exception(
+                            'won_handover autocreate failed for opp #%s',
+                            getattr(_opp, 'id', '?'))
+        except Exception:
+            pass
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
     return jsonify({'ok': True, 'stage': lead.stage, 'lead': lead.to_dict()})
 
 
@@ -2484,6 +2563,12 @@ def api_create_opportunity():
             db.session.rollback()
             app.logger.exception('Unhandled error in api_create_opportunity')
             return jsonify({'error': 'Internal server error'}), 500
+    # v2026-09-04 — Task engine: opportunity created
+    _fire_task_hook(opp, 'Opportunity', None, '__created__')
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
     return jsonify(opp.to_dict()), 201
 
 
@@ -2493,6 +2578,7 @@ def api_update_opportunity(oid):
     o = Opportunity.query.get_or_404(oid)
     if session.get('role') != 'admin' and o.owner_emp_code != session.get('emp_code'):
         return jsonify({'error': 'Forbidden'}), 403
+    _old_stage_opp = o.stage
     d = request.get_json(force=True) or {}
     # owner_emp_code is a privileged transfer — admin only.
     if 'owner_emp_code' in d and d['owner_emp_code'] != o.owner_emp_code:
@@ -2509,6 +2595,21 @@ def api_update_opportunity(oid):
     if d.get('stage') == 'Lost' and not o.lost_at:
         o.lost_at = datetime.utcnow()
     db.session.commit()
+    # v2026-09-04 — Task engine: opportunity stage change
+    if _old_stage_opp != o.stage:
+        _fire_task_hook(o, 'Opportunity', _old_stage_opp, o.stage)
+        # v2026-09-05 — Phase 8: auto-queue WonHandover on Won.
+        if o.stage == 'Won':
+            try:
+                from app.quote.routes import _autocreate_handover
+                _autocreate_handover(o)
+            except Exception:
+                app.logger.exception(
+                    'won_handover autocreate failed for opp #%s', o.id)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
     return jsonify(o.to_dict())
 
 
@@ -3544,6 +3645,70 @@ except Exception as _e:                                              # pragma: n
 # Machine-to-machine endpoints — Microsoft Graph authenticates via clientState,
 # not CSRF. Exempt only these.
 csrf.exempt(api_email_webhook)
+
+
+# ═════════════════════════════════════════════════════════════════════
+# v2026-09-04 — CRM Foundation blueprints (Phases 2-5).
+#   * app/my_work        — role-aware landing page (/my-work).
+#   * app/notifications  — in-app bell dropdown + /notifications inbox.
+# Register additively; failures are logged but never block boot.
+# ═════════════════════════════════════════════════════════════════════
+try:
+    from app.my_work.routes import bp as my_work_bp
+    app.register_blueprint(my_work_bp)
+    app.logger.info('CRM Foundation: my_work blueprint registered.')
+except Exception as _e:
+    app.logger.warning('my_work blueprint failed to load: %s', _e)
+
+try:
+    from app.notifications.routes import bp as notifications_bp
+    app.register_blueprint(notifications_bp)
+    app.logger.info('CRM Foundation: notifications blueprint registered.')
+except Exception as _e:
+    app.logger.warning('notifications blueprint failed to load: %s', _e)
+
+
+# ═════════════════════════════════════════════════════════════════════
+# v2026-09-05 — CRM Phases 6-8 blueprints (RFQ, Quote, Handover).
+# ═════════════════════════════════════════════════════════════════════
+for _mod_path, _bp_name in [
+    ('app.rfq.routes',           'rfq_bp'),
+    ('app.quote.routes',         'quote_bp'),
+    ('app.handover.routes',      'handover_bp'),
+    ('app.competitor.routes',    'competitor_bp'),
+    ('app.funnel.routes',        'funnel_bp'),
+    ('app.business_card.routes', 'business_card_bp'),
+    ('app.help.routes',          'help_bp'),
+    ('app.reports_v2.routes',    'reports_v2_bp'),
+]:
+    try:
+        _mod = __import__(_mod_path, fromlist=['bp'])
+        app.register_blueprint(_mod.bp)
+        app.logger.info('CRM blueprint: %s registered.', _mod_path)
+    except Exception as _e:
+        app.logger.warning('%s failed to load: %s', _mod_path, _e)
+
+
+# ═════════════════════════════════════════════════════════════════════
+# v2026-09-07 — Phase 14 PWA routes (service worker + offline page).
+# The SW must be served at the same scope it needs to control.  When
+# URL_PREFIX is set (e.g. `/CRM`), the ProxyFix + force_script_name
+# combo already rewrites `/sw.js` to `/CRM/sw.js`, so registering the
+# route bare here is correct in both bare and prefixed deployments.
+# ═════════════════════════════════════════════════════════════════════
+@app.route('/sw.js')
+def _pwa_service_worker():
+    from flask import send_from_directory
+    resp = send_from_directory(app.static_folder or 'static', 'sw.js',
+                               mimetype='application/javascript')
+    resp.headers['Cache-Control'] = 'no-cache'
+    resp.headers['Service-Worker-Allowed'] = '/'
+    return resp
+
+
+@app.route('/offline')
+def _pwa_offline():
+    return render_template('offline.html')
 
 
 if __name__ == '__main__':

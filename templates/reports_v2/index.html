@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Reports — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
+        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
+        --font:'Barlow','Inter',system-ui,sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);
+       font-size:14px;padding:24px 32px 60px}
+  h1{font-size:26px;color:var(--ink);margin-bottom:20px}
+  h2{font-size:15px;color:var(--red);margin:22px 0 10px;
+     text-transform:uppercase;letter-spacing:.04em;font-weight:700}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+  .rep{background:var(--card);border:1px solid var(--border);border-radius:8px;
+       padding:14px;transition:.2s}
+  .rep:hover{border-color:var(--red);box-shadow:0 2px 8px rgba(0,0,0,.06)}
+  .rep a{text-decoration:none;color:var(--ink);font-weight:600;display:block}
+  .rep a:hover{color:var(--red)}
+  .rep .xlsx{font-size:11px;color:var(--text-2);margin-top:4px;display:inline-block}
+  .rep .xlsx a{display:inline;color:var(--text-2);font-weight:500}
+  .rep .xlsx a:hover{color:var(--red)}
+</style>
+</head>
+<body>
+<h1>Reports Hub</h1>
+
+{% for category, items in reports %}
+  <h2>{{ category }}</h2>
+  <div class="grid">
+    {% for endpoint, label in items %}
+      <div class="rep">
+        <a href="{{ url_for('reports_v2.' + endpoint) }}">{{ label }} →</a>
+        <span class="xlsx">
+          Export: <a href="{{ url_for('reports_v2.' + endpoint) }}?format=xlsx">.xlsx</a>
+        </span>
+      </div>
+    {% endfor %}
+  </div>
+{% endfor %}
+</body>
+</html>

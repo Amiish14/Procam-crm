@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Scan Business Card — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() if csrf_token else '' }}">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--red:#C72435;--ink:#0B0D12;--text:#363B47;--text-2:#6B7280;
+        --bg:#F7F8FA;--card:#FFF;--border:#E5E7EB;
+        --font:'Barlow','Inter',system-ui,sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);
+       font-size:14px;padding:24px 32px 60px}
+  h1{font-size:24px;font-weight:700;color:var(--ink);margin-bottom:16px}
+  h2{font-size:16px;color:var(--ink);margin:20px 0 10px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;
+        padding:20px;max-width:920px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+  .drop{border:2px dashed var(--border);border-radius:12px;padding:40px;
+        text-align:center;background:#FAFBFC;cursor:pointer;transition:.2s}
+  .drop.dragover{border-color:var(--red);background:#FDEEF0}
+  .drop input[type="file"]{display:none}
+  .btn{display:inline-block;padding:10px 18px;border:1px solid var(--border);
+       border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer;
+       font-family:var(--font);font-size:14px;font-weight:600;text-decoration:none;
+       min-height:44px}
+  .btn.primary{background:var(--red);color:#fff;border-color:var(--red)}
+  .btn.dark{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .field{display:flex;flex-direction:column;gap:4px}
+  .field label{font-size:12px;color:var(--text-2);text-transform:uppercase;
+               letter-spacing:.04em;font-weight:600}
+  .field input,.field textarea{padding:8px 10px;border:1px solid var(--border);
+               border-radius:6px;font-family:var(--font);font-size:14px;background:#fff}
+  .spinner{display:inline-block;width:22px;height:22px;border:3px solid var(--border);
+           border-top-color:var(--red);border-radius:50%;animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .dup{padding:8px 10px;background:#FDEEF0;border:1px solid #F4B0BA;
+       border-radius:6px;margin-bottom:6px;display:flex;justify-content:space-between;
+       align-items:center;font-size:13px}
+  .actions{display:flex;gap:12px;margin-top:16px;flex-wrap:wrap}
+  .err{color:#B91C1C;font-size:13px;margin-top:8px}
+  .muted{color:var(--text-2);font-size:12px}
+  @media (max-width:640px){
+    body{padding:16px}
+    .grid{grid-template-columns:1fr}
+    .card{padding:14px}
+  }
+</style>
+</head>
+<body>
+
+<h1>Scan Business Card</h1>
+
+<div class="card" id="upload-card">
+  <label class="drop" id="drop">
+    <input type="file" id="file" name="file" accept="image/*,application/pdf" capture="environment">
+    <div style="font-size:16px;font-weight:600;color:var(--ink);margin-bottom:8px">
+      Tap to take a photo, or drop a card image here
+    </div>
+    <div class="muted">Accepts JPG, PNG, HEIC, WEBP, PDF. Up to 8&nbsp;MB.</div>
+  </label>
+  <div id="upload-msg" class="err" style="display:none"></div>
+</div>
+
+<div class="card" id="loading-card" style="display:none;text-align:center">
+  <div class="spinner"></div>
+  <div style="margin-top:12px">Extracting card fields — please wait…</div>
+</div>
+
+<div class="card" id="review-card" style="display:none">
+  <h2>Review Extracted Fields</h2>
+  <div id="ocr-error" class="err" style="display:none"></div>
+  <div class="grid" id="fields"></div>
+
+  <h2>Possible Duplicates</h2>
+  <div>
+    <div style="font-size:12px;color:var(--text-2);margin-bottom:4px">Accounts:</div>
+    <div id="dup-accounts"></div>
+    <div style="font-size:12px;color:var(--text-2);margin:8px 0 4px">Contacts:</div>
+    <div id="dup-contacts"></div>
+  </div>
+
+  <div class="actions">
+    <button class="btn primary" id="btn-save-new">Save as new Account + Contact</button>
+    <button class="btn dark" id="btn-link">Link to selected duplicate</button>
+    <button class="btn" id="btn-discard">Discard</button>
+  </div>
+  <div id="save-msg" class="err" style="display:none"></div>
+</div>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  let currentCard = null;
+  let linkAccountId = null;
+  let linkContactId = null;
+
+  const FIELDS = [
+    ['name','Name'], ['designation','Designation'],
+    ['department','Department'], ['company','Company'],
+    ['email','Email'], ['mobile','Mobile'],
+    ['telephone','Telephone'], ['website','Website'],
+    ['address','Address'], ['city','City'],
+    ['state','State'], ['country','Country'],
+    ['linkedin_url','LinkedIn'],
+  ];
+
+  const drop = $('drop');
+  const file = $('file');
+  drop.addEventListener('dragover', e=>{e.preventDefault();drop.classList.add('dragover')});
+  drop.addEventListener('dragleave', ()=>drop.classList.remove('dragover'));
+  drop.addEventListener('drop', e=>{
+    e.preventDefault(); drop.classList.remove('dragover');
+    if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]);
+  });
+  file.addEventListener('change', ()=>{
+    if (file.files[0]) uploadFile(file.files[0]);
+  });
+
+  async function uploadFile(f){
+    $('upload-msg').style.display='none';
+    $('upload-card').style.display='none';
+    $('loading-card').style.display='block';
+    $('review-card').style.display='none';
+    try{
+      const fd = new FormData();
+      fd.append('file', f);
+      const r = await fetch('/api/business-cards/upload', {method:'POST', body:fd});
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || 'Upload failed');
+      currentCard = j.card;
+      renderReview(currentCard);
+    }catch(e){
+      $('upload-msg').textContent = e.message;
+      $('upload-msg').style.display='block';
+      $('upload-card').style.display='block';
+    } finally {
+      $('loading-card').style.display='none';
+    }
+  }
+
+  function renderReview(card){
+    $('review-card').style.display='block';
+    const errBox = $('ocr-error');
+    if (card.ocr_error) {
+      errBox.textContent = 'OCR service warning: ' + card.ocr_error +
+                           ' — you can still edit and save manually.';
+      errBox.style.display = 'block';
+    } else { errBox.style.display = 'none'; }
+
+    const wrap = $('fields'); wrap.innerHTML = '';
+    const ex = card.extracted || {};
+    FIELDS.forEach(([k,label])=>{
+      const div = document.createElement('div');
+      div.className = 'field';
+      const isTA = (k === 'address');
+      div.innerHTML = `<label>${label}</label>`+
+        (isTA
+          ? `<textarea id="f_${k}" rows="2">${(ex[k]||'').replace(/</g,'&lt;')}</textarea>`
+          : `<input id="f_${k}" value="${(ex[k]||'').replace(/"/g,'&quot;')}">`);
+      wrap.appendChild(div);
+    });
+
+    const dup = card.dup_matches || {accounts:[], contacts:[]};
+    const accBox = $('dup-accounts'); accBox.innerHTML='';
+    (dup.accounts||[]).forEach(a=>{
+      const el = document.createElement('div');
+      el.className='dup';
+      el.innerHTML = `<span><strong>${a.name}</strong> <span class="muted">— ${a.reason} (${a.score})</span></span>
+        <button class="btn" data-id="${a.id}">Pick</button>`;
+      el.querySelector('button').onclick = ()=>{
+        linkAccountId = a.id;
+        [...accBox.querySelectorAll('.dup')].forEach(x=>x.style.background='#FDEEF0');
+        el.style.background = '#FFE0B2';
+      };
+      accBox.appendChild(el);
+    });
+    if (!dup.accounts || !dup.accounts.length){
+      accBox.innerHTML = '<span class="muted">No account matches.</span>';
+    }
+
+    const cntBox = $('dup-contacts'); cntBox.innerHTML='';
+    (dup.contacts||[]).forEach(a=>{
+      const el = document.createElement('div');
+      el.className='dup';
+      el.innerHTML = `<span><strong>${a.name}</strong> <span class="muted">— ${a.reason} (${a.score})</span></span>
+        <button class="btn" data-id="${a.id}">Pick</button>`;
+      el.querySelector('button').onclick = ()=>{
+        linkContactId = a.id;
+        [...cntBox.querySelectorAll('.dup')].forEach(x=>x.style.background='#FDEEF0');
+        el.style.background = '#FFE0B2';
+      };
+      cntBox.appendChild(el);
+    });
+    if (!dup.contacts || !dup.contacts.length){
+      cntBox.innerHTML = '<span class="muted">No contact matches.</span>';
+    }
+  }
+
+  function collectFields(){
+    const out = {};
+    FIELDS.forEach(([k])=>{
+      out[k] = ($('f_'+k) ? $('f_'+k).value : '').trim();
+    });
+    return out;
+  }
+
+  async function save(choice){
+    if (!currentCard) return;
+    const body = {fields: collectFields(), choice};
+    if (choice === 'link'){
+      if (!linkAccountId && !linkContactId){
+        $('save-msg').textContent='Pick at least one duplicate to link to.';
+        $('save-msg').style.display='block'; return;
+      }
+      if (linkAccountId) body.link_account_id = linkAccountId;
+      if (linkContactId) body.link_contact_id = linkContactId;
+    }
+    const r = await fetch('/api/business-cards/'+currentCard.id+'/save',
+      {method:'POST', headers:{'Content-Type':'application/json'},
+       body: JSON.stringify(body)});
+    const j = await r.json();
+    if (!j.ok){
+      $('save-msg').textContent = j.error || 'Save failed';
+      $('save-msg').style.display = 'block';
+      return;
+    }
+    alert('Saved.');
+    location.reload();
+  }
+
+  $('btn-save-new').onclick = ()=>save('new');
+  $('btn-link').onclick = ()=>save('link');
+  $('btn-discard').onclick = async ()=>{
+    if (!currentCard) return;
+    if (!confirm('Discard this scan?')) return;
+    await fetch('/api/business-cards/'+currentCard.id+'/discard',
+      {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    location.reload();
+  };
+})();
+</script>
+</body>
+</html>

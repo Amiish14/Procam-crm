@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Quote {{ quote.quote_number }} — printable</title>
+<style>
+  body{font-family:Helvetica,Arial,sans-serif;color:#000;margin:24px 32px;font-size:12px}
+  h1{font-size:20px;margin-bottom:4px}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#666;
+     margin:18px 0 6px}
+  table{width:100%;border-collapse:collapse;margin-bottom:12px}
+  th,td{padding:6px 8px;border:1px solid #999;font-size:11px}
+  th{background:#eee;font-weight:600;text-align:left}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .meta td{border:0;padding:2px 6px}
+  .btn{display:inline-block;padding:6px 12px;border:1px solid #333;background:#fff;
+       cursor:pointer;font-size:12px;text-decoration:none;color:#000}
+  .totals{width:auto;margin-left:auto}
+  @media print { .noprint{display:none} }
+</style>
+</head>
+<body>
+
+<div class="noprint" style="margin-bottom:14px">
+  <a class="btn" href="/quotes/{{ quote.id }}">← Back</a>
+  <button class="btn" onclick="window.print()">Print</button>
+  <a class="btn" href="/quotes/{{ quote.id }}/pdf" target="_blank">Download PDF</a>
+</div>
+
+<h1>QUOTATION — {{ quote.quote_number }}</h1>
+<div style="color:#666">Revision {{ quote.revision_number }} — Status {{ quote.status }}</div>
+
+<table class="meta">
+  <tr><td><b>Subject:</b></td><td>{{ quote.subject or '' }}</td></tr>
+  <tr><td><b>Quote date:</b></td><td>{{ quote.quote_date or '' }}</td>
+      <td><b>Validity:</b></td><td>{{ quote.validity_until or '' }}</td></tr>
+  <tr><td><b>Currency:</b></td><td>{{ quote.currency }}</td>
+      <td><b>Prepared by:</b></td><td>{{ quote.prepared_by_id or '' }}</td></tr>
+</table>
+
+<h2>Line items</h2>
+<table>
+  <thead><tr>
+    <th>#</th><th>Service</th><th>Description</th>
+    <th class="num">Qty</th><th>Unit</th>
+    <th class="num">Rate</th><th class="num">Total</th>
+  </tr></thead>
+  <tbody>
+  {% for ln in lines %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td>{{ ln.service or '' }}</td>
+      <td>{{ ln.description or '' }}</td>
+      <td class="num">{{ '%.3f'|format(ln.quantity or 0) }}</td>
+      <td>{{ ln.unit or '' }}</td>
+      <td class="num">{{ '%.2f'|format(ln.unit_rate or 0) }}</td>
+      <td class="num">{{ '%.2f'|format(ln.line_total or 0) }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" style="text-align:center">No lines.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<table class="totals">
+  <tr><td><b>Subtotal</b></td><td class="num">{{ '%.2f'|format(quote.subtotal or 0) }}</td></tr>
+  <tr><td><b>Tax</b></td><td class="num">{{ '%.2f'|format(quote.tax_amount or 0) }}</td></tr>
+  <tr><td><b>Total ({{ quote.currency }})</b></td>
+      <td class="num"><b>{{ '%.2f'|format(quote.total_amount or 0) }}</b></td></tr>
+</table>
+
+{% if quote.payment_terms %}
+  <h2>Payment terms</h2><div>{{ quote.payment_terms }}</div>
+{% endif %}
+{% if quote.inclusions %}
+  <h2>Inclusions</h2><div>{{ quote.inclusions }}</div>
+{% endif %}
+{% if quote.exclusions %}
+  <h2>Exclusions</h2><div>{{ quote.exclusions }}</div>
+{% endif %}
+{% if quote.remarks %}
+  <h2>Remarks</h2><div>{{ quote.remarks }}</div>
+{% endif %}
+
+</body>
+</html>

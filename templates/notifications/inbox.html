@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Notifications — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Barlow','Inter',system-ui,sans-serif;background:#F7F8FA;color:#363B47;
+       font-size:14px;line-height:1.55;padding:24px 32px}
+  h1{font-size:24px;font-weight:700;color:#0B0D12;margin-bottom:18px}
+  a{color:inherit;text-decoration:none}
+  .row{background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:14px 18px;
+       margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+  .row.unread{border-left:3px solid #C72435;background:#FDEEF0}
+  .row .title{font-weight:600;color:#0B0D12}
+  .row .body{color:#6B7280;font-size:13px;margin-top:2px}
+  .row .meta{color:#9CA3AF;font-size:11.5px;margin-top:4px}
+  .empty{color:#9CA3AF;text-align:center;padding:40px;font-size:14px;background:#fff;
+         border:1px dashed #E5E7EB;border-radius:8px}
+  .toolbar{margin-bottom:14px;display:flex;justify-content:space-between;align-items:center}
+  form{display:inline}
+  button{background:#0B0D12;color:#fff;border:none;padding:6px 14px;border-radius:6px;
+         font-family:inherit;font-weight:500;font-size:13px;cursor:pointer}
+</style>
+</head>
+<body>
+
+<h1>Notifications</h1>
+
+<div class="toolbar">
+  <a href="/my-work" style="color:#6B7280">← My Work</a>
+  <form method="post" action="/notifications/read-all">
+    <button type="submit">Mark all read</button>
+  </form>
+</div>
+
+{% if rows %}
+  {% for n in rows %}
+    <a class="row {% if not n.is_read %}unread{% endif %}" href="{{ n.action_url or '/notifications' }}">
+      <div>
+        <div class="title">{{ n.title }}</div>
+        {% if n.body %}<div class="body">{{ n.body }}</div>{% endif %}
+        <div class="meta">{{ n.kind }} · {{ n.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+      </div>
+    </a>
+  {% endfor %}
+{% else %}
+  <div class="empty">No notifications yet.</div>
+{% endif %}
+
+</body>
+</html>
