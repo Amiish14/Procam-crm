@@ -4146,7 +4146,33 @@ async function doChangePw(){
            '</div>';
    }).join('');
   }
+  /* Shrink the navigation until it stops overflowing.  Measured, not
+     guessed: the classes are removed first so each stage is judged on the
+     real layout. */
+  function fitNav(){
+    var b = document.body;
+    b.classList.remove('nav-tight', 'nav-compact');
+    if (mount.scrollWidth <= mount.clientWidth + 1) return;
+    b.classList.add('nav-tight');
+    if (mount.scrollWidth <= mount.clientWidth + 1) return;
+    b.classList.add('nav-compact');
+  }
+
   renderNav();
+  /* Deferred: has-topnav and the topnav stylesheet are both applied after
+     this point, so measuring now would measure an unstyled element.
+     Webfonts change the widths again when they land. */
+  requestAnimationFrame(fitNav);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(fitNav).catch(function(){});
+  }
+
+  var _fitPending = false;
+  window.addEventListener('resize', function(){
+    if (_fitPending) return;
+    _fitPending = true;
+    requestAnimationFrame(function(){ _fitPending = false; fitNav(); });
+  });
 
   /* Re-render once the real permission set arrives. */
   (function(){
@@ -4158,6 +4184,7 @@ async function doChangePw(){
         if(!d || !d.ok) return;
         MY_PERMS = new Set(d.perms || []);
         renderNav();
+        requestAnimationFrame(fitNav);   // the group count just changed
         if(typeof syncCounts === 'function') syncCounts();
       })
       .catch(function(){ /* nav simply stays as first rendered */ });
@@ -4221,19 +4248,17 @@ async function doChangePw(){
     }
     .topnav-group { position: relative; flex-shrink: 0; }
 
-    /* Eight groups plus the right-hand controls run out of room before
-       they run out of screen.  Tighten, then drop the words and keep the
-       icons (each button carries a title), rather than letting the two
-       sides overlap. */
-    @media (max-width: 1600px) {
-      .topnav-head { padding: 8px 9px; font-size: 12.5px; }
-      body.has-topnav .topnav { gap: 0; }
-    }
-    @media (max-width: 1380px) {
-      .topnav-head .lbl { display: none; }
-      .topnav-head { padding: 8px 10px; }
-      .topnav-caret { display: none; }
-    }
+    /* Eight groups plus the right-hand controls run out of room long
+       before they run out of screen, and how much room is left depends on
+       the width of the controls — which a media query cannot know.  So
+       fitNav() measures the overflow and adds these classes in order.
+       Without this the group buttons overflow their own box and paint
+       straight over Sign out. */
+    body.nav-tight .topnav-head   { padding: 8px 8px; font-size: 12.5px; }
+    body.nav-tight .topnav-caret  { display: none; }
+    body.nav-tight.has-topnav .topnav { gap: 0; }
+    body.nav-compact .topnav-head .lbl { display: none; }
+    body.nav-compact .topnav-head { padding: 8px 9px; }
     /* The right-hand cluster gives up its words too, in the same order a
        person would: the toggle label first, then the user's name. */
     @media (max-width: 1200px) {

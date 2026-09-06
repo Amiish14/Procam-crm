@@ -143,6 +143,24 @@ def test_header_right_side_cannot_be_squeezed():
         '.top-r must not shrink, or the nav overlaps the header controls'
 
 
+def test_nav_overflow_is_measured_not_guessed():
+    """Width media queries cannot see how wide the right-hand controls are.
+
+    flex-shrink:0 stops .top-r being compressed, but the nav's buttons
+    still overflow their own box and paint over it, so the fit has to be
+    measured and the shrink stages applied from JS.
+    """
+    html = open(os.path.join(_TEMPLATES, 'app.html')).read()
+    assert 'function fitNav()' in html
+    assert 'mount.scrollWidth <= mount.clientWidth' in html, \
+        'fitNav must compare content width against available width'
+    assert 'body.nav-tight' in html and 'body.nav-compact' in html, \
+        'both shrink stages must exist in the stylesheet'
+    assert 'requestAnimationFrame(fitNav)' in html, \
+        'measuring before has-topnav and the topnav CSS are applied ' \
+        'measures an unstyled element'
+
+
 def test_no_duplicate_intelligence_control():
     """The Intelligence chip duplicated the Intelligence menu group."""
     html = open(os.path.join(_TEMPLATES, 'app.html')).read()
