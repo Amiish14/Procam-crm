@@ -128,6 +128,97 @@
       <div class="empty">No contacts linked to this company yet</div>{% endif %}
     </div>
 
+    {% set cp = data.competitor_profile %}
+    {% if cp %}
+    <div class="card">
+      <div class="card-hd">
+        <div class="card-ttl">Competitor 360
+          <div style="font-size:11.5px;color:var(--p-text-3);font-weight:400;margin-top:2px">
+            Procam's record against this company</div></div>
+        <span class="b sL">Competitor</span>
+      </div>
+      <div class="panel">
+        <div class="grid3" style="margin-bottom:0">
+          <div class="kpi"><div class="label">Encounters</div>
+            <div class="value">{{ cp.encounter_count }}</div></div>
+          <div class="kpi success"><div class="label">Won against</div>
+            <div class="value">{{ cp.won_against }}</div></div>
+          <div class="kpi danger"><div class="label">Lost against</div>
+            <div class="value">{{ cp.lost_against }}</div></div>
+          <div class="kpi"><div class="label">Win rate</div>
+            <div class="value">{{ (cp.win_rate_against ~ '%')
+              if cp.win_rate_against is not none else '—' }}</div></div>
+        </div>
+      </div>
+
+      {% if cp.encounters %}
+      <div class="table-wrap"><table>
+        <thead><tr><th>Opportunity</th><th>Customer</th><th>Status</th>
+          <th>Outcome</th></tr></thead>
+        <tbody>{% for e in cp.encounters %}
+          <tr><td>{{ e.opportunity or '—' }}</td>
+              <td>{% if e.customer_id %}<a href="{{ url_prefix }}/companies/{{ e.customer_id }}">{{ e.customer }}</a>
+                  {% else %}{{ e.customer or '—' }}{% endif %}</td>
+              <td><span class="pill">{{ e.status or '—' }}</span></td>
+              <td>{% if e.outcome == 'Procam won' %}<span class="pill won">{{ e.outcome }}</span>
+                  {% elif e.outcome == 'Procam lost' %}<span class="pill lost">{{ e.outcome }}</span>
+                  {% else %}<span class="meta">open</span>{% endif %}</td></tr>
+        {% endfor %}</tbody></table></div>
+      {% else %}
+      <div class="empty" style="margin:0 16px 16px">
+        No encounters recorded against this competitor yet.<br>
+        <span class="tiny">Add competitors on an opportunity to build this picture.</span>
+      </div>
+      {% endif %}
+
+      {% if cp.prices %}
+      <div class="card-hd" style="border-top:1px solid var(--p-divider)">
+        <div class="card-ttl">Known pricing</div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Opportunity</th><th>Customer</th>
+          <th class="num">Their price</th><th class="num">Ours</th>
+          <th>Source</th></tr></thead>
+        <tbody>{% for p in cp.prices %}
+          <tr><td>{{ p.opportunity or '—' }}</td><td>{{ p.customer or '—' }}</td>
+              <td class="num">{{ '{:,.0f}'.format(p.their_price) }}</td>
+              <td class="num">{{ '{:,.0f}'.format(p.our_price) if p.our_price else '—' }}</td>
+              <td class="meta">{{ p.source or '—' }}</td></tr>
+        {% endfor %}</tbody></table></div>
+      {% endif %}
+
+      {% if cp.customer_overlap %}
+      <div class="panel" style="border-top:1px solid var(--p-divider)">
+        <div class="sec">Customers we both chase</div>
+        {% for c in cp.customer_overlap %}
+          <a class="pill info" style="margin:0 5px 5px 0;display:inline-flex"
+             href="{{ url_prefix }}/companies/{{ c.id }}">{{ c.name }}</a>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div class="card-hd" style="border-top:1px solid var(--p-divider)">
+        <div class="card-ttl">Intelligence</div>
+        <span class="b sN">{{ cp.intelligence|length }}</span></div>
+      <div class="panel">
+        {% if cp.intelligence %}
+        <div class="tl">{% for i in cp.intelligence %}
+          <div class="tl-item">
+            <div class="tl-when">{{ i.date }}{% if i.added_by %} · {{ i.added_by }}{% endif %}</div>
+            <div class="tl-title">{{ i.type }}</div>
+            <div class="tl-body">{{ i.summary }}
+              {% if i.url %} · <a href="{{ i.url }}" target="_blank" rel="noopener">source ↗</a>
+              {% elif i.source %} · {{ i.source }}{% endif %}</div>
+          </div>
+        {% endfor %}</div>
+        {% else %}
+        <div class="empty">Nothing recorded yet.<br>
+          <span class="tiny">Tender results, pricing, new equipment, appointments
+            and public news all belong here.</span></div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
     {% if data.competitors %}
     <div class="card">
       <div class="card-hd"><div class="card-ttl">Competitors encountered</div></div>

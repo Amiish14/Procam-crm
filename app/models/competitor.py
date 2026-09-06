@@ -104,9 +104,15 @@ class OpportunityCompetitor(db.Model):
     __tablename__ = 'opportunity_competitors'
 
     id                = db.Column(db.Integer, primary_key=True)
+    # §19 — a competitor is a Company classification, not a separate
+    # master. company_id is the real link; competitor_id is retained
+    # for the empty legacy table and is no longer written.
+    company_id    = db.Column(db.Integer,
+                              db.ForeignKey('companies.id'),
+                              nullable=True, index=True)
     competitor_id     = db.Column(db.Integer,
                                   db.ForeignKey('competitor_masters.id'),
-                                  nullable=False, index=True)
+                                  nullable=True, index=True)
 
     opportunity_id    = db.Column(db.Integer,
                                   db.ForeignKey('opportunities.id'),
@@ -172,7 +178,7 @@ class CompetitorContact(db.Model):
     id                 = db.Column(db.Integer, primary_key=True)
     competitor_id      = db.Column(db.Integer,
                                    db.ForeignKey('competitor_masters.id'),
-                                   nullable=False, index=True)
+                                   nullable=True, index=True)
     name               = db.Column(db.String(200), nullable=False)
     designation        = db.Column(db.String(160))
     department         = db.Column(db.String(120))
@@ -218,9 +224,15 @@ class CompetitorIntelligence(db.Model):
     __tablename__ = 'competitor_intelligence'
 
     id                     = db.Column(db.Integer, primary_key=True)
+    # §19 — a competitor is a Company classification, not a separate
+    # master. company_id is the real link; competitor_id is retained
+    # for the empty legacy table and is no longer written.
+    company_id    = db.Column(db.Integer,
+                              db.ForeignKey('companies.id'),
+                              nullable=True, index=True)
     competitor_id          = db.Column(db.Integer,
                                        db.ForeignKey('competitor_masters.id'),
-                                       nullable=False, index=True)
+                                       nullable=True, index=True)
     event_type             = db.Column(db.String(60), nullable=False,
                                        index=True)
     event_date             = db.Column(db.Date, default=date.today,
@@ -268,7 +280,7 @@ class CompetitorAssessment(db.Model):
     id                     = db.Column(db.Integer, primary_key=True)
     competitor_id          = db.Column(db.Integer,
                                        db.ForeignKey('competitor_masters.id'),
-                                       nullable=False, index=True)
+                                       nullable=True, index=True)
     assessment_date        = db.Column(db.Date, default=date.today,
                                        nullable=False)
     pricing                = db.Column(db.Integer)

@@ -257,6 +257,104 @@ def competitors_seen(company_id):
     return out
 
 
+def competitor_profile(company_id):
+    """§19-21 — Procam's competitive record against this company.
+
+    Reads the junction by company_id, because §19 makes a competitor a
+    classification of Company Master rather than a separate record.
+    Returns None when the company is not classified as a competitor, so
+    the section simply does not appear.
+    """
+    if 'Competitor' not in classifications(company_id):
+        return None
+
+    from app import Opportunity, Company
+
+    oc = _model('app.models.competitor:OpportunityCompetitor')
+    intel = _model('app.models.competitor:CompetitorIntelligence')
+
+    encounters = []
+    won_against = lost_against = 0
+    prices = []
+    customers = {}
+
+    if oc is not None:
+        try:
+            rows = oc.query.filter(oc.company_id == company_id).all()
+        except Exception:
+            rows = []
+        for row in rows:
+            opp = (Opportunity.query.get(row.opportunity_id)
+                   if getattr(row, 'opportunity_id', None) else None)
+            customer = None
+            if opp is not None and opp.company_id:
+                customer = Company.query.get(opp.company_id)
+                if customer:
+                    customers[customer.id] = customer.name
+
+            outcome = ''
+            if opp is not None:
+                if (opp.stage or '') == 'Won':
+                    won_against += 1
+                    outcome = 'Procam won'
+                elif (opp.stage or '') == 'Lost':
+                    lost_against += 1
+                    outcome = 'Procam lost'
+
+            price = getattr(row, 'quoted_price', None)
+            if price:
+                prices.append({
+                    'opportunity': opp.opp_number if opp else '',
+                    'customer': customer.name if customer else '',
+                    'their_price': float(price),
+                    'our_price': float(opp.value_inr) if opp
+                                 and opp.value_inr else None,
+                    'source': getattr(row, 'price_source', '') or '',
+                })
+
+            encounters.append({
+                'opportunity_id': getattr(row, 'opportunity_id', None),
+                'opportunity': opp.opp_number if opp else '',
+                'customer': customer.name if customer else '',
+                'customer_id': customer.id if customer else None,
+                'status': getattr(row, 'status', '') or '',
+                'outcome': outcome,
+            })
+
+    timeline = []
+    if intel is not None:
+        try:
+            rows = (intel.query.filter(intel.company_id == company_id)
+                    .order_by(intel.event_date.desc()).limit(60).all())
+        except Exception:
+            rows = []
+        for r in rows:
+            timeline.append({
+                'id': r.id,
+                'date': str(getattr(r, 'event_date', '') or '')[:10],
+                'type': getattr(r, 'event_type', '') or '',
+                'summary': getattr(r, 'summary', '') or '',
+                'source': getattr(r, 'source', '') or '',
+                'url': getattr(r, 'source_url', '') or '',
+                'added_by': getattr(r, 'added_by_id', '') or '',
+            })
+
+    decided = won_against + lost_against
+    return {
+        'encounters': encounters,
+        'encounter_count': len(encounters),
+        'won_against': won_against,
+        'lost_against': lost_against,
+        'win_rate_against': round(won_against / decided * 100, 1)
+                            if decided else None,
+        'prices': prices,
+        'customer_overlap': [{'id': k, 'name': v}
+                             for k, v in sorted(customers.items(),
+                                                key=lambda kv: kv[1])],
+        'intelligence': timeline,
+    }
+
+
 def full(company):
     return {
         'header': header(company),
@@ -266,4 +364,5 @@ def full(company):
         'leads': leads(company.id),
         'timeline': timeline(company.id),
         'competitors': competitors_seen(company.id),
+        'competitor_profile': competitor_profile(company.id),
     }

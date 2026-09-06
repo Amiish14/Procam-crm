@@ -115,9 +115,14 @@ def _list_field(v):
 @bp.route('/competitors')
 @_require_auth
 def competitor_list_page():
-    if not session.get('emp_code'):
-        return redirect(url_for('login'))
-    return render_template('competitor/master.html')
+    """§6/§19 — Competitors are a filtered view of Company Master.
+
+    competitor_masters was a second company master, which §4 forbids. The
+    list now shows companies classified as Competitor, and each opens the
+    same Company 360 any other route would reach (§87).
+    """
+    from flask import redirect
+    return redirect('/companies?relationship=Competitor')
 
 
 @bp.route('/competitors/<int:cid>')
