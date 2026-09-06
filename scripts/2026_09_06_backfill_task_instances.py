@@ -109,14 +109,29 @@ def _has_competitor(lead_id):
         return False
 
 
-def _due_for(lead, sla_hours):
-    """When this task should have been done, from the lead's own history."""
+def _due_for(lead, sla_hours, from_history=False):
+    """When this task is due.
+
+    A `followup_date` a human actually set is a real commitment, and if it
+    has passed the task genuinely is overdue — that is worth surfacing.
+
+    `updated_at` is not the same thing. Most of it comes from bulk edits
+    (a migration on 13 Aug touched ~1,300 leads at once), so deriving due
+    dates from it marks nearly the whole pipeline overdue on the same
+    minute. That is a migration artefact wearing the costume of urgency:
+    it buries the genuinely late work and teaches everyone to ignore red
+    in their first week. So by default the clock starts now for those.
+
+    --due-from-history restores the old behaviour if you would rather see
+    the full historical debt.
+    """
     if getattr(lead, 'followup_date', None):
         return datetime.combine(lead.followup_date, datetime.min.time())
-    base = getattr(lead, 'updated_at', None) or getattr(lead, 'created_at', None)
     hours = sla_hours or 48
-    if base:
-        return base + timedelta(hours=hours)
+    if from_history:
+        base = getattr(lead, 'updated_at', None) or getattr(lead, 'created_at', None)
+        if base:
+            return base + timedelta(hours=hours)
     return datetime.utcnow() + timedelta(hours=hours)
 
 
@@ -134,6 +149,10 @@ def main():
                          'tasks for deals closed on or after this date '
                          '(default 90 days back; there are 2,600+ historical '
                          'Won/Lost leads and dumping them all is not useful)')
+    ap.add_argument('--due-from-history', action='store_true',
+                    help='derive due dates from updated_at rather than '
+                         'starting the clock now — marks most of the '
+                         'pipeline overdue immediately')
     ap.add_argument('--limit', type=int)
     args = ap.parse_args()
 
@@ -229,7 +248,7 @@ def main():
                 out[f'definition missing: {key}'] += 1
                 continue
 
-            due = _due_for(lead, tdef.sla_hours)
+            due = _due_for(lead, tdef.sla_hours, args.due_from_history)
             route = (tdef.action_route or '').replace('{entity_id}', str(lead.id))
             out[key] += 1
             out['OVERDUE on arrival' if due < now else 'due in future'] += 1
@@ -261,6 +280,18 @@ def main():
                 ))
             db.session.commit()
             print(f'created {len(created)} tasks.')
+
+        by_owner = Counter(c[2] for c in created)
+        if by_owner:
+            names = {e.emp_code: e.name for e in Employee.query.all()}
+            print(f'\n--- workload: {len(created)} tasks across '
+                  f'{len(by_owner)} people ---')
+            for code, n in by_owner.most_common(12):
+                bar = '#' * min(40, max(1, n * 40 // max(by_owner.values())))
+                print('   %-11s %-24s %4d  %s' % (
+                    code, (names.get(code) or '')[:24], n, bar))
+            if len(by_owner) > 12:
+                print(f'   ... and {len(by_owner) - 12} more people')
 
         if orphans:
             print(f'\n--- {len(orphans)} leads owned by an inactive/unknown '
