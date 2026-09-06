@@ -39,12 +39,13 @@ bp = Blueprint('rfq', __name__)
 
 # ─── auth helpers ──────────────────────────────────────────────────────────
 def _require_auth(f):
-    @wraps(f)
-    def wrap(*a, **kw):
-        if not session.get('emp_code'):
-            return jsonify(error='Not authenticated'), 401
-        return f(*a, **kw)
-    return wrap
+    """Gated by the Access Control matrix (module.rfq).
+
+    Kept under the original name so every existing @_require_auth on this
+    blueprint picks up the permission check without being touched.
+    """
+    from app.access.service import require as _require_perm
+    return _require_perm('module.rfq')(f)
 
 
 def _current_emp():
@@ -182,6 +183,7 @@ def _create_lines_from_payload(rfq, lines_payload, actor_id):
 
 # ─── HTML views ────────────────────────────────────────────────────────────
 @bp.route('/rfqs')
+@_require_auth
 def rfq_list_page():
     if not session.get('emp_code'):
         return redirect(url_for('login'))
@@ -189,6 +191,7 @@ def rfq_list_page():
 
 
 @bp.route('/rfqs/<int:rid>')
+@_require_auth
 def rfq_detail_page(rid):
     if not session.get('emp_code'):
         return redirect(url_for('login'))

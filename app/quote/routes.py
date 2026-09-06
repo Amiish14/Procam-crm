@@ -45,12 +45,13 @@ bp = Blueprint('quote', __name__)
 
 # ─── auth helpers ──────────────────────────────────────────────────────────
 def _require_auth(f):
-    @wraps(f)
-    def wrap(*a, **kw):
-        if not session.get('emp_code'):
-            return jsonify(error='Not authenticated'), 401
-        return f(*a, **kw)
-    return wrap
+    """Gated by the Access Control matrix (module.quotes).
+
+    Kept under the original name so every existing @_require_auth on this
+    blueprint picks up the permission check without being touched.
+    """
+    from app.access.service import require as _require_perm
+    return _require_perm('module.quotes')(f)
 
 
 def _current_emp():
@@ -122,6 +123,7 @@ def _fire(entity, entity_type, old_state, new_state):
 
 # ─── HTML ──────────────────────────────────────────────────────────────────
 @bp.route('/quotes')
+@_require_auth
 def quote_list_page():
     if not session.get('emp_code'):
         return redirect(url_for('login'))
@@ -129,6 +131,7 @@ def quote_list_page():
 
 
 @bp.route('/quotes/<int:qid>')
+@_require_auth
 def quote_detail_page(qid):
     if not session.get('emp_code'):
         return redirect(url_for('login'))
@@ -137,6 +140,7 @@ def quote_detail_page(qid):
 
 
 @bp.route('/quotes/<int:qid>/print')
+@_require_auth
 def quote_print_page(qid):
     if not session.get('emp_code'):
         return redirect(url_for('login'))
@@ -147,6 +151,7 @@ def quote_print_page(qid):
 
 
 @bp.route('/quotes/<int:qid>/pdf')
+@_require_auth
 def quote_pdf(qid):
     if not session.get('emp_code'):
         return redirect(url_for('login'))

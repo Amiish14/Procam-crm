@@ -1691,11 +1691,13 @@ window.CRMToast = (function(){
     <button class="btn btn-ghost" onclick="rAccess()">Refresh</button>
   </div>
   <div class="card" style="margin-bottom:14px"><div style="padding:14px 16px;font-size:13px;line-height:1.7;color:var(--p-text-2)">
-    <b style="color:var(--p-ink)">Admin</b> &mdash; every report, whole company.<br>
-    <b style="color:var(--p-ink)">Vertical Head</b> &mdash; every report, but only their own vertical's
-    tasks, accounts, leads, deals and quotes.<br>
-    <b style="color:var(--p-ink)">Everyone else</b> &mdash; no reports; they work from My Work,
-    which shows what is assigned to them.
+    Two separate settings per person.
+    <b style="color:var(--p-ink)">Can see</b> controls how much of the company
+    they get &mdash; the whole company, only their own vertical, or only records
+    they personally own. The <b style="color:var(--p-ink)">checkboxes</b> control
+    which screens they can open at all.<br>
+    A vertical head, for example, ticks every report but is set to
+    <i>Own vertical only</i>. Changes save immediately.
   </div></div>
   <div id="accCnt"></div>
 </div>
@@ -3704,118 +3706,169 @@ async function toggleEmp(id){
 }
 
 // ── ACCESS CONTROL ──
-// Mirrors the server-side gate in app/reports_v2/routes.py: admins see the
-// whole company, vertical heads see their own vertical, everyone else gets
-// no reports at all.
+// The matrix is the single place access is decided.  Everything here just
+// reads and writes /api/access/*; the server enforces it independently.
+let ACCESS = null;                 // last payload from /api/access/matrix
 let ACCESS_SHOW_INACTIVE = false;
 
-function accessOf(emp){
-  if(emp.role === 'admin')
-    return {cls:'sL', txt:'Whole company'};
-  if(emp.is_vertical_head){
-    const v = (emp.vertical || '').trim();
-    return v ? {cls:'sW', txt:v + ' only'}
-             : {cls:'sR', txt:'No vertical set — sees only their own records'};
-  }
-  return {cls:'sN', txt:'My Work only'};
-}
-
 async function rAccess(){
-  let emps = await api('/api/employees');
-  if(!Array.isArray(emps)) emps = [];
-  const shown  = emps.filter(x => ACCESS_SHOW_INACTIVE || x.is_active);
-  const hidden = emps.length - shown.length;
+  const r = await api('/api/access/matrix' +
+                      (ACCESS_SHOW_INACTIVE ? '?inactive=1' : ''));
+  if(!r || !r.ok){
+    g('accCnt').innerHTML = '<div class="card"><div style="padding:18px">'+
+      'Could not load the access matrix.'+
+      (r && r.error ? ' ' + e(r.error) : '') + '</div></div>';
+    return;
+  }
+  ACCESS = r;
 
-  const groups = {};
-  shown.forEach(x => {
-    const v = (x.vertical || '').trim() || '(no vertical)';
-    (groups[v] = groups[v] || []).push(x);
-  });
+  const perms = [];
+  r.groups.forEach(grp => grp.items.forEach(it =>
+      perms.push({...it, group: grp.title})));
 
-  const admins = shown.filter(x => x.role === 'admin').length;
-  const heads  = shown.filter(x => x.role !== 'admin' && x.is_vertical_head).length;
+  const people = r.people;
+  const nAll  = people.filter(p => p.data_scope === 'all').length;
+  const nVert = people.filter(p => p.data_scope === 'vertical').length;
+  const nOwn  = people.length - nAll - nVert;
 
   let html = `<div class="card"><div style="padding:14px 16px;display:flex;
-       gap:22px;align-items:center;flex-wrap:wrap;font-size:13px">
-    <div><b style="font-size:19px;color:var(--p-ink)">${admins}</b>
-         <span style="color:var(--p-text-2)"> admins</span></div>
-    <div><b style="font-size:19px;color:var(--p-ink)">${heads}</b>
-         <span style="color:var(--p-text-2)"> vertical heads</span></div>
-    <div><b style="font-size:19px;color:var(--p-ink)">${shown.length - admins - heads}</b>
-         <span style="color:var(--p-text-2)"> without report access</span></div>
+       gap:24px;align-items:center;flex-wrap:wrap;font-size:13px">
+    <div><b style="font-size:19px;color:var(--p-ink)">${nAll}</b>
+         <span style="color:var(--p-text-2)"> see the whole company</span></div>
+    <div><b style="font-size:19px;color:var(--p-ink)">${nVert}</b>
+         <span style="color:var(--p-text-2)"> see their own vertical</span></div>
+    <div><b style="font-size:19px;color:var(--p-ink)">${nOwn}</b>
+         <span style="color:var(--p-text-2)"> see only their own records</span></div>
     <label style="margin-left:auto;display:flex;align-items:center;gap:7px;
                   cursor:pointer;color:var(--p-text-2)">
       <input type="checkbox" ${ACCESS_SHOW_INACTIVE ? 'checked' : ''}
              onchange="ACCESS_SHOW_INACTIVE=this.checked;rAccess()">
-      Show inactive${hidden ? ' (' + hidden + ')' : ''}
+      Show inactive
     </label>
   </div></div>`;
 
-  if(heads === 0 && admins > 0){
-    html += `<div class="card"><div style="padding:13px 16px;font-size:13px;
-      line-height:1.6;border-left:3px solid var(--p-warning);color:var(--p-text)">
-      <b>No vertical heads yet.</b> Only the ${admins} admin${admins===1?'':'s'}
-      can open Reports right now. Make someone a head below to give them their
-      own vertical's numbers.</div></div>`;
-  }
+  // group people by vertical
+  const byVert = {};
+  people.forEach(p => {
+    const v = p.vertical || '(no vertical)';
+    (byVert[v] = byVert[v] || []).push(p);
+  });
 
-  Object.keys(groups).sort().forEach(v => {
-    const people = groups[v].slice().sort((a,b) =>
-      (a.name || '').localeCompare(b.name || ''));
-    const vHeads = people.filter(x => x.is_vertical_head).length;
+  Object.keys(byVert).sort().forEach(v => {
+    const rows = byVert[v];
     html += `<div class="card">
-      <div class="card-hd">
-        <div class="card-ttl">${e(v)}
-          <span style="font-weight:500;color:var(--p-text-2);font-size:12.5px">
-            · ${people.length} ${people.length === 1 ? 'person' : 'people'}</span></div>
-        <span class="b ${vHeads ? 'sW' : 'sN'}">${vHeads ? vHeads + ' head' + (vHeads===1?'':'s') : 'no head'}</span>
-      </div>
-      <table><thead><tr>
-        <th>Employee</th><th>Designation</th><th>Role</th>
-        <th>Can see</th><th style="text-align:right">Vertical head</th>
-      </tr></thead><tbody>` +
-      people.map(emp => {
-        const acc = accessOf(emp);
-        const isAdmin = emp.role === 'admin';
-        return `<tr${emp.is_active ? '' : ' style="opacity:.5"'}>
-          <td><b>${e(emp.name)}</b>
-              <span style="color:var(--p-text-3);font-size:12px"> ${e(emp.emp_code)}</span>
-              ${emp.is_active ? '' : '<span class="b sN" style="margin-left:6px">inactive</span>'}</td>
-          <td style="color:var(--p-text-2)">${e(emp.designation || '—')}</td>
-          <td>${isAdmin ? '<span class="b sL">Admin</span>'
-                        : emp.role === 'presales' ? '<span class="b sA">Pre-Sales</span>'
-                        : '<span class="b sN">' + e(emp.role || 'user') + '</span>'}</td>
-          <td><span class="b ${acc.cls}">${e(acc.txt)}</span></td>
-          <td style="text-align:right">${
-            isAdmin
-              ? '<span style="color:var(--p-text-3);font-size:12px">admin — sees all</span>'
-              : `<button class="btn btn-ghost btn-sm" onclick="toggleHead(${emp.id})">${
-                   emp.is_vertical_head ? 'Remove as head' : 'Make head'}</button>`
-          }</td>
+      <div class="card-hd"><div class="card-ttl">${e(v)}
+        <span style="font-weight:500;color:var(--p-text-2);font-size:12.5px">
+          · ${rows.length} ${rows.length===1?'person':'people'}</span></div></div>
+      <div style="overflow-x:auto">
+      <table style="min-width:1040px">
+        <thead>
+          <tr>
+            <th rowspan="2" style="min-width:190px">Employee</th>
+            <th rowspan="2" style="min-width:150px">Can see</th>
+            ${r.groups.map(grp => `<th colspan="${grp.items.length}"
+                style="text-align:center;border-left:1px solid var(--p-border)">
+                ${e(grp.title)}</th>`).join('')}
+            <th rowspan="2" style="min-width:120px;text-align:right">Preset</th>
+          </tr>
+          <tr>
+            ${r.groups.map(grp => grp.items.map((it,i) =>
+                `<th title="${e(it.help)}" style="text-align:center;
+                    font-weight:500;font-size:11px;white-space:nowrap
+                    ${i===0?';border-left:1px solid var(--p-border)':''}">
+                    ${e(it.label)}</th>`).join('')).join('')}
+          </tr>
+        </thead>
+        <tbody>` +
+      rows.map(p => {
+        const held = new Set(p.perms);
+        return `<tr${p.is_active ? '' : ' style="opacity:.5"'}>
+          <td style="cursor:default">
+            <b>${e(p.name)}</b>
+            <span style="color:var(--p-text-3);font-size:12px"> ${e(p.emp_code)}</span>
+            ${p.role === 'admin' ? '<span class="b sL" style="margin-left:6px">Admin</span>' : ''}
+            ${p.is_active ? '' : '<span class="b sN" style="margin-left:6px">inactive</span>'}
+            <div style="font-size:11.5px;color:var(--p-text-3);margin-top:2px">
+              ${e(p.designation || '—')}${p.configured ? '' : ' · not yet configured'}</div>
+          </td>
+          <td style="cursor:default">
+            <select class="fmc" style="height:30px;font-size:12.5px"
+                    onchange="accScope('${p.emp_code}', this.value)">
+              ${r.scopes.map(sc => `<option value="${sc.value}"
+                  ${sc.value === p.data_scope ? 'selected' : ''}>${e(sc.label)}</option>`).join('')}
+            </select>
+          </td>
+          ${perms.map((it, i) => {
+            const first = r.groups.some(grp => grp.items[0].key === it.key);
+            return `<td style="text-align:center;cursor:default
+                ${first ? ';border-left:1px solid var(--p-border)' : ''}">
+              <input type="checkbox" ${held.has(it.key) ? 'checked' : ''}
+                     title="${e(it.label)} — ${e(it.help)}"
+                     onchange="accPerm('${p.emp_code}','${it.key}',this.checked)">
+            </td>`;
+          }).join('')}
+          <td style="text-align:right;cursor:default">
+            <select class="fmc" style="height:30px;font-size:12px"
+                    onchange="accPreset('${p.emp_code}', this.value); this.selectedIndex=0">
+              <option value="">Apply…</option>
+              ${r.presets.map(ps => `<option value="${ps.key}"
+                  title="${e(ps.help)}">${e(ps.label)}</option>`).join('')}
+              <option value="__reset">Reset to role default</option>
+            </select>
+          </td>
         </tr>`;
-      }).join('') + `</tbody></table></div>`;
+      }).join('') + `</tbody></table></div></div>`;
   });
 
   g('accCnt').innerHTML = html;
 }
 
-async function toggleHead(id){
-  const emps = await api('/api/employees');
-  const emp  = Array.isArray(emps) ? emps.find(x => x.id === id) : null;
-  if(!emp) return;
-  const next = !emp.is_vertical_head;
-  if(next && !(emp.vertical || '').trim()){
-    if(!confirm(emp.name + ' has no vertical set, so as a head they would see '
-                + 'only their own records. Set their vertical first?\n\n'
-                + 'OK to continue anyway, Cancel to stop.')) return;
-  }
-  const r = await api('/api/employees/' + id, {method:'PUT',
-              body: JSON.stringify({is_vertical_head: next})});
-  if(r.ok){
+function _accPerson(code){
+  return ACCESS ? ACCESS.people.find(p => p.emp_code === code) : null;
+}
+
+async function _accPut(code, payload, okMsg){
+  const r = await api('/api/access/profile/' + encodeURIComponent(code),
+                      {method:'PUT', body: JSON.stringify(payload)});
+  if(r && r.ok){
+    const p = _accPerson(code);
+    if(p && r.effective){ p.data_scope = r.effective.data_scope;
+                          p.perms = r.effective.perms; p.configured = true; }
+    toast(okMsg, 'ok');
     rAccess();
-    toast(emp.name + (next ? ' is now a vertical head ✓'
-                           : ' is no longer a vertical head'), 'ok');
-  } else toast(r.error || 'Could not update', 'err');
+  } else {
+    toast((r && r.error) || 'Could not save', 'err');
+    rAccess();               // put the checkbox back where it was
+  }
+}
+
+function accScope(code, value){
+  const p = _accPerson(code); if(!p) return;
+  _accPut(code, {data_scope: value, perms: p.perms},
+          p.name + ' — ' + value.replace('all','whole company')
+                                .replace('vertical','own vertical')
+                                .replace('own','own records only'));
+}
+
+function accPerm(code, key, on){
+  const p = _accPerson(code); if(!p) return;
+  const next = new Set(p.perms);
+  on ? next.add(key) : next.delete(key);
+  _accPut(code, {data_scope: p.data_scope, perms: [...next]},
+          p.name + (on ? ' granted ' : ' no longer has ') + key);
+}
+
+async function accPreset(code, preset){
+  if(!preset) return;
+  const p = _accPerson(code); if(!p) return;
+  if(preset === '__reset'){
+    const r = await api('/api/access/profile/' + encodeURIComponent(code),
+                        {method:'DELETE'});
+    if(r && r.ok){ toast(p.name + ' reset to their role default', 'ok'); rAccess(); }
+    else toast((r && r.error) || 'Could not reset', 'err');
+    return;
+  }
+  _accPut(code, {preset}, p.name + ' set to ' + preset.replace('_',' '));
 }
 
 // ── UPLOAD ──
@@ -3972,33 +4025,34 @@ async function doChangePw(){
         { page: 'accounts',  label: 'Accounts',             ic: 'building',      countId: 'sbAcc' },
         { page: 'projects',  label: 'Project Intelligence', ic: 'construction',  countId: 'sbPrj' },
         { page: 'contacts',  label: 'Global CRM',           ic: 'globe'         },
-        { href: '/business-cards/scan', label: 'Scan Business Card', ic: 'sparkles' },
+        { href: '/business-cards/scan', label: 'Scan Business Card', ic: 'sparkles', perm: 'module.business_cards' },
       ]},
     { title: 'Deals',               icon: 'briefcase',
       items: [
-        { href: '/rfqs',                          label: 'RFQs',                    ic: 'clipboard_list' },
-        { href: '/quotes',                        label: 'Quotes',                  ic: 'send'          },
-        { href: '/handovers',                     label: 'Handovers',               ic: 'trophy'        },
-        { href: '/funnels/account-development',   label: 'Account Funnel',          ic: 'git_branch'    },
-        { href: '/funnels/project-intelligence',  label: 'Project Funnel',          ic: 'construction'  },
+        { href: '/rfqs',                          label: 'RFQs',                    ic: 'clipboard_list', perm: 'module.rfq' },
+        { href: '/quotes',                        label: 'Quotes',                  ic: 'send',           perm: 'module.quotes' },
+        { href: '/handovers',                     label: 'Handovers',               ic: 'trophy',         perm: 'module.handovers' },
+        { href: '/funnels/account-development',   label: 'Account Funnel',          ic: 'git_branch',     perm: 'module.funnels' },
+        { href: '/funnels/project-intelligence',  label: 'Project Funnel',          ic: 'construction',   perm: 'module.funnels' },
       ]},
     { title: 'Intelligence',        icon: 'brain',
       items: [
         { page: 'news',      label: 'Market Intelligence',  ic: 'newspaper',     countId: 'sbNews', adminOnly: true },
         { page: 'outreach',  label: 'AI Outreach',          ic: 'send'          },
-        { href: '/competitors',                    label: 'Competitors',           ic: 'target'        },
-        { href: '/competitors/dashboard',          label: 'Competitor Dashboard',  ic: 'dashboard'     },
+        { href: '/competitors',                    label: 'Competitors',           ic: 'target',       perm: 'module.competitors' },
+        { href: '/competitors/dashboard',          label: 'Competitor Dashboard',  ic: 'dashboard',    perm: 'module.competitors' },
       ]},
-    { title: 'Reports',             icon: 'trending_up', managerOnly: true,
+    { title: 'Reports',             icon: 'trending_up', anyPerm: ['reports.action','reports.competitor','reports.accounts'],
       items: [
-        { href: '/reports', label: 'Reports Hub',            ic: 'trending_up' },
+        { href: '/reports', label: 'Reports Hub',            ic: 'trending_up',
+          anyPerm: ['reports.action','reports.competitor','reports.accounts'] },
       ]},
     { title: 'Team & Admin',        icon: 'users',
       items: [
         { page: 'team',      label: 'Team',                 ic: 'users',         adminOnly: true },
         { page: 'assign',    label: 'Assign',               ic: 'zap',           adminOnly: true },
         { page: 'employees', label: 'Employees',            ic: 'user_lock',     adminOnly: true },
-        { page: 'access',    label: 'Access Control',       ic: 'key',           adminOnly: true },
+        { page: 'access',    label: 'Access Control',       ic: 'key',           perm: 'admin.access' },
         { page: 'kpi',       label: 'KPI Settings',         ic: 'settings',      adminOnly: true },
         { page: 'upload',    label: 'Upload',               ic: 'upload',        adminOnly: true },
         { page: 'pwchange',  label: 'Change Password',      ic: 'key'           },
@@ -4010,6 +4064,15 @@ async function doChangePw(){
   brand.className = 'topnav-brand';
   brand.innerHTML = '<img src="https://www.procamlogistics.com/public/frontend/assets/img/logo.png" alt="Procam"> CRM';
   mount.parentNode.insertBefore(brand, mount);
+
+  /* Permissions for the signed-in user.  The server enforces these
+     independently — hiding a link is courtesy, not security. */
+  var MY_PERMS = new Set();
+  function mayUse(it){
+    if (it.perm)    return MY_PERMS.has(it.perm);
+    if (it.anyPerm) return it.anyPerm.some(function(p){ return MY_PERMS.has(p); });
+    return true;
+  }
 
   function itemHTML(it){
     var cnt = it.countId ? ' <span class="sb-cnt" id="tn_'+it.countId+'">0</span>' : '';
@@ -4029,10 +4092,13 @@ async function doChangePw(){
            '</a>';
   }
 
-  mount.innerHTML = TOPNAV_GROUPS.map(function(g){
+  function renderNav(){
+   mount.innerHTML = TOPNAV_GROUPS.map(function(g){
+    var items = g.items.filter(mayUse);
+    if (!items.length) return '';
+    g = {title: g.title, icon: g.icon, items: items};
     var allAdmin = g.items.every(function(x){ return x.adminOnly; });
-    var groupCls = (allAdmin ? ' admin-only' : '') +
-                   (g.managerOnly ? ' manager-only' : '');
+    var groupCls = (allAdmin ? ' admin-only' : '');
     return '<div class="topnav-group'+groupCls+'">'+
              '<button class="topnav-head" type="button">'+
                '<span class="ic">'+ic(g.icon)+'</span>'+
@@ -4041,7 +4107,23 @@ async function doChangePw(){
              '</button>'+
              '<div class="topnav-drop">'+g.items.map(itemHTML).join('')+'</div>'+
            '</div>';
-  }).join('');
+   }).join('');
+  }
+  renderNav();
+
+  /* Re-render once the real permission set arrives. */
+  (function(){
+    var base = (window.CRM && CRM.url) ? CRM.url('') : '';
+    fetch((base || '') + '/api/access/me', {credentials:'same-origin'})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d){
+        if(!d || !d.ok) return;
+        MY_PERMS = new Set(d.perms || []);
+        renderNav();
+        if(typeof syncCounts === 'function') syncCounts();
+      })
+      .catch(function(){ /* nav simply stays as first rendered */ });
+  })();
 
   /* Mirror the live counts from the (still-present but hidden) sidebar. */
   function syncCounts(){

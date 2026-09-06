@@ -32,12 +32,13 @@ bp = Blueprint('handover', __name__)
 
 
 def _require_auth(f):
-    @wraps(f)
-    def wrap(*a, **kw):
-        if not session.get('emp_code'):
-            return jsonify(error='Not authenticated'), 401
-        return f(*a, **kw)
-    return wrap
+    """Gated by the Access Control matrix (module.handovers).
+
+    Kept under the original name so every existing @_require_auth on this
+    blueprint picks up the permission check without being touched.
+    """
+    from app.access.service import require as _require_perm
+    return _require_perm('module.handovers')(f)
 
 
 def _current_emp():
@@ -72,6 +73,7 @@ _STATUSES = ['Handover Pending', 'TMS Project Created',
 
 # ─── HTML ──────────────────────────────────────────────────────────────────
 @bp.route('/handovers')
+@_require_auth
 def queue_page():
     if not session.get('emp_code'):
         return redirect(url_for('login'))

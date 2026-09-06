@@ -31,12 +31,13 @@ _ALLOWED_EXTS = {'.png', '.jpg', '.jpeg', '.heic', '.webp', '.pdf'}
 
 # ─── auth helpers ────────────────────────────────────────────────────────
 def _require_auth(f):
-    @wraps(f)
-    def wrap(*a, **kw):
-        if not session.get('emp_code'):
-            return jsonify(error='Not authenticated'), 401
-        return f(*a, **kw)
-    return wrap
+    """Gated by the Access Control matrix (module.business_cards).
+
+    Kept under the original name so every existing @_require_auth on this
+    blueprint picks up the permission check without being touched.
+    """
+    from app.access.service import require as _require_perm
+    return _require_perm('module.business_cards')(f)
 
 
 def _emp():
@@ -45,6 +46,7 @@ def _emp():
 
 # ─── HTML page ───────────────────────────────────────────────────────────
 @bp.route('/business-cards/scan')
+@_require_auth
 def scan_page():
     if not session.get('emp_code'):
         return render_template('login.html') if False else ('', 302, {'Location': '/login'})

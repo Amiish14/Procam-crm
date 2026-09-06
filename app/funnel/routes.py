@@ -49,12 +49,13 @@ bp = Blueprint('funnel', __name__)
 
 # ─── auth helpers ────────────────────────────────────────────────────────
 def _require_auth(f):
-    @wraps(f)
-    def wrap(*a, **kw):
-        if not session.get('emp_code'):
-            return jsonify(error='Not authenticated'), 401
-        return f(*a, **kw)
-    return wrap
+    """Gated by the Access Control matrix (module.funnels).
+
+    Kept under the original name so every existing @_require_auth on this
+    blueprint picks up the permission check without being touched.
+    """
+    from app.access.service import require as _require_perm
+    return _require_perm('module.funnels')(f)
 
 
 def _parse_date(v):
@@ -585,6 +586,7 @@ def api_funnel_count_vs_value():
 
 # ─── HTML views ──────────────────────────────────────────────────────────
 @bp.route('/funnels/account-development')
+@_require_auth
 def account_dev_page():
     if not session.get('emp_code'):
         return redirect(url_for('login'))
@@ -592,6 +594,7 @@ def account_dev_page():
 
 
 @bp.route('/funnels/project-intelligence')
+@_require_auth
 def project_intel_page():
     if not session.get('emp_code'):
         return redirect(url_for('login'))

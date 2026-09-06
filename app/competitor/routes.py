@@ -62,12 +62,13 @@ bp = Blueprint('competitor', __name__)
 
 # ─── auth helpers ────────────────────────────────────────────────────────
 def _require_auth(f):
-    @wraps(f)
-    def wrap(*a, **kw):
-        if not session.get('emp_code'):
-            return jsonify(error='Not authenticated'), 401
-        return f(*a, **kw)
-    return wrap
+    """Gated by the Access Control matrix (module.competitors).
+
+    Kept under the original name so every existing @_require_auth on this
+    blueprint picks up the permission check without being touched.
+    """
+    from app.access.service import require as _require_perm
+    return _require_perm('module.competitors')(f)
 
 
 def _current_emp_code():
@@ -112,6 +113,7 @@ def _list_field(v):
 
 # ─── HTML views ──────────────────────────────────────────────────────────
 @bp.route('/competitors')
+@_require_auth
 def competitor_list_page():
     if not session.get('emp_code'):
         return redirect(url_for('login'))
@@ -119,6 +121,7 @@ def competitor_list_page():
 
 
 @bp.route('/competitors/<int:cid>')
+@_require_auth
 def competitor_detail_page(cid):
     if not session.get('emp_code'):
         return redirect(url_for('login'))
@@ -127,6 +130,7 @@ def competitor_detail_page(cid):
 
 
 @bp.route('/competitors/dashboard')
+@_require_auth
 def competitor_dashboard_page():
     if not session.get('emp_code'):
         return redirect(url_for('login'))

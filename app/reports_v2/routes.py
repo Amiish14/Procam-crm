@@ -28,45 +28,35 @@ from app import db
 bp = Blueprint('reports_v2', __name__)
 
 
-# ─── auth helper ─────────────────────────────────────────────────────────
-# These reports expose company-wide commercial figures — won value, price
-# comparison, network contribution, and every user's workload.  They are
-# management reporting, not a self-service surface, so they are limited to
-# admins and vertical heads.  Individual contributors work from /my-work,
-# which already scopes to the tasks they own.
-#
-# To widen access later, edit _is_report_manager() — it is the single
-# gate for all 35 report routes.
-_MANAGER_ROLES = ('admin', 'procam_admin')
+# ─── auth ────────────────────────────────────────────────────────────────
+# Who may open a report, and how much of it they see, both come from the
+# Access Control matrix (Team & Admin → Access Control).  Nothing here
+# decides policy; it only asks.
+from app.access.service import (require as _require_perm, can as _can,
+                                data_scope as _data_scope, REPORT_PERMS)
+from app.models.access import DataScope
+
+_action     = _require_perm('reports.action',     'reports_v2/_denied.html')
+_competitor = _require_perm('reports.competitor', 'reports_v2/_denied.html')
+_accounts   = _require_perm('reports.accounts',   'reports_v2/_denied.html')
 
 
-def _is_report_manager():
-    """True / False for a logged-in user; None when not logged in."""
-    code = session.get('emp_code')
-    if not code:
-        return None
-    if (session.get('role') or '') in _MANAGER_ROLES:
-        return True
-    # The session only carries the coarse role, so a vertical head has to
-    # be confirmed against the row itself.
-    try:
-        from app import Employee
-        emp = Employee.query.filter_by(emp_code=code).first()
-    except Exception:
-        return False
-    if emp is None:
-        return False
-    if (emp.role or '') in _MANAGER_ROLES:
-        return True
-    return bool(getattr(emp, 'is_vertical_head', False))
+def _any_report(f):
+    """The hub — open to anyone holding at least one report permission."""
+    @wraps(f)
+    def wrap(*a, **kw):
+        if not session.get('emp_code'):
+            return ('', 302, {'Location': '/login'})
+        if not any(_can(p) for p in REPORT_PERMS):
+            return render_template('reports_v2/_denied.html'), 403
+        return f(*a, **kw)
+    return wrap
 
 
 class _Scope:
     """The slice of the company a viewer may see.
 
-    Admins get ``None`` — unrestricted.  A vertical head gets their own
-    vertical: every employee in it, and by extension every task, account,
-    lead, deal and quote those people own.
+    ``None`` instead of a _Scope means unrestricted.
     """
     __slots__ = ('vertical', 'emp_codes', '_company_ids')
 
@@ -94,19 +84,23 @@ class _Scope:
 def _scope():
     """``None`` when the viewer may see the whole company, else a _Scope.
 
-    Only admins are unrestricted.  A vertical head is confined to their
-    own vertical — the people in it plus anyone reporting directly to
-    them.  Every report calls this; nothing else decides visibility.
+    Driven entirely by the viewer's data_scope in the Access Control
+    matrix: 'all' sees everything, 'vertical' sees their own vertical,
+    'own' sees only what they personally own.
     """
-    if (session.get('role') or '') in _MANAGER_ROLES:
+    scope = _data_scope()
+    if scope == DataScope.ALL:
         return None
+
     from app import Employee
     emp = Employee.query.filter_by(emp_code=session.get('emp_code')).first()
     if emp is None:
         return _Scope('', set())          # unknown user sees nothing
-    if (emp.role or '') in _MANAGER_ROLES:
-        return None
+
     vertical = (emp.vertical or '').strip()
+    if scope == DataScope.OWN:
+        return _Scope(vertical, {emp.emp_code})
+
     codes = {emp.emp_code}
     clauses = [Employee.vertical_head_id == emp.id]
     if vertical:
@@ -278,9 +272,13 @@ def _serve(rows, meta, filters):
 # HUB
 # =========================================================================
 @bp.route('/reports')
-@_require_manager
+@_any_report
 def hub():
-    return render_template('reports_v2/index.html', reports=REPORT_INDEX)
+    # Show only the categories this person can actually open, so the hub
+    # never advertises a report that will refuse them.
+    allowed = [(title, items) for title, items in REPORT_INDEX
+               if _can(_CATEGORY_PERM.get(title, ''))]
+    return render_template('reports_v2/index.html', reports=allowed)
 
 
 # =========================================================================
@@ -348,7 +346,7 @@ def _apply_task_filters(q, TaskInstance):
 
 
 @bp.route('/reports/open-tasks')
-@_require_manager
+@_action
 def rep_open_tasks():
     from app.models.task_engine import TaskInstance, TaskInstanceStatus
     q = TaskInstance.query.filter(
@@ -364,7 +362,7 @@ def rep_open_tasks():
 
 
 @bp.route('/reports/overdue-tasks')
-@_require_manager
+@_action
 def rep_overdue_tasks():
     from app.models.task_engine import TaskInstance, TaskInstanceStatus
     now = datetime.utcnow()
@@ -384,7 +382,7 @@ def rep_overdue_tasks():
 
 
 @bp.route('/reports/tasks-by-user')
-@_require_manager
+@_action
 def rep_tasks_by_user():
     from app.models.task_engine import TaskInstance
     q = (db.session.query(
@@ -410,7 +408,7 @@ def rep_tasks_by_user():
 
 
 @bp.route('/reports/tasks-by-role')
-@_require_manager
+@_action
 def rep_tasks_by_role():
     from app.models.task_engine import TaskInstance
     q = (db.session.query(
@@ -436,7 +434,7 @@ def rep_tasks_by_role():
 
 
 @bp.route('/reports/tasks-by-vertical')
-@_require_manager
+@_action
 def rep_tasks_by_vertical():
     # Vertical isn't modelled on TaskInstance; approximate via task_key
     # prefix (module) as a stand-in for now.
@@ -462,7 +460,7 @@ def rep_tasks_by_vertical():
 
 
 @bp.route('/reports/task-completion')
-@_require_manager
+@_action
 def rep_task_completion():
     from app.models.task_engine import TaskInstance, TaskInstanceStatus
     q = _scope_tasks(TaskInstance.query.filter(
@@ -545,48 +543,48 @@ def _sla_report(module_prefix, slug, title):
 
 
 @bp.route('/reports/sla-performance')
-@_require_manager
+@_action
 def rep_sla_performance():
     return _sla_report('', 'sla_performance', 'SLA Performance (all)')
 
 
 @bp.route('/reports/sla-rate-sourcing')
-@_require_manager
+@_action
 def rep_sla_rate_sourcing():
     return _sla_report('rate_sourcing', 'sla_rate_sourcing',
                        'SLA — Rate Sourcing')
 
 
 @bp.route('/reports/sla-quote-prep')
-@_require_manager
+@_action
 def rep_sla_quote_prep():
     return _sla_report('quote.prep', 'sla_quote_prep',
                        'SLA — Quote Preparation')
 
 
 @bp.route('/reports/sla-quote-submit')
-@_require_manager
+@_action
 def rep_sla_quote_submit():
     return _sla_report('quote.submit', 'sla_quote_submit',
                        'SLA — Quote Submission')
 
 
 @bp.route('/reports/sla-negotiation-followup')
-@_require_manager
+@_action
 def rep_sla_negotiation_followup():
     return _sla_report('negotiation', 'sla_negotiation_followup',
                        'SLA — Negotiation Follow-up')
 
 
 @bp.route('/reports/sla-won-handover')
-@_require_manager
+@_action
 def rep_sla_won_handover():
     return _sla_report('handover', 'sla_won_handover',
                        'SLA — Won → Handover')
 
 
 @bp.route('/reports/account-followup-due')
-@_require_manager
+@_action
 def rep_account_followup_due():
     from app import Company
     today = date.today()
@@ -623,7 +621,7 @@ def rep_account_followup_due():
 
 
 @bp.route('/reports/project-review-due')
-@_require_manager
+@_action
 def rep_project_review_due():
     from app.models.task_engine import TaskInstance, TaskInstanceStatus
     q = _scope_tasks(TaskInstance.query.filter(
@@ -642,7 +640,7 @@ def rep_project_review_due():
 # Competitor (spec §60)
 # =========================================================================
 @bp.route('/reports/competitor-register')
-@_require_manager
+@_competitor
 def rep_competitor_register():
     from app.models.competitor import CompetitorMaster
     q = CompetitorMaster.query.order_by(CompetitorMaster.name).all()
@@ -672,7 +670,7 @@ def rep_competitor_register():
 
 
 @bp.route('/reports/competitor-contacts')
-@_require_manager
+@_competitor
 def rep_competitor_contacts():
     from app.models.competitor import CompetitorContact, CompetitorMaster
     _ids = _scoped_competitor_ids(_scope())
@@ -708,7 +706,7 @@ def rep_competitor_contacts():
 
 
 @bp.route('/reports/competitor-intelligence-log')
-@_require_manager
+@_competitor
 def rep_competitor_intel_log():
     from app.models.competitor import CompetitorIntelligence, CompetitorMaster
     _ids = _scoped_competitor_ids(_scope())
@@ -743,7 +741,7 @@ def rep_competitor_intel_log():
 
 
 @bp.route('/reports/competitor-encounters')
-@_require_manager
+@_competitor
 def rep_competitor_encounters():
     from app.models.competitor import OpportunityCompetitor, CompetitorMaster
     rows = []
@@ -776,7 +774,7 @@ def rep_competitor_encounters():
 
 
 @bp.route('/reports/win-loss-by-competitor')
-@_require_manager
+@_competitor
 def rep_win_loss_by_competitor():
     from app.models.competitor import OpportunityCompetitor, CompetitorMaster
     tally = {}
@@ -807,7 +805,7 @@ def rep_win_loss_by_competitor():
 
 
 @bp.route('/reports/price-comparison')
-@_require_manager
+@_competitor
 def rep_price_comparison():
     from app.models.competitor import OpportunityCompetitor, CompetitorMaster
     rows = []
@@ -870,7 +868,7 @@ def _competitor_grouping(dimension_key, label, extractor):
 
 
 @bp.route('/reports/competitor-by-customer')
-@_require_manager
+@_competitor
 def rep_competitor_by_customer():
     # No direct customer column on OpportunityCompetitor — cross-tabulate
     # by opportunity's linked company.
@@ -904,7 +902,7 @@ def rep_competitor_by_customer():
 
 
 @bp.route('/reports/competitor-by-industry')
-@_require_manager
+@_competitor
 def rep_competitor_by_industry():
     return _competitor_grouping(
         'industry', 'Industry',
@@ -912,7 +910,7 @@ def rep_competitor_by_industry():
 
 
 @bp.route('/reports/competitor-by-vertical')
-@_require_manager
+@_competitor
 def rep_competitor_by_vertical():
     return _competitor_grouping(
         'vertical', 'Vertical',
@@ -920,7 +918,7 @@ def rep_competitor_by_vertical():
 
 
 @bp.route('/reports/competitor-by-service')
-@_require_manager
+@_competitor
 def rep_competitor_by_service():
     return _competitor_grouping(
         'service', 'Service',
@@ -928,7 +926,7 @@ def rep_competitor_by_service():
 
 
 @bp.route('/reports/competitor-by-geography')
-@_require_manager
+@_competitor
 def rep_competitor_by_geography():
     return _competitor_grouping(
         'geography', 'Geography',
@@ -940,7 +938,7 @@ def rep_competitor_by_geography():
 # Account Development (spec §61)
 # =========================================================================
 @bp.route('/reports/accounts-by-pic')
-@_require_manager
+@_accounts
 def rep_accounts_by_pic():
     from app import Company
     q = Company.query.filter(Company.is_active.is_(True))
@@ -965,7 +963,7 @@ def rep_accounts_by_pic():
 
 
 @bp.route('/reports/accounts-by-stage')
-@_require_manager
+@_accounts
 def rep_accounts_by_stage():
     from app import Company
     q = Company.query.filter(Company.is_active.is_(True))
@@ -990,7 +988,7 @@ def rep_accounts_by_stage():
 
 
 @bp.route('/reports/activities-by-account')
-@_require_manager
+@_accounts
 def rep_activities_by_account():
     # Lead.company is a plain account-name string, not a FK — unlike
     # Opportunity.company_id.  Group on the name directly.
@@ -1017,7 +1015,7 @@ def rep_activities_by_account():
 
 
 @bp.route('/reports/contacts-developed')
-@_require_manager
+@_accounts
 def rep_contacts_developed():
     from app import Contact
     q = Contact.query.filter(Contact.assigned_to.isnot(None))
@@ -1042,7 +1040,7 @@ def rep_contacts_developed():
 
 
 @bp.route('/reports/rfqs-by-account')
-@_require_manager
+@_accounts
 def rep_rfqs_by_account():
     try:
         from app.models.rfq import RFQ
@@ -1114,7 +1112,7 @@ def _quote_agg(field):
 
 
 @bp.route('/reports/quote-value-by-account')
-@_require_manager
+@_accounts
 def rep_quote_value_by_account():
     rows = _quote_agg('total_amount')
     return _serve(rows, {
@@ -1129,7 +1127,7 @@ def rep_quote_value_by_account():
 
 
 @bp.route('/reports/won-value-by-account')
-@_require_manager
+@_accounts
 def rep_won_value_by_account():
     from app import Opportunity, Company
     _q = Opportunity.query.filter(Opportunity.stage == 'Won')
@@ -1159,7 +1157,7 @@ def rep_won_value_by_account():
 
 
 @bp.route('/reports/overseas-partner-contribution')
-@_require_manager
+@_accounts
 def rep_overseas_partner_contribution():
     from app import OverseasAgent, Lead
     tally = {}
@@ -1186,7 +1184,7 @@ def rep_overseas_partner_contribution():
 
 
 @bp.route('/reports/network-contribution')
-@_require_manager
+@_accounts
 def rep_network_contribution():
     from app import Lead
     _q = Lead.query
@@ -1211,7 +1209,7 @@ def rep_network_contribution():
 
 
 @bp.route('/reports/dormant-accounts')
-@_require_manager
+@_accounts
 def rep_dormant_accounts():
     from app import Company
     days = int(request.args.get('days') or 90)
@@ -1249,6 +1247,12 @@ def rep_dormant_accounts():
 # =========================================================================
 # Master index (used by the hub)
 # =========================================================================
+_CATEGORY_PERM = {
+    'Action Management': 'reports.action',
+    'Competitor':        'reports.competitor',
+    'Account Development': 'reports.accounts',
+}
+
 REPORT_INDEX = [
     ('Action Management', [
         ('rep_open_tasks', 'Open Tasks'),
