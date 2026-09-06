@@ -186,6 +186,15 @@ def _apply_opp_filters(q, f):
             f['date_to'], datetime.max.time()))
     if f.get('source'):
         q = q.filter(Opportunity.source_type == f['source'])
+    if f.get('vertical'):
+        # Opportunity carries no vertical of its own; it inherits the one
+        # on the lead it came from. Without this the vertical filter
+        # silently did nothing to the opportunity layers, so a filtered
+        # funnel showed unfiltered numbers — worse than offering no filter.
+        from app import Lead
+        lead_ids = [r[0] for r in db.session.query(Lead.id).filter(
+            Lead.procam_vertical == f['vertical']).all()]
+        q = q.filter(Opportunity.lead_id.in_(lead_ids or [0]))
     return q
 
 
@@ -566,6 +575,133 @@ def api_funnel_account_development():
 def api_funnel_project_intelligence():
     f = _pick_filters()
     return jsonify(stages=_project_intelligence_funnel(f))
+
+
+def _sales_funnel(f):
+    """§68 — the commercial funnel end to end.
+
+    Deliberately crosses entities: an account that never became an
+    opportunity, and an opportunity that never became an RFQ, are exactly
+    the losses a funnel exists to show.  Each layer counts DISTINCT
+    accounts reaching that depth, so the reduction is real rather than an
+    artefact of one deal having many quotes.
+    """
+    from app import Company, Lead, Opportunity
+
+    layers = []
+
+    accounts = _apply_company_filters(
+        Company.query.filter(Company.is_active.is_(True)), f).all()
+    account_ids = {c.id for c in accounts}
+    layers.append(('Target Accounts', len(account_ids), 0.0, account_ids))
+
+    leads_q = _apply_opp_filters.__self__ if False else None  # noqa
+    from app import Lead as _Lead
+    lead_rows = _Lead.query.filter(_Lead.company_id.isnot(None))
+    if f.get('pic'):
+        lead_rows = lead_rows.filter(_Lead.assigned_to == f['pic'])
+    if f.get('vertical'):
+        lead_rows = lead_rows.filter(_Lead.procam_vertical == f['vertical'])
+    if f.get('source'):
+        lead_rows = lead_rows.filter(_Lead.source == f['source'])
+    contacted = {l.company_id for l in lead_rows.all()
+                 if l.company_id in account_ids}
+    layers.append(('Contact Established', len(contacted), 0.0, contacted))
+
+    opps = _apply_opp_filters(Opportunity.query, f).all()
+    with_opp = {o.company_id for o in opps if o.company_id}
+    opp_value = sum(float(o.value_inr or 0) for o in opps)
+    layers.append(('Opportunities', len(with_opp), opp_value, with_opp))
+
+    rfq_accounts, rfq_value = set(), 0.0
+    try:
+        for r in _rfqs_by_status(
+                ['Received', 'Rate Sourcing', 'Quote Preparation', 'Quoted',
+                 'Negotiation', 'Won', 'Lost'], f):
+            if getattr(r, 'account_id', None):
+                rfq_accounts.add(r.account_id)
+    except Exception:
+        pass
+    layers.append(('RFQs', len(rfq_accounts), rfq_value, rfq_accounts))
+
+    quoted, quote_value = set(), 0.0
+    try:
+        for q in _quotes_by_status(
+                ['Submitted', 'Awaiting Response', 'Under Negotiation',
+                 'Approved', 'Won', 'Lost'], f):
+            if getattr(q, 'account_id', None):
+                quoted.add(q.account_id)
+            quote_value += float(getattr(q, 'total_amount', 0) or 0)
+    except Exception:
+        pass
+    layers.append(('Quoted', len(quoted), quote_value, quoted))
+
+    negotiating = [o for o in opps
+                   if (o.stage or '') in ('Negotiation', 'Under Negotiation')]
+    neg_ids = {o.company_id for o in negotiating if o.company_id}
+    layers.append(('Negotiation', len(neg_ids),
+                   sum(float(o.value_inr or 0) for o in negotiating),
+                   neg_ids))
+
+    won = [o for o in opps if (o.stage or '') == 'Won']
+    won_ids = {o.company_id for o in won if o.company_id}
+    layers.append(('Won', len(won_ids),
+                   sum(float(o.value_inr or 0) for o in won), won_ids))
+
+    # A funnel measures how deep each account got, so an account that
+    # reached Won has by definition passed every stage above it.  Counting
+    # the layers independently made the funnel widen at the bottom —
+    # accounts whose deals never touched the (unused) RFQ and Quote
+    # modules disappeared mid-funnel and returned at Won, producing a
+    # negative drop-off.  Rolling each layer up from the ones below keeps
+    # it monotonic, which is what makes it a funnel.
+    rolled = []
+    carried = set()
+    for name, _count, value, ids in reversed(layers):
+        if ids is not None:
+            carried = carried | ids
+            rolled.append((name, len(carried), value))
+        else:
+            rolled.append((name, _count, value))
+    layers = list(reversed(rolled))
+
+    out = []
+    previous = None
+    for name, count, value in layers:
+        conversion = None
+        if previous is not None and previous > 0:
+            conversion = round(count / previous * 100, 1)
+        out.append({
+            'stage': name, 'count': count, 'value': round(value, 2),
+            'conversion_pct_from_previous': conversion,
+            'drop_off': max(0, previous - count)
+                        if previous is not None else None,
+        })
+        previous = count
+
+    top = out[0]['count'] if out else 0
+    for row in out:
+        row['pct_of_top'] = round(row['count'] / top * 100, 1) if top else 0
+    return out
+
+
+@bp.route('/api/funnel/sales', methods=['GET'])
+@_require_auth
+def api_funnel_sales():
+    f = _pick_filters()
+    return jsonify(ok=True, stages=_sales_funnel(f), filters={
+        k: (str(v) if v else '') for k, v in f.items()})
+
+
+@bp.route('/funnels/sales')
+@_require_auth
+def sales_funnel_page():
+    from app.master_data import service as md
+    return render_template(
+        'funnel/sales.html',
+        verticals=[i.label for i in md.items('vertical')],
+        industries=[i.label for i in md.items('industry')],
+        sources=[i.label for i in md.items('source')])
 
 
 @bp.route('/api/funnel/count-vs-value', methods=['GET'])

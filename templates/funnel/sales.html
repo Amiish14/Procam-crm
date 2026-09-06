@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sales Funnel — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .fn{display:flex;flex-direction:column;gap:2px;margin:6px 0 18px}
+  .fn-row{display:grid;grid-template-columns:170px 1fr 190px;gap:14px;
+    align-items:center;min-height:52px}
+  .fn-stage{font-weight:650;color:var(--p-ink);font-size:13.5px;
+    text-align:right}
+  .fn-stage small{display:block;font-weight:400;color:var(--p-text-3);
+    font-size:11px}
+  .fn-track{position:relative;height:44px;display:flex;align-items:center;
+    justify-content:center}
+  .fn-bar{height:100%;border-radius:5px;display:flex;align-items:center;
+    justify-content:center;gap:10px;min-width:78px;color:#fff;
+    transition:filter var(--dur-out);background:var(--p-red)}
+  .fn-bar:hover{filter:brightness(1.08)}
+  .fn-n{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums;
+    letter-spacing:-.01em}
+  .fn-pct{font-size:11.5px;opacity:.86;font-variant-numeric:tabular-nums}
+  .fn-side{font-size:12px;color:var(--p-text-2);
+    font-variant-numeric:tabular-nums}
+  .fn-side b{color:var(--p-ink)}
+  .fn-drop{grid-column:2;font-size:11px;color:var(--p-text-3);
+    text-align:center;padding:1px 0;font-variant-numeric:tabular-nums}
+  .fn-drop b{color:var(--p-warning)}
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Funnels</div>
+    <h1>Sales Funnel</h1>
+    <div class="crm-sub">Accounts reaching each depth of the commercial
+      process, and where they stop.</div>
+  </div>
+  <div class="toolbar">
+    <a class="btn" href="{{ url_prefix }}/funnels/account-development">Account Funnel</a>
+    <a class="btn" href="{{ url_prefix }}/funnels/project-intelligence">Project Funnel</a>
+  </div>
+</div>
+
+<div class="filters">
+  <select id="fVert"><option value="">All verticals</option>
+    {% for v in verticals %}<option value="{{ v }}">{{ v }}</option>{% endfor %}</select>
+  <select id="fInd"><option value="">All industries</option>
+    {% for i in industries %}<option value="{{ i }}">{{ i }}</option>{% endfor %}</select>
+  <select id="fSrc"><option value="">All sources</option>
+    {% for s in sources %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select>
+  <input id="fPic" placeholder="Owner (employee code)" style="max-width:200px">
+  <select id="fMode">
+    <option value="count">By count</option>
+    <option value="value">By value</option>
+  </select>
+  <button class="btn primary" onclick="load()">Apply</button>
+  <button class="btn ghost" onclick="reset()">Clear</button>
+</div>
+
+<div class="card"><div class="panel">
+  <div id="fn" class="fn"><div class="empty">Loading…</div></div>
+</div></div>
+
+<div class="card">
+  <div class="card-hd"><div class="card-ttl">Stage detail</div></div>
+  <div class="table-wrap"><table id="tbl">
+    <thead><tr><th>Stage</th><th class="num">Accounts</th>
+      <th class="num">Value (INR)</th><th class="num">Conversion</th>
+      <th class="num">Drop-off</th><th class="num">% of top</th></tr></thead>
+    <tbody></tbody></table></div>
+</div>
+
+<script>
+var MODE = 'count';
+function esc(s){ return String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function inr(n){
+  n = Number(n || 0);
+  if(n >= 10000000) return (n/10000000).toFixed(2) + ' Cr';
+  if(n >= 100000)   return (n/100000).toFixed(2) + ' L';
+  return n.toLocaleString('en-IN');
+}
+function reset(){
+  ['fVert','fInd','fSrc','fPic'].forEach(function(id){
+    document.getElementById(id).value = ''; });
+  load();
+}
+async function load(){
+  MODE = document.getElementById('fMode').value;
+  var p = new URLSearchParams();
+  var map = {vertical:'fVert', industry:'fInd', source:'fSrc', pic:'fPic'};
+  Object.keys(map).forEach(function(k){
+    var v = (document.getElementById(map[k]).value || '').trim();
+    if(v) p.set(k, v);
+  });
+  var r = await fetch('{{ url_prefix }}/api/funnel/sales?' + p.toString(),
+                      {credentials:'same-origin'});
+  var d = await r.json();
+  if(!d.ok){ document.getElementById('fn').innerHTML =
+    '<div class="empty">Could not load the funnel.</div>'; return; }
+  draw(d.stages);
+  table(d.stages);
+}
+
+function draw(stages){
+  var host = document.getElementById('fn');
+  if(!stages.length){ host.innerHTML = '<div class="empty">No data.</div>'; return; }
+
+  var vals = stages.map(function(s){ return MODE === 'value' ? s.value : s.count; });
+  var top = Math.max.apply(null, vals.concat([1]));
+
+  host.innerHTML = stages.map(function(s, i){
+    var v = MODE === 'value' ? s.value : s.count;
+    // A floor keeps a small stage readable instead of collapsing to a sliver.
+    var width = Math.max(9, (v / top) * 100);
+    var shade = 0.55 + (0.4 * i / Math.max(1, stages.length - 1));
+    var drop = (s.drop_off && s.drop_off > 0)
+      ? '<div class="fn-drop">↓ <b>' + s.drop_off.toLocaleString('en-IN')
+        + '</b> did not reach the next stage</div>' : '';
+    return drop + '<div class="fn-row">'
+      + '<div class="fn-stage">' + esc(s.stage)
+      + '<small>' + s.pct_of_top + '% of top</small></div>'
+      + '<div class="fn-track"><div class="fn-bar" style="width:' + width
+      + '%;opacity:' + shade.toFixed(2) + '" title="' + esc(s.stage) + '">'
+      + '<span class="fn-n">' + (MODE === 'value' ? inr(v) : v.toLocaleString('en-IN')) + '</span>'
+      + (s.conversion_pct_from_previous !== null
+         ? '<span class="fn-pct">' + s.conversion_pct_from_previous + '% carried through</span>' : '')
+      + '</div></div>'
+      + '<div class="fn-side">' + (MODE === 'value'
+          ? '<b>' + s.count.toLocaleString('en-IN') + '</b> accounts'
+          : '<b>' + inr(s.value) + '</b>') + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+function table(stages){
+  document.querySelector('#tbl tbody').innerHTML = stages.map(function(s){
+    return '<tr><td><b>' + esc(s.stage) + '</b></td>'
+      + '<td class="num">' + s.count.toLocaleString('en-IN') + '</td>'
+      + '<td class="num">' + inr(s.value) + '</td>'
+      + '<td class="num">' + (s.conversion_pct_from_previous === null ? '—'
+          : s.conversion_pct_from_previous + '%') + '</td>'
+      + '<td class="num">' + (s.drop_off === null ? '—'
+          : s.drop_off.toLocaleString('en-IN')) + '</td>'
+      + '<td class="num">' + s.pct_of_top + '%</td></tr>';
+  }).join('');
+}
+load();
+</script>
+
+</div><!-- /crm-wrap -->
+</body>
+</html>
