@@ -48,12 +48,16 @@ def _emp():
 @bp.route('/business-cards/scan')
 @_require_auth
 def scan_page():
-    if not session.get('emp_code'):
-        return render_template('login.html') if False else ('', 302, {'Location': '/login'})
-    return render_template('business_card/scan.html')
+    """§35 — the mobile capture screen."""
+    from app.master_data import service as md
+    from app import Employee
+    return render_template(
+        'business_card/scan.html',
+        relationships=[i.label for i in md.items('relationship')],
+        employees=Employee.query.filter_by(is_active=True)
+                          .order_by(Employee.name).all())
 
 
-# ─── Upload + extract ────────────────────────────────────────────────────
 @bp.route('/api/business-cards/upload', methods=['POST'])
 @_require_auth
 def api_upload():
@@ -150,9 +154,13 @@ def api_save(card_id):
         # Create new Account (if a company name is present) + Contact.
         acct = None
         if company_name:
-            acct = Company.query.filter(
-                db.func.lower(Company.name) == company_name.lower()
-            ).first()
+            # Same matcher the imports and linking use, so a card for
+            # "Siemens Ltd" attaches to "Siemens Limited" rather than
+            # creating the duplicate de-duplication would have to merge.
+            from app.services.company_match import build_index, match
+            index = build_index(
+                Company.query.filter(Company.is_active.is_(True)).all())
+            acct, _reason, _cands = match(company_name, index)
             if not acct:
                 acct = Company(
                     name=company_name,
@@ -184,6 +192,7 @@ def api_save(card_id):
                 website=(fields.get('website') or '').strip() or None,
                 linkedin=(fields.get('linkedin_url') or '').strip() or None,
                 account_id=acct.id if acct else None,
+                company_id=acct.id if acct else None,
                 assigned_to=_emp(),
             )
             db.session.add(cnt)
@@ -193,9 +202,61 @@ def api_save(card_id):
             return jsonify(error='Neither person nor company name present'),\
                    400
 
+    # §38 — classify the organisation there and then. A salesperson who
+    # has just met a competitor should not have to find another screen to
+    # say so.
+    target_account = (row.created_account_id or row.linked_account_id)
+    applied = []
+    wanted = [t.strip() for t in (data.get('classifications') or [])
+              if t and t.strip()]
+    if target_account and wanted:
+        from app.master_data import service as md
+        from presales.models import AccountRelationshipTag
+        allowed = {i.label for i in md.items('relationship')}
+        unknown = [t for t in wanted if t not in allowed]
+        if unknown:
+            return jsonify(ok=False,
+                           error=f'Not a known relationship type: '
+                                 f'{", ".join(unknown)}'), 400
+        have = {t.tag for t in AccountRelationshipTag.query.filter_by(
+            account_id=target_account).all()}
+        for tag in wanted:
+            if tag not in have:
+                db.session.add(AccountRelationshipTag(
+                    account_id=target_account, tag=tag))
+                applied.append(tag)
+
+    # §40 — turn the scan into work rather than a filed card.
+    follow_up = (data.get('follow_up_date') or '').strip()
+    note = (data.get('note') or '').strip()
+    created_lead = None
+    if target_account and (follow_up or note or data.get('create_lead')):
+        from app import Lead, Company as _Company
+        company = _Company.query.get(target_account)
+        lead = Lead(company=company.name if company else company_name,
+                    company_id=target_account,
+                    project=(data.get('lead_title') or
+                             f'Follow-up — {person_name or company_name}'),
+                    source='business_card', stage='New',
+                    assigned_to=(data.get('owner') or _emp()),
+                    pic=person_name or None,
+                    email=(fields.get('email') or '').strip() or None,
+                    phone=(fields.get('mobile') or '').strip() or None,
+                    notes=note or None)
+        if follow_up:
+            try:
+                from datetime import datetime as _dt
+                lead.followup_date = _dt.strptime(follow_up, '%Y-%m-%d').date()
+            except Exception:
+                pass
+        db.session.add(lead)
+        db.session.flush()
+        created_lead = lead.id
+
     row.status = 'Saved'
     db.session.commit()
-    return jsonify(ok=True, card=row.to_dict())
+    return jsonify(ok=True, card=row.to_dict(),
+                   classifications=applied, lead_id=created_lead)
 
 
 # ─── Discard ─────────────────────────────────────────────────────────────

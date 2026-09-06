@@ -96,7 +96,13 @@ def _domain_of(url_or_email: str) -> str:
     if '@' in s:
         return s.split('@', 1)[1].split('/')[0]
     s = s.replace('http://', '').replace('https://', '')
-    return s.split('/')[0].strip()
+    s = s.split('/')[0].strip()
+    # A card printed "www.siemens.com" would not have matched a company
+    # stored as "siemens.com", which defeats the point of matching on
+    # domain at all (§39).
+    if s.startswith('www.'):
+        s = s[4:]
+    return s
 
 
 def find_duplicates(extracted: dict, db) -> dict:

@@ -18,6 +18,8 @@
     </div>
     <div>
       <a class="top-back" href="{{ url_for('dashboard') }}">← Dashboard</a>
+      <a class="btn primary crm-fab-desk" style="margin-left:12px"
+         href="{{ url_prefix }}/business-cards/scan">Scan a business card</a>
     </div>
   </div>
 
@@ -81,5 +83,17 @@
 })();
 </script>
 </div><!-- /crm-wrap -->
+
+<!-- §35 — Scan Card as a thumb-reachable action, not a menu item. -->
+<a class="crm-fab" href="{{ url_prefix }}/business-cards/scan"
+   aria-label="Scan a business card">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" stroke-width="2" stroke-linecap="round"
+       stroke-linejoin="round">
+    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+    <circle cx="12" cy="13" r="4"/>
+  </svg>
+  Scan card
+</a>
 </body>
 </html>
