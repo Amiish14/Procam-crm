@@ -144,18 +144,20 @@ def main():
         if not dry:
             db.session.commit()
 
-        print('\nWho sees what now')
-        from app.access.service import effective
+        # Report from the employee row alone.  This script must not
+        # depend on access_profiles: that table is created by the
+        # 2026_09_08 migration, which may not have run yet.
+        print('\nWho holds elevated access now')
         for e in Employee.query.filter_by(is_active=True)\
                                .order_by(Employee.name).all():
-            scope, perms = effective(e.emp_code)
-            if scope == 'all' or e.is_vertical_head or e.role == 'admin' \
-               or e.is_super_admin:
-                tag = ('SUPER ADMIN' if e.is_super_admin
-                       else 'admin' if e.role == 'admin'
-                       else 'vertical head' if e.is_vertical_head else '')
-                print(f'  {e.emp_code:12} {e.name:26} {scope:9}'
-                      f' {len(perms):2} perms   {tag}')
+            if not (e.is_super_admin or e.role == 'admin'
+                    or e.is_vertical_head):
+                continue
+            tag = ('SUPER ADMIN — everything, owns the matrix'
+                   if e.is_super_admin
+                   else 'admin — whole company' if e.role == 'admin'
+                   else f'vertical head — {e.vertical or "(no vertical)"} only')
+            print(f'  {e.emp_code:12} {e.name:28} {tag}')
 
         print('\n' + ('Dry run — nothing written.' if dry else '✓ applied'))
     return 0
