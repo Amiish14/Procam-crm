@@ -149,6 +149,11 @@ def main():
                          'tasks for deals closed on or after this date '
                          '(default 90 days back; there are 2,600+ historical '
                          'Won/Lost leads and dumping them all is not useful)')
+    ap.add_argument('--spread-days', type=int, default=21,
+                    help='pace each owner\'s backlog across this many days '
+                         '(default 21). A 48h SLA suits one fresh lead, not '
+                         'a 380-lead backlog — without this every task in a '
+                         'queue falls due the same minute. 0 disables.')
     ap.add_argument('--due-from-history', action='store_true',
                     help='derive due dates from updated_at rather than '
                          'starting the clock now — marks most of the '
@@ -251,8 +256,33 @@ def main():
             due = _due_for(lead, tdef.sla_hours, args.due_from_history)
             route = (tdef.action_route or '').replace('{entity_id}', str(lead.id))
             out[key] += 1
-            out['OVERDUE on arrival' if due < now else 'due in future'] += 1
             created.append((lead, key, owner, due, route, tdef))
+
+        # ── Pace the backlog ──────────────────────────────────────────
+        # Tasks carrying a real follow-up date keep it — that is a human
+        # commitment. The rest are spread evenly per owner, oldest lead
+        # first, so a queue arrives at a rate someone can actually work
+        # rather than 380 items sharing one timestamp.
+        if args.spread_days and args.spread_days > 0:
+            per_owner = {}
+            for row in created:
+                per_owner.setdefault(row[2], []).append(row)
+            spread = []
+            for owner, rows in per_owner.items():
+                movable = [r for r in rows
+                           if not getattr(r[0], 'followup_date', None)]
+                fixed = [r for r in rows if getattr(r[0], 'followup_date', None)]
+                movable.sort(key=lambda r: r[0].id)      # oldest lead first
+                n = len(movable)
+                if n:
+                    step = (args.spread_days * 24.0) / n
+                    for i, (lead, key, own, due, route, tdef) in enumerate(movable):
+                        spread.append((lead, key, own,
+                                       now + timedelta(hours=step * (i + 1)),
+                                       route, tdef))
+                spread.extend(fixed)
+            created = spread
+            out['paced across %d days' % args.spread_days] = len(created)
 
         if not args.apply:
             for lead, key, owner, due, route, tdef in created[:25]:
@@ -280,6 +310,9 @@ def main():
                 ))
             db.session.commit()
             print(f'created {len(created)} tasks.')
+
+        for _l, _k, _o, _d, _r, _t in created:
+            out['OVERDUE on arrival' if _d < now else 'due in future'] += 1
 
         by_owner = Counter(c[2] for c in created)
         if by_owner:
