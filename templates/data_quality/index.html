@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Data Quality — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .dq{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(310px,1fr))}
+  .dq-card{background:var(--p-surface);border:1px solid var(--p-border);
+    border-left:3px solid var(--p-border-strong);border-radius:var(--rd-md);
+    padding:16px 18px;box-shadow:var(--el-1);display:flex;
+    flex-direction:column;gap:6px}
+  .dq-card.critical{border-left-color:var(--p-danger)}
+  .dq-card.warning{border-left-color:var(--p-warning)}
+  .dq-card.info{border-left-color:var(--p-info)}
+  .dq-card.clear{border-left-color:var(--p-success);opacity:.72}
+  .dq-n{font-size:29px;font-weight:700;color:var(--p-ink);line-height:1.1;
+    font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .dq-card.critical .dq-n{color:var(--p-danger)}
+  .dq-card.warning .dq-n{color:var(--p-warning)}
+  .dq-card.clear .dq-n{color:var(--p-success)}
+  .dq-l{font-weight:650;color:var(--p-ink);font-size:14px}
+  .dq-w{font-size:12.5px;color:var(--p-text-2);line-height:1.55}
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Administration</div>
+    <h1>Data Quality</h1>
+    <div class="crm-sub">What is wrong with the data right now, and what each
+      problem costs. Measured live — not a report someone has to run.</div>
+  </div>
+</div>
+
+{% if critical %}
+<div class="card" style="border-left:3px solid var(--p-danger)">
+  <div class="panel">
+    <b style="color:var(--p-ink)">{{ critical|length }} critical
+      issue{{ '' if critical|length == 1 else 's' }}</b>
+    <div style="font-size:13px;color:var(--p-text-2);margin-top:4px">
+      {% for c in critical %}{{ c.label }} ({{ '{:,}'.format(c.count) }}){% if not loop.last %} · {% endif %}{% endfor %}
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="card" style="border-left:3px solid var(--p-success)">
+  <div class="panel"><b style="color:var(--p-ink)">No critical issues.</b>
+    Every lead, opportunity and task has an owner.</div>
+</div>
+{% endif %}
+
+<div class="dq">
+  {% for c in checks %}
+  <div class="dq-card {{ 'clear' if c.count == 0 else c.severity }}">
+    <div class="dq-n">
+      {%- if c.count is none %}—{% else %}{{ '{:,}'.format(c.count) }}{% endif -%}
+    </div>
+    <div class="dq-l">{{ c.label }}</div>
+    <div class="dq-w">
+      {%- if c.count == 0 %}Clear.
+      {%- elif c.error %}Could not check: {{ c.error }}
+      {%- else %}{{ c.why }}{% endif -%}
+    </div>
+    {% if c.count and not c.error %}
+      <div><a class="btn tiny" href="{{ url_prefix }}{{ c.route }}">Go and fix</a></div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<div class="note" style="margin-top:20px">
+  <strong>These are measurements, not opinions.</strong> Each check runs
+  against the live database every time this page loads, so a number here
+  always matches what the reports see.
+</div>
+
+</div><!-- /crm-wrap -->
+</body>
+</html>
