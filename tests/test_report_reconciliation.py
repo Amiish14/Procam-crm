@@ -137,3 +137,49 @@ def test_a_fully_linked_book_shows_no_unattributed_line(books):
     html = _c().get('/reports/won-value-by-account').get_data(as_text=True)
     assert 'not linked to an account' not in html
     assert _report_total(html) == 600000
+
+
+def test_shared_opp_number_links_only_when_unambiguous(books):
+    """The 2023 import dropped lead_id but kept opp_number on both sides.
+
+    That shared reference is a real join — but only where every lead
+    carrying the number agrees on the company. Where two leads disagree,
+    picking one would attach a Won deal to the wrong account, which is
+    exactly the silent corruption §65 warns about.
+    """
+    with flask_app.app_context():
+        other = Company(name='Beta Ltd', is_active=True)
+        db.session.add(other)
+        db.session.flush()
+
+        # agreed: two leads, same number, same company
+        for n in range(2):
+            db.session.add(Lead(company='Acme Corp', company_id=books['acme'],
+                                opp_number='OPP-AGREE', stage='New'))
+        agreed = Opportunity(opp_number='OPP-AGREE', stage='Won',
+                             value_inr=1000, owner_emp_code='RECADM')
+
+        # conflicted: two leads, same number, different companies
+        db.session.add(Lead(company='Acme Corp', company_id=books['acme'],
+                            opp_number='OPP-CLASH', stage='New'))
+        db.session.add(Lead(company='Beta Ltd', company_id=other.id,
+                            opp_number='OPP-CLASH', stage='New'))
+        clash = Opportunity(opp_number='OPP-CLASH', stage='Won',
+                            value_inr=1000, owner_emp_code='RECADM')
+
+        db.session.add_all([agreed, clash])
+        db.session.commit()
+
+        by_number = {}
+        for lead_id, number, company_id in db.session.query(
+                Lead.id, Lead.opp_number, Lead.company_id).filter(
+                Lead.opp_number.isnot(None)).all():
+            by_number.setdefault((number or '').strip(), set()).add(company_id)
+
+        usable = {k: next(iter(v)) for k, v in by_number.items()
+                  if len(v) == 1 and next(iter(v)) is not None}
+
+        assert 'OPP-AGREE' in usable, 'an agreed number should link'
+        assert usable['OPP-AGREE'] == books['acme']
+        assert 'OPP-CLASH' not in usable, \
+            'a number mapping to two companies must not be resolved'

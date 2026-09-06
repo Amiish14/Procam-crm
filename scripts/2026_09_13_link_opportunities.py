@@ -124,6 +124,29 @@ def main():
             db.session.query(Lead.id, Lead.company_id)
             .filter(Lead.company_id.isnot(None)).all())
         lead_name = dict(db.session.query(Lead.id, Lead.company).all())
+
+        # The 2023 import dropped lead_id but kept opp_number on BOTH
+        # sides, and Lead carries the same column.  That shared reference
+        # is the join the import left behind — and it is a real link, not
+        # an inference: the two rows describe one opportunity.
+        by_opp_number = {}
+        for lead_id, number, company_id in db.session.query(
+                Lead.id, Lead.opp_number, Lead.company_id).filter(
+                Lead.opp_number.isnot(None),
+                Lead.opp_number != '').all():
+            key = (number or '').strip()
+            if not key:
+                continue
+            by_opp_number.setdefault(key, set()).add(company_id)
+
+        # Only usable where every lead sharing that number agrees on the
+        # company.  Where they disagree the number is ambiguous and must
+        # not be resolved by picking one.
+        opp_number_company = {
+            k: next(iter(v)) for k, v in by_opp_number.items()
+            if len(v) == 1 and next(iter(v)) is not None}
+        conflicted = sum(1 for v in by_opp_number.values() if len(v) > 1)
+
         index = build_index(
             Company.query.filter(Company.is_active.is_(True)).all())
 
@@ -133,6 +156,16 @@ def main():
                 stats['from parent lead'] += 1
                 if not dry:
                     opp.company_id = lead_company[opp.lead_id]
+                continue
+
+            key = (opp.opp_number or '').strip()
+            if key and key in opp_number_company:
+                stats['by shared opp_number'] += 1
+                if not dry:
+                    opp.company_id = opp_number_company[key]
+                continue
+            if key and key in by_opp_number:
+                stats['opp_number ambiguous'] += 1
                 continue
 
             raw = lead_name.get(opp.lead_id) if opp.lead_id else None
@@ -146,19 +179,29 @@ def main():
             else:
                 stats['still unlinked'] += 1
 
+        if conflicted:
+            print(f'\n  {conflicted} opp_number(s) map to more than one '
+                  f'company — left alone rather than picked between.')
+
         if not dry:
             db.session.commit()
 
-        print(f'\n  {"Would link" if dry else "Linked"} from parent lead   '
+        verb = 'Would link' if dry else 'Linked'
+        print(f'\n  {verb} from parent lead       '
               f'{stats["from parent lead"]:>7}')
-        print(f'  {"Would link" if dry else "Linked"} by name match     '
-              f'{stats["by name match"]:>7}')
+        print(f'  {verb} by shared opp_number {stats["by shared opp_number"]:>7}')
+        print(f'  {verb} by name match        {stats["by name match"]:>7}')
+        print(f'  opp_number ambiguous            '
+              f'{stats["opp_number ambiguous"]:>7}')
         print(f'  cannot be determined            '
               f'{stats["still unlinked"]:>7}')
 
         if dry:
-            projected = before_visible + stats['from parent lead'] \
-                        + stats['by name match']
+            projected = (before_visible + stats['from parent lead']
+                         + stats['by shared opp_number']
+                         + stats['by name match'])
+            print(f'\nWon Value report would then see roughly '
+                  f'{projected} of {before_total} Won deals.')
             print(f'\nProjection only — re-run without --check to apply.')
         else:
             after_total, after_visible, after_valued = report_gap()
