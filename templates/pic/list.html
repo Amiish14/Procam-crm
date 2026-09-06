@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>People — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Team</div>
+    <h1>People</h1>
+    <div class="crm-sub">
+      {% if scoped %}The people in your vertical, with what each is carrying.
+      {% else %}Everyone, with what each is carrying.{% endif %}
+    </div>
+  </div>
+</div>
+
+<form class="filters" method="get" action="{{ url_prefix }}/people">
+  <input name="q" value="{{ term }}" placeholder="Search by name…" style="min-width:240px">
+  <button class="btn primary" type="submit">Search</button>
+  {% if term %}<a class="btn ghost" href="{{ url_prefix }}/people">Clear</a>{% endif %}
+</form>
+
+{% if people %}
+<div class="card"><div class="table-wrap"><table>
+  <thead><tr>
+    <th>Person</th><th>Vertical</th>
+    <th class="num">Open leads</th><th class="num">Accounts</th>
+    <th class="num">Open tasks</th><th class="num">Overdue</th>
+    <th class="num">Won</th><th class="num">Win rate</th>
+  </tr></thead>
+  <tbody>
+    {% for p in people %}{% set w = loads[p.emp_code] %}
+    <tr onclick="location.href='{{ url_prefix }}/people/{{ p.emp_code }}'"
+        style="cursor:pointer">
+      <td><b><a href="{{ url_prefix }}/people/{{ p.emp_code }}">{{ p.name }}</a></b>
+        <div class="meta">{{ p.designation or p.emp_code }}</div></td>
+      <td>{{ p.vertical or '—' }}</td>
+      <td class="num">{{ w.open_leads }}</td>
+      <td class="num">{{ w.accounts }}</td>
+      <td class="num">{{ w.open_tasks }}</td>
+      <td class="num">{% if w.overdue_tasks %}<span class="pill overdue">{{ w.overdue_tasks }}</span>
+          {% else %}0{% endif %}</td>
+      <td class="num">{{ w.won }}</td>
+      <td class="num">{{ (w.win_rate ~ '%') if w.win_rate is not none else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table></div></div>
+{% else %}
+<div class="empty">No people match{{ ' “' ~ term ~ '”' if term }}.</div>
+{% endif %}
+
+</div><!-- /crm-wrap -->
+</body>
+</html>

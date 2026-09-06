@@ -29,6 +29,8 @@
     <a href="{{ url_prefix }}/funnels/account-development"
        class="{{ 'on' if request.path.startswith('/funnels') }}">Funnels</a>
     {% endif %}
+    <a href="{{ url_prefix }}/people"
+       class="{{ 'on' if request.path.startswith('/people') }}">People</a>
     {% if can('reports.action') or can('reports.competitor')
           or can('reports.accounts') %}
     <a href="{{ url_prefix }}/reports"

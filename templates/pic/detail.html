@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ employee.name }} — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .pic-hd{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;
+    padding-bottom:18px;border-bottom:1px solid var(--p-border);
+    margin-bottom:20px}
+  .pic-av{width:52px;height:52px;border-radius:50%;background:var(--p-red);
+    color:#fff;display:flex;align-items:center;justify-content:center;
+    font-weight:700;font-size:19px;flex-shrink:0;letter-spacing:-.02em}
+  .pic-name{font-size:25px;font-weight:700;color:var(--p-ink);
+    letter-spacing:-.02em;line-height:1.2}
+  .pic-facts{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;
+    color:var(--p-text-2);margin-top:5px}
+  .pic-facts b{color:var(--p-ink);font-weight:600}
+  .ring{display:inline-flex;align-items:baseline;gap:5px}
+  .ring .pct{font-size:25px;font-weight:700;letter-spacing:-.02em;
+    font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+{% set w = data.workload %}{% set p = data.employee %}
+
+<div class="pic-hd">
+  <div class="pic-av">{{ p.name.split()|map('first')|join('')|upper|truncate(2, True, '') }}</div>
+  <div style="flex:1;min-width:260px">
+    <div class="cat">PIC 360</div>
+    <div class="pic-name">{{ p.name }}</div>
+    <div class="pic-facts">
+      <span><b>{{ p.emp_code }}</b></span>
+      {% if p.designation %}<span>{{ p.designation }}</span>{% endif %}
+      {% if p.vertical %}<span>Vertical <b>{{ p.vertical }}</b></span>{% endif %}
+      {% if p.is_vertical_head %}<span class="pill won">Vertical head</span>{% endif %}
+      {% if not p.is_active %}<span class="pill lost">Inactive</span>{% endif %}
+    </div>
+  </div>
+  <div class="toolbar">
+    <a class="btn" href="{{ url_prefix }}/people">← All people</a>
+  </div>
+</div>
+
+<div class="grid3">
+  <div class="kpi{{ ' danger' if w.overdue_tasks else '' }}">
+    <div class="label">Overdue tasks</div><div class="value">{{ w.overdue_tasks }}</div></div>
+  <div class="kpi"><div class="label">Open tasks</div>
+    <div class="value">{{ w.open_tasks }}</div></div>
+  <div class="kpi"><div class="label">Completed tasks</div>
+    <div class="value">{{ w.completed_tasks }}</div></div>
+  <div class="kpi"><div class="label">SLA hit rate</div>
+    <div class="value">{{ (w.sla_hit ~ '%') if w.sla_hit is not none else '—' }}</div>
+    {% if w.sla_sample %}<div class="meta">across {{ w.sla_sample }} completed</div>{% endif %}</div>
+
+  <div class="kpi"><div class="label">Open leads</div>
+    <div class="value">{{ w.open_leads }}</div>
+    <div class="meta">{{ w.leads }} in total</div></div>
+  <div class="kpi"><div class="label">Accounts owned</div>
+    <div class="value">{{ w.accounts }}</div></div>
+  <div class="kpi"><div class="label">Opportunities</div>
+    <div class="value">{{ w.opportunities }}</div></div>
+  <div class="kpi success"><div class="label">Won</div>
+    <div class="value">{{ w.won }}</div></div>
+  <div class="kpi"><div class="label">Won value (INR)</div>
+    <div class="value">{{ '{:,.0f}'.format(w.won_value) }}</div></div>
+  <div class="kpi"><div class="label">Win rate</div>
+    <div class="value">{{ (w.win_rate ~ '%') if w.win_rate is not none else '—' }}</div>
+    <div class="meta">{{ w.won }} won · {{ w.lost }} lost</div></div>
+  <div class="kpi"><div class="label">RFQs driven</div>
+    <div class="value">{{ w.rfqs }}</div></div>
+  <div class="kpi"><div class="label">Quotes prepared</div>
+    <div class="value">{{ w.quotes }}</div></div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <div class="card-hd"><div class="card-ttl">Open tasks</div>
+      <span class="b {{ 'sL' if w.overdue_tasks else 'sN' }}">{{ w.open_tasks }}</span></div>
+    {% if data.tasks %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Task</th><th>Entity</th><th>Due</th></tr></thead>
+      <tbody>{% for t in data.tasks %}
+        <tr><td><span class="task-key">{{ t.task_key }}</span></td>
+            <td>{% if t.route %}<a href="{{ url_prefix }}{{ t.route }}">{{ t.entity }}</a>
+                {% else %}{{ t.entity }}{% endif %}</td>
+            <td>{% if t.overdue %}<span class="pill overdue">{{ t.due_at or 'overdue' }}</span>
+                {% else %}{{ t.due_at or '—' }}{% endif %}</td></tr>
+      {% endfor %}</tbody></table></div>
+    {% else %}<div class="empty">No open tasks</div>{% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-hd"><div class="card-ttl">Accounts owned</div>
+      <span class="b sN">{{ w.accounts }}</span></div>
+    {% if data.accounts %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Account</th><th>Stage</th><th>Last activity</th></tr></thead>
+      <tbody>{% for a in data.accounts %}
+        <tr><td><a href="{{ url_prefix }}/companies/{{ a.id }}">{{ a.name }}</a></td>
+            <td>{{ a.stage or '—' }}</td>
+            <td>{{ a.last_activity_at or '—' }}</td></tr>
+      {% endfor %}</tbody></table></div>
+    {% else %}<div class="empty">No accounts assigned</div>{% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-hd"><div class="card-ttl">Activity — last 30 days</div>
+    <span class="b sN">{{ data.activity|length }}</span></div>
+  {% if data.activity %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>When</th><th>Type</th><th>Subject</th></tr></thead>
+    <tbody>{% for a in data.activity %}
+      <tr><td>{{ a.at }}</td><td><span class="pill">{{ a.kind }}</span></td>
+          <td><a href="{{ url_prefix }}/app?lead={{ a.lead_id }}">{{ a.subject or '—' }}</a></td></tr>
+    {% endfor %}</tbody></table></div>
+  {% else %}
+  <div class="empty">No activity logged in the last 30 days.<br>
+    <span class="tiny">Calls, meetings and visits recorded against leads appear here.</span></div>
+  {% endif %}
+</div>
+
+</div><!-- /crm-wrap -->
+</body>
+</html>
