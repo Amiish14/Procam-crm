@@ -128,3 +128,23 @@ def test_missing_permissions_do_not_empty_the_menu():
     html = open(os.path.join(_TEMPLATES, 'app.html')).read()
     assert 'var MY_PERMS = null;' in html
     assert 'if (MY_PERMS === null) return true;' in html
+
+
+def test_header_right_side_cannot_be_squeezed():
+    """The nav grew to eight groups and overlapped the user controls.
+
+    flex-shrink:0 on .top-r is what stops the two sides colliding; without
+    it the nav pushes straight through Sign out and the user chip.
+    """
+    html = open(os.path.join(_TEMPLATES, 'app.html')).read()
+    top_r = [l for l in html.split('\n') if l.startswith('.top-r{')]
+    assert top_r, '.top-r rule not found'
+    assert 'flex-shrink:0' in top_r[0], \
+        '.top-r must not shrink, or the nav overlaps the header controls'
+
+
+def test_no_duplicate_intelligence_control():
+    """The Intelligence chip duplicated the Intelligence menu group."""
+    html = open(os.path.join(_TEMPLATES, 'app.html')).read()
+    assert 'id="newsBell"' not in html, \
+        'the duplicate Intelligence chip is back, crowding the header'

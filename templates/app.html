@@ -75,7 +75,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:va
 .top{background:#fff;height:56px;display:flex;align-items:center;padding:0 24px;gap:16px;flex-shrink:0;border-bottom:1px solid var(--border);position:relative;z-index:100}
 .top-logo,.top-sep,.top-bars,.tb,.top-tag,.top-name{display:none !important}
 .top-title{font-size:var(--t-md);font-weight:600;color:var(--ink);letter-spacing:-.005em;line-height:1}
-.top-r{display:flex;align-items:center;gap:12px;margin-left:auto}
+.top-r{display:flex;align-items:center;gap:12px;margin-left:auto;flex-shrink:0}
 .top-chip{display:flex;align-items:center;gap:10px;padding:0;background:transparent;border:none;cursor:default}
 .top-av{width:28px;height:28px;border-radius:50%;background:var(--red-tint);color:var(--red);font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0;letter-spacing:.02em;line-height:1}
 .top-uname{font-size:12.5px;color:var(--ink-2);font-weight:500}
@@ -1132,7 +1132,6 @@ window.CRMToast = (function(){
         <div style="padding:14px;text-align:center;color:#9CA3AF;font-size:12.5px;">Loading…</div>
       </div>
     </div>
-    <div class="news-bell admin-only" onclick="nav('news')" id="newsBell" title="Market Intelligence">Intelligence<div class="news-dot" id="newsDot" style="display:none"></div></div>
     <div class="top-chip">
       <div class="top-av" id="tAv"></div>
       <div class="top-uname" id="tName"></div>
@@ -2355,7 +2354,12 @@ async function rDash(){
   // Sidebar counts
   g('sbN').textContent=st.active||0;
   g('sbOp').textContent=st.opp||0;
-  if(st.pending_news>0){g('sbNews').textContent=st.pending_news;g('newsDot').style.display='';}
+  // newsDot belonged to the Intelligence chip, since removed from the
+  // header; the sidebar count remains.
+  if(st.pending_news>0){
+    const _n=g('sbNews'); if(_n) _n.textContent=st.pending_news;
+    const _d=g('newsDot'); if(_d) _d.style.display='';
+  }
   if(st.inbox){
     // Sum legacy + new stage names during transition — server autoheal
     // migrates on next lead edit, but old data may still show up in
@@ -4036,14 +4040,14 @@ async function doChangePw(){
         { page: 'scorecard', label: 'Team Scorecard',       ic: 'trophy'       },
         { href: '/help',     label: 'Help & Guides',        ic: 'brain'        },
       ]},
-    { title: 'Sales Pipeline',      icon: 'target',
+    { title: 'Pipeline',            icon: 'target',
       items: [
         { page: 'pipeline',  label: 'Sales Pipeline',       ic: 'git_branch',    countId: 'sbPip' },
         { page: 'leads',     label: 'My Leads',             ic: 'clipboard_list',countId: 'sbN'   },
         { page: 'all',       label: 'All Leads',            ic: 'layers',        adminOnly: true },
         { page: 'opp',       label: 'Opportunities',        ic: 'target',        countId: 'sbOp', adminOnly: true },
       ]},
-    { title: 'Accounts & Projects', icon: 'briefcase',
+    { title: 'Accounts',            icon: 'briefcase',
       items: [
         { page: 'accounts',  label: 'Accounts',             ic: 'building',      countId: 'sbAcc' },
         { page: 'projects',  label: 'Project Intelligence', ic: 'construction',  countId: 'sbPrj' },
@@ -4075,7 +4079,7 @@ async function doChangePw(){
         { page: 'access', label: 'User Access Matrix', ic: 'user_lock',
           perm: 'admin.super' },
       ]},
-    { title: 'Team & Admin',        icon: 'users',
+    { title: 'Admin',               icon: 'users',
       items: [
         { page: 'team',      label: 'Team',                 ic: 'users',         adminOnly: true },
         { page: 'assign',    label: 'Assign',               ic: 'zap',           adminOnly: true },
@@ -4133,7 +4137,7 @@ async function doChangePw(){
     var allAdmin = g.items.every(function(x){ return x.adminOnly; });
     var groupCls = (allAdmin ? ' admin-only' : '');
     return '<div class="topnav-group'+groupCls+'">'+
-             '<button class="topnav-head" type="button">'+
+             '<button class="topnav-head" type="button" title="'+g.title+'">'+
                '<span class="ic">'+ic(g.icon)+'</span>'+
                '<span class="lbl">'+g.title+'</span>'+
                '<svg class="topnav-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>'+
@@ -4212,10 +4216,35 @@ async function doChangePw(){
 
     .topnav { display: none; }
     body.has-topnav .topnav {
-      display: flex; align-items: center; gap: 4px; flex: 1;
-      margin: 0 12px; min-width: 0; overflow: visible;
+      display: flex; align-items: center; gap: 2px; flex: 1 1 auto;
+      margin: 0 10px; min-width: 0; overflow: visible;
     }
     .topnav-group { position: relative; flex-shrink: 0; }
+
+    /* Eight groups plus the right-hand controls run out of room before
+       they run out of screen.  Tighten, then drop the words and keep the
+       icons (each button carries a title), rather than letting the two
+       sides overlap. */
+    @media (max-width: 1600px) {
+      .topnav-head { padding: 8px 9px; font-size: 12.5px; }
+      body.has-topnav .topnav { gap: 0; }
+    }
+    @media (max-width: 1380px) {
+      .topnav-head .lbl { display: none; }
+      .topnav-head { padding: 8px 10px; }
+      .topnav-caret { display: none; }
+    }
+    /* The right-hand cluster gives up its words too, in the same order a
+       person would: the toggle label first, then the user's name. */
+    @media (max-width: 1200px) {
+      #scopeToggleLbl { display: none; }
+      #scopeToggle    { padding: 0 10px; }
+      .top-uname      { display: none; }
+    }
+    @media (max-width: 1040px) {
+      #myWorkChip span:not([id]) { display: none; }
+      #myWorkChip { padding: 0 10px; }
+    }
     .topnav-head {
       background: transparent; border: 0; cursor: pointer;
       color: #374151; font-size: 13px; font-weight: 600;
