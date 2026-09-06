@@ -61,14 +61,14 @@
 
 <div class="hero">
   <div>
-    <div style="font-size:12px;color:var(--text-2)"><a href="/competitors">← Competitors</a></div>
+    <div style="font-size:12px;color:var(--text-2)"><a href="{{ url_prefix }}/competitors">← Competitors</a></div>
     <h1>{{ competitor.name }}</h1>
     <div style="color:var(--text-2);font-size:13px;margin-top:4px">
       {{ competitor.country or '' }} {% if competitor.city %}· {{ competitor.city }}{% endif %}
       {% if competitor.website %} · <a href="{{ competitor.website }}" target="_blank" rel="noopener">website</a>{% endif %}
     </div>
   </div>
-  <div><a class="btn" href="/competitors/dashboard">Dashboard</a></div>
+  <div><a class="btn" href="{{ url_prefix }}/competitors/dashboard">Dashboard</a></div>
 </div>
 
 <div class="tabs">

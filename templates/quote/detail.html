@@ -62,9 +62,9 @@
     <div style="color:var(--text-2);font-size:13px;margin-top:6px">{{ quote.subject or '(no subject)' }}</div>
   </div>
   <div class="toolbar">
-    <a class="btn" href="/quotes">← All quotes</a>
-    <a class="btn" href="/quotes/{{ quote.id }}/pdf" target="_blank">PDF</a>
-    <button class="btn" onclick="window.open('/quotes/{{ quote.id }}/print','_blank')">Print</button>
+    <a class="btn" href="{{ url_prefix }}/quotes">← All quotes</a>
+    <a class="btn" href="{{ url_prefix }}/quotes/{{ quote.id }}/pdf" target="_blank">PDF</a>
+    <button class="btn" onclick="window.open('{{ url_prefix }}/quotes/{{ quote.id }}/print','_blank')">Print</button>
     <button class="btn primary" id="btnSubmitApproval" onclick="submitForApproval()">Submit for approval</button>
     <button class="btn success" id="btnApprove" onclick="approve()">Approve</button>
     <button class="btn warning" id="btnReject" onclick="reject()">Reject</button>

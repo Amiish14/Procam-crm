@@ -769,6 +769,20 @@ class EmailEvent(db.Model):
         }
 
 
+# v2026-09-06 — Templates are served under URL_PREFIX (/CRM behind nginx),
+# so every internal link has to carry it.  `url_prefix` is exposed to every
+# template for exactly that: href="{{ url_prefix }}/quotes".  Without it a
+# link resolves at the domain root and nginx answers 404.
+@app.context_processor
+def _inject_url_prefix():
+    prefix = (os.environ.get('URL_PREFIX') or '').rstrip('/')
+
+    def crm_url(path=''):
+        return prefix + '/' + str(path).lstrip('/')
+
+    return {'url_prefix': prefix, 'crm_url': crm_url}
+
+
 # ─────────────────── AUTH ROUTES ───────────────────
 
 @app.route('/')

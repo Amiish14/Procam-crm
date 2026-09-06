@@ -64,7 +64,7 @@
     <div style="color:var(--text-2);font-size:13px;margin-top:6px">{{ rfq.subject }}</div>
   </div>
   <div class="toolbar">
-    <a class="btn" href="/rfqs">← All RFQs</a>
+    <a class="btn" href="{{ url_prefix }}/rfqs">← All RFQs</a>
     <button class="btn primary" onclick="advance()">Advance status →</button>
     <button class="btn success" onclick="openAddLine()">+ Add rate line</button>
   </div>

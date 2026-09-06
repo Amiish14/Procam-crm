@@ -36,7 +36,7 @@
 </head>
 <body>
 <h1>Help Admin</h1>
-<p><a href="/help">← Back to help</a></p>
+<p><a href="{{ url_prefix }}/help">← Back to help</a></p>
 
 <h2>New Article</h2>
 <form id="new-article" onsubmit="createArticle(event)">
@@ -65,7 +65,7 @@
         <td>{{ 'Yes' if a.is_active else 'No' }}</td>
         <td>{{ a.display_order }}</td>
         <td>
-          <a class="btn" href="/help/{{ a.slug }}">View</a>
+          <a class="btn" href="{{ url_prefix }}/help/{{ a.slug }}">View</a>
           <button class="btn danger" onclick="delArticle({{ a.id }})">Delete</button>
         </td>
       </tr>

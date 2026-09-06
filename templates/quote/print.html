@@ -22,9 +22,9 @@
 <body>
 
 <div class="noprint" style="margin-bottom:14px">
-  <a class="btn" href="/quotes/{{ quote.id }}">← Back</a>
+  <a class="btn" href="{{ url_prefix }}/quotes/{{ quote.id }}">← Back</a>
   <button class="btn" onclick="window.print()">Print</button>
-  <a class="btn" href="/quotes/{{ quote.id }}/pdf" target="_blank">Download PDF</a>
+  <a class="btn" href="{{ url_prefix }}/quotes/{{ quote.id }}/pdf" target="_blank">Download PDF</a>
 </div>
 
 <h1>QUOTATION — {{ quote.quote_number }}</h1>

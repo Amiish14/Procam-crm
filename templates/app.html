@@ -25,16 +25,16 @@
 </script>
 <title>Procam CRM</title>
 <!-- ────────── Phase 14 · PWA metadata ────────── -->
-<link rel="manifest" href="/static/manifest.json">
+<link rel="manifest" href="{{ url_prefix }}/static/manifest.json">
 <meta name="theme-color" content="#BC1D2F">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Procam CRM">
-<link rel="apple-touch-icon" href="/static/img/pwa-192.png">
+<link rel="apple-touch-icon" href="{{ url_prefix }}/static/img/pwa-192.png">
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function () {
-      navigator.serviceWorker.register('/sw.js').catch(function (err) {
+      navigator.serviceWorker.register('{{ url_prefix }}/sw.js').catch(function (err) {
         console.warn('SW registration failed', err);
       });
     });
@@ -1100,7 +1100,7 @@ window.CRMToast = (function(){
   <nav id="topnav" class="topnav" aria-label="Primary"></nav>
   <div class="top-r">
     <!-- v2026-09-04 — My Work quick-jump chip (Phase 4) -->
-    <a href="/my-work" id="myWorkChip"
+    <a href="{{ url_prefix }}/my-work" id="myWorkChip"
        style="text-decoration:none;background:transparent;border:1px solid var(--p-border);border-radius:999px;height:34px;padding:0 14px;display:inline-flex;align-items:center;gap:10px;font-size:12.5px;font-weight:600;color:var(--p-text);font-family:var(--p-font);cursor:pointer;transition:background var(--dur-out),border-color var(--dur-out),color var(--dur-out);"
        title="My Work — pending actions, due today, overdue">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
@@ -1118,7 +1118,7 @@ window.CRMToast = (function(){
     <div id="notifPanel" style="display:none;position:absolute;top:52px;right:180px;width:340px;max-height:420px;overflow:hidden;background:#fff;border:1px solid var(--p-border);border-radius:8px;box-shadow:0 12px 40px rgba(11,13,18,.14);z-index:9999;">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--p-border);">
         <strong style="font-size:13px;">Notifications</strong>
-        <a href="/notifications" style="color:var(--p-red);font-size:12px;text-decoration:none;font-weight:600;">See all →</a>
+        <a href="{{ url_prefix }}/notifications" style="color:var(--p-red);font-size:12px;text-decoration:none;font-weight:600;">See all →</a>
       </div>
       <div id="notifList" style="max-height:360px;overflow-y:auto;">
         <div style="padding:14px;text-align:center;color:#9CA3AF;font-size:12.5px;">Loading…</div>
@@ -4077,7 +4077,9 @@ async function doChangePw(){
     var admin = (it.adminOnly ? ' admin-only' : '') +
                 (it.managerOnly ? ' manager-only' : '');
     if (it.href) {
-      return '<a href="'+it.href+'" class="topnav-item'+admin+'"'+
+      /* crmUrl() applies the deployment prefix; a bare /rfqs resolves at
+         the domain root and nginx answers 404. */
+      return '<a href="'+crmUrl(it.href)+'" class="topnav-item'+admin+'"'+
              ' onclick="topnavCloseAll();">'+
                '<span class="ic">'+ic(it.ic)+'</span>'+
                '<span class="lbl">'+it.label+'</span>'+cnt+
@@ -5256,7 +5258,7 @@ async function loadMyWork(){
      media query above).
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="crm-fab" aria-hidden="true">
-  <a class="fab visible" id="fab-scan" href="/business-cards/scan"
+  <a class="fab visible" id="fab-scan" href="{{ url_prefix }}/business-cards/scan"
      title="Scan business card">📇</a>
   <a class="fab secondary" id="fab-call"    href="#" title="Call">📞</a>
   <a class="fab secondary" id="fab-email"   href="#" title="Email">✉️</a>

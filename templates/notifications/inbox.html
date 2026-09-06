@@ -30,8 +30,8 @@
 <h1>Notifications</h1>
 
 <div class="toolbar">
-  <a href="/my-work" style="color:#6B7280">← My Work</a>
-  <form method="post" action="/notifications/read-all">
+  <a href="{{ url_prefix }}/my-work" style="color:#6B7280">← My Work</a>
+  <form method="post" action="{{ url_prefix }}/notifications/read-all">
     <button type="submit">Mark all read</button>
   </form>
 </div>
