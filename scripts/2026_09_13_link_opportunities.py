@@ -152,8 +152,12 @@ def main():
 
         stats = Counter()
         for opp in orphans:
+            is_won = (opp.stage or '') == 'Won'
+
             if opp.lead_id and opp.lead_id in lead_company:
                 stats['from parent lead'] += 1
+                if is_won:
+                    stats['won_recovered'] += 1
                 if not dry:
                     opp.company_id = lead_company[opp.lead_id]
                 continue
@@ -161,6 +165,8 @@ def main():
             key = (opp.opp_number or '').strip()
             if key and key in opp_number_company:
                 stats['by shared opp_number'] += 1
+                if is_won:
+                    stats['won_recovered'] += 1
                 if not dry:
                     opp.company_id = opp_number_company[key]
                 continue
@@ -174,10 +180,14 @@ def main():
                 None, 'no_match', [])
             if company is not None:
                 stats['by name match'] += 1
+                if is_won:
+                    stats['won_recovered'] += 1
                 if not dry:
                     opp.company_id = company.id
             else:
                 stats['still unlinked'] += 1
+                if is_won:
+                    stats['won_still_unlinked'] += 1
 
         if conflicted:
             print(f'\n  {conflicted} opp_number(s) map to more than one '
@@ -197,11 +207,18 @@ def main():
               f'{stats["still unlinked"]:>7}')
 
         if dry:
-            projected = (before_visible + stats['from parent lead']
-                         + stats['by shared opp_number']
-                         + stats['by name match'])
-            print(f'\nWon Value report would then see roughly '
-                  f'{projected} of {before_total} Won deals.')
+            # Only Won rows affect the Won Value report; the earlier
+            # version added every linked opportunity to a Won-only
+            # baseline and printed more Won deals than exist.
+            projected = before_visible + stats['won_recovered']
+            pct = (projected / before_total * 100) if before_total else 0
+            print(f'\nWon Value by Account would then see '
+                  f'{projected} of {before_total} Won deals ({pct:.1f}%)'
+                  f' — up from {before_visible}.')
+            if stats['won_still_unlinked']:
+                print(f'  {stats["won_still_unlinked"]} Won deal(s) would '
+                      f'remain unattributed and keep showing on the '
+                      f'"not linked to an account" line.')
             print(f'\nProjection only — re-run without --check to apply.')
         else:
             after_total, after_visible, after_valued = report_gap()
