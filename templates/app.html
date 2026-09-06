@@ -1678,6 +1678,16 @@ window.CRMToast = (function(){
   <div id="empCnt"></div>
 </div>
 
+<!-- DATA MAPPING — the §65 review queue -->
+<div class="page" id="pg-mapping">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">Data Mapping</div>
+    <div class="pg-sub">Company names that could not be matched with certainty — decide once, and every record with that name follows</div></div>
+    <button class="btn btn-ghost" onclick="rMapping()">Refresh</button>
+  </div>
+  <div id="dmCnt"></div>
+</div>
+
 <!-- MASTER DATA — admin-configurable vocabularies (§59-62) -->
 <div class="page" id="pg-master">
   <div class="pg-hd">
@@ -1959,7 +1969,7 @@ async function init(){
 }
 
 // ── NAV ──
-const PG_TITLES={dash:'Overview',pipeline:'Sales Pipeline','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-biz':'Business Discussion','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated','inb-quoted':'Quoted','inb-negot':'Under Negotiation',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard',access:'User Access Matrix',master:'Master Data'};
+const PG_TITLES={dash:'Overview',pipeline:'Sales Pipeline','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-biz':'Business Discussion','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated','inb-quoted':'Quoted','inb-negot':'Under Negotiation',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard',access:'User Access Matrix',master:'Master Data',mapping:'Data Mapping'};
 // Legacy 6-stage inbox nav ids alias into the unified Sales Pipeline
 // page pre-filtered to the corresponding stage. Preserves any old
 // bookmarked deep-link.
@@ -1991,7 +2001,7 @@ function nav(p){
   const t=g('topPgTtl'); if(t) t.textContent=PG_TITLES[p]||'';
   const fns={dash:rDash,pipeline:rPipeline,leads:rLeads,all:rAll,outreach:rOR,contacts:rCt,news:rNews,
               team:rTeam,assign:rAssign,employees:rEmps,opp:rOpp,upload:()=>upTab('xl'),
-              kpi:rKpiAdmin,perf:rPerf,scorecard:rScorecard,access:rAccess,master:rMaster};
+              kpi:rKpiAdmin,perf:rPerf,scorecard:rScorecard,access:rAccess,master:rMaster,mapping:rMapping};
   if(fns[p]) try{fns[p]();}catch(err){console.error('nav error for page',p,err);}
   if(p==='inb-new')   rInbox('New','inbNew');
   if(p==='inb-call')  rInbox('Call Done','inbCall');
@@ -3691,6 +3701,134 @@ async function toggleEmp(id){
   if(r.ok){rEmps();toast(`${emp.name} ${!emp.is_active?'activated':'deactivated'} ✓`);}
 }
 
+// ── DATA MAPPING — §65 review queue ──
+// Grouped by company name: 590 queued leads are only about a hundred
+// distinct names, so the same decision must not be asked twenty times.
+let DM = null;
+
+async function rMapping(){
+  const r = await api('/api/mapping/queue');
+  if(!r || !r.ok){
+    g('dmCnt').innerHTML = '<div class="card"><div style="padding:18px">'+
+      'Could not load the queue.'+(r&&r.error?' '+e(r.error):'')+'</div></div>';
+    return;
+  }
+  DM = r;
+
+  if(!r.groups.length){
+    g('dmCnt').innerHTML = `<div class="card"><div style="padding:40px 20px;
+      text-align:center;color:var(--p-text-2)">
+      <div style="font-size:34px;margin-bottom:8px">✓</div>
+      <b style="color:var(--p-ink);font-size:15px">Nothing left to decide</b>
+      <div style="margin-top:6px">${r.resolved} name${r.resolved===1?'':'s'} resolved.
+      Every lead and contact is now linked to Company Master, or deliberately set aside.</div>
+    </div></div>`;
+    return;
+  }
+
+  let html = `<div class="card"><div style="padding:14px 16px;display:flex;
+       gap:24px;align-items:center;flex-wrap:wrap;font-size:13px">
+    <div><b style="font-size:19px;color:var(--p-ink)">${r.pending}</b>
+         <span style="color:var(--p-text-2)"> records awaiting a decision</span></div>
+    <div><b style="font-size:19px;color:var(--p-ink)">${r.total_groups}</b>
+         <span style="color:var(--p-text-2)"> distinct names</span></div>
+    <div><b style="font-size:19px;color:var(--p-success,#059669)">${r.resolved}</b>
+         <span style="color:var(--p-text-2)"> resolved</span></div>
+  </div></div>`;
+
+  html += r.groups.map(function(G, i){
+    const ents = Object.keys(G.entities)
+      .map(k => G.entities[k]+' '+k.toLowerCase()+(G.entities[k]===1?'':'s'))
+      .join(' · ');
+    const cands = (G.candidates||[]).map(c =>
+      `<button class="btn btn-ghost btn-sm" style="margin:0 6px 6px 0"
+         onclick="dmResolve(${i}, ${c.id})"
+         title="Link all ${G.count} record(s) to this company">
+         ${e(c.name)} <span style="color:var(--p-text-3)">#${c.id}</span></button>`).join('');
+
+    return `<div class="card">
+      <div class="card-hd">
+        <div class="card-ttl">${e(G.raw_value||'(blank)')}
+          <div style="font-size:11.5px;color:var(--p-text-3);font-weight:400;margin-top:2px">
+            ${e(ents)} · ${G.reason==='ambiguous'
+              ? 'several companies match equally'
+              : 'no company matches this name'}</div>
+        </div>
+        <span class="b ${G.reason==='ambiguous'?'sR':'sN'}">${G.count} record${G.count===1?'':'s'}</span>
+      </div>
+      <div style="padding:14px 16px">
+        ${cands ? '<div style="font-size:11.5px;font-weight:700;letter-spacing:.06em;'+
+                  'text-transform:uppercase;color:var(--p-text-3);margin-bottom:8px">'+
+                  (G.reason==='ambiguous'?'Which one?':'Did you mean')+'</div>'+cands : ''}
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+          <input class="fmc" id="dmS_${i}" placeholder="Search Company Master…"
+                 style="height:32px;max-width:280px"
+                 oninput="dmSearch(${i})" autocomplete="off">
+          <button class="btn btn-red btn-sm" onclick="dmCreate(${i})"
+                  title="Create a new Company Master record with this name">
+            Create "${e((G.raw_value||'').slice(0,28))}"</button>
+          <button class="btn btn-ghost btn-sm" onclick="dmSkip(${i})"
+                  title="Not a company we track">Not a company</button>
+        </div>
+        <div id="dmR_${i}" style="margin-top:8px"></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  g('dmCnt').innerHTML = html;
+}
+
+let _dmTimer = null;
+function dmSearch(i){
+  clearTimeout(_dmTimer);
+  _dmTimer = setTimeout(async function(){
+    const term = (g('dmS_'+i).value||'').trim();
+    const box = g('dmR_'+i);
+    if(term.length < 2){ box.innerHTML=''; return; }
+    const r = await api('/api/mapping/search?q='+encodeURIComponent(term));
+    if(!r || !r.ok) return;
+    box.innerHTML = r.results.length
+      ? r.results.map(c => `<button class="btn btn-ghost btn-sm"
+          style="margin:0 6px 6px 0" onclick="dmResolve(${i}, ${c.id})">
+          ${e(c.name)}${c.meta?' <span style="color:var(--p-text-3)">· '+e(c.meta)+'</span>':''}
+          </button>`).join('')
+      : '<span style="font-size:12.5px;color:var(--p-text-3)">No match — create it instead.</span>';
+  }, 220);
+}
+
+async function dmResolve(i, companyId){
+  const G = DM.groups[i]; if(!G) return;
+  const r = await api('/api/mapping/resolve',
+    {method:'POST', body: JSON.stringify({ids:G.ids, company_id:companyId})});
+  if(r && r.ok){
+    toast(`${r.linked} record(s) linked to ${r.company_name} ✓`,'ok');
+    rMapping();
+  } else toast((r&&r.error)||'Could not link','err');
+}
+
+async function dmCreate(i){
+  const G = DM.groups[i]; if(!G) return;
+  const name = prompt('Create a Company Master record named:', G.raw_value||'');
+  if(name === null || !name.trim()) return;
+  const r = await api('/api/mapping/resolve',
+    {method:'POST', body: JSON.stringify({ids:G.ids, create_name:name.trim()})});
+  if(r && r.ok){
+    toast(`${r.linked} record(s) linked to ${r.company_name} ✓`,'ok');
+    rMapping();
+  } else toast((r&&r.error)||'Could not create','err');
+}
+
+async function dmSkip(i){
+  const G = DM.groups[i]; if(!G) return;
+  if(!confirm(`Set aside ${G.count} record(s) for "${G.raw_value}"?\n\n`
+              +'Use this when the name is not a company — a person, a job '
+              +'reference, or noise. The records stay, just unlinked.')) return;
+  const r = await api('/api/mapping/skip',
+    {method:'POST', body: JSON.stringify({ids:G.ids})});
+  if(r && r.ok){ toast(`${r.skipped} set aside`,'ok'); rMapping(); }
+  else toast((r&&r.error)||'Could not skip','err');
+}
+
 // ── MASTER DATA (§59-62) ──
 let MD = null, MD_OPEN = null;
 
@@ -4160,6 +4298,8 @@ async function doChangePw(){
         { page: 'access', label: 'User Access Matrix', ic: 'user_lock',
           perm: 'admin.super' },
         { page: 'master', label: 'Master Data', ic: 'settings',
+          perm: 'admin.master' },
+        { page: 'mapping', label: 'Data Mapping', ic: 'layers',
           perm: 'admin.master' },
       ]},
     { title: 'Admin',               icon: 'users',
