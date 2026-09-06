@@ -28,7 +28,16 @@ def _resolve_db_url():
 
     This runs BEFORE importing app.py, because app.py calls init_db() at
     import time and that query fails while the new column is missing.
+
+    app.py loads .env itself, so this has to as well — without it the
+    script reads an unset DATABASE_URL, falls back to the default, and
+    quietly migrates the wrong file.
     """
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(os.path.join(_ROOT, '.env'))
+    except Exception:
+        pass
     url = os.environ.get('DATABASE_URL', 'sqlite:///procam_crm.db')
     if url.startswith('postgres://'):
         url = url.replace('postgres://', 'postgresql://', 1)
@@ -60,6 +69,18 @@ def add_column_if_missing(dry):
         print(f'database: {url.split("@")[-1]}')
 
     engine = create_engine(url)
+
+    # Prove this is the live database before altering it.  An empty
+    # employees table means the wrong file was resolved.
+    with engine.connect() as conn:
+        n_emp = conn.execute(text('SELECT COUNT(*) FROM employees')).scalar()
+    print(f'employees in this database: {n_emp}')
+    if not n_emp:
+        print('!! no employees here — this is not the live database.')
+        print('   Check DATABASE_URL in .env, then re-run.')
+        engine.dispose()
+        return False
+
     cols = {c['name'] for c in inspect(engine).get_columns('employees')}
     if 'is_super_admin' in cols:
         print('employees.is_super_admin — already present')
