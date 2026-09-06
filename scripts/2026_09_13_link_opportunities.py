@@ -50,11 +50,62 @@ def report_gap():
     return total, visible, valued
 
 
+def diagnose():
+    """Why an opportunity cannot be attributed.
+
+    The first run linked only 3 of 4,269, which contradicts 94.7% of leads
+    being linked — so the assumption that these hang off leads is wrong.
+    This reports what they actually carry.
+    """
+    orphans = Opportunity.query.filter(
+        Opportunity.company_id.is_(None)).all()
+    print(f'\nOpportunities with no company: {len(orphans)}\n')
+
+    with_lead = [o for o in orphans if o.lead_id]
+    print(f'  have a lead_id                {len(with_lead):>7}')
+    print(f'  no lead_id at all             '
+          f'{len(orphans) - len(with_lead):>7}')
+
+    if with_lead:
+        lead_ids = [o.lead_id for o in with_lead]
+        found = {l.id: l for l in Lead.query.filter(
+            Lead.id.in_(lead_ids)).all()}
+        missing = [o for o in with_lead if o.lead_id not in found]
+        linked = [o for o in with_lead
+                  if o.lead_id in found and found[o.lead_id].company_id]
+        print(f'    …lead row missing            {len(missing):>7}')
+        print(f'    …lead has a company          {len(linked):>7}')
+        print(f'    …lead also unlinked          '
+              f'{len(with_lead) - len(missing) - len(linked):>7}')
+
+    titled = [o for o in orphans if (o.title or '').strip()]
+    print(f'\n  have a title                  {len(titled):>7}')
+    owned = [o for o in orphans if (o.owner_emp_code or '').strip()]
+    print(f'  have an owner                 {len(owned):>7}')
+    staged = Counter((o.stage or '(blank)') for o in orphans)
+    print('\n  by stage:')
+    for stage, n in staged.most_common(8):
+        print(f'    {stage:28} {n:>7}')
+
+    print('\n  sample of what they carry:')
+    for o in orphans[:8]:
+        print(f'    #{o.id:<6} {(o.opp_number or "—")[:16]:18}'
+              f' lead={o.lead_id or "—":<8}'
+              f' title={(o.title or "—")[:40]}')
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--check', action='store_true')
+    ap.add_argument('--diagnose', action='store_true',
+                    help='explain why opportunities cannot be attributed')
     args = ap.parse_args()
     dry = args.check
+
+    if args.diagnose:
+        with app.app_context():
+            return diagnose()
 
     with app.app_context():
         before_total, before_visible, before_valued = report_gap()
