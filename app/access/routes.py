@@ -9,7 +9,8 @@ from flask import Blueprint, jsonify, request, session
 from app import db
 from app.models.access import AccessProfile, DataScope
 from app.access.service import (PERMISSION_GROUPS, ALL_PERMS, REPORT_PERMS,
-                                effective, require, set_profile, default_for)
+                                effective, set_profile, default_for,
+                                require_super, is_super)
 
 bp = Blueprint('access', __name__)
 
@@ -49,7 +50,7 @@ PRESETS = {
 
 
 @bp.route('/api/access/matrix')
-@require('admin.access')
+@require_super
 def api_matrix():
     """Everyone, with the access actually in force for each of them."""
     from app import Employee
@@ -65,6 +66,7 @@ def api_matrix():
     for emp in q.order_by(Employee.name).all():
         scope, perms = effective(emp.emp_code)
         people.append({
+            'is_super':    bool(getattr(emp, 'is_super_admin', False)),
             'id':          emp.id,
             'emp_code':    emp.emp_code,
             'name':        emp.name,
@@ -91,7 +93,7 @@ def api_matrix():
 
 
 @bp.route('/api/access/profile/<emp_code>', methods=['PUT'])
-@require('admin.access')
+@require_super
 def api_set_profile(emp_code):
     from app import Employee
 
@@ -114,10 +116,11 @@ def api_set_profile(emp_code):
             return jsonify(ok=False,
                            error='data_scope and perms are required'), 400
 
-    # Never let the last administrator remove their own way back in.
-    if emp_code == session.get('emp_code') and 'admin.access' not in perms:
-        return jsonify(ok=False, error='You cannot remove your own Access '
-                       'Control permission. Ask another admin to do it.'), 400
+    # The super admin's access is a column, not a profile row; editing it
+    # here would be silently ignored, so say so rather than pretend.
+    if getattr(emp, 'is_super_admin', False):
+        return jsonify(ok=False, error='The super admin always has full '
+                       'access and cannot be restricted here.'), 400
 
     try:
         prof = set_profile(emp_code, scope, perms)
@@ -131,7 +134,7 @@ def api_set_profile(emp_code):
 
 
 @bp.route('/api/access/profile/<emp_code>', methods=['DELETE'])
-@require('admin.access')
+@require_super
 def api_reset_profile(emp_code):
     """Drop the override and fall back to the role-derived default."""
     from app import Employee
@@ -147,6 +150,32 @@ def api_reset_profile(emp_code):
 
     scope, perms = default_for(emp)
     return jsonify(ok=True, data_scope=scope, perms=sorted(perms))
+
+
+@bp.route('/api/access/summary/<emp_code>')
+@require_super
+def api_person_summary(emp_code):
+    '''Plain-English answer to: what can this person actually see?'''
+    from app import Employee
+
+    emp = Employee.query.filter_by(emp_code=emp_code).first()
+    if emp is None:
+        return jsonify(ok=False, error='No such employee'), 404
+
+    scope, perms = effective(emp_code)
+    label = {'all': 'every record in the company',
+             'vertical': f'only {emp.vertical or "their vertical"} records',
+             'own': 'only records they personally own'}.get(scope, scope)
+
+    opens, closed = [], []
+    for title, items in PERMISSION_GROUPS:
+        for key, lbl, _help in items:
+            (opens if key in perms else closed).append(f'{title} · {lbl}')
+
+    return jsonify(ok=True, emp_code=emp_code, name=emp.name,
+                   is_super=bool(getattr(emp, 'is_super_admin', False)),
+                   data_scope=scope, scope_label=label,
+                   can_open=opens, cannot_open=closed)
 
 
 @bp.route('/api/access/me')

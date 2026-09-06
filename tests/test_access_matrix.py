@@ -35,16 +35,18 @@ from app.access.service import effective, ALL_PERMS        # noqa: E402
 def people():
     with flask_app.app_context():
         db.create_all()
-        for code, name, role, vert in (
-                ('MADMIN', 'Matrix Admin', 'admin', 'All'),
-                ('MHEAD',  'Matrix Head',  'user',  'Heavy Transport'),
-                ('MREP',   'Matrix Rep',   'user',  'Heavy Transport')):
+        # MADMIN owns the matrix: only a super admin may read or write it.
+        for code, name, role, vert, sup in (
+                ('MADMIN', 'Matrix Admin', 'admin', 'All',             True),
+                ('MHEAD',  'Matrix Head',  'user',  'Heavy Transport', False),
+                ('MREP',   'Matrix Rep',   'user',  'Heavy Transport', False)):
             e = Employee.query.filter_by(emp_code=code).first()
             if not e:
                 e = Employee(emp_code=code, name=name)
                 db.session.add(e)
             e.name, e.role, e.vertical = name, role, vert
             e.is_active, e.is_vertical_head = True, False
+            e.is_super_admin = sup
             e.must_change_pw = False
         db.session.commit()
     return True
@@ -67,7 +69,7 @@ def _put(client, code, payload):
 
 
 # ── who may touch the matrix ─────────────────────────────────────────
-def test_admin_can_read_matrix(people):
+def test_super_admin_can_read_matrix(people):
     r = _c('MADMIN').get('/api/access/matrix')
     assert r.status_code == 200
     d = r.get_json()
@@ -142,9 +144,9 @@ def test_reset_returns_to_role_default(people):
 
 
 # ── guard rails ──────────────────────────────────────────────────────
-def test_admin_cannot_remove_their_own_access(people):
+def test_the_owner_cannot_edit_themselves_into_a_corner(people):
     """Otherwise one wrong click locks the only door from the inside."""
-    r = _put(_c('MADMIN'), 'MADMIN', {'data_scope': 'all', 'perms': []})
+    r = _put(_c('MADMIN'), 'MADMIN', {'data_scope': 'own', 'perms': []})
     assert r.status_code == 400
     assert _c('MADMIN').get('/api/access/matrix').status_code == 200
 

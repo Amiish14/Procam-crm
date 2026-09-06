@@ -102,4 +102,4 @@ def test_api_me_exposes_the_flag(people):
 def test_access_page_is_present_for_admin(people):
     html = _client('AADMIN').get('/app').get_data(as_text=True)
     assert 'pg-access' in html
-    assert 'Access Control' in html
+    assert 'User Access Matrix' in html

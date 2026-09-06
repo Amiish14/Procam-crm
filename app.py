@@ -242,6 +242,11 @@ class Employee(db.Model):
     # admins / top-of-tree). Enables role-scoped drill-down without
     # inventing a separate teams table.
     is_vertical_head = db.Column(db.Boolean, default=False)
+    # The super admin owns the Access Control matrix and always sees the
+    # whole company.  Deliberately a column, not a permission: it cannot be
+    # granted or revoked through the matrix, so nobody can promote
+    # themselves and the owner cannot be locked out.
+    is_super_admin   = db.Column(db.Boolean, default=False)
     vertical_head_id = db.Column(db.Integer, db.ForeignKey('employees.id'),
                                  nullable=True)
     created_at    = db.Column(db.DateTime, default=datetime.utcnow)
@@ -261,6 +266,7 @@ class Employee(db.Model):
             # Drives the manager-only navigation (Reports); mirrors the
             # server-side gate in app/reports_v2/routes.py.
             'is_vertical_head': bool(self.is_vertical_head),
+            'is_super_admin': bool(self.is_super_admin),
             'must_change_pw': self.must_change_pw, 'is_active': self.is_active,
             'industries': json.loads(self.industries or '[]'),
             'joined_on': str(self.joined_on) if self.joined_on else ''

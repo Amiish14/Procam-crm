@@ -51,6 +51,11 @@ PERMISSION_GROUPS = [
 
 ALL_PERMS = [k for _g, items in PERMISSION_GROUPS for k, _l, _h in items]
 
+# Deliberately NOT in PERMISSION_GROUPS: it is not a checkbox.  It comes
+# only from Employee.is_super_admin, so it cannot be granted through the
+# matrix and the owner of the matrix cannot be edited out of it.
+SUPER_PERM = 'admin.super'
+
 REPORT_PERMS = ['reports.action', 'reports.competitor', 'reports.accounts']
 
 # Everything a person needs to do ordinary sales work.
@@ -65,6 +70,8 @@ def default_for(emp):
     """The profile an employee gets when nobody has configured them yet."""
     if emp is None:
         return DataScope.OWN, []
+    if getattr(emp, 'is_super_admin', False):
+        return DataScope.ALL, list(ALL_PERMS)
     if (emp.role or '') in _ADMIN_ROLES:
         return DataScope.ALL, list(ALL_PERMS)
     if getattr(emp, 'is_vertical_head', False):
@@ -79,14 +86,25 @@ def _employee(emp_code):
     return Employee.query.filter_by(emp_code=emp_code).first()
 
 
+def is_super(emp_code=None):
+    """True for the super admin — the one account that owns access itself."""
+    emp = _employee(emp_code if emp_code is not None
+                    else session.get('emp_code'))
+    return bool(emp is not None and getattr(emp, 'is_super_admin', False))
+
+
 def effective(emp_code):
     """Return ``(data_scope, perms:set)`` actually in force for someone.
 
-    A stored profile wins.  Admins always keep admin.access, so the last
-    admin cannot lock everyone — including themselves — out of the screen
-    that would fix it.
+    A stored profile wins, with two exceptions that exist so the portal
+    cannot be locked shut: the super admin always holds everything, and an
+    admin always keeps admin.access.
     """
     emp = _employee(emp_code)
+
+    if emp is not None and getattr(emp, 'is_super_admin', False):
+        return DataScope.ALL, set(ALL_PERMS) | {SUPER_PERM}
+
     prof = AccessProfile.query.filter_by(emp_code=emp_code).first() \
         if emp_code else None
 
@@ -122,6 +140,23 @@ def data_scope():
 
 def is_admin():
     return can('admin.access')
+
+
+def require_super(f):
+    """Only the super admin may open this."""
+    @wraps(f)
+    def wrap(*a, **kw):
+        if not session.get('emp_code'):
+            if request.path.startswith('/api/'):
+                return jsonify(ok=False, error='Not authenticated'), 401
+            return ('', 302, {'Location': '/login'})
+        if not is_super():
+            if request.path.startswith('/api/'):
+                return jsonify(ok=False, error='Only the super admin can '
+                               'change access.', need=SUPER_PERM), 403
+            return render_template('access_denied.html', need=SUPER_PERM), 403
+        return f(*a, **kw)
+    return wrap
 
 
 def require(perm, template=None):
