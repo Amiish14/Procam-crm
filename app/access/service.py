@@ -46,6 +46,8 @@ PERMISSION_GROUPS = [
         ('admin.access',        'Access Control', 'Change this matrix'),
         ('admin.employees',     'Employee Master', 'Add and edit employees'),
         ('admin.email',         'Email Ingestion', 'Mailbox, subscriptions, inbox log'),
+        ('admin.master',        'Master Data',
+         'Verticals, industries, relationship types and other lists'),
     ]),
 ]
 

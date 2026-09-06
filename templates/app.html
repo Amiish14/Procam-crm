@@ -1678,6 +1678,22 @@ window.CRMToast = (function(){
   <div id="empCnt"></div>
 </div>
 
+<!-- MASTER DATA — admin-configurable vocabularies (§59-62) -->
+<div class="page" id="pg-master">
+  <div class="pg-hd">
+    <div><div class="pg-ttl">Master Data</div>
+    <div class="pg-sub">Verticals, industries and every other list the CRM offers — editable without a developer</div></div>
+    <button class="btn btn-ghost" onclick="rMaster()">Refresh</button>
+  </div>
+  <div class="card" style="margin-bottom:14px"><div style="padding:14px 16px;font-size:13px;line-height:1.7;color:var(--p-text-2)">
+    A value added here becomes available immediately across forms, filters,
+    assignment, reports and the Excel templates.<br>
+    A value already used by records is <b style="color:var(--p-ink)">deactivated, never deleted</b> —
+    it disappears from new entries while historical data stays intact.
+  </div></div>
+  <div id="mdCnt"></div>
+</div>
+
 <!-- ACCESS CONTROL — who can see which reports -->
 <div class="page" id="pg-access">
   <div class="pg-hd">
@@ -1943,7 +1959,7 @@ async function init(){
 }
 
 // ── NAV ──
-const PG_TITLES={dash:'Overview',pipeline:'Sales Pipeline','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-biz':'Business Discussion','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated','inb-quoted':'Quoted','inb-negot':'Under Negotiation',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard',access:'User Access Matrix'};
+const PG_TITLES={dash:'Overview',pipeline:'Sales Pipeline','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-biz':'Business Discussion','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated','inb-quoted':'Quoted','inb-negot':'Under Negotiation',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard',access:'User Access Matrix',master:'Master Data'};
 // Legacy 6-stage inbox nav ids alias into the unified Sales Pipeline
 // page pre-filtered to the corresponding stage. Preserves any old
 // bookmarked deep-link.
@@ -1975,7 +1991,7 @@ function nav(p){
   const t=g('topPgTtl'); if(t) t.textContent=PG_TITLES[p]||'';
   const fns={dash:rDash,pipeline:rPipeline,leads:rLeads,all:rAll,outreach:rOR,contacts:rCt,news:rNews,
               team:rTeam,assign:rAssign,employees:rEmps,opp:rOpp,upload:()=>upTab('xl'),
-              kpi:rKpiAdmin,perf:rPerf,scorecard:rScorecard,access:rAccess};
+              kpi:rKpiAdmin,perf:rPerf,scorecard:rScorecard,access:rAccess,master:rMaster};
   if(fns[p]) try{fns[p]();}catch(err){console.error('nav error for page',p,err);}
   if(p==='inb-new')   rInbox('New','inbNew');
   if(p==='inb-call')  rInbox('Call Done','inbCall');
@@ -3675,6 +3691,109 @@ async function toggleEmp(id){
   if(r.ok){rEmps();toast(`${emp.name} ${!emp.is_active?'activated':'deactivated'} ✓`);}
 }
 
+// ── MASTER DATA (§59-62) ──
+let MD = null, MD_OPEN = null;
+
+async function rMaster(){
+  const r = await api('/api/master/lists');
+  if(!r || !r.ok){
+    g('mdCnt').innerHTML = '<div class="card"><div style="padding:18px">'+
+      'Could not load master data.'+(r&&r.error?' '+e(r.error):'')+'</div></div>';
+    return;
+  }
+  MD = r.lists;
+  if(MD_OPEN === null && MD.length) MD_OPEN = MD[0].key;
+
+  g('mdCnt').innerHTML = MD.map(function(L){
+    const open = (L.key === MD_OPEN);
+    const live = L.items.filter(i => i.is_active).length;
+    const off  = L.items.length - live;
+    return `<div class="card">
+      <div class="card-hd" style="cursor:pointer" onclick="mdOpen('${L.key}')">
+        <div class="card-ttl">${e(L.label)}
+          <span style="font-weight:500;color:var(--p-text-2);font-size:12.5px">
+            · ${live} value${live===1?'':'s'}${off?' · '+off+' retired':''}</span>
+          <div style="font-size:11.5px;color:var(--p-text-3);font-weight:400;margin-top:2px">
+            ${e(L.description||'')}</div>
+        </div>
+        <span class="b sN">${open?'Hide':'Edit'}</span>
+      </div>
+      ${open ? mdBody(L) : ''}
+    </div>`;
+  }).join('');
+}
+
+function mdBody(L){
+  const rows = L.items.map(function(it){
+    return `<tr${it.is_active?'':' style="opacity:.55"'}>
+      <td style="cursor:default"><b>${e(it.label)}</b>
+        ${it.is_active?'':'<span class="b sN" style="margin-left:6px">retired</span>'}
+        ${it.code!==it.label?'<div style="font-size:11.5px;color:var(--p-text-3)">'+e(it.code)+'</div>':''}</td>
+      <td style="cursor:default;color:var(--p-text-2)">${e(it.description||'—')}</td>
+      <td style="text-align:right;cursor:default">
+        <button class="btn btn-ghost btn-sm" onclick="mdRename(${it.id},'${e(L.key)}')">Rename</button>
+        <button class="btn btn-ghost btn-sm" onclick="mdToggle(${it.id},${it.is_active?'false':'true'})">
+          ${it.is_active?'Retire':'Restore'}</button>
+        ${it.is_active?'':`<button class="btn btn-ghost btn-sm" style="color:var(--p-red)"
+          onclick="mdDelete(${it.id})">Delete</button>`}
+      </td></tr>`;
+  }).join('');
+
+  return `<div style="overflow-x:auto"><table style="min-width:640px">
+      <thead><tr><th style="min-width:220px">Value</th><th>Description</th>
+        <th style="text-align:right;min-width:230px">Actions</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="3" style="color:var(--p-text-3)">No values yet</td></tr>'}</tbody>
+    </table></div>
+    <div style="padding:12px 16px;border-top:1px solid var(--p-border-2,#eee);
+                display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input class="fmc" id="mdNew_${L.key}" placeholder="Add a value…"
+             style="height:32px;max-width:280px"
+             onkeydown="if(event.key==='Enter')mdAdd('${L.key}')">
+      <button class="btn btn-red btn-sm" onclick="mdAdd('${L.key}')">Add</button>
+      <span style="font-size:11.5px;color:var(--p-text-3)">
+        Available everywhere as soon as you add it.</span>
+    </div>`;
+}
+
+function mdOpen(key){ MD_OPEN = (MD_OPEN === key) ? null : key; rMaster(); }
+
+async function mdAdd(key){
+  const el = g('mdNew_'+key); if(!el) return;
+  const label = (el.value||'').trim();
+  if(!label){ toast('Type a value first','err'); return; }
+  const r = await api('/api/master/'+encodeURIComponent(key),
+                      {method:'POST', body:JSON.stringify({code:label,label:label})});
+  if(r && r.ok){ toast(label+' added ✓','ok'); MD_OPEN = key; rMaster(); }
+  else toast((r&&r.error)||'Could not add','err');
+}
+
+async function mdRename(id, key){
+  const label = prompt('New label for this value?');
+  if(label === null) return;
+  const r = await api('/api/master/item/'+id,
+                      {method:'PUT', body:JSON.stringify({label:label.trim()})});
+  if(r && r.ok){ MD_OPEN = key; rMaster(); toast('Renamed ✓','ok'); }
+  else toast((r&&r.error)||'Could not rename','err');
+}
+
+async function mdToggle(id, makeActive){
+  const r = await api('/api/master/item/'+id,
+                      {method:'PUT', body:JSON.stringify({is_active:makeActive})});
+  if(r && r.ok){ rMaster(); toast(makeActive?'Restored ✓':'Retired — existing records keep this value','ok'); }
+  else toast((r&&r.error)||'Could not update','err');
+}
+
+async function mdDelete(id){
+  if(!confirm('Delete this value permanently?\n\nIf any record still uses it, '
+              +'it will be retired instead so history stays intact.')) return;
+  const r = await api('/api/master/item/'+id, {method:'DELETE'});
+  if(r && r.ok){
+    rMaster();
+    toast(r.deleted ? 'Deleted ✓' : (r.message || 'Retired instead'),
+          r.deleted ? 'ok' : 'err');
+  } else toast((r&&r.error)||'Could not delete','err');
+}
+
 // ── ACCESS CONTROL ──
 // The matrix is the single place access is decided.  Everything here just
 // reads and writes /api/access/*; the server enforces it independently.
@@ -4040,6 +4159,8 @@ async function doChangePw(){
       items: [
         { page: 'access', label: 'User Access Matrix', ic: 'user_lock',
           perm: 'admin.super' },
+        { page: 'master', label: 'Master Data', ic: 'settings',
+          perm: 'admin.master' },
       ]},
     { title: 'Admin',               icon: 'users',
       items: [
