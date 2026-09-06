@@ -61,6 +61,125 @@ def _is_report_manager():
     return bool(getattr(emp, 'is_vertical_head', False))
 
 
+class _Scope:
+    """The slice of the company a viewer may see.
+
+    Admins get ``None`` — unrestricted.  A vertical head gets their own
+    vertical: every employee in it, and by extension every task, account,
+    lead, deal and quote those people own.
+    """
+    __slots__ = ('vertical', 'emp_codes', '_company_ids')
+
+    def __init__(self, vertical, emp_codes):
+        self.vertical = vertical
+        self.emp_codes = emp_codes
+        self._company_ids = None
+
+    @property
+    def codes(self):
+        # A sentinel keeps an empty scope matching nothing, rather than
+        # silently degrading to "no filter".
+        return list(self.emp_codes) or ['\x00-no-one-\x00']
+
+    @property
+    def company_ids(self):
+        if self._company_ids is None:
+            from app import Company
+            rows = (db.session.query(Company.id)
+                    .filter(Company.pic_emp_code.in_(self.codes)).all())
+            self._company_ids = {r[0] for r in rows}
+        return self._company_ids
+
+
+def _scope():
+    """``None`` when the viewer may see the whole company, else a _Scope.
+
+    Only admins are unrestricted.  A vertical head is confined to their
+    own vertical — the people in it plus anyone reporting directly to
+    them.  Every report calls this; nothing else decides visibility.
+    """
+    if (session.get('role') or '') in _MANAGER_ROLES:
+        return None
+    from app import Employee
+    emp = Employee.query.filter_by(emp_code=session.get('emp_code')).first()
+    if emp is None:
+        return _Scope('', set())          # unknown user sees nothing
+    if (emp.role or '') in _MANAGER_ROLES:
+        return None
+    vertical = (emp.vertical or '').strip()
+    codes = {emp.emp_code}
+    clauses = [Employee.vertical_head_id == emp.id]
+    if vertical:
+        clauses.append(Employee.vertical == vertical)
+    for e in Employee.query.filter(or_(*clauses)).all():
+        if e.emp_code:
+            codes.add(e.emp_code)
+    return _Scope(vertical, codes)
+
+
+def _scope_tasks(q):
+    """Confine a TaskInstance query to the viewer's vertical."""
+    sc = _scope()
+    if sc is None:
+        return q
+    from app.models.task_engine import TaskInstance
+    return q.filter(TaskInstance.owner_user_id.in_(sc.codes))
+
+
+def _lead_scope_clause(sc):
+    """A lead belongs to a vertical if its owner does, or if it is
+    explicitly tagged to that vertical."""
+    from app import Lead
+    clauses = [Lead.assigned_to.in_(sc.codes)]
+    if sc.vertical:
+        clauses.append(Lead.procam_vertical == sc.vertical)
+    return or_(*clauses)
+
+
+def _scoped_lead_ids(sc):
+    from app import Lead
+    rows = db.session.query(Lead.id).filter(_lead_scope_clause(sc)).all()
+    return {r[0] for r in rows}
+
+
+def _scoped_competitor_ids(sc):
+    """Competitor ids visible to the viewer.
+
+    A competitor is tagged with the verticals it competes in.  A head sees
+    the ones tagged to their vertical; untagged competitors are shared
+    reference data and stay visible to everyone.
+    """
+    from app.models.competitor import CompetitorMaster
+    if sc is None:
+        return None                       # unrestricted
+    want = (sc.vertical or '').strip().lower()
+    ids = set()
+    for c in CompetitorMaster.query.all():
+        tags = [str(v).strip().lower() for v in (c.verticals or []) if v]
+        if not tags or (want and want in tags):
+            ids.add(c.id)
+    return ids
+
+
+def _scoped_opp_competitors():
+    """Competitor encounters on deals or leads inside the viewer's scope."""
+    from app.models.competitor import OpportunityCompetitor
+    sc = _scope()
+    rows = OpportunityCompetitor.query.all()
+    if sc is None:
+        return rows
+    from app import Opportunity
+    opp_ids = {r[0] for r in db.session.query(Opportunity.id)
+               .filter(Opportunity.owner_emp_code.in_(sc.codes)).all()}
+    lead_ids = _scoped_lead_ids(sc)
+    out = []
+    for oc in rows:
+        if getattr(oc, 'opportunity_id', None) in opp_ids \
+           or getattr(oc, 'lead_id', None) in lead_ids:
+            out.append(oc)
+    return out
+
+
 def _require_manager(f):
     @wraps(f)
     def wrap(*a, **kw):
@@ -159,9 +278,8 @@ def _serve(rows, meta, filters):
 # HUB
 # =========================================================================
 @bp.route('/reports')
+@_require_manager
 def hub():
-    if not session.get('emp_code'):
-        return ('', 302, {'Location': '/login'})
     return render_template('reports_v2/index.html', reports=REPORT_INDEX)
 
 
@@ -226,7 +344,7 @@ def _apply_task_filters(q, TaskInstance):
     if to_d:
         q = q.filter(TaskInstance.created_at <= datetime.combine(
             to_d, datetime.max.time()))
-    return q
+    return _scope_tasks(q)
 
 
 @bp.route('/reports/open-tasks')
@@ -276,6 +394,7 @@ def rep_tasks_by_user():
          )
          .group_by(TaskInstance.owner_user_id, TaskInstance.status)
          .order_by(TaskInstance.owner_user_id))
+    q = _scope_tasks(q)
     rows = [{'owner_user': r.owner or '',
              'status': r.status, 'count': int(r.n)} for r in q.all()]
     return _serve(rows, {
@@ -301,6 +420,7 @@ def rep_tasks_by_role():
          )
          .group_by(TaskInstance.owner_role, TaskInstance.status)
          .order_by(TaskInstance.owner_role))
+    q = _scope_tasks(q)
     rows = [{'role': r.role or '', 'status': r.status,
              'count': int(r.n)} for r in q.all()]
     return _serve(rows, {
@@ -327,6 +447,7 @@ def rep_tasks_by_vertical():
          )
          .group_by('bucket')
          .order_by(func.count(TaskInstance.id).desc()))
+    q = _scope_tasks(q)
     rows = [{'bucket': r.bucket or '', 'count': int(r.n)}
             for r in q.all()]
     return _serve(rows, {
@@ -344,10 +465,10 @@ def rep_tasks_by_vertical():
 @_require_manager
 def rep_task_completion():
     from app.models.task_engine import TaskInstance, TaskInstanceStatus
-    q = TaskInstance.query.filter(
+    q = _scope_tasks(TaskInstance.query.filter(
         TaskInstance.status == TaskInstanceStatus.COMPLETED,
         TaskInstance.completed_at.isnot(None),
-    )
+    ))
     from_d = _parse_date(request.args.get('from'))
     to_d   = _parse_date(request.args.get('to'))
     if from_d:
@@ -380,10 +501,10 @@ def _sla_report(module_prefix, slug, title):
 
     # Build a task_key → sla_hours lookup so we can rate SLA hit.
     defs = {d.task_key: d.sla_hours for d in TaskDefinition.query.all()}
-    q = TaskInstance.query.filter(
+    q = _scope_tasks(TaskInstance.query.filter(
         TaskInstance.task_key.ilike(f'{module_prefix}%'),
         TaskInstance.status == TaskInstanceStatus.COMPLETED,
-    )
+    ))
     rows = []
     total = hit = 0
     for t in q.all():
@@ -473,7 +594,11 @@ def rep_account_followup_due():
         Company.is_active.is_(True),
         Company.next_action_at.isnot(None),
         Company.next_action_at <= today,
-    ).order_by(Company.next_action_at.asc())
+    )
+    _sc = _scope()
+    if _sc is not None:
+        q = q.filter(Company.pic_emp_code.in_(_sc.codes))
+    q = q.order_by(Company.next_action_at.asc())
     rows = [{
         'id': c.id, 'name': c.name,
         'pic': c.pic_emp_code or '',
@@ -501,10 +626,10 @@ def rep_account_followup_due():
 @_require_manager
 def rep_project_review_due():
     from app.models.task_engine import TaskInstance, TaskInstanceStatus
-    q = TaskInstance.query.filter(
+    q = _scope_tasks(TaskInstance.query.filter(
         TaskInstance.task_key.ilike('project.review%'),
         TaskInstance.status.in_(TaskInstanceStatus.OPEN),
-    )
+    ))
     return _serve(_task_rows(q), {
         'slug': 'project_review_due',
         'title': 'Project Reviews Due',
@@ -521,6 +646,9 @@ def rep_project_review_due():
 def rep_competitor_register():
     from app.models.competitor import CompetitorMaster
     q = CompetitorMaster.query.order_by(CompetitorMaster.name).all()
+    _ids = _scoped_competitor_ids(_scope())
+    if _ids is not None:
+        q = [c for c in q if c.id in _ids]
     rows = [{
         'id': c.id, 'name': c.name,
         'website': c.website or '',
@@ -547,8 +675,11 @@ def rep_competitor_register():
 @_require_manager
 def rep_competitor_contacts():
     from app.models.competitor import CompetitorContact, CompetitorMaster
+    _ids = _scoped_competitor_ids(_scope())
     rows = []
     for cc in CompetitorContact.query.all():
+        if _ids is not None and getattr(cc, 'competitor_id', None) not in _ids:
+            continue
         cm = CompetitorMaster.query.get(cc.competitor_id) if getattr(
             cc, 'competitor_id', None) else None
         rows.append({
@@ -580,9 +711,12 @@ def rep_competitor_contacts():
 @_require_manager
 def rep_competitor_intel_log():
     from app.models.competitor import CompetitorIntelligence, CompetitorMaster
+    _ids = _scoped_competitor_ids(_scope())
     rows = []
     for i in (CompetitorIntelligence.query
               .order_by(CompetitorIntelligence.id.desc()).all()):
+        if _ids is not None and getattr(i, 'competitor_id', None) not in _ids:
+            continue
         cm = CompetitorMaster.query.get(i.competitor_id) \
             if getattr(i, 'competitor_id', None) else None
         rows.append({
@@ -613,7 +747,7 @@ def rep_competitor_intel_log():
 def rep_competitor_encounters():
     from app.models.competitor import OpportunityCompetitor, CompetitorMaster
     rows = []
-    for oc in OpportunityCompetitor.query.all():
+    for oc in _scoped_opp_competitors():
         cm = CompetitorMaster.query.get(oc.competitor_id) \
             if getattr(oc, 'competitor_id', None) else None
         rows.append({
@@ -646,7 +780,7 @@ def rep_competitor_encounters():
 def rep_win_loss_by_competitor():
     from app.models.competitor import OpportunityCompetitor, CompetitorMaster
     tally = {}
-    for oc in OpportunityCompetitor.query.all():
+    for oc in _scoped_opp_competitors():
         cm = CompetitorMaster.query.get(oc.competitor_id) \
             if getattr(oc, 'competitor_id', None) else None
         name = cm.name if cm else '(unknown)'
@@ -677,7 +811,7 @@ def rep_win_loss_by_competitor():
 def rep_price_comparison():
     from app.models.competitor import OpportunityCompetitor, CompetitorMaster
     rows = []
-    for oc in OpportunityCompetitor.query.all():
+    for oc in _scoped_opp_competitors():
         cm = CompetitorMaster.query.get(oc.competitor_id) \
             if getattr(oc, 'competitor_id', None) else None
         rows.append({
@@ -709,7 +843,7 @@ def _competitor_grouping(dimension_key, label, extractor):
     """Group competitor encounters by a competitor-master attribute."""
     from app.models.competitor import OpportunityCompetitor, CompetitorMaster
     tally = {}
-    for oc in OpportunityCompetitor.query.all():
+    for oc in _scoped_opp_competitors():
         cm = CompetitorMaster.query.get(oc.competitor_id) \
             if getattr(oc, 'competitor_id', None) else None
         if not cm:
@@ -743,7 +877,7 @@ def rep_competitor_by_customer():
     from app.models.competitor import OpportunityCompetitor, CompetitorMaster
     from app import Opportunity, Company
     tally = {}
-    for oc in OpportunityCompetitor.query.all():
+    for oc in _scoped_opp_competitors():
         opp_id = getattr(oc, 'opportunity_id', None)
         cust_name = '(no opp)'
         if opp_id:
@@ -809,8 +943,12 @@ def rep_competitor_by_geography():
 @_require_manager
 def rep_accounts_by_pic():
     from app import Company
+    q = Company.query.filter(Company.is_active.is_(True))
+    _sc = _scope()
+    if _sc is not None:
+        q = q.filter(Company.pic_emp_code.in_(_sc.codes))
     tally = {}
-    for c in Company.query.filter(Company.is_active.is_(True)).all():
+    for c in q.all():
         pic = c.pic_emp_code or '(unassigned)'
         tally[pic] = tally.get(pic, 0) + 1
     rows = [{'pic': k, 'accounts': v} for k, v in
@@ -830,8 +968,12 @@ def rep_accounts_by_pic():
 @_require_manager
 def rep_accounts_by_stage():
     from app import Company
+    q = Company.query.filter(Company.is_active.is_(True))
+    _sc = _scope()
+    if _sc is not None:
+        q = q.filter(Company.pic_emp_code.in_(_sc.codes))
     tally = {}
-    for c in Company.query.filter(Company.is_active.is_(True)).all():
+    for c in q.all():
         st = c.dev_stage or '(unset)'
         tally[st] = tally.get(st, 0) + 1
     rows = [{'stage': k, 'accounts': v} for k, v in
@@ -856,6 +998,9 @@ def rep_activities_by_account():
     q = (db.session.query(Lead.company, func.count(LeadActivity.id))
          .join(LeadActivity, LeadActivity.lead_id == Lead.id)
          .group_by(Lead.company))
+    _sc = _scope()
+    if _sc is not None:
+        q = q.filter(_lead_scope_clause(_sc))
     rows = [{'account': (name or '').strip() or '(no account)',
              'activities': int(n)}
             for name, n in q.all()]
@@ -875,8 +1020,12 @@ def rep_activities_by_account():
 @_require_manager
 def rep_contacts_developed():
     from app import Contact
+    q = Contact.query.filter(Contact.assigned_to.isnot(None))
+    _sc = _scope()
+    if _sc is not None:
+        q = q.filter(Contact.assigned_to.in_(_sc.codes))
     tally = {}
-    for c in Contact.query.filter(Contact.assigned_to.isnot(None)).all():
+    for c in q.all():
         who = c.assigned_to or '(unknown)'
         tally[who] = tally.get(who, 0) + 1
     rows = [{'user': k, 'contacts_developed': v}
@@ -906,8 +1055,12 @@ def rep_rfqs_by_account():
                         {'key': 'rfqs', 'label': 'RFQs'}],
         }, dict(request.args))
     from app import Company
+    _q = RFQ.query
+    _sc = _scope()
+    if _sc is not None:
+        _q = _q.filter(RFQ.lead_driver.in_(_sc.codes))
     tally = {}
-    for r in RFQ.query.all():
+    for r in _q.all():
         cid = getattr(r, 'company_id', None) or \
               getattr(r, 'account_id', None)
         if not cid:
@@ -936,8 +1089,12 @@ def _quote_agg(field):
     except Exception:
         return []
     from app import Company
+    _q = Quote.query
+    _sc = _scope()
+    if _sc is not None:
+        _q = _q.filter(Quote.prepared_by_id.in_(_sc.codes))
     tally = {}
-    for q in Quote.query.all():
+    for q in _q.all():
         cid = getattr(q, 'company_id', None) or \
               getattr(q, 'account_id', None)
         if not cid:
@@ -959,7 +1116,7 @@ def _quote_agg(field):
 @bp.route('/reports/quote-value-by-account')
 @_require_manager
 def rep_quote_value_by_account():
-    rows = _quote_agg('total_value_inr')
+    rows = _quote_agg('total_amount')
     return _serve(rows, {
         'slug': 'quote_value_by_account',
         'title': 'Quoted Value by Account',
@@ -975,8 +1132,12 @@ def rep_quote_value_by_account():
 @_require_manager
 def rep_won_value_by_account():
     from app import Opportunity, Company
+    _q = Opportunity.query.filter(Opportunity.stage == 'Won')
+    _sc = _scope()
+    if _sc is not None:
+        _q = _q.filter(Opportunity.owner_emp_code.in_(_sc.codes))
     tally = {}
-    for o in Opportunity.query.filter(Opportunity.stage == 'Won').all():
+    for o in _q.all():
         if not o.company_id:
             continue
         v = float(o.value_inr) if o.value_inr else 0.0
@@ -1002,10 +1163,15 @@ def rep_won_value_by_account():
 def rep_overseas_partner_contribution():
     from app import OverseasAgent, Lead
     tally = {}
+    _sc = _scope()
     for a in OverseasAgent.query.all():
-        n = Lead.query.filter(Lead.source_details.ilike(f'%{a.name}%'))\
-                      .count() if hasattr(Lead, 'source_details') else 0
-        tally[a.name] = n
+        if not hasattr(Lead, 'source_details'):
+            tally[a.name] = 0
+            continue
+        _q = Lead.query.filter(Lead.source_details.ilike(f'%{a.name}%'))
+        if _sc is not None:
+            _q = _q.filter(_lead_scope_clause(_sc))
+        tally[a.name] = _q.count()
     rows = [{'partner': k, 'leads': v} for k, v in
             sorted(tally.items(), key=lambda kv: -kv[1])]
     return _serve(rows, {
@@ -1023,8 +1189,12 @@ def rep_overseas_partner_contribution():
 @_require_manager
 def rep_network_contribution():
     from app import Lead
+    _q = Lead.query
+    _sc = _scope()
+    if _sc is not None:
+        _q = _q.filter(_lead_scope_clause(_sc))
     tally = {}
-    for l in Lead.query.all():
+    for l in _q.all():
         src = getattr(l, 'source', None) or '(unset)'
         tally[src] = tally.get(src, 0) + 1
     rows = [{'source': k, 'leads': v} for k, v in
@@ -1050,7 +1220,11 @@ def rep_dormant_accounts():
         Company.is_active.is_(True),
         or_(Company.last_activity_at.is_(None),
             Company.last_activity_at < threshold),
-    ).order_by(Company.last_activity_at.asc().nullsfirst())
+    )
+    _sc = _scope()
+    if _sc is not None:
+        q = q.filter(Company.pic_emp_code.in_(_sc.codes))
+    q = q.order_by(Company.last_activity_at.asc().nullsfirst())
     rows = [{
         'id': c.id, 'name': c.name,
         'pic': c.pic_emp_code or '',
