@@ -258,6 +258,9 @@ class Employee(db.Model):
             'email': self.email, 'mobile': self.mobile,
             'department': self.department, 'designation': self.designation,
             'vertical': self.vertical, 'role': self.role,
+            # Drives the manager-only navigation (Reports); mirrors the
+            # server-side gate in app/reports_v2/routes.py.
+            'is_vertical_head': bool(self.is_vertical_head),
             'must_change_pw': self.must_change_pw, 'is_active': self.is_active,
             'industries': json.loads(self.industries or '[]'),
             'joined_on': str(self.joined_on) if self.joined_on else ''

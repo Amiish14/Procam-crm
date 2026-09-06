@@ -1945,6 +1945,11 @@ async function init(){
   } else {
     document.querySelectorAll('.admin-only').forEach(el=>el.style.display='none');
   }
+  // Admins and vertical heads get the Reports hub — same gate the server
+  // applies in app/reports_v2/routes.py.
+  if(ME.role==='admin' || ME.is_vertical_head){
+    document.body.classList.add('role-manager');
+  }
   g('dDate').textContent=new Date().toLocaleDateString('en-IN',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
   // Populate assign dropdowns
   const tOpts=EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join('');
@@ -3815,9 +3820,12 @@ async function doChangePw(){
   var TOPNAV_GROUPS = [
     { title: 'Overview',            icon: 'dashboard',
       items: [
+        { href: '/my-work',  label: 'My Work',              ic: 'clipboard_list' },
         { page: 'dash',      label: 'Dashboard',            ic: 'dashboard'    },
+        { href: '/notifications', label: 'Notifications',   ic: 'newspaper'    },
         { page: 'perf',      label: 'My Performance',       ic: 'trending_up'  },
         { page: 'scorecard', label: 'Team Scorecard',       ic: 'trophy'       },
+        { href: '/help',     label: 'Help & Guides',        ic: 'brain'        },
       ]},
     { title: 'Sales Pipeline',      icon: 'target',
       items: [
@@ -3831,6 +3839,7 @@ async function doChangePw(){
         { page: 'accounts',  label: 'Accounts',             ic: 'building',      countId: 'sbAcc' },
         { page: 'projects',  label: 'Project Intelligence', ic: 'construction',  countId: 'sbPrj' },
         { page: 'contacts',  label: 'Global CRM',           ic: 'globe'         },
+        { href: '/business-cards/scan', label: 'Scan Business Card', ic: 'sparkles' },
       ]},
     { title: 'Deals',               icon: 'briefcase',
       items: [
@@ -3846,6 +3855,10 @@ async function doChangePw(){
         { page: 'outreach',  label: 'AI Outreach',          ic: 'send'          },
         { href: '/competitors',                    label: 'Competitors',           ic: 'target'        },
         { href: '/competitors/dashboard',          label: 'Competitor Dashboard',  ic: 'dashboard'     },
+      ]},
+    { title: 'Reports',             icon: 'trending_up', managerOnly: true,
+      items: [
+        { href: '/reports', label: 'Reports Hub',            ic: 'trending_up' },
       ]},
     { title: 'Team & Admin',        icon: 'users',
       items: [
@@ -3866,7 +3879,8 @@ async function doChangePw(){
 
   function itemHTML(it){
     var cnt = it.countId ? ' <span class="sb-cnt" id="tn_'+it.countId+'">0</span>' : '';
-    var admin = it.adminOnly ? ' admin-only' : '';
+    var admin = (it.adminOnly ? ' admin-only' : '') +
+                (it.managerOnly ? ' manager-only' : '');
     if (it.href) {
       return '<a href="'+it.href+'" class="topnav-item'+admin+'"'+
              ' onclick="topnavCloseAll();">'+
@@ -3883,7 +3897,8 @@ async function doChangePw(){
 
   mount.innerHTML = TOPNAV_GROUPS.map(function(g){
     var allAdmin = g.items.every(function(x){ return x.adminOnly; });
-    var groupCls = allAdmin ? ' admin-only' : '';
+    var groupCls = (allAdmin ? ' admin-only' : '') +
+                   (g.managerOnly ? ' manager-only' : '');
     return '<div class="topnav-group'+groupCls+'">'+
              '<button class="topnav-head" type="button">'+
                '<span class="ic">'+ic(g.icon)+'</span>'+
@@ -4008,6 +4023,12 @@ async function doChangePw(){
 
     body:not(.role-admin) .topnav-item.admin-only,
     body:not(.role-admin) .topnav-group.admin-only { display: none; }
+
+    /* Reports are management-only; the server enforces the same rule in
+       app/reports_v2/routes.py.  Default is hidden, so the entry never
+       flashes before the role is known. */
+    body:not(.role-manager) .topnav-item.manager-only,
+    body:not(.role-manager) .topnav-group.manager-only { display: none; }
   `;
   document.head.appendChild(s);
 })();

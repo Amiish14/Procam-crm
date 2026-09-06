@@ -29,13 +29,55 @@ bp = Blueprint('reports_v2', __name__)
 
 
 # ─── auth helper ─────────────────────────────────────────────────────────
-def _require_auth(f):
+# These reports expose company-wide commercial figures — won value, price
+# comparison, network contribution, and every user's workload.  They are
+# management reporting, not a self-service surface, so they are limited to
+# admins and vertical heads.  Individual contributors work from /my-work,
+# which already scopes to the tasks they own.
+#
+# To widen access later, edit _is_report_manager() — it is the single
+# gate for all 35 report routes.
+_MANAGER_ROLES = ('admin', 'procam_admin')
+
+
+def _is_report_manager():
+    """True / False for a logged-in user; None when not logged in."""
+    code = session.get('emp_code')
+    if not code:
+        return None
+    if (session.get('role') or '') in _MANAGER_ROLES:
+        return True
+    # The session only carries the coarse role, so a vertical head has to
+    # be confirmed against the row itself.
+    try:
+        from app import Employee
+        emp = Employee.query.filter_by(emp_code=code).first()
+    except Exception:
+        return False
+    if emp is None:
+        return False
+    if (emp.role or '') in _MANAGER_ROLES:
+        return True
+    return bool(getattr(emp, 'is_vertical_head', False))
+
+
+def _require_manager(f):
     @wraps(f)
     def wrap(*a, **kw):
-        if not session.get('emp_code'):
+        allowed = _is_report_manager()
+        if allowed is None:
             return ('', 302, {'Location': '/login'})
+        if not allowed:
+            wants_json = (request.path.startswith('/api/')
+                          or (request.args.get('format') or '') == 'json')
+            if wants_json:
+                return jsonify(
+                    ok=False,
+                    error='Reports are available to managers and admins.'), 403
+            return render_template('reports_v2/_denied.html'), 403
         return f(*a, **kw)
     return wrap
+
 
 
 def _emp():
@@ -188,7 +230,7 @@ def _apply_task_filters(q, TaskInstance):
 
 
 @bp.route('/reports/open-tasks')
-@_require_auth
+@_require_manager
 def rep_open_tasks():
     from app.models.task_engine import TaskInstance, TaskInstanceStatus
     q = TaskInstance.query.filter(
@@ -204,7 +246,7 @@ def rep_open_tasks():
 
 
 @bp.route('/reports/overdue-tasks')
-@_require_auth
+@_require_manager
 def rep_overdue_tasks():
     from app.models.task_engine import TaskInstance, TaskInstanceStatus
     now = datetime.utcnow()
@@ -224,7 +266,7 @@ def rep_overdue_tasks():
 
 
 @bp.route('/reports/tasks-by-user')
-@_require_auth
+@_require_manager
 def rep_tasks_by_user():
     from app.models.task_engine import TaskInstance
     q = (db.session.query(
@@ -249,7 +291,7 @@ def rep_tasks_by_user():
 
 
 @bp.route('/reports/tasks-by-role')
-@_require_auth
+@_require_manager
 def rep_tasks_by_role():
     from app.models.task_engine import TaskInstance
     q = (db.session.query(
@@ -274,7 +316,7 @@ def rep_tasks_by_role():
 
 
 @bp.route('/reports/tasks-by-vertical')
-@_require_auth
+@_require_manager
 def rep_tasks_by_vertical():
     # Vertical isn't modelled on TaskInstance; approximate via task_key
     # prefix (module) as a stand-in for now.
@@ -299,7 +341,7 @@ def rep_tasks_by_vertical():
 
 
 @bp.route('/reports/task-completion')
-@_require_auth
+@_require_manager
 def rep_task_completion():
     from app.models.task_engine import TaskInstance, TaskInstanceStatus
     q = TaskInstance.query.filter(
@@ -382,48 +424,48 @@ def _sla_report(module_prefix, slug, title):
 
 
 @bp.route('/reports/sla-performance')
-@_require_auth
+@_require_manager
 def rep_sla_performance():
     return _sla_report('', 'sla_performance', 'SLA Performance (all)')
 
 
 @bp.route('/reports/sla-rate-sourcing')
-@_require_auth
+@_require_manager
 def rep_sla_rate_sourcing():
     return _sla_report('rate_sourcing', 'sla_rate_sourcing',
                        'SLA — Rate Sourcing')
 
 
 @bp.route('/reports/sla-quote-prep')
-@_require_auth
+@_require_manager
 def rep_sla_quote_prep():
     return _sla_report('quote.prep', 'sla_quote_prep',
                        'SLA — Quote Preparation')
 
 
 @bp.route('/reports/sla-quote-submit')
-@_require_auth
+@_require_manager
 def rep_sla_quote_submit():
     return _sla_report('quote.submit', 'sla_quote_submit',
                        'SLA — Quote Submission')
 
 
 @bp.route('/reports/sla-negotiation-followup')
-@_require_auth
+@_require_manager
 def rep_sla_negotiation_followup():
     return _sla_report('negotiation', 'sla_negotiation_followup',
                        'SLA — Negotiation Follow-up')
 
 
 @bp.route('/reports/sla-won-handover')
-@_require_auth
+@_require_manager
 def rep_sla_won_handover():
     return _sla_report('handover', 'sla_won_handover',
                        'SLA — Won → Handover')
 
 
 @bp.route('/reports/account-followup-due')
-@_require_auth
+@_require_manager
 def rep_account_followup_due():
     from app import Company
     today = date.today()
@@ -456,7 +498,7 @@ def rep_account_followup_due():
 
 
 @bp.route('/reports/project-review-due')
-@_require_auth
+@_require_manager
 def rep_project_review_due():
     from app.models.task_engine import TaskInstance, TaskInstanceStatus
     q = TaskInstance.query.filter(
@@ -475,7 +517,7 @@ def rep_project_review_due():
 # Competitor (spec §60)
 # =========================================================================
 @bp.route('/reports/competitor-register')
-@_require_auth
+@_require_manager
 def rep_competitor_register():
     from app.models.competitor import CompetitorMaster
     q = CompetitorMaster.query.order_by(CompetitorMaster.name).all()
@@ -502,7 +544,7 @@ def rep_competitor_register():
 
 
 @bp.route('/reports/competitor-contacts')
-@_require_auth
+@_require_manager
 def rep_competitor_contacts():
     from app.models.competitor import CompetitorContact, CompetitorMaster
     rows = []
@@ -535,7 +577,7 @@ def rep_competitor_contacts():
 
 
 @bp.route('/reports/competitor-intelligence-log')
-@_require_auth
+@_require_manager
 def rep_competitor_intel_log():
     from app.models.competitor import CompetitorIntelligence, CompetitorMaster
     rows = []
@@ -567,7 +609,7 @@ def rep_competitor_intel_log():
 
 
 @bp.route('/reports/competitor-encounters')
-@_require_auth
+@_require_manager
 def rep_competitor_encounters():
     from app.models.competitor import OpportunityCompetitor, CompetitorMaster
     rows = []
@@ -600,7 +642,7 @@ def rep_competitor_encounters():
 
 
 @bp.route('/reports/win-loss-by-competitor')
-@_require_auth
+@_require_manager
 def rep_win_loss_by_competitor():
     from app.models.competitor import OpportunityCompetitor, CompetitorMaster
     tally = {}
@@ -631,7 +673,7 @@ def rep_win_loss_by_competitor():
 
 
 @bp.route('/reports/price-comparison')
-@_require_auth
+@_require_manager
 def rep_price_comparison():
     from app.models.competitor import OpportunityCompetitor, CompetitorMaster
     rows = []
@@ -694,7 +736,7 @@ def _competitor_grouping(dimension_key, label, extractor):
 
 
 @bp.route('/reports/competitor-by-customer')
-@_require_auth
+@_require_manager
 def rep_competitor_by_customer():
     # No direct customer column on OpportunityCompetitor — cross-tabulate
     # by opportunity's linked company.
@@ -728,7 +770,7 @@ def rep_competitor_by_customer():
 
 
 @bp.route('/reports/competitor-by-industry')
-@_require_auth
+@_require_manager
 def rep_competitor_by_industry():
     return _competitor_grouping(
         'industry', 'Industry',
@@ -736,7 +778,7 @@ def rep_competitor_by_industry():
 
 
 @bp.route('/reports/competitor-by-vertical')
-@_require_auth
+@_require_manager
 def rep_competitor_by_vertical():
     return _competitor_grouping(
         'vertical', 'Vertical',
@@ -744,7 +786,7 @@ def rep_competitor_by_vertical():
 
 
 @bp.route('/reports/competitor-by-service')
-@_require_auth
+@_require_manager
 def rep_competitor_by_service():
     return _competitor_grouping(
         'service', 'Service',
@@ -752,7 +794,7 @@ def rep_competitor_by_service():
 
 
 @bp.route('/reports/competitor-by-geography')
-@_require_auth
+@_require_manager
 def rep_competitor_by_geography():
     return _competitor_grouping(
         'geography', 'Geography',
@@ -764,7 +806,7 @@ def rep_competitor_by_geography():
 # Account Development (spec §61)
 # =========================================================================
 @bp.route('/reports/accounts-by-pic')
-@_require_auth
+@_require_manager
 def rep_accounts_by_pic():
     from app import Company
     tally = {}
@@ -785,7 +827,7 @@ def rep_accounts_by_pic():
 
 
 @bp.route('/reports/accounts-by-stage')
-@_require_auth
+@_require_manager
 def rep_accounts_by_stage():
     from app import Company
     tally = {}
@@ -806,7 +848,7 @@ def rep_accounts_by_stage():
 
 
 @bp.route('/reports/activities-by-account')
-@_require_auth
+@_require_manager
 def rep_activities_by_account():
     # Lead.company is a plain account-name string, not a FK — unlike
     # Opportunity.company_id.  Group on the name directly.
@@ -830,7 +872,7 @@ def rep_activities_by_account():
 
 
 @bp.route('/reports/contacts-developed')
-@_require_auth
+@_require_manager
 def rep_contacts_developed():
     from app import Contact
     tally = {}
@@ -851,7 +893,7 @@ def rep_contacts_developed():
 
 
 @bp.route('/reports/rfqs-by-account')
-@_require_auth
+@_require_manager
 def rep_rfqs_by_account():
     try:
         from app.models.rfq import RFQ
@@ -915,7 +957,7 @@ def _quote_agg(field):
 
 
 @bp.route('/reports/quote-value-by-account')
-@_require_auth
+@_require_manager
 def rep_quote_value_by_account():
     rows = _quote_agg('total_value_inr')
     return _serve(rows, {
@@ -930,7 +972,7 @@ def rep_quote_value_by_account():
 
 
 @bp.route('/reports/won-value-by-account')
-@_require_auth
+@_require_manager
 def rep_won_value_by_account():
     from app import Opportunity, Company
     tally = {}
@@ -956,7 +998,7 @@ def rep_won_value_by_account():
 
 
 @bp.route('/reports/overseas-partner-contribution')
-@_require_auth
+@_require_manager
 def rep_overseas_partner_contribution():
     from app import OverseasAgent, Lead
     tally = {}
@@ -978,7 +1020,7 @@ def rep_overseas_partner_contribution():
 
 
 @bp.route('/reports/network-contribution')
-@_require_auth
+@_require_manager
 def rep_network_contribution():
     from app import Lead
     tally = {}
@@ -999,7 +1041,7 @@ def rep_network_contribution():
 
 
 @bp.route('/reports/dormant-accounts')
-@_require_auth
+@_require_manager
 def rep_dormant_accounts():
     from app import Company
     days = int(request.args.get('days') or 90)
