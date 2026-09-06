@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Training Progress — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Administration</div>
+    <h1>Training Progress</h1>
+    <div class="crm-sub">Who has started, who has finished, and who is certified.</div>
+  </div>
+</div>
+
+<div class="grid3">
+  <div class="kpi"><div class="label">People</div><div class="value">{{ total }}</div></div>
+  <div class="kpi"><div class="label">Started</div><div class="value">{{ started }}</div></div>
+  <div class="kpi success"><div class="label">Certified</div><div class="value">{{ certified }}</div></div>
+  <div class="kpi warn"><div class="label">Not started</div><div class="value">{{ not_started }}</div></div>
+</div>
+
+<div class="card"><div class="table-wrap"><table>
+  <thead><tr><th>Person</th><th>Vertical</th><th class="num">Levels</th>
+    <th class="num">Progress</th><th class="num">Average</th><th>Status</th></tr></thead>
+  <tbody>
+    {% for p in people %}
+    <tr>
+      <td><b>{{ p.name }}</b><div class="meta">{{ p.emp_code }}</div></td>
+      <td>{{ p.vertical or '—' }}</td>
+      <td class="num">{{ p.completed }} / {{ p.levels }}</td>
+      <td class="num">{{ p.percent }}%</td>
+      <td class="num">{{ (p.average_score ~ '%') if p.average_score is not none else '—' }}</td>
+      <td>{% if p.certified %}<span class="pill won">Certified</span>
+          {% elif p.started %}<span class="pill warn">In progress</span>
+          {% else %}<span class="pill muted">Not started</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table></div></div>
+
+</div><!-- /crm-wrap -->
+</body>
+</html>

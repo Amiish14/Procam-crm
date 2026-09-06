@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ spec.title }} — Training Academy</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .step{font-size:10.5px;font-weight:700;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--p-red);margin-bottom:6px}
+  .sec-b{margin-bottom:20px}
+  .sec-b h3{margin:0 0 5px}
+  .sec-b p{margin:0;color:var(--p-text);line-height:1.7;max-width:66ch}
+  .opt{display:block;padding:11px 14px;border:1px solid var(--p-border);
+    border-radius:var(--rd);margin-bottom:8px;cursor:pointer;
+    transition:border-color var(--dur-out),background var(--dur-out)}
+  .opt:hover{border-color:var(--p-border-strong);background:var(--p-surface-2)}
+  .opt input{margin-right:9px}
+  .q{margin-bottom:22px}
+  .q b{display:block;margin-bottom:9px;color:var(--p-ink)}
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Level {{ spec.level }}</div>
+    <h1>{{ spec.title }}</h1>
+    <div class="crm-sub">{{ spec.why }}</div>
+  </div>
+  <a class="btn" href="{{ url_prefix }}/academy">← All levels</a>
+</div>
+
+<div class="card">
+  <div class="card-hd"><div class="card-ttl">1 · Learn</div></div>
+  <div class="panel">
+    {% for heading, body in spec.sections %}
+    <div class="sec-b"><h3>{{ heading }}</h3><p>{{ body }}</p></div>
+    {% endfor %}
+    <button class="btn" id="btnLearned" onclick="learned()">
+      I have read this</button>
+    <span id="learnedMsg" class="meta"></span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-hd"><div class="card-ttl">2 · Practice</div>
+    {% if state.practice_score %}<span class="b sW">done</span>{% endif %}</div>
+  <div class="panel">
+    <p style="margin-bottom:14px">{{ spec.practice.prompt }}</p>
+    {% if spec.practice.kind == 'number' %}
+      <input id="pAns" class="fmc" style="max-width:180px"
+             placeholder="Type the number" inputmode="numeric">
+    {% else %}
+      {% for opt in spec.practice.options %}
+      <label class="opt"><input type="radio" name="p" value="{{ loop.index0 }}">
+        {{ opt }}</label>
+      {% endfor %}
+    {% endif %}
+    <div style="margin-top:12px">
+      <button class="btn primary" onclick="practice()">Check my answer</button>
+      <span id="pMsg" style="margin-left:10px"></span>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-hd"><div class="card-ttl">3 · Validate</div>
+    {% if state.quiz_score %}<span class="b sN">best {{ state.quiz_score }}%</span>{% endif %}</div>
+  <div class="panel">
+    {% for question, options, _a in spec.quiz %}
+    {# The outer index has to be captured: loop.parent is not available
+       for nested loops in this Jinja version. #}
+    {% set qi = loop.index0 %}
+    <div class="q"><b>{{ loop.index }}. {{ question }}</b>
+      {% for opt in options %}
+      <label class="opt"><input type="radio" name="q{{ qi }}"
+        value="{{ loop.index0 }}"> {{ opt }}</label>
+      {% endfor %}
+    </div>
+    {% endfor %}
+    <button class="btn primary" onclick="submitQuiz()">Submit</button>
+    <div id="qMsg" style="margin-top:12px"></div>
+  </div>
+</div>
+
+<script>
+var KEY = '{{ spec.key }}';
+var NQ = {{ spec.quiz|length }};
+function esc(s){ return String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+async function post(path, body){
+  var r = await fetch('{{ url_prefix }}' + path, {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body || {})});
+  return r.json();
+}
+async function learned(){
+  await post('/api/academy/' + KEY + '/learned');
+  document.getElementById('learnedMsg').textContent = ' ✓ noted';
+  document.getElementById('btnLearned').disabled = true;
+}
+async function practice(){
+  var el = document.getElementById('pAns');
+  var answer = el ? el.value
+    : (document.querySelector('input[name=p]:checked') || {}).value;
+  if(answer === undefined || answer === null || answer === ''){
+    document.getElementById('pMsg').innerHTML =
+      '<span class="err">Give an answer first.</span>'; return;
+  }
+  var d = await post('/api/academy/' + KEY + '/practice', {answer: answer});
+  document.getElementById('pMsg').innerHTML = d.correct
+    ? '<span class="pill won">Correct</span>'
+    : '<span class="pill lost">Not quite</span> <span class="meta">'
+      + esc(d.feedback) + '</span>';
+}
+async function submitQuiz(){
+  var answers = [];
+  for(var i = 0; i < NQ; i++){
+    var picked = document.querySelector('input[name=q' + i + ']:checked');
+    if(!picked){
+      document.getElementById('qMsg').innerHTML =
+        '<span class="err">Answer every question.</span>'; return;
+    }
+    answers.push(picked.value);
+  }
+  var d = await post('/api/academy/' + KEY + '/quiz', {answers: answers});
+  var msg = '<b>' + d.score + '%</b> — pass mark ' + d.pass_mark + '%. ';
+  if(d.passed){
+    msg += '<span class="pill won">Level complete</span>';
+  } else if(d.needs_practice){
+    msg += '<span class="pill warn">Do the practice exercise above first</span>';
+  } else {
+    msg += '<span class="pill lost">Read it again and retry</span>';
+  }
+  msg += '<div style="margin-top:10px">' + d.detail.map(function(x){
+    return '<div class="meta">' + (x.correct ? '✓' : '✗') + ' '
+      + esc(x.question) + (x.correct ? '' : ' — ' + esc(x.answer)) + '</div>';
+  }).join('') + '</div>';
+  document.getElementById('qMsg').innerHTML = msg;
+}
+</script>
+
+</div><!-- /crm-wrap -->
+</body>
+</html>

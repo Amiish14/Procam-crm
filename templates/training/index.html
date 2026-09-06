@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Training Academy — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .lv{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+  .lv-card{display:flex;gap:16px;align-items:center;background:var(--p-surface);
+    border:1px solid var(--p-border);border-radius:var(--rd-md);
+    padding:15px 18px;box-shadow:var(--el-1);text-decoration:none;
+    transition:border-color var(--dur-out),box-shadow var(--dur-out)}
+  .lv-card:hover{border-color:var(--p-border-strong);box-shadow:var(--el-2);
+    color:inherit}
+  .lv-n{width:38px;height:38px;border-radius:50%;flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;font-weight:700;
+    background:var(--p-surface-3);color:var(--p-text-2);font-size:14px}
+  .lv-card.done .lv-n{background:var(--p-success);color:#fff}
+  .lv-card.doing .lv-n{background:var(--p-warning);color:#fff}
+  .lv-b{flex:1;min-width:0}
+  .lv-t{font-weight:650;color:var(--p-ink);font-size:14.5px}
+  .lv-w{font-size:12.5px;color:var(--p-text-2);margin-top:2px}
+  .prog{height:8px;background:var(--p-surface-3);border-radius:99px;
+    overflow:hidden;margin:10px 0 4px}
+  .prog span{display:block;height:100%;background:var(--p-success);
+    border-radius:99px;transition:width .4s var(--easing)}
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Procam CRM</div>
+    <h1>Training Academy</h1>
+    <div class="crm-sub">Ten levels. Read, do the exercise, pass the check —
+      then you are certified.</div>
+  </div>
+  {% if summary.certified %}
+  <a class="btn primary" href="{{ url_prefix }}/academy/certificate">
+    View your certificate</a>
+  {% endif %}
+</div>
+
+<div class="card"><div class="panel">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;
+              flex-wrap:wrap;gap:10px">
+    <div><b style="font-size:17px;color:var(--p-ink)">{{ summary.completed }}
+      of {{ summary.levels }}</b>
+      <span style="color:var(--p-text-2)"> levels complete</span></div>
+    {% if summary.average_score is not none %}
+    <div class="meta">Average score {{ summary.average_score }}%</div>
+    {% endif %}
+  </div>
+  <div class="prog"><span style="width:{{ summary.percent }}%"></span></div>
+  {% if summary.certified %}
+    <div style="font-size:13px;color:var(--p-success)">
+      <b>Certified</b> — {{ summary.certificate.certificate_id }}</div>
+  {% elif summary.completed == summary.levels %}
+    <div style="font-size:13px"><a href="{{ url_prefix }}/academy/certificate">
+      All levels done — collect your certificate →</a></div>
+  {% else %}
+    <div class="meta">{{ summary.levels - summary.completed }} to go.</div>
+  {% endif %}
+</div></div>
+
+<div class="lv">
+  {% for l in levels %}
+  <a class="lv-card {{ 'done' if l.status == 'Completed' else ('doing' if l.status == 'In Progress' else '') }}"
+     href="{{ url_prefix }}/academy/{{ l.key }}">
+    <div class="lv-n">{{ '✓' if l.status == 'Completed' else l.level }}</div>
+    <div class="lv-b">
+      <div class="lv-t">Level {{ l.level }} — {{ l.title }}</div>
+      <div class="lv-w">{{ l.why }}</div>
+    </div>
+    <div style="text-align:right;flex-shrink:0">
+      {% if l.status == 'Completed' %}
+        <span class="pill won">{{ l.quiz_score }}%</span>
+        {% if l.stale %}<div class="meta">refresher due</div>{% endif %}
+      {% elif l.status == 'In Progress' %}
+        <span class="pill warn">In progress</span>
+      {% else %}
+        <span class="pill muted">Not started</span>
+      {% endif %}
+    </div>
+  </a>
+  {% endfor %}
+</div>
+
+</div><!-- /crm-wrap -->
+</body>
+</html>

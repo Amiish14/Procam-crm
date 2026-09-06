@@ -74,6 +74,9 @@ def test_page_has_no_duplicate_component_css(path):
     src = open(path).read()
     shared = ('btn', 'card', 'pill', 'hero', 'empty', 'kpi', 'filters')
     for block in re.findall(r'<style>(.*?)</style>', src, re.S):
+        # Print overrides are page-specific by nature — a certificate
+        # restyling `body` for paper is not a component redefinition.
+        block = re.sub(r'@media\s+print\s*\{.*?\n  \}', '', block, flags=re.S)
         for comp in shared:
             pattern = r'(?:^|[},;\s])\.' + comp + r'\s*[{,:]'
             hit = re.search(pattern, block, re.M)

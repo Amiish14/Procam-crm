@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Certificate — {{ cert.emp_name }}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .cert{background:var(--p-surface);border:1px solid var(--p-border);
+    border-top:5px solid var(--p-red);border-radius:var(--rd-md);
+    padding:52px 56px;max-width:760px;margin:22px auto;text-align:center;
+    box-shadow:var(--el-2)}
+  .cert-brand{font-weight:700;color:var(--p-red);letter-spacing:.06em;
+    font-size:13px;text-transform:uppercase}
+  .cert-h{font-size:15px;color:var(--p-text-2);margin:26px 0 8px}
+  .cert-name{font-size:36px;font-weight:700;color:var(--p-ink);
+    letter-spacing:-.02em;line-height:1.15;text-wrap:balance}
+  .cert-sub{font-size:15px;color:var(--p-text-2);margin-top:14px;
+    line-height:1.7;max-width:52ch;margin-left:auto;margin-right:auto}
+  .cert-meta{display:flex;justify-content:center;gap:40px;flex-wrap:wrap;
+    margin-top:34px;padding-top:24px;border-top:1px solid var(--p-divider)}
+  .cert-meta div{text-align:center}
+  .cert-meta .k{font-size:10.5px;font-weight:700;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--p-text-3)}
+  .cert-meta .v{font-size:16px;font-weight:650;color:var(--p-ink);
+    margin-top:3px;font-variant-numeric:tabular-nums}
+  .cert-id{font-family:ui-monospace,Menlo,monospace;font-size:12px;
+    color:var(--p-text-3);margin-top:26px;letter-spacing:.04em}
+  @media print{
+    .crm-top,.noprint{display:none !important}
+    body{background:#fff;padding:0}
+    .cert{border:1px solid #ddd;box-shadow:none;margin:0}
+  }
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="cert">
+  <div class="cert-brand">Procam Logistics</div>
+  <div class="cert-h">This certifies that</div>
+  <div class="cert-name">{{ cert.emp_name }}</div>
+  <div class="cert-sub">
+    has completed all {{ cert.levels_passed }} levels of the Procam CRM
+    Training Academy — covering companies and people, account development,
+    leads and opportunities, RFQs, quotes, competitor intelligence,
+    operations handover and reporting.
+  </div>
+
+  <div class="cert-meta">
+    <div><div class="k">Employee</div><div class="v">{{ cert.emp_code }}</div></div>
+    <div><div class="k">Levels</div><div class="v">{{ cert.levels_passed }}</div></div>
+    <div><div class="k">Average score</div><div class="v">{{ cert.average_score }}%</div></div>
+    <div><div class="k">Issued</div>
+      <div class="v">{{ cert.issued_at.strftime('%d %b %Y') if cert.issued_at else '' }}</div></div>
+  </div>
+
+  <div class="cert-id">Certificate {{ cert.certificate_id }}</div>
+</div>
+
+<div class="noprint" style="text-align:center;margin-bottom:30px">
+  <button class="btn primary" onclick="window.print()">Print or save as PDF</button>
+  <a class="btn" href="{{ url_prefix }}/academy">Back to the Academy</a>
+</div>
+
+</div><!-- /crm-wrap -->
+</body>
+</html>
