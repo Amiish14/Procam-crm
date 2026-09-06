@@ -43,7 +43,7 @@
         <h3>{{ title }} <span class="count">{{ rows|length }}</span></h3>
         {% if rows %}
           {% for t in rows %}
-            <a class="task-row" href="{{ t.action_route or '#' }}">
+            <a class="task-row" href="{{ crm_url(t.action_route) if t.action_route else '#' }}">
               <div class="task-body">
                 <div class="task-title">{{ t.entity_display or t.entity_type }}</div>
                 <div class="task-meta">

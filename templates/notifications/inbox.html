@@ -22,7 +22,7 @@
 
 {% if rows %}
   {% for n in rows %}
-    <a class="row {% if not n.is_read %}unread{% endif %}" href="{{ n.action_url or '/notifications' }}">
+    <a class="row {% if not n.is_read %}unread{% endif %}" href="{{ crm_url(n.action_url or '/notifications') }}">
       <div>
         <div class="title">{{ n.title }}</div>
         {% if n.body %}<div class="body">{{ n.body }}</div>{% endif %}

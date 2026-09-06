@@ -109,3 +109,46 @@ def test_nav_hrefs_go_through_crm_url():
     html = open(os.path.join(_TEMPLATES, 'app.html')).read()
     assert "crmUrl(it.href)" in html, \
         'topnav items must resolve their href through crmUrl()'
+
+
+def test_crm_url_is_safe_for_stored_routes():
+    """Routes come out of the database (TaskInstance.action_route,
+    Notification.action_url), so the helper has to prefix a bare path,
+    leave an already-prefixed one alone, and not touch external links.
+    Double-prefixing 404s exactly like not prefixing does.
+    """
+    with flask_app.test_request_context('/my-work'):
+        crm_url = None
+        for proc in flask_app.template_context_processors[None]:
+            d = proc()
+            if 'crm_url' in d:
+                crm_url = d['crm_url']
+        assert crm_url is not None
+
+        assert crm_url('/app?lead=9') == _PREFIX + '/app?lead=9'
+        assert crm_url(_PREFIX + '/app?lead=9') == _PREFIX + '/app?lead=9'
+        assert crm_url('https://example.com/x') == 'https://example.com/x'
+        assert crm_url('#anchor') == '#anchor'
+        assert crm_url(None) == _PREFIX + '/'
+
+
+def test_my_work_task_links_are_prefixed(client):
+    """Clicking a task in My Work 404'd for everyone: action_route is
+    stored bare and was rendered straight into the href."""
+    from app.models.task_engine import TaskInstance
+    with flask_app.app_context():
+        if not TaskInstance.query.filter_by(owner_user_id='PFXADM').first():
+            db.session.add(TaskInstance(
+                task_key='lead.qualify', entity_type='Lead', entity_id=7,
+                entity_display='Test Account', owner_user_id='PFXADM',
+                status='Pending', priority=2, action_route='/app?lead=7'))
+            db.session.commit()
+
+    html = client.get('/my-work',
+                      environ_overrides={'SCRIPT_NAME': _PREFIX}
+                      ).get_data(as_text=True)
+    links = re.findall(r'class="task-row" href="([^"]+)"', html)
+    assert links, 'no task rows rendered — the fixture did not take'
+    for link in links:
+        assert link.startswith(_PREFIX + '/') or link == '#', \
+            f'task link bypasses {_PREFIX}: {link}'

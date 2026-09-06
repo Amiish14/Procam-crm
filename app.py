@@ -778,7 +778,21 @@ def _inject_url_prefix():
     prefix = (os.environ.get('URL_PREFIX') or '').rstrip('/')
 
     def crm_url(path=''):
-        return prefix + '/' + str(path).lstrip('/')
+        """Prefix an internal path, safely.
+
+        Idempotent, and leaves external or in-page links alone — routes
+        stored in the database (TaskInstance.action_route,
+        Notification.action_url) pass through here, and double-prefixing
+        them would 404 exactly like not prefixing them does.
+        """
+        p = str(path or '').strip()
+        if not p:
+            return prefix + '/'
+        if p.startswith(('http://', 'https://', '//', '#', 'mailto:', 'tel:')):
+            return p
+        if prefix and (p == prefix or p.startswith(prefix + '/')):
+            return p
+        return prefix + '/' + p.lstrip('/')
 
     def can(perm):
         try:
