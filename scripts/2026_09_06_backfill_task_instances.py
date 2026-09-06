@@ -58,13 +58,22 @@ try:
 except ImportError:                                              # pragma: no cover
     pass
 
-from app import app, db, Lead, Employee                       # noqa: E402
+from app import app, db, Lead, Employee, LEGACY_STAGE_MAP     # noqa: E402
 from app.models.task_engine import (TaskDefinition, TaskInstance,   # noqa: E402
                                     TaskInstanceStatus)
 
 # Marker written into notes so --undo can find exactly these rows and
 # nothing a human or the engine created afterwards.
 MARKER = '[seeded by 2026_09_06 backfill]'
+
+
+def canonical_stage(raw):
+    """Live data still carries pre-2026-08 stage names — app.py only
+    rewrites them lazily, when a lead is next edited. 1,264 active leads
+    are still on the old names, so normalise here or the backfill silently
+    skips them."""
+    st = (raw or '').strip()
+    return LEGACY_STAGE_MAP.get(st, st)
 
 STAGE_TASK = {
     'New':                 'lead.first_contact',
@@ -120,6 +129,11 @@ def main():
                     help='delete tasks this script created, and nothing else')
     ap.add_argument('--include-closed', action='store_true',
                     help='also raise handover / debrief tasks on Won and Lost')
+    ap.add_argument('--closed-since', metavar='YYYY-MM-DD',
+                    help='with --include-closed, only raise handover/debrief '
+                         'tasks for deals closed on or after this date '
+                         '(default 90 days back; there are 2,600+ historical '
+                         'Won/Lost leads and dumping them all is not useful)')
     ap.add_argument('--limit', type=int)
     args = ap.parse_args()
 
@@ -152,8 +166,18 @@ def main():
                        TaskInstance.status.in_(TaskInstanceStatus.OPEN)).all()}
 
         wanted = dict(STAGE_TASK)
+        closed_cut = None
         if args.include_closed:
             wanted.update(CLOSED_TASK)
+            if args.closed_since:
+                try:
+                    closed_cut = datetime.strptime(args.closed_since, '%Y-%m-%d')
+                except ValueError:
+                    sys.exit(f'--closed-since must be YYYY-MM-DD, '
+                             f'got {args.closed_since!r}')
+            else:
+                closed_cut = datetime.utcnow() - timedelta(days=90)
+            print(f'closed deals from  : {str(closed_cut)[:10]} onwards')
 
         leads = (Lead.query
                  .filter(Lead.assigned_to.isnot(None), Lead.assigned_to != '')
@@ -169,24 +193,30 @@ def main():
 
         out = Counter()
         now = datetime.utcnow()
-        created = []
+        created, orphans = [], []
 
         for lead in leads:
             owner = (lead.assigned_to or '').strip()
             if owner not in valid_owner:
-                out['owner not an active employee'] += 1
+                out['SKIPPED — owner is not an active employee'] += 1
+                orphans.append((lead.id, lead.company or '', owner))
                 continue
             if ('Lead', lead.id) in already:
                 out['already has an open task'] += 1
                 continue
 
-            stage = (lead.stage or '').strip()
+            stage = canonical_stage(lead.stage)
             key = wanted.get(stage)
             if not key:
                 out[f'no task for stage: {stage or "(blank)"}'] += 1
                 continue
             # Don't raise a handover task for something already handed over,
             # nor a debrief where the competitor is already recorded.
+            if key in CLOSED_TASK.values() and closed_cut is not None:
+                when = getattr(lead, 'updated_at', None) or getattr(lead, 'created_at', None)
+                if when and when < closed_cut:
+                    out['closed before the cut-off'] += 1
+                    continue
             if key == 'deal.won.handoff' and _has_handover(lead.id):
                 out['won: handover already exists'] += 1
                 continue
@@ -231,6 +261,14 @@ def main():
                 ))
             db.session.commit()
             print(f'created {len(created)} tasks.')
+
+        if orphans:
+            print(f'\n--- {len(orphans)} leads owned by an inactive/unknown '
+                  f'employee (no task can be raised) ---')
+            for lid, comp, own in orphans[:12]:
+                print('   %-7s %-34s %s' % (lid, comp[:34], own))
+            if len(orphans) > 12:
+                print(f'   ... and {len(orphans) - 12} more — reassign these')
 
         print('\n--- summary ---')
         for k, n in out.most_common():
