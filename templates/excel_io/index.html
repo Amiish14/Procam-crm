@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Import / Export — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .tpl{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+  .tpl-card{background:var(--p-surface);border:1px solid var(--p-border);
+    border-radius:var(--rd-md);padding:16px 18px;box-shadow:var(--el-1);
+    display:flex;flex-direction:column;gap:8px}
+  .tpl-card b{color:var(--p-ink);font-size:14.5px}
+  .tpl-card p{font-size:12.5px;color:var(--p-text-2);margin:0;flex:1}
+  .sum{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));
+    margin:14px 0}
+  .sum div{background:var(--p-surface-2);border:1px solid var(--p-border);
+    border-radius:var(--rd);padding:11px 13px}
+  .sum .n{font-size:21px;font-weight:700;color:var(--p-ink);
+    font-variant-numeric:tabular-nums;line-height:1.15}
+  .sum .l{font-size:10.5px;font-weight:700;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--p-text-3)}
+  .sum .bad .n{color:var(--p-danger)}
+  .sum .warn .n{color:var(--p-warning)}
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Administration</div>
+    <h1>Master Data Import</h1>
+    <div class="crm-sub">Prepare records in Excel and load them in bulk.
+      Nothing is written until you have seen the preview and confirmed it.</div>
+  </div>
+</div>
+
+<h2 style="font-size:16px;margin-bottom:10px">1 · Download a template</h2>
+<div class="tpl">
+  {% for t in templates %}
+  <div class="tpl-card">
+    <b>{{ t.label }}</b>
+    <p>{{ t.description }}</p>
+    <div><a class="btn tiny" href="{{ url_prefix }}/admin/import/template/{{ t.kind }}">
+      Download .xlsx</a></div>
+  </div>
+  {% endfor %}
+</div>
+
+<h2 style="font-size:16px;margin:28px 0 10px">2 · Upload and preview</h2>
+<div class="card"><div class="panel">
+  <div class="row2">
+    <div class="field">
+      <label>Template</label>
+      <select id="kind">
+        {% for t in templates %}<option value="{{ t.kind }}">{{ t.label }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label>What may this import do?</label>
+      <select id="mode">
+        <option value="upsert">Create new and update existing</option>
+        <option value="create">Create new only — skip anything that exists</option>
+        <option value="update">Update existing only — skip anything new</option>
+      </select>
+    </div>
+  </div>
+  <div class="field">
+    <label>File</label>
+    <input type="file" id="file" accept=".xlsx,.xlsm">
+  </div>
+  <div class="actions" style="justify-content:flex-start">
+    <button class="btn primary" id="btnPreview" onclick="doPreview()">Preview import</button>
+    <span id="busy" style="display:none"><span class="spinner"></span></span>
+  </div>
+  <div id="out" style="margin-top:6px"></div>
+</div></div>
+
+{% if recent %}
+<h2 style="font-size:16px;margin:28px 0 10px">Recent imports</h2>
+<div class="card"><div class="table-wrap"><table>
+  <thead><tr><th>When</th><th>Template</th><th>File</th>
+    <th class="num">Rows</th><th class="num">Created</th>
+    <th class="num">Updated</th><th class="num">Failed</th><th>By</th></tr></thead>
+  <tbody>{% for b in recent %}
+    <tr><td>{{ b.created_at.strftime('%Y-%m-%d %H:%M') if b.created_at else '—' }}</td>
+        <td>{{ b.kind }}</td><td>{{ b.filename or '—' }}</td>
+        <td class="num">{{ b.total_rows }}</td>
+        <td class="num">{{ b.counts.get('created', '—') }}</td>
+        <td class="num">{{ b.counts.get('updated', '—') }}</td>
+        <td class="num">{% if b.error_rows %}<span class="pill lost">{{ b.error_rows }}</span>
+            {% else %}0{% endif %}</td>
+        <td>{{ b.created_by or '—' }}</td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% endif %}
+
+<script>
+var LAST = null;
+function esc(s){ return String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+async function doPreview(){
+  var file = document.getElementById('file').files[0];
+  var out = document.getElementById('out');
+  if(!file){ out.innerHTML = '<div class="err">Choose a file first.</div>'; return; }
+
+  var fd = new FormData();
+  fd.append('file', file);
+  fd.append('kind', document.getElementById('kind').value);
+  fd.append('mode', document.getElementById('mode').value);
+
+  document.getElementById('busy').style.display = '';
+  document.getElementById('btnPreview').disabled = true;
+  try {
+    var r = await fetch('{{ url_prefix }}/admin/import/preview',
+                        {method:'POST', body: fd, credentials:'same-origin'});
+    var d = await r.json();
+    if(!d.ok){ out.innerHTML = '<div class="err">'+esc(d.error)+'</div>'; return; }
+    LAST = d;
+    render(d);
+  } catch(e) {
+    out.innerHTML = '<div class="err">Upload failed. Try again.</div>';
+  } finally {
+    document.getElementById('busy').style.display = 'none';
+    document.getElementById('btnPreview').disabled = false;
+  }
+}
+
+function render(d){
+  var s = d.summary;
+  var rows = d.sample.map(function(x){
+    var msg = (x.errors.concat(x.warnings)).map(esc).join(' · ');
+    var cls = x.errors.length ? 'lost' : (x.action === 'skip' ? 'muted'
+              : (x.action === 'update' ? 'info' : 'won'));
+    return '<tr><td class="num">'+x.row+'</td><td>'+esc(x.name)+'</td>'
+         + '<td><span class="pill '+cls+'">'+esc(x.action)+'</span></td>'
+         + '<td>'+(msg || '—')+'</td></tr>';
+  }).join('');
+
+  document.getElementById('out').innerHTML =
+    '<div class="sum">'
+    + tile('Rows', s.total) + tile('Will create', s.create)
+    + tile('Will update', s.update) + tile('Skipped', s.skip, 'warn')
+    + tile('Errors', s.errors, 'bad')
+    + '</div>'
+    + (s.errors
+       ? '<div class="note">'+s.errors+' row(s) cannot be imported and will '
+         + 'be left out. <a href="{{ url_prefix }}/admin/import/'+d.batch_id
+         + '/errors">Download the error report</a>, fix those rows and '
+         + 'upload again — the rows that worked will not duplicate.</div>'
+       : '')
+    + '<div class="card" style="margin-top:12px"><div class="table-wrap"><table>'
+    + '<thead><tr><th>Row</th><th>Record</th><th>Action</th><th>Notes</th></tr></thead>'
+    + '<tbody>'+rows+'</tbody></table></div></div>'
+    + '<div class="actions" style="justify-content:flex-start">'
+    + '<button class="btn primary" onclick="doCommit()">Apply this import'
+    + (s.errors ? ' (skipping '+s.errors+' bad row'+(s.errors===1?'':'s')+')' : '')
+    + '</button>'
+    + '<span class="meta">Nothing has been written yet.</span></div>';
+}
+
+function tile(label, n, cls){
+  return '<div class="'+(cls||'')+'"><div class="n">'+n+'</div>'
+       + '<div class="l">'+label+'</div></div>';
+}
+
+async function doCommit(){
+  if(!LAST) return;
+  if(!confirm('Apply this import?\n\nRows with errors are skipped. '
+              + 'Existing companies are updated, not duplicated.')) return;
+  var r = await fetch('{{ url_prefix }}/admin/import/commit',
+    {method:'POST', credentials:'same-origin',
+     headers:{'Content-Type':'application/json'},
+     body: JSON.stringify({batch_id: LAST.batch_id, mode: LAST.mode})});
+  var d = await r.json();
+  var out = document.getElementById('out');
+  if(!d.ok){ out.innerHTML = '<div class="err">'+esc(d.error)+'</div>'; return; }
+  out.innerHTML = '<div class="card"><div class="panel">'
+    + '<b style="color:var(--p-ink)">Import applied.</b><div class="sum">'
+    + tile('Created', d.counts.created) + tile('Updated', d.counts.updated)
+    + tile('Skipped', d.counts.skipped, 'warn')
+    + tile('Failed', d.counts.failed, 'bad') + '</div>'
+    + (d.errors ? '<a class="btn tiny" href="{{ url_prefix }}/admin/import/'
+        + d.batch_id + '/errors">Download the error report</a>' : '')
+    + '</div></div>';
+  LAST = null;
+}
+</script>
+
+</div><!-- /crm-wrap -->
+</body>
+</html>

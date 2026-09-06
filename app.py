@@ -3749,6 +3749,7 @@ for _mod_path, _bp_name in [
     ('app.company360.routes',    'company360_bp'),
     ('app.data_quality.routes',  'data_quality_bp'),
     ('app.pic360.routes',        'pic360_bp'),
+    ('app.excel_io.routes',      'excel_io_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])
