@@ -161,6 +161,35 @@ def test_nav_overflow_is_measured_not_guessed():
         'measures an unstyled element'
 
 
+def test_nav_cannot_overflow_the_header():
+    """The structural guarantee, independent of any JS running.
+
+    .topnav-group is flex-shrink:0, so the buttons overflow their own box
+    and paint over the header controls unless the bar clips them.  The
+    dropdowns must then be position:fixed, or clipping would hide the
+    menus themselves.
+    """
+    html = open(os.path.join(_TEMPLATES, 'app.html')).read()
+    nav_rule = html[html.index('body.has-topnav .topnav {'):]
+    nav_rule = nav_rule[:nav_rule.index('}')]
+    assert 'overflow: hidden' in nav_rule, \
+        '.topnav must clip, or its buttons paint over the header controls'
+
+    # There are two .topnav-drop rules; the injected one carries layout.
+    assert 'display: none; position: fixed' in html, \
+        'dropdowns must be position:fixed to escape the clipping bar'
+    assert 'function placeDrop(' in html, \
+        'fixed dropdowns need their coordinates set on open'
+
+
+def test_overflowing_groups_stay_reachable():
+    """Clipping must not silently hide a whole menu."""
+    html = open(os.path.join(_TEMPLATES, 'app.html')).read()
+    assert 'topnav-more' in html and 'lbl">More' in html, \
+        'groups that do not fit must move into a More menu'
+    assert 'function liveGroups()' in html
+
+
 def test_no_duplicate_intelligence_control():
     """The Intelligence chip duplicated the Intelligence menu group."""
     html = open(os.path.join(_TEMPLATES, 'app.html')).read()

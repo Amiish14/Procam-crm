@@ -4128,35 +4128,102 @@ async function doChangePw(){
            '</a>';
   }
 
-  function renderNav(){
-   mount.innerHTML = TOPNAV_GROUPS.map(function(g){
-    if (!mayUse(g)) return '';
-    var items = g.items.filter(mayUse);
-    if (!items.length) return '';
-    g = {title: g.title, icon: g.icon, items: items};
+  var CARET = '<svg class="topnav-caret" width="10" height="10" viewBox="0 0 24 24"'
+            + ' fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"'
+            + ' stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+
+  function groupHTML(g, extraCls){
     var allAdmin = g.items.every(function(x){ return x.adminOnly; });
-    var groupCls = (allAdmin ? ' admin-only' : '');
-    return '<div class="topnav-group'+groupCls+'">'+
+    return '<div class="topnav-group'+(allAdmin ? ' admin-only' : '')+(extraCls||'')+'">'+
              '<button class="topnav-head" type="button" title="'+g.title+'">'+
                '<span class="ic">'+ic(g.icon)+'</span>'+
-               '<span class="lbl">'+g.title+'</span>'+
-               '<svg class="topnav-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>'+
+               '<span class="lbl">'+g.title+'</span>'+ CARET +
              '</button>'+
              '<div class="topnav-drop">'+g.items.map(itemHTML).join('')+'</div>'+
            '</div>';
-   }).join('');
   }
-  /* Shrink the navigation until it stops overflowing.  Measured, not
-     guessed: the classes are removed first so each stage is judged on the
-     real layout. */
+
+  /* Groups this user may actually see, with their permitted items. */
+  function liveGroups(){
+    var out = [];
+    TOPNAV_GROUPS.forEach(function(g){
+      if (!mayUse(g)) return;
+      var items = g.items.filter(mayUse);
+      if (items.length) out.push({title:g.title, icon:g.icon, items:items});
+    });
+    return out;
+  }
+
+  /* Render the first `limit` groups inline; anything left over goes into a
+     single "More" menu, so a group is never merely hidden. */
+  function renderNav(limit){
+    var gs = liveGroups();
+    if (limit == null || limit > gs.length) limit = gs.length;
+    var html = gs.slice(0, limit).map(function(g){ return groupHTML(g); }).join('');
+    var rest = gs.slice(limit);
+    if (rest.length){
+      var inner = rest.map(function(g){
+        return '<div class="topnav-sec">'+g.title+'</div>'+
+               g.items.map(itemHTML).join('');
+      }).join('');
+      html += '<div class="topnav-group topnav-more">'+
+                '<button class="topnav-head" type="button" title="More">'+
+                  '<span class="ic">'+ic('layers')+'</span>'+
+                  '<span class="lbl">More</span>'+ CARET +
+                '</button>'+
+                '<div class="topnav-drop">'+inner+'</div>'+
+              '</div>';
+    }
+    mount.innerHTML = html;
+  }
+
+  /* Fit the navigation to the room actually available.
+     .topnav is overflow:hidden, so nothing can ever paint over the header
+     controls; this only decides how much stays inline rather than moving
+     into More. */
+  function fits(){ return mount.scrollWidth <= mount.clientWidth + 1; }
+
   function fitNav(){
-    var b = document.body;
+    var b = document.body, n = liveGroups().length;
     b.classList.remove('nav-tight', 'nav-compact');
-    if (mount.scrollWidth <= mount.clientWidth + 1) return;
+
+    renderNav(n);
+    if (fits()) return;
+
     b.classList.add('nav-tight');
-    if (mount.scrollWidth <= mount.clientWidth + 1) return;
+    if (fits()) return;
+
+    // Move groups into More, one at a time, until the rest fit.
+    for (var k = n - 1; k >= 1; k--){
+      renderNav(k);
+      if (fits()) return;
+    }
+
+    // Last resort on a very narrow window: icons only.
     b.classList.add('nav-compact');
+    renderNav(1);
   }
+
+  /* The dropdowns are position:fixed so overflow:hidden on the bar cannot
+     clip them.  That means their coordinates have to be set when they
+     open. */
+  function placeDrop(group){
+    var head = group.querySelector('.topnav-head');
+    var drop = group.querySelector('.topnav-drop');
+    if (!head || !drop) return;
+    var r = head.getBoundingClientRect();
+    drop.style.top = (r.bottom + 6) + 'px';
+    drop.style.left = '0px';                 // measure at a known origin
+    var w = drop.offsetWidth || 240;
+    var left = Math.min(r.left, window.innerWidth - w - 12);
+    drop.style.left = Math.max(8, left) + 'px';
+  }
+  window.placeTopnavDrop = placeDrop;
+
+  mount.addEventListener('mouseover', function(e){
+    var group = e.target.closest ? e.target.closest('.topnav-group') : null;
+    if (group) placeDrop(group);
+  });
 
   renderNav();
   /* Deferred: has-topnav and the topnav stylesheet are both applied after
@@ -4244,7 +4311,12 @@ async function doChangePw(){
     .topnav { display: none; }
     body.has-topnav .topnav {
       display: flex; align-items: center; gap: 2px; flex: 1 1 auto;
-      margin: 0 10px; min-width: 0; overflow: visible;
+      margin: 0 10px; min-width: 0;
+      /* The guarantee: buttons cannot paint over the header controls,
+         whatever the group count or window width.  fitNav() then keeps
+         anything that would be clipped reachable under "More", and the
+         dropdowns are position:fixed so they are not clipped by this. */
+      overflow: hidden;
     }
     .topnav-group { position: relative; flex-shrink: 0; }
 
@@ -4254,6 +4326,15 @@ async function doChangePw(){
        fitNav() measures the overflow and adds these classes in order.
        Without this the group buttons overflow their own box and paint
        straight over Sign out. */
+    /* Section headings inside the More menu, so grouping survives the
+       move off the bar. */
+    .topnav-sec {
+      font-size: 10.5px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase; color: #9ca3af;
+      padding: 10px 12px 4px;
+    }
+    .topnav-drop .topnav-sec:first-child { padding-top: 4px; }
+
     body.nav-tight .topnav-head   { padding: 8px 8px; font-size: 12.5px; }
     body.nav-tight .topnav-caret  { display: none; }
     body.nav-tight.has-topnav .topnav { gap: 0; }
@@ -4289,7 +4370,7 @@ async function doChangePw(){
     .topnav-group.open .topnav-caret { transform: rotate(180deg); color: #cc1e2e; }
 
     .topnav-drop {
-      display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 500;
+      display: none; position: fixed; z-index: 900;
       background: #fff; border: 1px solid #eef0f3; border-radius: 12px;
       box-shadow: 0 20px 40px rgba(0,0,0,.12), 0 4px 8px rgba(0,0,0,.06);
       padding: 6px; min-width: 240px;
