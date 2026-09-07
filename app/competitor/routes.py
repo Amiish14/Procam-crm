@@ -55,6 +55,7 @@ from app.models.competitor import (
 )
 from app.models.public_source import PublicSource, PublicSourceItem
 from app.services.task_engine import on_state_change
+from app.services.urls import prefixed as _prefixed, login_url as _login_url
 
 
 bp = Blueprint('competitor', __name__)
@@ -122,7 +123,7 @@ def competitor_list_page():
     same Company 360 any other route would reach (§87).
     """
     from flask import redirect
-    return redirect('/companies?relationship=Competitor')
+    return redirect(_prefixed('/companies?relationship=Competitor'))
 
 
 @bp.route('/competitors/<int:cid>')

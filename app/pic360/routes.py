@@ -2,6 +2,7 @@
 from flask import (Blueprint, jsonify, render_template, request, session)
 
 from app.pic360 import service as p360
+from app.services.urls import prefixed as _prefixed, login_url as _login_url
 
 bp = Blueprint('pic360', __name__)
 
@@ -14,7 +15,7 @@ def _login_required(f):
         if not session.get('emp_code'):
             if request.path.startswith('/api/'):
                 return jsonify(ok=False, error='Not authenticated'), 401
-            return ('', 302, {'Location': '/login'})
+            return ('', 302, {'Location': _login_url()})
         return f(*a, **kw)
     return wrap
 

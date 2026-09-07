@@ -19,6 +19,7 @@ from flask import session, jsonify, render_template, request
 
 from app import db
 from app.models.access import AccessProfile, DataScope
+from app.services.urls import prefixed as _prefixed, login_url as _login_url
 
 
 # ── the catalogue ────────────────────────────────────────────────────
@@ -151,7 +152,7 @@ def require_super(f):
         if not session.get('emp_code'):
             if request.path.startswith('/api/'):
                 return jsonify(ok=False, error='Not authenticated'), 401
-            return ('', 302, {'Location': '/login'})
+            return ('', 302, {'Location': _login_url()})
         if not is_super():
             if request.path.startswith('/api/'):
                 return jsonify(ok=False, error='Only the super admin can '
@@ -175,7 +176,7 @@ def require(perm, template=None):
                 # API callers expect 401, not a redirect to an HTML login.
                 if request.path.startswith('/api/'):
                     return jsonify(ok=False, error='Not authenticated'), 401
-                return ('', 302, {'Location': '/login'})
+                return ('', 302, {'Location': _login_url()})
             if not can(perm):
                 wants_json = (request.path.startswith('/api/')
                               or (request.args.get('format') or '') == 'json')

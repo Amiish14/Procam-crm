@@ -26,6 +26,7 @@ from flask import (Blueprint, jsonify, render_template, request, session,
 
 from app import db
 from app.models.help_content import HelpArticle, HelpTooltip
+from app.services.urls import prefixed as _prefixed, login_url as _login_url
 
 
 bp = Blueprint('help_v2', __name__)
@@ -114,7 +115,7 @@ def api_tooltips():
 @bp.route('/admin/help')
 def admin_hub():
     if not session.get('emp_code'):
-        return ('', 302, {'Location': '/login'})
+        return ('', 302, {'Location': _login_url()})
     if not _is_admin():
         abort(403)
     articles = (HelpArticle.query

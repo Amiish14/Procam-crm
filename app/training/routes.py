@@ -5,6 +5,7 @@ from flask import (Blueprint, jsonify, render_template, request, session,
 from app.access.service import require
 from app.training import service as tr
 from app.training.content import LEVELS, BY_KEY, CONTENT_VERSION
+from app.services.urls import prefixed as _prefixed, login_url as _login_url
 
 bp = Blueprint('training', __name__)
 
@@ -17,7 +18,7 @@ def _login_required(f):
         if not session.get('emp_code'):
             if request.path.startswith('/api/'):
                 return jsonify(ok=False, error='Not authenticated'), 401
-            return ('', 302, {'Location': '/login'})
+            return ('', 302, {'Location': _login_url()})
         return f(*a, **kw)
     return wrap
 
@@ -36,7 +37,7 @@ def academy():
 def level(level_key):
     spec = BY_KEY.get(level_key)
     if spec is None:
-        return redirect('/academy')
+        return redirect(_prefixed('/academy'))
     me = session.get('emp_code')
     state = {p['key']: p for p in tr.progress_for(me)}[level_key]
     return render_template('training/level.html', spec=spec, state=state,

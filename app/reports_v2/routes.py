@@ -35,6 +35,7 @@ bp = Blueprint('reports_v2', __name__)
 from app.access.service import (require as _require_perm, can as _can,
                                 data_scope as _data_scope, REPORT_PERMS)
 from app.models.access import DataScope
+from app.services.urls import prefixed as _prefixed, login_url as _login_url
 
 _action     = _require_perm('reports.action',     'reports_v2/_denied.html')
 _competitor = _require_perm('reports.competitor', 'reports_v2/_denied.html')
@@ -46,7 +47,7 @@ def _any_report(f):
     @wraps(f)
     def wrap(*a, **kw):
         if not session.get('emp_code'):
-            return ('', 302, {'Location': '/login'})
+            return ('', 302, {'Location': _login_url()})
         if not any(_can(p) for p in REPORT_PERMS):
             return render_template('reports_v2/_denied.html'), 403
         return f(*a, **kw)
@@ -179,7 +180,7 @@ def _require_manager(f):
     def wrap(*a, **kw):
         allowed = _is_report_manager()
         if allowed is None:
-            return ('', 302, {'Location': '/login'})
+            return ('', 302, {'Location': _login_url()})
         if not allowed:
             wants_json = (request.path.startswith('/api/')
                           or (request.args.get('format') or '') == 'json')

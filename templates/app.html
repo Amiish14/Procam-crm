@@ -4260,6 +4260,11 @@ async function doChangePw(){
         { href: '/help',     label: 'Help & Guides',        ic: 'brain'        },
         { href: '/academy',  label: 'Training Academy',     ic: 'trophy'       },
       ]},
+    { title: 'Access',              icon: 'user_lock', perm: 'admin.super',
+      items: [
+        { page: 'access', label: 'User Access Matrix', ic: 'user_lock',
+          perm: 'admin.super' },
+      ]},
     { title: 'Pipeline',            icon: 'target',
       items: [
         { page: 'pipeline',  label: 'Sales Pipeline',       ic: 'git_branch',    countId: 'sbPip' },
@@ -4295,30 +4300,18 @@ async function doChangePw(){
         { href: '/reports', label: 'Reports Hub',            ic: 'trending_up',
           anyPerm: ['reports.action','reports.competitor','reports.accounts'] },
       ]},
-    { title: 'Access',              icon: 'user_lock', perm: 'admin.super',
-      items: [
-        { page: 'access', label: 'User Access Matrix', ic: 'user_lock',
-          perm: 'admin.super' },
-        { page: 'master', label: 'Master Data', ic: 'settings',
-          perm: 'admin.master' },
-        { page: 'mapping', label: 'Data Mapping', ic: 'layers',
-          perm: 'admin.master' },
-        { href: '/admin/data-quality', label: 'Data Quality', ic: 'trending_up',
-          perm: 'admin.master' },
-        { href: '/admin/import', label: 'Import / Export', ic: 'upload',
-          perm: 'admin.master' },
-        { href: '/admin/leads', label: 'Bulk Leads', ic: 'layers',
-          perm: 'admin.master' },
-        { href: '/admin/audit', label: 'Audit Trail', ic: 'clipboard_list',
-          perm: 'admin.master' },
-        { href: '/admin/training', label: 'Training Progress', ic: 'trophy',
-          perm: 'admin.master' },
-      ]},
     { title: 'Admin',               icon: 'users',
       items: [
         { page: 'team',      label: 'Team',                 ic: 'users',         adminOnly: true },
         { page: 'assign',    label: 'Assign',               ic: 'zap',           adminOnly: true },
         { page: 'employees', label: 'Employees',            ic: 'user_lock',     adminOnly: true },
+        { page: 'master',    label: 'Master Data',           ic: 'settings',      perm: 'admin.master' },
+        { page: 'mapping',   label: 'Data Mapping',          ic: 'layers',        perm: 'admin.master' },
+        { href: '/admin/data-quality', label: 'Data Quality', ic: 'trending_up',  perm: 'admin.master' },
+        { href: '/admin/import',       label: 'Import / Export', ic: 'upload',    perm: 'admin.master' },
+        { href: '/admin/leads',        label: 'Bulk Leads',   ic: 'layers',       perm: 'admin.master' },
+        { href: '/admin/audit',        label: 'Audit Trail',  ic: 'clipboard_list', perm: 'admin.master' },
+        { href: '/admin/training',     label: 'Training Progress', ic: 'trophy',  perm: 'admin.master' },
         { page: 'kpi',       label: 'KPI Settings',         ic: 'settings',      adminOnly: true },
         { page: 'upload',    label: 'Upload',               ic: 'upload',        adminOnly: true },
         { page: 'pwchange',  label: 'Change Password',      ic: 'key'           },
@@ -4577,11 +4570,11 @@ async function doChangePw(){
     body.nav-tight.has-topnav .topnav { gap: 0; }
     body.nav-compact .topnav-head .lbl { display: none; }
     body.nav-compact .topnav-head { padding: 8px 9px; }
-    /* The right-hand cluster gives up its words too, in the same order a
-       person would: the toggle label first, then the user's name. */
-    @media (max-width: 1200px) {
-      .top-uname      { display: none; }
-    }
+    /* The header reclaimed ~265px when the source toggle and the
+       duplicate Intelligence chip were removed, so the signed-in name no
+       longer has to go at 1200px. Knowing which account you are on
+       matters more than the space it costs; below 900px the whole top
+       navigation is hidden anyway. */
     @media (max-width: 1040px) {
       #myWorkChip span:not([id]) { display: none; }
       #myWorkChip { padding: 0 10px; }

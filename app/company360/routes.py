@@ -14,6 +14,7 @@ from flask import (Blueprint, jsonify, render_template, request, session,
 from app import db
 from app.access.service import require
 from app.company360 import service as c360
+from app.services.urls import prefixed as _prefixed, login_url as _login_url
 
 bp = Blueprint('company360', __name__)
 
@@ -26,7 +27,7 @@ def _login_required(f):
         if not session.get('emp_code'):
             if request.path.startswith('/api/'):
                 return jsonify(ok=False, error='Not authenticated'), 401
-            return ('', 302, {'Location': '/login'})
+            return ('', 302, {'Location': _login_url()})
         return f(*a, **kw)
     return wrap
 
@@ -105,13 +106,13 @@ def company_list():
 @bp.route('/customers')
 @_login_required
 def customers():
-    return redirect('/companies?relationship=Customer')
+    return redirect(_prefixed('/companies?relationship=Customer'))
 
 
 @bp.route('/overseas-partners')
 @_login_required
 def overseas_partners():
-    return redirect('/companies?relationship=Overseas Partner')
+    return redirect(_prefixed('/companies?relationship=Overseas Partner'))
 
 
 # ── classifications (§5, §11) ────────────────────────────────────────
