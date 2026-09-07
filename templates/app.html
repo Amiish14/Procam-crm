@@ -1889,21 +1889,6 @@ try { localStorage.removeItem('crm_lead_scope'); } catch(e){}
 (function(){
   setTimeout(function(){ try{ loadMyWork(); }catch(e){} }, 300);
 
-  // v2026-09-02 — /leads/<id> redirects here as ?lead=<id> (see
-  // app.py::lead_deeplink). Open that lead once the app has painted, then
-  // clean the URL so a refresh doesn't reopen it.
-  (function openLeadFromUrl(){
-    var id = parseInt(new URLSearchParams(window.location.search).get('lead') || '', 10);
-    if(!id) return;
-    var tries = 0;
-    var t = setInterval(function(){
-      if(typeof openLd === 'function'){
-        clearInterval(t);
-        try{ openLd(id); }catch(e){ console.warn('deep link failed', e); }
-        history.replaceState(null, '', window.location.pathname);
-      } else if(++tries > 40){ clearInterval(t); }
-    }, 150);
-  })();
 })();
 
 /* Endpoints that read from the leads table and therefore participate
@@ -1966,6 +1951,91 @@ async function init(){
   const tOpts=EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join('');
   ['aAsgn','opAsgn','blkU','inbNewAsgn','inbQualAsgn','inbPropAsgn','inbNegAsgn','inbDecAsgn'].forEach(id=>{const el=g(id);if(el&&el.tagName==='SELECT')el.insertAdjacentHTML('beforeend',tOpts);});
   nav('dash');
+  // Last, so the lists are hydrated and the dashboard has painted: the
+  // detail views are full-view swaps and need their parent view up first.
+  try{ await openDeepLink(); }catch(err){ console.error('deep link', err); }
+}
+
+/* ── Deep links ─────────────────────────────────────────────────────
+   Company 360 and the other server-rendered pages link into this app
+   with ?opp= or ?lead=. There is no router, so this is the single place
+   that reads the query string.
+
+   The parameter is deliberately NOT stripped: refresh and Back should
+   keep showing the record that was asked for. */
+async function openDeepLink(){
+  const q = new URLSearchParams(location.search);
+
+  const readId = (name) => {
+    const raw = (q.get(name) || '').trim();
+    if(!raw) return null;                       // not present
+    const n = parseInt(raw, 10);
+    // A bad id must surface, never quietly become the dashboard.
+    return (Number.isInteger(n) && n > 0 && String(n) === raw) ? n : NaN;
+  };
+
+  for(const name of ['opp', 'lead']){           // first recognised wins
+    const id = readId(name);
+    if(id === null) continue;
+    if(Number.isNaN(id)){
+      deepLinkNotFound(name, q.get(name));
+      return;
+    }
+    if(name === 'opp') await openOppDeepLink(id);
+    else               await openLeadDeepLink(id);
+    return;
+  }
+  // Nothing recognised — leave the dashboard exactly as it was.
+}
+
+async function openLeadDeepLink(leadId){
+  nav('leads');
+  const l = await api('/api/leads/' + leadId);
+  if(!l || !l.id){ deepLinkNotFound('lead', leadId); return; }
+  await openLd(leadId);
+}
+
+async function openOppDeepLink(oppId){
+  nav('opp');
+  // Company 360 links with the Opportunity id, but this app's
+  // opportunity modal is lead-centric — it edits the opportunity fields
+  // ON a lead. So resolve the opportunity to its lead first.
+  const o = await api('/api/opportunities/' + oppId);
+  if(!o || !o.id){ deepLinkNotFound('opp', oppId); return; }
+  if(!o.lead_id){
+    deepLinkNotFound('opp', oppId,
+      'This opportunity is not linked to a lead, so there is no detail '
+      + 'view to open. Historical opportunities imported in 2023 have no '
+      + 'lead behind them.');
+    return;
+  }
+  if(!o.lead_visible){
+    deepLinkNotFound('opp', oppId,
+      'This opportunity belongs to a lead you do not have access to.');
+    return;
+  }
+  await openOpp(o.lead_id);
+}
+
+function deepLinkNotFound(kind, id, why){
+  const page = (kind === 'opp') ? 'opp' : 'leads';
+  nav(page);
+  const host = g('pg-' + page);
+  if(!host) return;
+  const old = g('deepLinkMsg');
+  if(old) old.remove();
+  const box = document.createElement('div');
+  box.className = 'card';
+  box.id = 'deepLinkMsg';
+  box.innerHTML =
+    '<div style="padding:16px 20px;border-left:3px solid var(--red)">'
+    + '<b style="color:var(--ink)">Record not found</b>'
+    + '<div style="margin-top:5px;color:var(--text-2);font-size:13px">'
+    + e(why || ((kind === 'opp' ? 'Opportunity' : 'Lead') + ' '
+                + String(id) + ' does not exist, or you do not have '
+                + 'access to it.'))
+    + '</div></div>';
+  host.insertBefore(box, host.firstChild);
 }
 
 // ── NAV ──
@@ -2615,7 +2685,14 @@ function renderEmailSummaryCard(l){
 async function openLd(id){
   let leads=await api('/api/leads?limit=500');
   if(!Array.isArray(leads))leads=[];
-  const l=leads.find(x=>x.id===id);
+  let l=leads.find(x=>x.id===id);
+  if(!l){
+    // The list is capped at 500, so a deep link — or any caller naming a
+    // lead outside the current page — found nothing and this returned
+    // silently. Fall back to fetching the one record.
+    const one=await api('/api/leads/'+id);
+    if(one&&one.id)l=one;
+  }
   if(!l)return;
   activeId=id;
   g('ldTtl').textContent=l.company;
@@ -2752,7 +2829,12 @@ async function openOpp(id){
   oppId=id;
   let leads=await api('/api/leads?limit=500');
   if(!Array.isArray(leads))leads=[];
-  const l=leads.find(x=>x.id===id);if(!l)return;
+  let l=leads.find(x=>x.id===id);
+  if(!l){
+    const one=await api('/api/leads/'+id);
+    if(one&&one.id)l=one;
+  }
+  if(!l)return;
   g('opTtl').textContent=l.company;
   g('opSub').textContent=l.project||l.industry||'';
   const b=g('opBanner');

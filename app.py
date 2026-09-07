@@ -1242,6 +1242,46 @@ def api_create_lead():
         db.session.rollback()
     return jsonify({'ok': True, 'id': lead.id})
 
+@app.route('/api/leads/<int:lid>', methods=['GET'])
+@require_auth
+def api_lead_by_id(lid):
+    """Fetch one lead by id, for deep links.
+
+    The list endpoint is paginated, so a deep link to a lead outside the
+    first page found nothing and the detail view silently did not open.
+    Scoped through leads_for_user(), so this cannot show a lead the list
+    would have hidden.
+    """
+    lead = leads_for_user().filter(Lead.id == lid).first()
+    if lead is None:
+        return jsonify({'error': 'Lead not found', 'id': lid}), 404
+    return jsonify(lead.to_dict())
+
+
+@app.route('/api/opportunities/<int:oid>', methods=['GET'])
+@require_auth
+def api_opportunity_by_id(oid):
+    """Fetch one opportunity by id, for deep links.
+
+    Company 360 links with the Opportunity id, but the app's opportunity
+    modal is lead-centric — it edits the opportunity fields ON a lead. So
+    the caller needs lead_id to know what to open, and a clear answer when
+    there is no lead behind the opportunity.
+    """
+    opp = Opportunity.query.get(oid)
+    if opp is None:
+        return jsonify({'error': 'Opportunity not found', 'id': oid}), 404
+
+    body = opp.to_dict() if hasattr(opp, 'to_dict') else {'id': opp.id}
+    body['lead_id'] = opp.lead_id
+    if opp.lead_id:
+        visible = leads_for_user().filter(Lead.id == opp.lead_id).first()
+        body['lead_visible'] = visible is not None
+    else:
+        body['lead_visible'] = False
+    return jsonify(body)
+
+
 @app.route('/api/leads/<int:lid>', methods=['PUT'])
 @require_auth
 def api_update_lead(lid):
