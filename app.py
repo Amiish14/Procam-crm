@@ -2474,23 +2474,73 @@ def api_companies():
 @app.route('/api/companies', methods=['POST'])
 @require_auth
 def api_create_company():
+    """§10, §11 — create the organisation once, then classify it.
+
+    Deduplication uses the shared matcher rather than an exact lowercase
+    name, so "Siemens Ltd" resolves to an existing "Siemens Limited"
+    instead of creating the duplicate de-duplication would then have to
+    merge away. A name that matches is UPDATED with any new
+    classifications and returned, rather than refused — a salesperson
+    adding a competitor they have just met should not be stopped because
+    the company is already a customer.
+    """
+    from app.services.company_match import build_index, match
+    from app.master_data import service as md
+    from presales.models import AccountRelationshipTag
+
     d = request.get_json(force=True) or {}
-    if not (d.get('name') or '').strip():
+    name = (d.get('name') or '').strip()
+    if not name:
         return jsonify({'error': 'name required'}), 400
-    # Dedupe by lowercase name
-    existing = Company.query.filter(
-        db.func.lower(Company.name) == d['name'].strip().lower()).first()
-    if existing:
-        return jsonify({'error': 'Company already exists', 'id': existing.id}), 409
-    c = Company(name=d['name'].strip(), industry=d.get('industry'),
-                website=d.get('website'), country=d.get('country'),
-                state=d.get('state'), city=d.get('city'),
-                address=d.get('address'),
-                phone=d.get('phone'), email=d.get('email'),
-                linkedin=d.get('linkedin'), tier=d.get('tier'),
-                notes=d.get('notes'), created_by=session.get('emp_code'))
-    db.session.add(c); db.session.commit()
-    return jsonify(c.to_dict()), 201
+
+    wanted = [t.strip() for t in (d.get('classifications') or [])
+              if t and t.strip()]
+    if wanted:
+        allowed = {i.label for i in md.items('relationship')}
+        unknown = [t for t in wanted if t not in allowed]
+        if unknown:
+            return jsonify({'error': f'Not a known relationship type: '
+                                     f'{", ".join(unknown)}. Add it under '
+                                     f'Master Data first.'}), 400
+
+    index = build_index(Company.query.filter(Company.is_active.is_(True)).all())
+    existing, _reason, _cands = match(name, index)
+
+    created = existing is None
+    if created:
+        c = Company(name=name, industry=d.get('industry'),
+                    website=d.get('website'), country=d.get('country'),
+                    state=d.get('state'), city=d.get('city'),
+                    address=d.get('address'),
+                    phone=d.get('phone'), email=d.get('email'),
+                    linkedin=d.get('linkedin'), tier=d.get('tier'),
+                    notes=d.get('notes'),
+                    pic_emp_code=(d.get('pic_emp_code')
+                                  or session.get('emp_code')),
+                    created_by=session.get('emp_code'))
+        db.session.add(c)
+        db.session.flush()
+    else:
+        c = existing
+
+    have = {t.tag for t in AccountRelationshipTag.query.filter_by(
+        account_id=c.id).all()}
+    added = [t for t in wanted if t not in have]
+    for tag in added:
+        db.session.add(AccountRelationshipTag(account_id=c.id, tag=tag))
+    db.session.commit()
+
+    body = c.to_dict()
+    body.update({
+        'created': created,
+        'matched_existing': not created,
+        'classifications_added': added,
+        'message': ('Created' if created else
+                    f'"{name}" matched the existing "{c.name}" — '
+                    f'classifications were added to that record rather '
+                    f'than creating a second one.'),
+    })
+    return jsonify(body), (201 if created else 200)
 
 
 @app.route('/api/companies/<int:cid>', methods=['PUT'])

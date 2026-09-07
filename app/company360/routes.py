@@ -52,8 +52,11 @@ def company_360(company_id):
         except Exception:
             pass
 
+    from app.master_data import service as md
     return render_template('company/detail.html', company=company,
-                           data=c360.full(company))
+                           data=c360.full(company),
+                           relationships=[i.label for i in
+                                          md.items('relationship')])
 
 
 @bp.route('/api/companies/<int:company_id>/360')
@@ -118,7 +121,7 @@ def overseas_partners():
 # ── classifications (§5, §11) ────────────────────────────────────────
 @bp.route('/api/companies/<int:company_id>/classifications',
           methods=['POST'])
-@require('admin.master')
+@_login_required
 def api_set_classifications(company_id):
     """Replace the relationship types on a company.
 

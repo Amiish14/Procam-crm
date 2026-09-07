@@ -46,6 +46,8 @@
       {% for t in h.classifications %}<span class="pill info">{{ t }}</span>
       {% else %}<span class="pill muted">No relationship type set</span>{% endfor %}
       {% if h.strategic %}<span class="pill won">Strategic</span>{% endif %}
+      <button class="btn tiny ghost" onclick="openTags()"
+              title="Change what this organisation is to Procam">Edit</button>
     </div>
     <div class="c360-facts">
       {% if h.industry %}<span>Industry <b>{{ h.industry }}</b></span>{% endif %}
@@ -267,6 +269,52 @@
     </div>
   </div>
 </div>
+
+
+<!-- §5/§11 — one record, as many relationships as apply. -->
+<dialog id="tagDlg">
+  <div class="modal-wrap">
+    <h2>What is {{ h.name }} to Procam?</h2>
+    <p class="meta" style="margin-bottom:14px">Tick every one that applies.
+      A company can be a customer and a competitor at the same time — that
+      is one record, not two.</p>
+    <div id="tagBox">
+      {% for r in relationships %}
+      <label class="pill" style="cursor:pointer;margin:0 6px 6px 0;
+             display:inline-flex;gap:6px;align-items:center;height:26px">
+        <input type="checkbox" value="{{ r }}"
+               {{ 'checked' if r in h.classifications }}> {{ r }}</label>
+      {% endfor %}
+    </div>
+    <div id="tagMsg"></div>
+    <div class="actions">
+      <button class="btn ghost" onclick="document.getElementById('tagDlg').close()">Cancel</button>
+      <button class="btn primary" onclick="saveTags()">Save</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+function openTags(){
+  document.getElementById('tagMsg').innerHTML = '';
+  document.getElementById('tagDlg').showModal();
+}
+async function saveTags(){
+  var tags = Array.prototype.slice.call(
+      document.querySelectorAll('#tagBox input:checked'))
+      .map(function(c){ return c.value; });
+  var r = await fetch('{{ url_prefix }}/api/companies/{{ h.id }}/classifications', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({classifications: tags})});
+  var d = await r.json();
+  if(!d.ok){
+    document.getElementById('tagMsg').innerHTML =
+      '<div class="err">' + d.error + '</div>'; return;
+  }
+  location.reload();
+}
+</script>
 
 </div><!-- /crm-wrap -->
 </body>

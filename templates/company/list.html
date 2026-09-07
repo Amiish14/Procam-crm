@@ -24,7 +24,73 @@
       {% endif %}
     </div>
   </div>
+  <button class="btn primary" onclick="openNew()">+ New company</button>
 </div>
+
+<!-- §10/§11 — create the organisation once, then classify it. -->
+<dialog id="newCo">
+  <div class="modal-wrap">
+    <h2>New company</h2>
+    <p class="meta" style="margin-bottom:16px">One record per organisation.
+      If it already exists under another spelling it will be matched, not
+      duplicated.</p>
+    <div class="field"><label>Company name</label>
+      <input id="ncName" placeholder="e.g. Bharat Heavy Electricals Limited"
+             autocomplete="off"></div>
+    <div class="field"><label>Relationship — tick every one that applies</label>
+      <div id="ncTags">
+        {% for r in relationships %}
+        <label class="pill" style="cursor:pointer;margin:0 6px 6px 0;
+               display:inline-flex;gap:6px;align-items:center;height:26px">
+          <input type="checkbox" value="{{ r }}"
+                 {{ 'checked' if r == relationship }}> {{ r }}</label>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Industry</label><input id="ncInd"></div>
+      <div class="field"><label>Website</label><input id="ncWeb"></div>
+      <div class="field"><label>City</label><input id="ncCity"></div>
+      <div class="field"><label>Country</label>
+        <input id="ncCountry" value="India"></div>
+    </div>
+    <div id="ncMsg"></div>
+    <div class="actions">
+      <button class="btn ghost" onclick="document.getElementById('newCo').close()">Cancel</button>
+      <button class="btn primary" onclick="saveNew()">Create</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+function openNew(){
+  document.getElementById('ncMsg').innerHTML = '';
+  document.getElementById('newCo').showModal();
+  document.getElementById('ncName').focus();
+}
+async function saveNew(){
+  var name = (document.getElementById('ncName').value || '').trim();
+  var msg = document.getElementById('ncMsg');
+  if(!name){ msg.innerHTML = '<div class="err">Give the company a name.</div>';
+             return; }
+  var tags = Array.prototype.slice.call(
+      document.querySelectorAll('#ncTags input:checked'))
+      .map(function(c){ return c.value; });
+
+  var r = await fetch('{{ url_prefix }}/api/companies', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      name: name, classifications: tags,
+      industry: document.getElementById('ncInd').value,
+      website: document.getElementById('ncWeb').value,
+      city: document.getElementById('ncCity').value,
+      country: document.getElementById('ncCountry').value})});
+  var d = await r.json();
+  if(!d.ok){ msg.innerHTML = '<div class="err">' + d.error + '</div>'; return; }
+  location.href = '{{ url_prefix }}/companies/' + d.id;
+}
+</script>
 
 <form class="filters" method="get" action="{{ url_prefix }}/companies">
   <input name="q" value="{{ term }}" placeholder="Search by name…"

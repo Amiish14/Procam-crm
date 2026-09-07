@@ -38,6 +38,14 @@ def dupes():
         # up an earlier one's row and reverts the wrong merge.
         CompanyMergeLog.query.delete()
         Opportunity.query.delete()
+        # Relationship tags reference companies; other test modules create
+        # them, and deleting companies underneath leaves orphans that
+        # break the next merge.
+        try:
+            from presales.models import AccountRelationshipTag
+            AccountRelationshipTag.query.delete()
+        except Exception:
+            pass
         Company.query.delete()
         db.session.commit()
 

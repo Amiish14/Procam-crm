@@ -187,3 +187,86 @@ def test_named_routes_are_aliases_of_the_master(world):
 def test_anonymous_users_are_sent_to_login(world):
     r = flask_app.test_client().get(f'/companies/{world["acme"]}')
     assert r.status_code == 302
+
+
+# ── §10/§11: creating a company, then classifying it ─────────────────
+def _create(client, payload):
+    import json as _json
+    return client.post('/api/companies', data=_json.dumps(payload),
+                       content_type='application/json')
+
+
+def test_create_company_with_classifications(world):
+    r = _create(_c(), {'name': 'Brand New Rival',
+                       'classifications': ['Competitor'],
+                       'city': 'Chennai'})
+    assert r.status_code == 201
+    body = r.get_json()
+    assert body['created'] is True
+    assert body['classifications_added'] == ['Competitor']
+    with flask_app.app_context():
+        assert 'Competitor' in c360.classifications(body['id'])
+
+
+def test_creating_a_name_variant_updates_rather_than_duplicates(world):
+    """A salesperson adding a competitor they have just met must not be
+    stopped because the company is already a customer — nor create a
+    second record for it."""
+    first = _create(_c(), {'name': 'Duplicate Test Logistics',
+                           'classifications': ['Customer']}).get_json()
+    second = _create(_c(), {'name': 'Duplicate Test Logistics Pvt Ltd',
+                            'classifications': ['Competitor']}).get_json()
+
+    assert second['matched_existing'] is True
+    assert second['id'] == first['id'], 'a duplicate company was created'
+    assert second['classifications_added'] == ['Competitor']
+    with flask_app.app_context():
+        tags = set(c360.classifications(first['id']))
+    assert tags == {'Customer', 'Competitor'}, \
+        'both relationships should sit on the one record'
+
+
+def test_create_refuses_an_unknown_relationship(world):
+    r = _create(_c(), {'name': 'Bad Tag Co', 'classifications': ['Frenemy']})
+    assert r.status_code == 400
+    assert 'Master Data' in r.get_json()['error']
+
+
+def test_create_requires_a_name(world):
+    assert _create(_c(), {'classifications': ['Customer']}).status_code == 400
+
+
+def test_classifying_is_ordinary_work_not_admin_only(world):
+    """§38 already lets a salesperson classify from a scanned card, so the
+    same action on a company page carries the same rule."""
+    with flask_app.app_context():
+        plain = Employee.query.filter_by(emp_code='C360REP').first()
+        if not plain:
+            plain = Employee(emp_code='C360REP', name='Rep')
+            db.session.add(plain)
+        plain.role, plain.is_active = 'user', True
+        plain.is_super_admin, plain.must_change_pw = False, False
+        plain.vertical = 'Heavy Transport'
+        db.session.commit()
+
+    c = flask_app.test_client()
+    with c.session_transaction() as s:
+        s.update(emp_code='C360REP', name='Rep', role='user',
+                 vertical='Heavy Transport')
+    import json as _json
+    r = c.post(f'/api/companies/{world["quiet"]}/classifications',
+               data=_json.dumps({'classifications': ['Customer', 'Vendor']}),
+               content_type='application/json')
+    assert r.status_code == 200
+    assert set(r.get_json()['classifications']) == {'Customer', 'Vendor'}
+
+
+def test_the_company_page_offers_the_classification_editor(world):
+    body = _c().get(f'/companies/{world["acme"]}').get_data(as_text=True)
+    assert 'openTags(' in body, 'no way to change what a company is'
+    assert 'tagDlg' in body
+
+
+def test_the_list_offers_creation(world):
+    body = _c().get('/companies').get_data(as_text=True)
+    assert '+ New company' in body
