@@ -56,7 +56,8 @@ def company_360(company_id):
     return render_template('company/detail.html', company=company,
                            data=c360.full(company),
                            relationships=[i.label for i in
-                                          md.items('relationship')])
+                                          md.items('relationship')],
+                           networks=[i.label for i in md.items('network')])
 
 
 @bp.route('/api/companies/<int:company_id>/360')
@@ -137,13 +138,18 @@ def api_set_classifications(company_id):
         return jsonify(ok=False, error='No such company'), 404
 
     from app.master_data import service as md
-    allowed = {i.label for i in md.items('relationship')}
+    # §11 keeps relationship types and network memberships as tags on the
+    # same record ("Classification: Competitor · Networks: PCN, THLG"), so
+    # both vocabularies are valid here. Validating against relationships
+    # alone would silently strip an agent's network on the next edit.
+    allowed = ({i.label for i in md.items('relationship')}
+               | {i.label for i in md.items('network')})
     wanted = {t.strip() for t in (request.get_json(silent=True) or {})
               .get('classifications', []) if t and t.strip()}
     unknown = wanted - allowed
     if unknown:
         return jsonify(ok=False,
-                       error=f'Not a known relationship type: '
+                       error=f'Not a known relationship type or network: '
                              f'{", ".join(sorted(unknown))}. '
                              f'Add it under Master Data first.'), 400
 

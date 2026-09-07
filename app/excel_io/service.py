@@ -351,14 +351,22 @@ _COMPANY_FIELDS = ('industry', 'website', 'country', 'state', 'city',
                    'dev_stage', 'priority', 'notes')
 
 
-def _upsert_company(record, existing_id, mode):
+def _upsert_company(record, existing_id, mode, seen=None):
     from app import Company
+    from app.services.company_match import norm
 
     name = (record.get('name') or record.get('company') or '').strip()
     if not name:
         return None, None
 
-    if existing_id:
+    # Rows are validated against the database as it was BEFORE the import,
+    # so two rows for the same new company both look new. The preview says
+    # they will be merged into one record; without this they were not.
+    key = norm(name)
+    if seen is not None and key in seen:
+        company = seen[key]
+        action = 'update'
+    elif existing_id:
         company = Company.query.get(existing_id)
         action = 'update'
     else:
@@ -378,18 +386,26 @@ def _upsert_company(record, existing_id, mode):
         if value:
             setattr(company, field, value)
     db.session.flush()
-    _set_classifications(company.id, record.get('_relationship')
-                         or record.get('_network'))
+    if seen is not None and key:
+        seen[key] = company
+    # Both, not either: an agent that is a PCN member and an Overseas
+    # Partner should end with both on one record. The previous `or`
+    # silently dropped whichever came second.
+    for source in ('_relationship', '_network'):
+        _set_classifications(company.id, record.get(source))
     return company, action
 
 
 def _upsert_contact(record, company_id, mode):
     from app import Contact
 
-    name = (record.get('name') or record.get('_person_name') or '').strip()
+    # _person_name first: on a combined template `name` is the COMPANY
+    # name, so reading it first created contacts named after their
+    # employer. Only the people-only template uses `name` for a person.
+    name = (record.get('_person_name') or record.get('name') or '').strip()
     if not name:
         return None
-    email = (record.get('email') or record.get('_person_email') or '').strip()
+    email = (record.get('_person_email') or record.get('email') or '').strip()
 
     contact = None
     if email:
@@ -439,6 +455,9 @@ def _create_lead(record, company_id, mode):
 def commit(results, kind, mode, batch, actor):
     """Write a confirmed import. Rows with errors are never applied."""
     counts = {'created': 0, 'updated': 0, 'skipped': 0, 'failed': 0}
+    # Companies created during THIS run, so later rows naming the same
+    # organisation attach to it rather than creating another.
+    seen = {}
 
     for r in results:
         if r['errors']:
@@ -451,7 +470,8 @@ def commit(results, kind, mode, batch, actor):
         record = r['data']
         try:
             company = None
-            if kind in ('company', 'company_contact', 'network', 'lead'):
+            if kind in ('company', 'company_contact', 'network', 'lead',
+                        'overseas_agent'):
                 if kind == 'lead':
                     from app.services.company_match import build_index, match
                     from app import Company
@@ -460,12 +480,12 @@ def commit(results, kind, mode, batch, actor):
                     company, _reason, _c = match(record.get('company'), index)
                 else:
                     company, action = _upsert_company(
-                        record, r['existing_id'], mode)
+                        record, r['existing_id'], mode, seen)
                     if action == 'skip' or company is None:
                         counts['skipped'] += 1
                         continue
 
-            if kind in ('person', 'company_contact'):
+            if kind in ('person', 'company_contact', 'overseas_agent'):
                 if kind == 'person' and company is None:
                     from app.services.company_match import build_index, match
                     from app import Company

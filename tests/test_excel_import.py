@@ -240,3 +240,129 @@ def test_page_and_template_need_admin(clean):
     assert anon.get('/admin/import').status_code in (302, 401, 403)
     assert anon.get('/admin/import/template/company'
                     ).status_code in (302, 401, 403)
+
+
+# ── Overseas agents (§43) ────────────────────────────────────────────
+@pytest.fixture()
+def agents_ready(clean):
+    with flask_app.app_context():
+        for label in ('Overseas Agent', 'Overseas Partner'):
+            md.add_item('relationship', label, label)
+        for net in ('PCN', 'WCA', 'THLG'):
+            md.add_item('network', net, net)
+    return True
+
+
+def test_overseas_agent_template_exists_and_is_complete(agents_ready):
+    with flask_app.app_context():
+        wb = load_workbook(xl.build_template('overseas_agent'))
+    assert set(wb.sheetnames) == {'DATA', 'INSTRUCTIONS', 'LOOKUPS'}
+    headers = [c.value for c in wb['DATA'][1]]
+    for expected in ('Company Name', 'Relationship', 'Country', 'Networks',
+                     'Contact Name', 'Contact Email'):
+        assert expected in headers, f'{expected} missing from the template'
+
+
+def test_agent_template_lookups_carry_networks(agents_ready):
+    with flask_app.app_context():
+        wb = load_workbook(xl.build_template('overseas_agent'))
+    values = {c.value for row in wb['LOOKUPS'].iter_rows() for c in row}
+    assert 'PCN' in values
+    assert 'Overseas Agent' in values
+
+
+def _agent_row(name, relationship='Overseas Agent', country='United States',
+               networks='', person='', email=''):
+    """A row in the template's own column order."""
+    return [name, relationship, country, 'New York', '', '', '', '',
+            networks, person, '', email, '', '', '']
+
+
+def test_uploading_agents_maps_to_company_master(agents_ready):
+    """The whole point: fill it in, upload it, and it lands correctly."""
+    with flask_app.app_context():
+        from app import ImportBatch
+        records, problems = _records('overseas_agent', [
+            _agent_row('Logfret Inc.', 'Overseas Agent', 'United States',
+                       'PCN, WCA', 'Maria Silva', 'maria@logfret.com'),
+        ])
+        assert not problems, problems
+        results = xl.validate(records, 'overseas_agent', xl.MODE_UPSERT)
+        assert not results[0]['errors'], results[0]['errors']
+
+        batch = ImportBatch(kind='overseas_agent', filename='a.xlsx')
+        db.session.add(batch)
+        db.session.commit()
+        counts = xl.commit(results, 'overseas_agent', xl.MODE_UPSERT,
+                           batch, 'XLADM')
+        assert counts['created'] == 1
+
+        company = Company.query.filter(
+            Company.name.ilike('%logfret%')).first()
+        assert company is not None
+        assert company.country == 'United States'
+
+        tags = {t.tag for t in AccountRelationshipTag.query.filter_by(
+            account_id=company.id).all()}
+        assert 'Overseas Agent' in tags, 'the classification was not applied'
+        assert {'PCN', 'WCA'} <= tags, \
+            'network memberships were dropped — relationship and networks '\
+            'must BOTH be applied, not either'
+
+        contact = Contact.query.filter_by(name='Maria Silva').first()
+        assert contact is not None
+        assert contact.company_id == company.id
+
+
+def test_country_is_required_for_an_agent(agents_ready):
+    with flask_app.app_context():
+        records, _p = _records('overseas_agent',
+                               [_agent_row('No Country Ltd', country='')])
+        results = xl.validate(records, 'overseas_agent', xl.MODE_UPSERT)
+    assert any('Country is required' in e for e in results[0]['errors'])
+
+
+def test_an_agent_that_already_exists_is_updated_not_duplicated(agents_ready):
+    """An agent already on file as a customer gains the classification."""
+    with flask_app.app_context():
+        from app import ImportBatch
+        db.session.add(Company(name='Dual Role Logistics Ltd',
+                               is_active=True))
+        db.session.commit()
+
+        records, _p = _records('overseas_agent', [
+            _agent_row('Dual Role Logistics', 'Overseas Partner', 'Germany',
+                       'THLG')])
+        results = xl.validate(records, 'overseas_agent', xl.MODE_UPSERT)
+        batch = ImportBatch(kind='overseas_agent', filename='a.xlsx')
+        db.session.add(batch)
+        db.session.commit()
+        xl.commit(results, 'overseas_agent', xl.MODE_UPSERT, batch, 'XLADM')
+
+        matches = Company.query.filter(
+            Company.name.ilike('%dual role%')).all()
+        assert len(matches) == 1, 'the agent was duplicated'
+        tags = {t.tag for t in AccountRelationshipTag.query.filter_by(
+            account_id=matches[0].id).all()}
+        assert 'Overseas Partner' in tags and 'THLG' in tags
+
+
+def test_several_rows_for_one_agent_make_one_company(agents_ready):
+    with flask_app.app_context():
+        from app import ImportBatch
+        records, _p = _records('overseas_agent', [
+            _agent_row('Multi Contact Freight', person='Ann One',
+                       email='ann@mcf.com'),
+            _agent_row('Multi Contact Freight', person='Bob Two',
+                       email='bob@mcf.com'),
+        ])
+        results = xl.validate(records, 'overseas_agent', xl.MODE_UPSERT)
+        batch = ImportBatch(kind='overseas_agent', filename='a.xlsx')
+        db.session.add(batch)
+        db.session.commit()
+        xl.commit(results, 'overseas_agent', xl.MODE_UPSERT, batch, 'XLADM')
+
+        assert Company.query.filter(
+            Company.name.ilike('%multi contact%')).count() == 1
+        assert Contact.query.filter(
+            Contact.email.in_(['ann@mcf.com', 'bob@mcf.com'])).count() == 2

@@ -279,12 +279,22 @@
       A company can be a customer and a competitor at the same time — that
       is one record, not two.</p>
     <div id="tagBox">
+      <div class="sec">Relationship</div>
       {% for r in relationships %}
       <label class="pill" style="cursor:pointer;margin:0 6px 6px 0;
              display:inline-flex;gap:6px;align-items:center;height:26px">
         <input type="checkbox" value="{{ r }}"
                {{ 'checked' if r in h.classifications }}> {{ r }}</label>
       {% endfor %}
+      {% if networks %}
+      <div class="sec" style="margin-top:12px">Networks</div>
+      {% for n in networks %}
+      <label class="pill" style="cursor:pointer;margin:0 6px 6px 0;
+             display:inline-flex;gap:6px;align-items:center;height:26px">
+        <input type="checkbox" value="{{ n }}"
+               {{ 'checked' if n in h.classifications }}> {{ n }}</label>
+      {% endfor %}
+      {% endif %}
     </div>
     <div id="tagMsg"></div>
     <div class="actions">

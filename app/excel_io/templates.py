@@ -134,6 +134,53 @@ _t('lead', 'Historical Lead',
      'decision rather than being guessed.',
    ])
 
+_t('overseas_agent', 'Overseas Agent / Partner',
+   'Overseas agents and partners — the network Procam moves cargo '
+   'through. One row per organisation, with its main contact.',
+   'Company+Contact',
+   [
+     ('Company Name',     'name',        True,  None,
+      'Logfret Inc.',
+      'The agent or partner organisation. Matched against Company Master, '
+      'so an existing record is updated rather than duplicated.'),
+     ('Relationship',     '_relationship', True, 'relationship',
+      'Overseas Agent',
+      'Overseas Agent or Overseas Partner — or both, comma separated. '
+      'Add Vendor or Competitor too if they are also those.'),
+     ('Country',          'country',     True,  None, 'United States',
+      'Where the agent is based. Required — it is how partners are found.'),
+     ('City',             'city',        False, None, 'New York', ''),
+     ('Website',          'website',     False, None, 'logfret.com',
+      'Used to spot duplicates by domain.'),
+     ('Address',          'address',     False, None, '', ''),
+     ('Phone',            'phone',       False, None, '+1 212 555 0100', ''),
+     ('Email',            'email',       False, None, 'info@logfret.com',
+      'General company address, not the person.'),
+     ('Networks',         '_network',    False, 'network', 'PCN, WCA',
+      'Network memberships, comma separated.'),
+     ('Contact Name',     '_person_name', False, None, 'Maria Silva',
+      'Main contact at the agent. Left blank, only the company is created.'),
+     ('Designation',      '_designation', False, None,
+      'Head of Projects', ''),
+     ('Contact Email',    '_person_email', False, None,
+      'maria@logfret.com', 'Used to spot an existing person.'),
+     ('Contact Mobile',   '_person_mobile', False, None, '', ''),
+     ('Account Owner',    'pic_emp_code', False, None, 'EMP372011',
+      'Employee code of the Procam person who owns this relationship.'),
+     ('Notes',            'notes',       False, None,
+      'Strong in project cargo out of US East Coast', ''),
+   ],
+   notes=[
+     'An overseas agent is NOT a separate database. It is a company in '
+     'Company Master carrying the Overseas Agent classification, so the '
+     'same organisation can also be a Vendor or a Competitor without '
+     'becoming a second record.',
+     'Several rows for the same agent create ONE company with several '
+     'contacts.',
+     'Both Relationship and Networks are applied — an agent that is a PCN '
+     'member and an Overseas Partner ends with both on one record.',
+   ])
+
 _t('network', 'Network Membership',
    'Which networks a company belongs to — PCN, THLG and others.',
    'Network',

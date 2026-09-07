@@ -86,7 +86,7 @@ def main():
             'relationship': sorted(
                 set(relationship_seed)
                 | set(distinct(AccountRelationshipTag, 'tag'))),
-            'network': ['PCN', 'THLG', 'WCA', 'Other'],
+            'network': ['PCN', 'THLG', 'WCA', 'XLProjects', 'Other'],
             'service': ['Heavy Transport', 'Project Freight', 'Warehousing',
                         'Installation', 'Customs Clearance', 'Chartering',
                         'Other'],
