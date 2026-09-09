@@ -46,7 +46,7 @@ async function jfetch(url, opts) {
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 let DATA = null;
 async function loadData(){
-  const j = await jfetch('/api/competitors/' + CID);
+  const j = await jfetch('{{ url_prefix }}/api/competitors/' + CID);
   DATA = j.item;
 }
 document.querySelectorAll('.tab').forEach(t => {
@@ -128,7 +128,7 @@ async function addContact(){
   const name = prompt('Full name'); if (!name) return;
   const designation = prompt('Designation') || '';
   const linkedin = prompt('LinkedIn URL (optional)') || '';
-  const j = await jfetch('/api/competitors/'+CID+'/contacts',{method:'POST',
+  const j = await jfetch('{{ url_prefix }}/api/competitors/'+CID+'/contacts',{method:'POST',
     body: JSON.stringify({name, designation, linkedin_url: linkedin,
                           source:'Manual'})});
   if (j.error){alert(j.error); return;}
@@ -136,7 +136,7 @@ async function addContact(){
 }
 async function delContact(id){
   if (!confirm('Delete this contact?')) return;
-  await jfetch('/api/competitor-contacts/'+id,{method:'DELETE'});
+  await jfetch('{{ url_prefix }}/api/competitor-contacts/'+id,{method:'DELETE'});
   await loadData(); renderTab('contacts');
 }
 
@@ -186,7 +186,7 @@ async function addIntel(){
   const source = prompt('Source (LinkedIn / News / …)') || '';
   const source_url = prompt('Source URL') || '';
   const event_date = prompt('Event date (YYYY-MM-DD)') || '';
-  const j = await jfetch('/api/competitors/'+CID+'/intelligence',{method:'POST',
+  const j = await jfetch('{{ url_prefix }}/api/competitors/'+CID+'/intelligence',{method:'POST',
     body: JSON.stringify({event_type, summary, source, source_url, event_date})});
   if (j.error){alert(j.error); return;}
   await loadData(); renderTab('intelligence');
@@ -254,7 +254,7 @@ async function addAssess(){
     if (v === null) return;
     if (v !== '') payload[a] = parseInt(v, 10);
   }
-  const j = await jfetch('/api/competitors/'+CID+'/assessments',{method:'POST',
+  const j = await jfetch('{{ url_prefix }}/api/competitors/'+CID+'/assessments',{method:'POST',
     body: JSON.stringify(payload)});
   if (j.error){alert(j.error); return;}
   await loadData(); renderTab('assessments');
@@ -262,7 +262,7 @@ async function addAssess(){
 
 async function renderPerf(p){
   p.innerHTML = 'Loading…';
-  const j = await jfetch('/api/competitors/'+CID+'/performance');
+  const j = await jfetch('{{ url_prefix }}/api/competitors/'+CID+'/performance');
   p.innerHTML = `
     <div class="kpi">
       <div class="tile"><div class="k">Encounters</div><div class="v">${j.encounters}</div></div>

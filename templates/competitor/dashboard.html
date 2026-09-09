@@ -49,13 +49,13 @@ async function jfetch(url){
 }
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 (async () => {
-  const j = await jfetch('/api/competitors?active_only=1');
+  const j = await jfetch('{{ url_prefix }}/api/competitors?active_only=1');
   const comps = j.items || [];
   document.getElementById('kTot').textContent = comps.length;
 
   // Encounter counts (parallel)
   const perfs = await Promise.all(comps.slice(0,50).map(c =>
-    jfetch('/api/competitors/'+c.id+'/performance').catch(()=>({encounters:0}))));
+    jfetch('{{ url_prefix }}/api/competitors/'+c.id+'/performance').catch(()=>({encounters:0}))));
   const withEnc = comps.slice(0,50).map((c,i) => ({c, p: perfs[i]}));
   withEnc.sort((a,b)=>(b.p.encounters||0)-(a.p.encounters||0));
   const top = withEnc.slice(0,10);
@@ -74,7 +74,7 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;',
   // Recent intelligence — fetch top-8 competitors, take first 3 each,
   // merge & sort
   const intelBatches = await Promise.all(top.slice(0,8).map(x =>
-    jfetch('/api/competitors/'+x.c.id+'/intelligence').catch(()=>({items:[]}))));
+    jfetch('{{ url_prefix }}/api/competitors/'+x.c.id+'/intelligence').catch(()=>({items:[]}))));
   let intels = [];
   intelBatches.forEach((b,i) => (b.items||[]).slice(0,5).forEach(it =>
     intels.push(Object.assign({_comp: top[i].c.name}, it))));

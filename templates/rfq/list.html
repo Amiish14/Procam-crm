@@ -97,7 +97,7 @@ async function jfetch(url, opts) {
 let RFQS = [];
 async function loadRfqs() {
   try {
-    const j = await jfetch('/api/rfqs');
+    const j = await jfetch('{{ url_prefix }}/api/rfqs');
     RFQS = (j && j.ok) ? (j.rfqs || []) : [];
   } catch (e) { RFQS = []; }
   renderTable();
@@ -150,7 +150,7 @@ async function submitCreate() {
   ['account_id','lead_id'].forEach(k => {
     if (payload[k] != null) payload[k] = parseInt(payload[k], 10);
   });
-  const j = await jfetch('/api/rfqs', {method:'POST', body: JSON.stringify(payload)});
+  const j = await jfetch('{{ url_prefix }}/api/rfqs', {method:'POST', body: JSON.stringify(payload)});
   if (j && j.ok) {
     closeCreate();
     location = '/rfqs/' + j.rfq.id;

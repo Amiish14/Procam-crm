@@ -76,7 +76,7 @@ async function loadData(){
   add('pic','fPic'); add('vertical','fVert'); add('industry','fInd');
   add('country','fCtry'); add('account','fAcct'); add('financial_year','fFy');
   add('date_from','fFrom'); add('date_to','fTo');
-  const j = await jfetch('/api/funnel/account-development?' + q.toString());
+  const j = await jfetch('{{ url_prefix }}/api/funnel/account-development?' + q.toString());
   STAGES = j.stages || [];
   drawFunnel();
   drawTable();

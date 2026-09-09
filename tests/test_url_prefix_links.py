@@ -152,3 +152,51 @@ def test_my_work_task_links_are_prefixed(client):
     for link in links:
         assert link.startswith(_PREFIX + '/') or link == '#', \
             f'task link bypasses {_PREFIX}: {link}'
+
+
+def test_no_client_side_fetch_bypasses_the_prefix():
+    """A raw fetch('/api/...') 404s under /CRM and the page renders empty.
+
+    This is how the Account, Project and Sales funnels, business-card
+    scanning, the RFQ pages, the competitor pages and Help admin all
+    loaded successfully and then showed nothing: the HTML was fine, every
+    data call missed.
+
+    app.html wraps them in crmUrl(); server-rendered templates prefix the
+    literal with url_prefix.
+    """
+    import re
+    pat = re.compile(r"""fetch\(\s*(['"`])(/(?!/)[^'"`]*)""")
+    offenders = []
+    for tpl in glob.glob(os.path.join(_TEMPLATES, '**', '*.html'),
+                         recursive=True):
+        for n, line in enumerate(open(tpl), 1):
+            for m in pat.finditer(line):
+                url = m.group(2)
+                if url.startswith('{{'):
+                    continue
+                offenders.append(
+                    f'{os.path.relpath(tpl, _ROOT)}:{n}: fetch("{url}")')
+    assert not offenders, (
+        'These calls resolve at the domain root, not under the deployment '
+        'prefix:\n  ' + '\n  '.join(offenders)
+        + '\n\nIn app.html wrap the URL in crmUrl(); elsewhere prefix it '
+          'with {{ url_prefix }}.')
+
+
+@pytest.mark.parametrize('path', [
+    '/funnels/account-development',
+    '/funnels/project-intelligence',
+    '/funnels/sales',
+    '/business-cards/scan',
+])
+def test_the_funnel_and_scan_pages_can_reach_their_data(client, path):
+    """They returned 200 while every fetch inside them 404'd."""
+    import re
+    r = client.get(path, environ_overrides={'SCRIPT_NAME': _PREFIX})
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    calls = re.findall(r"""fetch\(\s*['"`](/[^'"`]*)""", html)
+    assert calls, f'{path} makes no data call at all — did it lose its script?'
+    bad = [u for u in calls if not u.startswith(_PREFIX + '/')]
+    assert not bad, f'{path} calls outside the prefix: {bad}'

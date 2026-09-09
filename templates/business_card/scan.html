@@ -88,7 +88,7 @@
     try{
       const fd = new FormData();
       fd.append('file', f);
-      const r = await fetch('/api/business-cards/upload', {method:'POST', body:fd});
+      const r = await fetch('{{ url_prefix }}/api/business-cards/upload', {method:'POST', body:fd});
       const j = await r.json();
       if (!j.ok) throw new Error(j.error || 'Upload failed');
       currentCard = j.card;
@@ -179,7 +179,7 @@
       if (linkAccountId) body.link_account_id = linkAccountId;
       if (linkContactId) body.link_contact_id = linkContactId;
     }
-    const r = await fetch('/api/business-cards/'+currentCard.id+'/save',
+    const r = await fetch('{{ url_prefix }}/api/business-cards/'+currentCard.id+'/save',
       {method:'POST', headers:{'Content-Type':'application/json'},
        body: JSON.stringify(body)});
     const j = await r.json();
@@ -197,7 +197,7 @@
   $('btn-discard').onclick = async ()=>{
     if (!currentCard) return;
     if (!confirm('Discard this scan?')) return;
-    await fetch('/api/business-cards/'+currentCard.id+'/discard',
+    await fetch('{{ url_prefix }}/api/business-cards/'+currentCard.id+'/discard',
       {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
     location.reload();
   };

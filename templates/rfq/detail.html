@@ -150,7 +150,7 @@ function pill(s) {
 }
 
 async function reload() {
-  const j = await jfetch('/api/rfqs/' + RFQ_ID);
+  const j = await jfetch('{{ url_prefix }}/api/rfqs/' + RFQ_ID);
   if (!j || !j.ok) return;
   const rfq = j.rfq;
   document.getElementById('hStatus').textContent = rfq.status;
@@ -188,18 +188,18 @@ async function saveHeader() {
   const fd = new FormData(f);
   const payload = {};
   fd.forEach((v, k) => { payload[k] = v; });
-  const j = await jfetch('/api/rfqs/' + RFQ_ID, {method:'PATCH', body: JSON.stringify(payload)});
+  const j = await jfetch('{{ url_prefix }}/api/rfqs/' + RFQ_ID, {method:'PATCH', body: JSON.stringify(payload)});
   if (j && j.ok) { reload(); } else { alert((j && j.error) || 'Save failed'); }
 }
 async function advance() {
-  const j = await jfetch('/api/rfqs/' + RFQ_ID + '/advance', {method:'POST', body:'{}'});
+  const j = await jfetch('{{ url_prefix }}/api/rfqs/' + RFQ_ID + '/advance', {method:'POST', body:'{}'});
   if (j && j.ok) { reload(); } else { alert((j && j.error) || 'Advance failed'); }
 }
 async function uploadAtt() {
   const f = document.getElementById('attFile').files[0];
   if (!f) return alert('choose a file');
   const fd = new FormData(); fd.append('file', f);
-  const r = await fetch('/api/rfqs/' + RFQ_ID + '/attachments',
+  const r = await fetch('{{ url_prefix }}/api/rfqs/' + RFQ_ID + '/attachments',
                         {method:'POST', headers:{'X-CSRFToken': CSRF_TOKEN}, body: fd});
   const j = await r.json();
   if (j && j.ok) { document.getElementById('attFile').value = ''; reload(); }
@@ -212,7 +212,7 @@ async function submitLine() {
   const p = {};
   fd.forEach((v,k) => { if (v !== '' && v != null) p[k] = v; });
   if (!p.service) return alert('service required');
-  const j = await jfetch('/api/rfqs/' + RFQ_ID + '/lines',
+  const j = await jfetch('{{ url_prefix }}/api/rfqs/' + RFQ_ID + '/lines',
                          {method:'POST', body: JSON.stringify(p)});
   if (j && j.ok) { f.reset(); document.getElementById('addLineModal').close(); reload(); }
   else { alert((j && j.error) || 'Failed'); }
@@ -230,7 +230,7 @@ async function submitRate() {
   const p = {};
   fd.forEach((v,k) => { if (k !== 'line_id' && v !== '' && v != null) p[k] = v; });
   if (!p.rate_amount) return alert('amount required');
-  const j = await jfetch(`/api/rfqs/${RFQ_ID}/lines/${line_id}/submit-rate`,
+  const j = await jfetch(`{{ url_prefix }}/api/rfqs/${RFQ_ID}/lines/${line_id}/submit-rate`,
                          {method:'POST', body: JSON.stringify(p)});
   if (j && j.ok) { document.getElementById('rateModal').close(); reload(); }
   else { alert((j && j.error) || 'Failed'); }

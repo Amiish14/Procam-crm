@@ -78,7 +78,7 @@ async function loadData(){
   add('country','fCtry'); add('state','fState'); add('branch','fBranch');
   add('project','fProj'); add('financial_year','fFy');
   add('date_from','fFrom'); add('date_to','fTo');
-  const j = await jfetch('/api/funnel/project-intelligence?' + q.toString());
+  const j = await jfetch('{{ url_prefix }}/api/funnel/project-intelligence?' + q.toString());
   STAGES = j.stages || [];
   drawFunnel();
   drawTable();

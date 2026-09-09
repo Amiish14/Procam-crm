@@ -894,7 +894,7 @@ CRM._empsByCode = {};
 CRM._empsPromise = null;
 CRM.ensureEmployees = function(){
   if (CRM._empsPromise) return CRM._empsPromise;
-  CRM._empsPromise = fetch('/api/employees').then(r=>r.json()).then(function(list){
+  CRM._empsPromise = fetch(crmUrl('/api/employees')).then(r=>r.json()).then(function(list){
     (Array.isArray(list) ? list : []).forEach(function(e){
       CRM._empsByCode[e.emp_code] = e;
     });
@@ -4981,7 +4981,7 @@ async function acctSubmit(){
     notes: g('naNotes').value.trim(),
   };
   try {
-    const r = await fetch('/api/accounts', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const r = await fetch(crmUrl('/api/accounts'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     const j = await r.json();
     if (!j.ok) { alert('Could not create: ' + (j.error||'unknown')); return; }
     closeModal();
@@ -5082,7 +5082,7 @@ async function acctLogActivity(id){
       { name:'next_at', label:'Next action date',  kind:'date', span:'half' },
     ],
     onSubmit: async function(vals){
-      const r = await fetch(`/api/accounts/${id}/activities`, {method:'POST',
+      const r = await fetch(crmUrl(`/api/accounts/${id}/activities`), {method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({kind: vals.kind, subject: vals.subject, body: vals.body,
                               next_action: vals.next, next_action_at: vals.next_at})});
@@ -5104,7 +5104,7 @@ async function acctChangeStage(id){
       { name:'note',  label:'Note',      kind:'textarea', rows: 3, help: 'Optional context for the stage change.' },
     ],
     onSubmit: async function(vals){
-      const r = await fetch(`/api/accounts/${id}/stage`, {method:'POST',
+      const r = await fetch(crmUrl(`/api/accounts/${id}/stage`), {method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({new_stage: vals.stage, note: vals.note})});
       const j = await r.json();
@@ -5127,7 +5127,7 @@ async function acctReassign(id){
       { name:'reason', label:'Reason', kind:'textarea', rows: 3 },
     ],
     onSubmit: async function(vals){
-      const r = await fetch(`/api/accounts/${id}/assign`, {method:'POST',
+      const r = await fetch(crmUrl(`/api/accounts/${id}/assign`), {method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({new_pic: vals.pic, reason: vals.reason})});
       const j = await r.json();
@@ -5149,7 +5149,7 @@ async function acctConvert(id){
         help: 'Optional. Leave blank if unknown.' },
     ],
     onSubmit: async function(vals){
-      const r = await fetch(`/api/accounts/${id}/convert`, {method:'POST',
+      const r = await fetch(crmUrl(`/api/accounts/${id}/convert`), {method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({title: vals.title, source_type:'Account Development',
                               value_inr: vals.value ? parseFloat(vals.value) : null})});
@@ -5279,7 +5279,7 @@ async function prjSubmit(){
     logistics_potential: g('pnPot').value.trim(),
   };
   try {
-    const r = await fetch('/api/projects', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const r = await fetch(crmUrl('/api/projects'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     const j = await r.json();
     if (!j.ok) { alert('Could not create'); return; }
     closeModal();
@@ -5359,7 +5359,7 @@ async function prjAddUpdate(id){
       { name:'next_review', label:'Next review date', kind:'date', span:'half' },
     ],
     onSubmit: async function(vals){
-      const r = await fetch(`/api/projects/${id}/updates`, {method:'POST',
+      const r = await fetch(crmUrl(`/api/projects/${id}/updates`), {method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({summary: vals.summary, update_type: vals.type,
                               update_date: vals.date,
@@ -5384,7 +5384,7 @@ async function prjChangeStage(id){
       { name:'note',  label:'Note',      kind:'textarea', rows: 3 },
     ],
     onSubmit: async function(vals){
-      const r = await fetch(`/api/projects/${id}/stage`, {method:'POST',
+      const r = await fetch(crmUrl(`/api/projects/${id}/stage`), {method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({new_stage: vals.stage, note: vals.note})});
       const j = await r.json();
@@ -5428,7 +5428,7 @@ async function prjLinkAccount(id){
       /* Else if pure numeric input */
       if (!acctId && /^\d+$/.test(rawVal)) acctId = parseInt(rawVal, 10);
       if (!acctId) { CRMToast.error('Could not identify the account. Pick from the list.'); return false; }
-      const r = await fetch(`/api/projects/${id}/accounts`, {method:'POST',
+      const r = await fetch(crmUrl(`/api/projects/${id}/accounts`), {method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({account_id: acctId, role: vals.role,
                               is_primary: vals.role === 'Project Owner',
@@ -5451,7 +5451,7 @@ async function prjConvert(id){
       { name:'value', label:'Estimated value (₹)', kind:'number', span:'half' },
     ],
     onSubmit: async function(vals){
-      const r = await fetch(`/api/projects/${id}/convert`, {method:'POST',
+      const r = await fetch(crmUrl(`/api/projects/${id}/convert`), {method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({title: vals.title, source_type:'Project Intelligence',
                               value_inr: vals.value ? parseFloat(vals.value) : null})});
@@ -5714,7 +5714,7 @@ async function loadMyWork(){
   try {
     var page = document.body && document.body.getAttribute('data-page');
     if (page){
-      fetch('/api/help/tooltips?page=' + encodeURIComponent(page),
+      fetch(crmUrl('/api/help/tooltips?page=') + encodeURIComponent(page),
             {credentials:'same-origin'})
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(j){

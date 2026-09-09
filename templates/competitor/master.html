@@ -80,7 +80,7 @@ function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;',
 let ROWS = [];
 async function loadRows(){
   const q = (document.getElementById('fSearch').value || '').trim();
-  const j = await jfetch('/api/competitors' + (q ? ('?q=' + encodeURIComponent(q)) : ''));
+  const j = await jfetch('{{ url_prefix }}/api/competitors' + (q ? ('?q=' + encodeURIComponent(q)) : ''));
   ROWS = (j && j.items) || [];
   renderTable();
 }
@@ -109,7 +109,7 @@ async function submitCreate(){
   ['aliases','services','verticals'].forEach(k=>{
     if (payload[k]) payload[k] = payload[k].split(',').map(s=>s.trim()).filter(Boolean);
   });
-  const j = await jfetch('/api/competitors',{method:'POST',body:JSON.stringify(payload)});
+  const j = await jfetch('{{ url_prefix }}/api/competitors',{method:'POST',body:JSON.stringify(payload)});
   if (j && j.item){
     closeCreate();
     location = '/competitors/' + j.item.id;
