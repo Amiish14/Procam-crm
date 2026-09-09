@@ -11,6 +11,31 @@ from datetime import datetime
 from app import db
 
 
+class PoType:
+    """What the customer actually committed on (§ proposed process)."""
+    PO       = 'Customer PO'
+    SO       = 'Sales Order'
+    CONTRACT = 'Customer Contract'
+    CHOICES  = (PO, SO, CONTRACT)
+
+
+class HandoverStatus:
+    """A won deal cannot reach Operations without a customer commitment.
+
+    AWAITING_PO is where every won deal starts: the deal is won, but
+    nothing can be created in TMS until the PO, Sales Order or Contract is
+    recorded against it.
+    """
+    AWAITING_PO   = 'Awaiting PO'
+    PENDING       = 'Handover Pending'      # PO captured, ready for TMS
+    PROJECT_MADE  = 'TMS Project Created'
+    COMPLETE      = 'Handover Complete'
+    CANCELLED     = 'Cancelled'
+
+    # Statuses that mean the PO has been recorded.
+    HAS_PO = (PENDING, PROJECT_MADE, COMPLETE)
+
+
 class WonHandover(db.Model):
     __tablename__ = 'won_handovers'
 
@@ -37,12 +62,23 @@ class WonHandover(db.Model):
     scope           = db.Column(db.Text)
     vertical        = db.Column(db.String(80))
     pic_emp_code    = db.Column(db.String(20))
-    po_ref          = db.Column(db.String(80))
+    # ── Customer commitment (captured BEFORE the project exists) ──
+    # The order was previously: win → create Project and Job → raise the
+    # PO against them. That allowed several projects under one PO and a
+    # project with no PO at all. Now the PO comes first and the project
+    # is created against it, so one PO means one Project and one Job.
+    po_ref          = db.Column(db.String(80), index=True)
+    po_type         = db.Column(db.String(30))   # see PoType
+    po_date         = db.Column(db.Date)
+    po_value        = db.Column(db.Numeric(15, 2))
+    po_currency     = db.Column(db.String(6), default='INR')
+    po_captured_by  = db.Column(db.String(20))
+    po_captured_at  = db.Column(db.DateTime)
     attachments     = db.Column(db.JSON, default=list)   # [{name, path}, ...]
     commercial_refs = db.Column(db.JSON, default=dict)
 
-    # Handover Pending / TMS Project Created / Handover Complete / Cancelled
-    status         = db.Column(db.String(24), default='Handover Pending',
+    # See HandoverStatus — starts at 'Awaiting PO'.
+    status         = db.Column(db.String(24), default='Awaiting PO',
                                index=True, nullable=False)
 
     tms_project_id = db.Column(db.String(40))
@@ -74,6 +110,14 @@ class WonHandover(db.Model):
             'vertical':        self.vertical or '',
             'pic_emp_code':    self.pic_emp_code or '',
             'po_ref':          self.po_ref or '',
+            'po_type':         self.po_type or '',
+            'po_date':         str(self.po_date) if self.po_date else '',
+            'po_value':        float(self.po_value) if self.po_value else 0.0,
+            'po_currency':     self.po_currency or 'INR',
+            'po_captured_by':  self.po_captured_by or '',
+            'po_captured_at':  (str(self.po_captured_at)[:16]
+                                if self.po_captured_at else ''),
+            'has_po':          bool(self.po_ref),
             'attachments':     list(self.attachments or []),
             'commercial_refs': dict(self.commercial_refs or {}),
             'status':          self.status,

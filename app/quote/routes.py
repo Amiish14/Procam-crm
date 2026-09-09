@@ -682,7 +682,7 @@ def _autocreate_handover(source_entity):
     Deduped by (opportunity_id, quote_id) so re-firing the hook is safe.
     """
     try:
-        from app.models.tms_handover import WonHandover
+        from app.models.tms_handover import WonHandover, HandoverStatus
         from app import Opportunity  # noqa: F401
         opp_id = None
         q_id = None
@@ -748,12 +748,12 @@ def _autocreate_handover(source_entity):
             origin=origin, destination=destination, scope=scope,
             vertical=vertical, pic_emp_code=pic,
             attachments=[], commercial_refs={},
-            status='Handover Pending',
+            status=HandoverStatus.AWAITING_PO,
             created_by_id=session.get('emp_code') if session else None,
         )
         db.session.add(row)
         db.session.flush()
-        _fire(row, 'WonHandover', None, 'Handover Pending')
+        _fire(row, 'WonHandover', None, HandoverStatus.AWAITING_PO)
         return row
     except Exception:
         try:

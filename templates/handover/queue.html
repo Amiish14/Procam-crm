@@ -6,6 +6,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  tr.is-target > td {
+    background: color-mix(in srgb, var(--accent, #2563eb) 12%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #2563eb) 35%, transparent);
+  }
+</style>
 </head>
 <body>
 {% include "_crm_topbar.html" %}
@@ -15,7 +21,9 @@
   <div>
     <h1>TMS Handover Queue</h1>
     <div style="color:var(--text-2);font-size:13px;margin-top:4px">
-      Won deals awaiting TMS project creation.
+      Won&nbsp;→&nbsp;<b>capture the Customer PO</b>&nbsp;→&nbsp;create the
+      TMS Project and Job. One PO = one Project and one Job, so the PO is
+      recorded before the project exists, not after.
     </div>
   </div>
   <div>
@@ -26,7 +34,8 @@
 
 <div class="filters">
   <select id="fStatus" onchange="load()">
-    <option value="Handover Pending">Handover Pending</option>
+    <option value="Awaiting PO">Awaiting PO</option>
+    <option value="Handover Pending">Ready for TMS (PO captured)</option>
     <option value="TMS Project Created">TMS Project Created</option>
     <option value="Handover Complete">Handover Complete</option>
     <option value="Cancelled">Cancelled</option>
@@ -39,14 +48,48 @@
     <th>#</th><th>Account</th><th>Vertical</th>
     <th class="num">Won value</th>
     <th>Opp / Quote</th>
+    <th>Customer PO</th>
     <th>Status</th><th>TMS Project</th><th>Acknowledged</th><th></th>
   </tr></thead>
-  <tbody id="tbody"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
+  <tbody id="tbody"><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
 </table>
+
+<dialog id="poModal">
+  <form method="dialog" class="modal-wrap" id="poForm">
+    <h2 style="margin-bottom:4px">Capture the customer commitment</h2>
+    <div style="color:var(--text-2);font-size:13px;margin-bottom:12px">
+      The TMS Project and Job are created against this reference. It can
+      only be used once for this customer.
+    </div>
+    <input type="hidden" name="hid">
+    <div class="grid2">
+      <div class="field">
+        <label>Type *</label>
+        <select name="po_type">
+          <option>Customer PO</option>
+          <option>Sales Order</option>
+          <option>Customer Contract</option>
+        </select>
+      </div>
+      <div class="field"><label>Reference *</label>
+        <input name="po_ref" required placeholder="e.g. PO/2026/00147"></div>
+      <div class="field"><label>Date</label><input type="date" name="po_date"></div>
+      <div class="field"><label>Value</label>
+        <input name="po_value" type="number" step="0.01" min="0"></div>
+      <div class="field"><label>Currency</label>
+        <input name="po_currency" value="INR" maxlength="6"></div>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn" onclick="document.getElementById('poModal').close()">Cancel</button>
+      <button type="button" class="btn success" onclick="submitPO()">Save PO</button>
+    </div>
+  </form>
+</dialog>
 
 <dialog id="hModal">
   <form method="dialog" class="modal-wrap" id="hForm">
-    <h2 style="margin-bottom:12px">Mark as TMS Project Created</h2>
+    <h2 style="margin-bottom:4px">Mark as TMS Project Created</h2>
+    <div id="hPoNote" style="color:var(--text-2);font-size:13px;margin-bottom:12px"></div>
     <input type="hidden" name="hid">
     <div class="grid2">
       <div class="field"><label>TMS Project ID *</label><input name="tms_project_id" required></div>
@@ -65,29 +108,58 @@
 const CSRF = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
 async function jf(u, o) {
   o = o || {}; o.headers = Object.assign({'Content-Type':'application/json','X-CSRFToken': CSRF}, o.headers || {});
+  // The portal is served under a prefix; a bare /api/… resolves at the
+  // domain root, where nginx 404s it and the page renders empty.
+  if (u.charAt(0) === '/' && u.indexOf('{{ url_prefix }}') !== 0) u = '{{ url_prefix }}' + u;
   const r = await fetch(u, o); return r.json();
 }
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function pill(s){const c=(s||'').toLowerCase().replace(/\s+/g,'-');return `<span class="pill ${c}">${esc(s||'')}</span>`}
+// Deep links land here from My Work tasks, the Data Quality drill-through
+// and the funnel: /handovers?status=Awaiting%20PO&id=42. Without this the
+// link opened the default queue and the record the user clicked was
+// nowhere on screen.
+const Q = new URLSearchParams(location.search);
+const HIGHLIGHT = parseInt(Q.get('id') || '', 10) || null;
+
+function applyDeepLink() {
+  const sel = document.getElementById('fStatus');
+  const want = Q.get('status');
+  if (want && [...sel.options].some(o => o.value === want)) {
+    sel.value = want;
+  } else if (HIGHLIGHT) {
+    sel.value = 'all';   // the row may be in any state
+  }
+}
+
 async function load() {
   const st = document.getElementById('fStatus').value;
   const j = await jf('/api/handovers?status=' + encodeURIComponent(st));
   const rows = (j && j.ok) ? (j.handovers || []) : [];
   const tbody = document.getElementById('tbody');
-  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty">No handovers.</td></tr>'; return; }
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="10" class="empty">Nothing here.</td></tr>'; return; }
   tbody.innerHTML = rows.map(r => `
-    <tr>
+    <tr id="h${r.id}">
       <td>${r.id}</td>
       <td><b>${esc(r.account_name)}</b></td>
       <td>${esc(r.vertical)}</td>
       <td class="num">${Number(r.won_value||0).toLocaleString()}</td>
       <td>${r.opportunity_id ? 'Opp #' + r.opportunity_id : ''}${r.quote_id ? ' / Q#' + r.quote_id : ''}</td>
+      <td>${r.po_ref
+            ? `<b>${esc(r.po_ref)}</b><br><span style="color:var(--text-2);font-size:12px">${esc(r.po_type || '')}${r.po_date ? ' · ' + esc(r.po_date) : ''}</span>`
+            : '<span style="color:var(--text-2)">— not yet raised —</span>'}</td>
       <td>${pill(r.status)}</td>
       <td>${esc(r.tms_project_id || '')}</td>
       <td>${esc(r.tms_ack_by || '')}</td>
       <td>
-        ${r.status === 'Handover Pending'
-          ? `<button class="btn tiny primary" onclick='openH(${JSON.stringify(r)})'>Mark TMS Created</button>`
+        ${!r.has_po && r.status !== 'Cancelled'
+          ? `<button class="btn tiny primary" onclick='openPO(${JSON.stringify(r)})'>Capture PO</button>`
+          : ''}
+        ${r.has_po && r.status === 'Handover Pending'
+          ? `<button class="btn tiny primary" onclick='openH(${JSON.stringify(r)})'>Create TMS Project</button>`
+          : ''}
+        ${r.has_po && r.status === 'Handover Pending'
+          ? `<button class="btn tiny" onclick='openPO(${JSON.stringify(r)})'>Edit PO</button>`
           : ''}
         ${r.status === 'TMS Project Created'
           ? `<button class="btn tiny success" onclick="markComplete(${r.id})">Complete</button>`
@@ -97,12 +169,50 @@ async function load() {
           : ''}
       </td>
     </tr>`).join('');
+
+  if (HIGHLIGHT) {
+    const row = document.getElementById('h' + HIGHLIGHT);
+    if (row) {
+      row.classList.add('is-target');
+      row.scrollIntoView({block: 'center', behavior: 'smooth'});
+    }
+  }
 }
 function openH(r) {
   const f = document.getElementById('hForm');
   f.reset();
   f.hid.value = r.id;
+  document.getElementById('hPoNote').textContent =
+    'Against ' + (r.po_type || 'Customer PO') + ' ' + (r.po_ref || '') +
+    ' — this PO carries this project and job only.';
   document.getElementById('hModal').showModal();
+}
+
+function openPO(r) {
+  const f = document.getElementById('poForm');
+  f.reset();
+  f.hid.value = r.id;
+  if (r.po_ref) {
+    f.po_ref.value = r.po_ref;
+    f.po_type.value = r.po_type || 'Customer PO';
+    if (r.po_date) f.po_date.value = r.po_date;
+    if (r.po_value) f.po_value.value = r.po_value;
+    f.po_currency.value = r.po_currency || 'INR';
+  }
+  document.getElementById('poModal').showModal();
+}
+
+async function submitPO() {
+  const f = document.getElementById('poForm');
+  const fd = new FormData(f);
+  const hid = fd.get('hid');
+  const p = {};
+  fd.forEach((v, k) => { if (k !== 'hid' && v !== '' && v != null) p[k] = v; });
+  if (!p.po_ref) { alert('A PO reference is required.'); return; }
+  const j = await jf('/api/handovers/' + hid + '/po',
+                     {method: 'POST', body: JSON.stringify(p)});
+  if (j && j.ok) { document.getElementById('poModal').close(); load(); }
+  else alert((j && j.error) || 'Save failed');
 }
 async function submitHandover() {
   const f = document.getElementById('hForm');
@@ -126,6 +236,7 @@ async function cancelH(hid) {
                      {method:'POST', body: JSON.stringify({reason})});
   if (j && j.ok) load(); else alert((j && j.error) || 'Failed');
 }
+applyDeepLink();
 load();
 </script>
 </div><!-- /crm-wrap -->

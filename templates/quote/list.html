@@ -67,6 +67,9 @@
 const CSRF = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
 async function jf(u, o) {
   o = o || {}; o.headers = Object.assign({'Content-Type':'application/json','X-CSRFToken': CSRF}, o.headers || {});
+  // The portal is served under a prefix; a bare /api/… resolves at the
+  // domain root, where nginx 404s it and the page renders empty.
+  if (u.charAt(0) === '/' && u.indexOf('{{ url_prefix }}') !== 0) u = '{{ url_prefix }}' + u;
   const r = await fetch(u, o); return r.json();
 }
 let QS = [];

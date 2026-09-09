@@ -189,6 +189,49 @@ def test_no_client_side_fetch_bypasses_the_prefix():
           'with {{ url_prefix }}.')
 
 
+def test_no_fetch_wrapper_bypasses_the_prefix():
+    """The same bug, one level of indirection down.
+
+    test_no_client_side_fetch_bypasses_the_prefix only sees a literal
+    fetch('/api/...'). Three pages — the quote list, quote detail and the
+    handover queue — routed every call through a local `jf(u)` helper
+    that passed the bare path straight to fetch(), so they rendered fine
+    and loaded nothing, exactly like the funnels did.
+
+    So: find each helper in a template that calls fetch() on its own
+    argument, and if the helper doesn't prefix, no call site may hand it
+    a bare absolute path.
+    """
+    # A function whose body reaches a fetch() call — non-greedy to the
+    # first fetch, which is enough to see whether the URL is prefixed.
+    wrapper_pat = re.compile(
+        r'(?:async\s+)?function\s+(\w+)\s*\([^)]*\)\s*\{(.{0,400}?)fetch\(([^;]{0,120})',
+        re.S)
+    offenders = []
+    for tpl in glob.glob(os.path.join(_TEMPLATES, '**', '*.html'),
+                         recursive=True):
+        rel = os.path.relpath(tpl, _ROOT)
+        text = open(tpl).read()
+        unsafe = set()
+        for m in wrapper_pat.finditer(text):
+            name, body, fetch_arg = m.group(1), m.group(2), m.group(3)
+            # Prefixing may happen on the fetch line or earlier in the body.
+            if 'url_prefix' in fetch_arg or 'crmUrl' in fetch_arg \
+               or 'url_prefix' in body or 'crmUrl' in body:
+                continue
+            unsafe.add(name)
+        for name in unsafe:
+            call = re.compile(re.escape(name) + r"""\(\s*(['"`])(/(?!/)[^'"`]*)""")
+            for n, line in enumerate(text.splitlines(), 1):
+                for m in call.finditer(line):
+                    offenders.append(f'{rel}:{n}: {name}("{m.group(2)}")')
+    assert not offenders, (
+        'These helpers pass an unprefixed path to fetch(), so the page '
+        'loads and stays empty:\n  ' + '\n  '.join(offenders)
+        + '\n\nPrefix inside the helper (as bulk_admin/leads.html does) '
+          'or at the call site.')
+
+
 @pytest.mark.parametrize('path', [
     '/funnels/account-development',
     '/funnels/project-intelligence',

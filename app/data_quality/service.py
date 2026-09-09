@@ -104,6 +104,39 @@ def check_won_without_handover():
     return q.count(), q
 
 
+def check_won_without_po():
+    """Won deals sitting in Awaiting PO.
+
+    Since the process changed, the Project and Job are created against
+    the customer PO, so a handover with no PO recorded is a won deal that
+    cannot move — and the longer it sits, the harder the PO is to chase.
+    """
+    from app.models.tms_handover import WonHandover, HandoverStatus
+    q = WonHandover.query.filter(
+        WonHandover.status == HandoverStatus.AWAITING_PO)
+    return q.count(), q
+
+
+def check_duplicate_po_refs():
+    """One PO carrying two handovers — two Projects under one PO.
+
+    The rule is enforced on entry, so anything here predates it or was
+    written straight to the database.
+    """
+    from app.models.tms_handover import WonHandover, HandoverStatus
+    from app.handover.po import norm_ref
+    rows = [h for h in WonHandover.query.filter(
+        WonHandover.po_ref.isnot(None),
+        WonHandover.status != HandoverStatus.CANCELLED).all() if h.po_ref]
+    groups = {}
+    for h in rows:
+        key = (h.account_id or ('name:' + norm_ref(h.account_name)),
+               norm_ref(h.po_ref))
+        groups.setdefault(key, []).append(h)
+    clashing = [h for g in groups.values() if len(g) > 1 for h in g]
+    return len(clashing), clashing
+
+
 def check_lost_without_competitor():
     from app import Opportunity
     try:
@@ -178,6 +211,14 @@ CHECKS = [
     ('lost_no_competitor', 'Lost deals with no competitor recorded',
      'No competitive learning is captured from the loss (§20).',
      'info', '/competitors', check_lost_without_competitor),
+    ('won_no_po', 'Won deals with no customer PO yet',
+     'The Project and Job are created against the PO, so these cannot '
+     'move until the Customer PO / Sales Order / Contract is recorded.',
+     'critical', '/handovers?status=Awaiting%20PO', check_won_without_po),
+    ('dupe_po_refs', 'One PO on more than one handover',
+     'Breaks "One PO = One Project and Job" — two projects would be '
+     'created against a single customer order.',
+     'critical', '/handovers?status=all', check_duplicate_po_refs),
     ('won_no_handover', 'Won deals with no TMS handover',
      'Blocked until TMS integration exists.',
      'info', '/handovers', check_won_without_handover),
@@ -225,6 +266,17 @@ def _describe(key, row):
                     row.designation, row.company) if x),
                 'route': f'/app?contact={row.id}'}
 
+    if type(row).__name__ == 'WonHandover':
+        return {'id': row.id,
+                'name': row.account_name or f'Handover #{row.id}',
+                'meta': ' · '.join(str(x) for x in (
+                    row.status,
+                    (f'{row.po_type or "PO"} {row.po_ref}' if row.po_ref
+                     else 'no PO recorded'),
+                    (f'{float(row.won_value):,.0f} INR' if row.won_value
+                     else '')) if x),
+                'route': f'/handovers?id={row.id}'}
+
     # TaskInstance and anything else
     return {'id': getattr(row, 'id', None),
             'name': (getattr(row, 'entity_display', None)
@@ -264,7 +316,12 @@ def records_for(key, limit=500):
                 'truncated': len(groups) > limit}
 
     rows = []
-    if detail is not None:
+    if isinstance(detail, (list, tuple)):
+        # Some checks do their grouping in Python and hand back a plain
+        # list. Without this they showed a count and drilled into
+        # nothing, which is the one thing this function exists to avoid.
+        rows = list(detail[:limit + 1])
+    elif detail is not None:
         try:
             rows = detail.limit(limit + 1).all()
         except Exception:

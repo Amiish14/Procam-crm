@@ -13,7 +13,8 @@ Two funnels expose the same shape of output:
 Account-Development funnel stages
     Target Account, Account Research, Contact Identified,
     Contact Established, Meeting/Engagement, Relationship Development,
-    Opportunity Identified, RFQ, Quote, Negotiation, Won, TMS Project
+    Opportunity Identified, RFQ, Quote, Negotiation, Won, Customer PO,
+    TMS Project
 
 Project-Intelligence funnel stages
     Project Identified, Project Development, EPC Identified,
@@ -23,12 +24,13 @@ Where the stages come from
     * Target …Relationship Development  -> Company.dev_stage
     * Opportunity Identified / RFQ / Quote / Negotiation / Won
                                          -> Opportunity.stage + RFQ + Quote
-    * TMS Project                        -> WonHandover status
+    * Customer PO                        -> WonHandover.po_ref captured
+    * TMS Project                        -> WonHandover with a TMS project id
     * Project Identified …Procurement    -> Project.stage
     * RFQ Expected                       -> Project.stage
     * RFQ / Quote / Negotiation / Won    -> Opportunities linked to project
                                             via source_project_id
-    * TMS Project                        -> WonHandover(project_id=…)
+    * Customer PO / TMS Project          -> WonHandover(project_id=…)
 
 Filter params (spec §44) applied where the underlying entity carries the
 column:  pic, lead_driver, rate_sourcing_pic, assignment_role, vertical,
@@ -83,13 +85,13 @@ ACCOUNT_DEV_FUNNEL = (
     'Target Account', 'Account Research', 'Contact Identified',
     'Contact Established', 'Meeting/Engagement',
     'Relationship Development', 'Opportunity Identified',
-    'RFQ', 'Quote', 'Negotiation', 'Won', 'TMS Project',
+    'RFQ', 'Quote', 'Negotiation', 'Won', 'Customer PO', 'TMS Project',
 )
 
 PROJECT_INTEL_FUNNEL = (
     'Project Identified', 'Project Development', 'EPC Identified',
     'Procurement', 'RFQ Expected', 'RFQ', 'Quote', 'Negotiation',
-    'Won', 'TMS Project',
+    'Won', 'Customer PO', 'TMS Project',
 )
 
 # Map funnel-stage → list of Company.dev_stage values (§ACCOUNT_DEV_STAGES)
@@ -308,6 +310,24 @@ def _projects_by_stage(stage_names, f):
     return q.all()
 
 
+def _po_and_tms(handovers):
+    """Split handovers into the two stages that now follow Won.
+
+    Since Sept 2026 the customer PO is captured *before* the Project and
+    Job are created, so these are genuinely sequential stages and not two
+    views of the same set: everything in TMS has a PO behind it, and the
+    gap between the two counts is the work sitting in Awaiting PO.
+    """
+    from app.models.tms_handover import HandoverStatus
+    live = [h for h in handovers if h.status != HandoverStatus.CANCELLED]
+    with_po = [h for h in live if h.po_ref]
+    in_tms = [h for h in with_po
+              if h.tms_project_id
+              or h.status in (HandoverStatus.PROJECT_MADE,
+                              HandoverStatus.COMPLETE)]
+    return with_po, in_tms
+
+
 def _handovers(f):
     from app.models.tms_handover import WonHandover
     q = WonHandover.query
@@ -401,8 +421,11 @@ def _row(stage, count, value, days_list, conversion=None):
     }
 
 
-def _account_development_funnel(f):
+def _account_development_funnel(f, with_members=False):
+    """Returns stage rows; with_members also returns the records behind
+    each bar, so the drill-through can never disagree with the chart."""
     stages_out = []
+    members = {}
 
     # Early stages (dev_stage on Company)
     for i, funnel_stage in enumerate(
@@ -424,6 +447,7 @@ def _account_development_funnel(f):
                 conv = _account_conv_pct(raw_stages[0], next_raw[0])
         except (IndexError, ValueError):
             conv = None
+        members[funnel_stage] = list(rows)
         stages_out.append(_row(funnel_stage, len(rows), 0, days, conv))
 
     # RFQ — from RFQ table
@@ -431,6 +455,7 @@ def _account_development_funnel(f):
     days = [( (datetime.utcnow().date() - r.received_date).days
               if r.received_date else None) for r in rfqs]
     days = [d for d in days if d is not None]
+    members['RFQ'] = list(rfqs)
     stages_out.append(_row('RFQ', len(rfqs),
                            0, days))
 
@@ -441,6 +466,7 @@ def _account_development_funnel(f):
     qdays = [((datetime.utcnow() - q.updated_at).days
               if q.updated_at else None) for q in quotes]
     qdays = [d for d in qdays if d is not None]
+    members['Quote'] = list(quotes)
     stages_out.append(_row('Quote', len(quotes), qval, qdays))
 
     # Negotiation
@@ -451,6 +477,7 @@ def _account_development_funnel(f):
     ndays = ([(datetime.utcnow() - q.updated_at).days for q in neg_q
               if q.updated_at] +
              [_days_in_stage_opp(o) for o in neg_o if _days_in_stage_opp(o) is not None])
+    members['Negotiation'] = list(neg_q) + list(neg_o)
     stages_out.append(_row('Negotiation', len(neg_q) + len(neg_o),
                            nval, ndays))
 
@@ -461,21 +488,25 @@ def _account_development_funnel(f):
             sum(float(o.value_inr or 0) for o in won_o))
     wdays = ([(datetime.utcnow() - q.won_at).days for q in won_q if q.won_at] +
              [_days_in_stage_opp(o) for o in won_o if _days_in_stage_opp(o) is not None])
+    members['Won'] = list(won_q) + list(won_o)
     stages_out.append(_row('Won', len(won_q) + len(won_o), wval, wdays))
 
-    # TMS Project
-    handovers = _handovers(f)
-    hval = sum(float(h.won_value or 0) for h in handovers)
-    hdays = [((datetime.utcnow() - h.created_at).days
-              if h.created_at else None) for h in handovers]
-    hdays = [d for d in hdays if d is not None]
-    stages_out.append(_row('TMS Project', len(handovers), hval, hdays))
+    # Customer PO, then TMS Project — in that order, because the PO is
+    # what the Project and Job are created against.
+    with_po, in_tms = _po_and_tms(_handovers(f))
+    for label, group in (('Customer PO', with_po), ('TMS Project', in_tms)):
+        gval = sum(float(h.won_value or 0) for h in group)
+        gdays = [(datetime.utcnow() - h.created_at).days
+                 for h in group if h.created_at]
+        members[label] = list(group)
+        stages_out.append(_row(label, len(group), gval, gdays))
 
-    return stages_out
+    return (stages_out, members) if with_members else stages_out
 
 
-def _project_intelligence_funnel(f):
+def _project_intelligence_funnel(f, with_members=False):
     stages_out = []
+    members = {}
 
     for funnel_stage in ('Project Identified', 'Project Development',
                          'EPC Identified', 'Procurement', 'RFQ Expected'):
@@ -484,6 +515,7 @@ def _project_intelligence_funnel(f):
         pvalue = sum(float(p.estimated_value_inr or 0) for p in rows)
         days = [d for d in (_days_in_stage_project(p) for p in rows)
                 if d is not None]
+        members[funnel_stage] = list(rows)
         stages_out.append(_row(funnel_stage, len(rows), pvalue, days))
 
     # RFQ — RFQs whose project_id links to a Project
@@ -496,6 +528,7 @@ def _project_intelligence_funnel(f):
     rdays = [((datetime.utcnow().date() - r.received_date).days
               if r.received_date else None) for r in rfq_rows]
     rdays = [d for d in rdays if d is not None]
+    members['RFQ'] = list(rfq_rows)
     stages_out.append(_row('RFQ', len(rfq_rows), 0, rdays))
 
     # Quote — quotes whose rfq.project_id is set
@@ -510,6 +543,7 @@ def _project_intelligence_funnel(f):
     qdays = [((datetime.utcnow() - q.updated_at).days
               if q.updated_at else None) for q in q_rows]
     qdays = [d for d in qdays if d is not None]
+    members['Quote'] = list(q_rows)
     stages_out.append(_row('Quote', len(q_rows), qval, qdays))
 
     # Negotiation
@@ -529,6 +563,7 @@ def _project_intelligence_funnel(f):
     ndays = ([(datetime.utcnow() - q.updated_at).days for q in neg_q
               if q.updated_at] +
              [_days_in_stage_opp(o) for o in neg_o if _days_in_stage_opp(o) is not None])
+    members['Negotiation'] = list(neg_q) + list(neg_o)
     stages_out.append(_row('Negotiation', len(neg_q) + len(neg_o), nval, ndays))
 
     # Won
@@ -546,18 +581,22 @@ def _project_intelligence_funnel(f):
             sum(float(o.value_inr or 0) for o in won_o))
     wdays = ([(datetime.utcnow() - q.won_at).days for q in won_q if q.won_at] +
              [_days_in_stage_opp(o) for o in won_o if _days_in_stage_opp(o) is not None])
+    members['Won'] = list(won_q) + list(won_o)
     stages_out.append(_row('Won', len(won_q) + len(won_o), wval, wdays))
 
-    # TMS Project — handover rows tied to a project
+    # Customer PO → TMS Project — handover rows tied to a project
     from app.models.tms_handover import WonHandover
-    handovers = WonHandover.query.filter(WonHandover.project_id.isnot(None)).all()
-    hval = sum(float(h.won_value or 0) for h in handovers)
-    hdays = [((datetime.utcnow() - h.created_at).days
-              if h.created_at else None) for h in handovers]
-    hdays = [d for d in hdays if d is not None]
-    stages_out.append(_row('TMS Project', len(handovers), hval, hdays))
+    handovers = WonHandover.query.filter(
+        WonHandover.project_id.isnot(None)).all()
+    with_po, in_tms = _po_and_tms(handovers)
+    for label, group in (('Customer PO', with_po), ('TMS Project', in_tms)):
+        gval = sum(float(h.won_value or 0) for h in group)
+        gdays = [(datetime.utcnow() - h.created_at).days
+                 for h in group if h.created_at]
+        members[label] = list(group)
+        stages_out.append(_row(label, len(group), gval, gdays))
 
-    return stages_out
+    return (stages_out, members) if with_members else stages_out
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -699,6 +738,73 @@ def api_funnel_sales():
         k: (str(v) if v else '') for k, v in f.items()})
 
 
+def _as_record(obj):
+    """One funnel member → one row in the drill-through list.
+
+    Every funnel stage holds a different entity — an account, a project,
+    an RFQ, a quote, an opportunity, a handover — so the shape they share
+    is built here rather than at each of the twenty-odd call sites.
+    """
+    kind = type(obj).__name__
+
+    def meta(*parts):
+        return ' · '.join(str(p) for p in parts if p)
+
+    if kind == 'Company':
+        return {'id': obj.id, 'name': obj.name or f'Account #{obj.id}',
+                'meta': meta(obj.dev_stage, obj.city, obj.pic_emp_code),
+                'route': f'/companies/{obj.id}'}
+
+    if kind == 'Project':
+        return {'id': obj.id,
+                'name': getattr(obj, 'name', '') or f'Project #{obj.id}',
+                'meta': meta(getattr(obj, 'stage', ''),
+                             getattr(obj, 'pic_emp_code', '')),
+                'route': f'/app?company={obj.id}'}
+
+    if kind == 'RFQ':
+        return {'id': obj.id,
+                'name': (getattr(obj, 'subject', '') or
+                         getattr(obj, 'rfq_number', '') or f'RFQ #{obj.id}'),
+                'meta': meta(getattr(obj, 'status', ''),
+                             getattr(obj, 'lead_driver', '')),
+                'route': f'/rfqs/{obj.id}'}
+
+    if kind == 'Quote':
+        return {'id': obj.id,
+                'name': (getattr(obj, 'subject', '') or
+                         getattr(obj, 'quote_number', '') or
+                         f'Quote #{obj.id}'),
+                'meta': meta(getattr(obj, 'status', ''),
+                             _money(getattr(obj, 'total_amount', 0))),
+                'route': f'/quotes/{obj.id}'}
+
+    if kind == 'Opportunity':
+        return {'id': obj.id,
+                'name': getattr(obj, 'title', '') or f'Opportunity #{obj.id}',
+                'meta': meta(getattr(obj, 'stage', ''),
+                             getattr(obj, 'owner_emp_code', ''),
+                             _money(getattr(obj, 'value_inr', 0))),
+                'route': f'/app?opp={obj.id}'}
+
+    if kind == 'WonHandover':
+        return {'id': obj.id,
+                'name': obj.account_name or f'Handover #{obj.id}',
+                'meta': meta(obj.status, obj.po_ref, obj.tms_project_id,
+                             _money(obj.won_value)),
+                'route': f'/handovers?id={obj.id}'}
+
+    return None
+
+
+def _money(v):
+    try:
+        v = float(v or 0)
+    except (TypeError, ValueError):
+        return ''
+    return f'INR {v:,.0f}' if v else ''
+
+
 @bp.route('/api/funnel/<which>/records', methods=['GET'])
 @_require_auth
 def api_funnel_records(which):
@@ -729,31 +835,15 @@ def api_funnel_records(which):
             'route': f'/companies/{c.id}',
         } for c in rows]
 
-    elif which == 'account-development':
-        raw = _ACCT_DEV_STAGE_MAP.get(stage)
-        if raw is None:
+    elif which in ('account-development', 'project-intelligence'):
+        builder = (_account_development_funnel
+                   if which == 'account-development'
+                   else _project_intelligence_funnel)
+        _stages, members = builder(f, with_members=True)
+        if stage not in members:
             return jsonify(ok=False, error=f'Unknown stage "{stage}"'), 404
-        for c in _accounts_by_stage(raw, f):
-            records.append({
-                'id': c.id, 'name': c.name,
-                'meta': ' · '.join(x for x in (c.dev_stage, c.city,
-                                               c.pic_emp_code) if x),
-                'route': f'/companies/{c.id}',
-            })
-        records.sort(key=lambda r: r['name'] or '')
-
-    elif which == 'project-intelligence':
-        raw = _PROJECT_STAGE_MAP.get(stage)
-        if raw is None:
-            return jsonify(ok=False, error=f'Unknown stage "{stage}"'), 404
-        for p in _projects_by_stage(raw, f):
-            records.append({
-                'id': p.id, 'name': getattr(p, 'name', '') or f'Project #{p.id}',
-                'meta': ' · '.join(str(x) for x in (
-                    getattr(p, 'stage', ''), getattr(p, 'pic_emp_code', ''))
-                    if x),
-                'route': f'/app?company={p.id}',
-            })
+        records = [_as_record(obj) for obj in members[stage]]
+        records = [r for r in records if r]
         records.sort(key=lambda r: r['name'] or '')
 
     else:

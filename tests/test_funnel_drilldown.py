@@ -119,13 +119,44 @@ def test_a_stage_is_required(pipeline):
     assert _c().get('/api/funnel/sales/records').status_code == 400
 
 
-def test_account_and_project_funnels_drill_too(pipeline):
+@pytest.mark.parametrize('which', ['account-development',
+                                   'project-intelligence'])
+def test_every_stage_of_every_funnel_drills(pipeline, which):
+    """Not one stage per funnel — every one.
+
+    The earlier version of this test checked `Target Account` and
+    `Project Identified` and passed, while RFQ, Quote, Negotiation, Won
+    and TMS Project all answered 404: only the early stages had an entry
+    in the stage→raw-status maps the drill-through read. Asking the
+    funnel itself which stages exist is what closes that gap for good.
+    """
     client = _c()
-    for which, stage in (('account-development', 'Target Account'),
-                         ('project-intelligence', 'Project Identified')):
-        r = client.get(f'/api/funnel/{which}/records?stage={quote(stage)}')
-        assert r.status_code == 200, f'{which}/{stage} → {r.status_code}'
-        assert r.get_json()['ok']
+    stages = client.get(f'/api/funnel/{which}').get_json()['stages']
+    assert stages, f'{which} returned no stages'
+    for s in stages:
+        name = s['stage']
+        r = client.get(f'/api/funnel/{which}/records?stage={quote(name)}')
+        assert r.status_code == 200, \
+            f'{which} / {name} → {r.status_code} (stage is not drillable)'
+        body = r.get_json()
+        assert body['ok']
+        assert body['count'] == s['count'], (
+            f'{which} / {name}: chart says {s["count"]}, '
+            f'the list has {body["count"]}')
+
+
+def test_every_drilled_record_can_be_opened(pipeline):
+    """A row nobody can click is a dead end, so every record carries a
+    name and a route into the portal."""
+    client = _c()
+    for which in ('sales', 'account-development', 'project-intelligence'):
+        for s in client.get(f'/api/funnel/{which}').get_json()['stages']:
+            recs = client.get(f'/api/funnel/{which}/records?stage='
+                              + quote(s['stage'])).get_json()['records']
+            for rec in recs:
+                assert rec.get('name'), f'{which}/{s["stage"]}: unnamed record'
+                assert (rec.get('route') or '').startswith('/'), \
+                    f'{which}/{s["stage"]}: {rec!r} has no route'
 
 
 # ── the stub is gone and the bars are clickable ──────────────────────

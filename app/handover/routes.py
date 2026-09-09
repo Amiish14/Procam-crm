@@ -10,11 +10,16 @@ Endpoints:
         GET   /api/handovers             queue list, filterable
         GET   /api/handovers/<id>        detail
         PATCH /api/handovers/<id>        TMS admin fills tms_project_id etc.
+        POST  /api/handovers/<id>/po     capture the customer PO (unblocks TMS)
         POST  /api/handovers/<id>/cancel
 
 State machine (managed here):
-    Handover Pending → TMS Project Created → Handover Complete
-                     ↘ Cancelled
+    Awaiting PO → Handover Pending → TMS Project Created → Handover Complete
+                ↘ Cancelled        ↙
+
+`Awaiting PO` is the entry state.  A won deal sits there until the
+Customer PO / Sales Order / Contract is recorded against it; only then can
+TMS create the Project and Job.  See app/handover/po.py for why.
 """
 from datetime import datetime
 from functools import wraps
@@ -23,7 +28,8 @@ from flask import (Blueprint, jsonify, render_template, request, session,
                    redirect, url_for, current_app)
 
 from app import db
-from app.models.tms_handover import WonHandover
+from app.models.tms_handover import WonHandover, HandoverStatus
+from app.handover import po as po_svc
 from app.services.task_engine import on_state_change
 from app.models.task_engine import TaskInstance, TaskInstanceStatus
 
@@ -67,8 +73,9 @@ def _fire(entity, entity_type, old_state, new_state):
             pass
 
 
-_STATUSES = ['Handover Pending', 'TMS Project Created',
-             'Handover Complete', 'Cancelled']
+_STATUSES = [HandoverStatus.AWAITING_PO, HandoverStatus.PENDING,
+             HandoverStatus.PROJECT_MADE, HandoverStatus.COMPLETE,
+             HandoverStatus.CANCELLED]
 
 
 # ─── HTML ──────────────────────────────────────────────────────────────────
@@ -111,10 +118,9 @@ def api_create():
         scope=(d.get('scope') or '').strip() or None,
         vertical=(d.get('vertical') or '').strip() or None,
         pic_emp_code=(d.get('pic_emp_code') or '').strip() or None,
-        po_ref=(d.get('po_ref') or '').strip() or None,
         attachments=list(d.get('attachments') or []),
         commercial_refs=dict(d.get('commercial_refs') or {}),
-        status='Handover Pending',
+        status=HandoverStatus.AWAITING_PO,
         created_by_id=actor,
     )
 
@@ -125,13 +131,22 @@ def api_create():
         if existing:
             return jsonify(ok=True, handover=existing.to_dict(), noop=True)
 
+    # A PO supplied up front (the deal was won against an existing order)
+    # skips the Awaiting PO wait — but goes through the same duplicate
+    # check as one captured later, so it can't smuggle in a second
+    # project under an existing PO.
+    if (d.get('po_ref') or '').strip():
+        ok, err = po_svc.capture(row, d, actor=actor)
+        if not ok:
+            return jsonify(ok=False, error=err), 400
+
     db.session.add(row)
     try:
         db.session.commit()
     except Exception:
         db.session.rollback()
         return jsonify(ok=False, error='commit failed'), 500
-    _fire(row, 'WonHandover', None, 'Handover Pending')
+    _fire(row, 'WonHandover', None, row.status)
     try:
         db.session.commit()
     except Exception:
@@ -155,9 +170,25 @@ def api_patch(hid):
     d = request.get_json(silent=True) or {}
     old_status = row.status
 
+    # Anything that creates or names the TMS Project/Job needs the PO
+    # to exist first — that ordering is the whole point of the change.
+    # `Handover Pending` is included: it is the "ready for TMS" state, so
+    # reaching it without a PO would make the queue lie about what can be
+    # created, even though blocks_tms would still stop the ids landing.
+    wants_tms = any(d.get(f) for f in ('tms_project_id', 'tms_job_id')) or \
+        d.get('status') in (HandoverStatus.PENDING,
+                            HandoverStatus.PROJECT_MADE,
+                            HandoverStatus.COMPLETE)
+    if wants_tms:
+        blocked = po_svc.blocks_tms(row)
+        if blocked:
+            return jsonify(ok=False, error=blocked, needs_po=True), 409
+
+    # po_ref is deliberately absent: it carries the uniqueness rule, so it
+    # is only writable through /po, which enforces it.
     for f in ('tms_project_id', 'tms_job_id', 'tms_ack_by', 'remarks',
               'account_name', 'origin', 'destination', 'scope', 'vertical',
-              'pic_emp_code', 'po_ref'):
+              'pic_emp_code'):
         if f in d:
             setattr(row, f, (d.get(f) or None))
     if 'services' in d:
@@ -182,12 +213,12 @@ def api_patch(hid):
     else:
         # Auto-advance when both project_id + ack set
         if row.tms_project_id and row.tms_ack_at \
-           and row.status == 'Handover Pending':
-            row.status = 'TMS Project Created'
+           and row.status == HandoverStatus.PENDING:
+            row.status = HandoverStatus.PROJECT_MADE
         # 'complete' keyword in remarks marks Complete
         rem = (d.get('remarks') or row.remarks or '').lower()
-        if 'complete' in rem and row.status == 'TMS Project Created':
-            row.status = 'Handover Complete'
+        if 'complete' in rem and row.status == HandoverStatus.PROJECT_MADE:
+            row.status = HandoverStatus.COMPLETE
 
     try:
         db.session.commit()
@@ -221,16 +252,50 @@ def api_patch(hid):
     return jsonify(ok=True, handover=row.to_dict())
 
 
+@bp.route('/api/handovers/<int:hid>/po', methods=['POST'])
+@_require_auth
+def api_capture_po(hid):
+    """Record the Customer PO / Sales Order / Contract on a won deal.
+
+    This is the step that now precedes project creation. It advances the
+    handover out of `Awaiting PO`, at which point TMS may create exactly
+    one Project and one Job against it.
+    """
+    row = WonHandover.query.get_or_404(hid)
+    if row.status == HandoverStatus.CANCELLED:
+        return jsonify(ok=False, error='Handover is Cancelled'), 400
+
+    d = request.get_json(silent=True) or {}
+    old_status = row.status
+    ok, err = po_svc.capture(row, d, actor=session.get('emp_code'))
+    if not ok:
+        return jsonify(ok=False, error=err), 400
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify(ok=False, error='commit failed'), 500
+
+    if row.status != old_status:
+        _fire(row, 'WonHandover', old_status, row.status)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    return jsonify(ok=True, handover=row.to_dict())
+
+
 @bp.route('/api/handovers/<int:hid>/cancel', methods=['POST'])
 @_require_auth
 def api_cancel(hid):
     row = WonHandover.query.get_or_404(hid)
-    if row.status in ('Handover Complete', 'Cancelled'):
+    if row.status in (HandoverStatus.COMPLETE, HandoverStatus.CANCELLED):
         return jsonify(ok=False, error=f'Handover is {row.status}'), 400
     d = request.get_json(silent=True) or {}
     reason = (d.get('reason') or '').strip()
     old = row.status
-    row.status = 'Cancelled'
+    row.status = HandoverStatus.CANCELLED
     if reason:
         row.remarks = ((row.remarks or '') +
                        f'\n[Cancelled {datetime.utcnow():%Y-%m-%d %H:%M}] {reason}').strip()
@@ -239,7 +304,7 @@ def api_cancel(hid):
     except Exception:
         db.session.rollback()
         return jsonify(ok=False, error='commit failed'), 500
-    _fire(row, 'WonHandover', old, 'Cancelled')
+    _fire(row, 'WonHandover', old, HandoverStatus.CANCELLED)
     try:
         db.session.commit()
     except Exception:
