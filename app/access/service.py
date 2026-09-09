@@ -49,6 +49,8 @@ PERMISSION_GROUPS = [
         ('admin.email',         'Email Ingestion', 'Mailbox, subscriptions, inbox log'),
         ('admin.master',        'Master Data',
          'Verticals, industries, relationship types and other lists'),
+        ('admin.triage',        'Lead Triage',
+         'Unassigned inbound leads, ageing, and quick assignment'),
     ]),
 ]
 

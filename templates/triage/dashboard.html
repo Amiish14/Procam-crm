@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Lead Triage — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .tri-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+            gap:12px;margin-bottom:20px}
+  .tri-kpi{background:var(--card);border:1px solid var(--border);
+           border-radius:var(--r-lg);padding:16px 18px}
+  .tri-kpi .label{font-size:10.5px;font-weight:700;letter-spacing:.06em;
+                  text-transform:uppercase;color:var(--text-3)}
+  .tri-kpi .value{font-size:30px;font-weight:700;margin-top:4px;
+                  font-variant-numeric:tabular-nums;line-height:1.1}
+  .tri-kpi .sub{font-size:12px;color:var(--text-2);margin-top:2px}
+  .tri-kpi.alarm .value{color:var(--red)}
+
+  /* Ageing reads as a queue, so the bars are one object, not five cards. */
+  .buckets{display:flex;gap:2px;margin-bottom:22px;border-radius:var(--r);
+           overflow:hidden;border:1px solid var(--border)}
+  .bkt{flex:1;padding:12px 14px;background:var(--card);text-align:center}
+  .bkt .n{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+  .bkt .l{font-size:11px;color:var(--text-2);margin-top:2px}
+  .bkt.stale{background:var(--red-tint,#fdeef0)}
+  .bkt.stale .n{color:var(--red)}
+  .bkt.empty .n{color:var(--text-3);font-weight:500}
+
+  td.assign select{padding:4px;font-size:12px;max-width:150px}
+  tr.done{opacity:.35}
+  .age-hot{color:var(--red);font-weight:600}
+  .sec-tag{font-size:11px;color:var(--text-3)}
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <h1>Lead Triage</h1>
+    <div style="color:var(--text-2);font-size:13px;margin-top:4px">
+      Inbound leads arrive with no owner, so they appear in nobody's My
+      Work until someone assigns them. This is that queue.
+    </div>
+  </div>
+  <div>
+    <a class="btn" href="{{ url_prefix }}/my-work">My Work</a>
+    <a class="btn" href="{{ url_prefix }}/app">CRM</a>
+  </div>
+</div>
+
+<div class="tri-kpis" id="kpis"></div>
+<div class="buckets" id="buckets"></div>
+
+<h2 style="margin-bottom:10px">Unassigned</h2>
+<div class="tw">
+<table>
+  <thead><tr>
+    <th>Company</th><th>Contact</th><th>Source</th>
+    <th>Arrived</th><th class="num">Age</th>
+    <th>Primary PIC</th><th>Secondary</th>
+  </tr></thead>
+  <tbody id="unassigned"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+</table>
+</div>
+
+<h2 style="margin:26px 0 4px">Assigned but not actioned</h2>
+<div style="color:var(--text-2);font-size:12.5px;margin-bottom:10px">
+  Past the <span id="slaLabel">{{ sla_hours }}</span>-hour SLA with no
+  activity logged and no stage change. This is the list the secondary PIC
+  exists for.
+  <label style="margin-left:12px">SLA hours
+    <input id="sla" type="number" min="1" max="720" value="{{ sla_hours }}"
+           style="width:70px;padding:3px" onchange="load()">
+  </label>
+</div>
+<div class="tw">
+<table>
+  <thead><tr>
+    <th>Company</th><th>Primary PIC</th><th>Secondary</th>
+    <th>Arrived</th><th class="num">Age</th><th class="num">Overdue by</th>
+  </tr></thead>
+  <tbody id="stalled"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+</table>
+</div>
+
+<script>
+const CSRF = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+const PREFIX = '{{ url_prefix }}';
+let EMPS = [];
+
+async function jf(u, o){
+  o = o || {};
+  o.headers = Object.assign({'Content-Type':'application/json',
+                             'X-CSRFToken': CSRF}, o.headers || {});
+  if (u.charAt(0) === '/' && u.indexOf('{{ url_prefix }}') !== 0) u = '{{ url_prefix }}' + u;
+  const r = await fetch(u, o);
+  return r.json();
+}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+function kpi(label, value, sub, alarm){
+  return `<div class="tri-kpi${alarm?' alarm':''}">
+    <div class="label">${esc(label)}</div>
+    <div class="value">${esc(value)}</div>
+    <div class="sub">${esc(sub||'')}</div></div>`;
+}
+
+function renderHeadline(h){
+  const oldest = h.oldest_hours == null ? '—'
+    : (h.oldest_hours >= 48 ? Math.floor(h.oldest_hours/24)+'d'
+                            : Math.round(h.oldest_hours)+'h');
+  document.getElementById('kpis').innerHTML =
+      kpi('Unassigned', h.unassigned_total,
+          h.unassigned_total ? 'waiting for an owner' : 'queue is clear',
+          h.unassigned_total > 0)
+    + kpi('Assigned today', h.assigned_today, 'triage decisions made')
+    + kpi('Oldest unassigned', oldest,
+          h.oldest_company || '', (h.oldest_hours || 0) >= 24);
+}
+
+function renderBuckets(list){
+  document.getElementById('buckets').innerHTML = list.map(b=>`
+    <div class="bkt${b.stale && b.count ? ' stale' : ''}${b.count ? '' : ' empty'}">
+      <div class="n">${b.count}</div>
+      <div class="l">${esc(b.label)}</div>
+    </div>`).join('');
+}
+
+function pickers(r){
+  const opt = (code, name, sel) =>
+    `<option value="${esc(code)}"${sel?' selected':''}>${esc(name)}</option>`;
+  const primary = '<option value="">— assign —</option>'
+    + EMPS.map(m=>opt(m.emp_code, m.name, m.emp_code===r.assigned_to)).join('');
+  const secondary = '<option value="">— none —</option>'
+    + EMPS.map(m=>opt(m.emp_code, m.name, m.emp_code===r.secondary_owner)).join('');
+  return [
+    `<td class="assign"><select onchange="assign(${r.id},'primary',this.value)">${primary}</select></td>`,
+    `<td class="assign"><select onchange="assign(${r.id},'secondary',this.value)">${secondary}</select></td>`,
+  ].join('');
+}
+
+function ageCell(r){
+  const hot = (r.age_hours || 0) >= 24;
+  return `<td class="num${hot?' age-hot':''}">${esc(r.age_label)}</td>`;
+}
+
+// Rows open the lead through the app's own handler rather than a second
+// lead-detail implementation.
+function openLead(id){ location.href = PREFIX + '/app?lead=' + id; }
+
+function renderUnassigned(rows){
+  const tb = document.getElementById('unassigned');
+  if(!rows.length){
+    tb.innerHTML = '<tr><td colspan="7" class="empty">'
+                 + 'Nothing unassigned — the queue is clear.</td></tr>';
+    return;
+  }
+  tb.innerHTML = rows.map(r=>`
+    <tr id="t${r.id}">
+      <td><a href="#" onclick="openLead(${r.id});return false"><b>${esc(r.company)}</b></a></td>
+      <td>${esc(r.contact)}${r.contact_email
+            ? `<div class="sec-tag">${esc(r.contact_email)}</div>` : ''}</td>
+      <td>${esc(r.source)}</td>
+      <td>${esc(r.arrived)}</td>
+      ${ageCell(r)}
+      ${pickers(r)}
+    </tr>`).join('');
+}
+
+function renderStalled(rows){
+  const tb = document.getElementById('stalled');
+  if(!rows.length){
+    tb.innerHTML = '<tr><td colspan="6" class="empty">'
+                 + 'Every assigned lead has been actioned within the SLA.</td></tr>';
+    return;
+  }
+  tb.innerHTML = rows.map(r=>`
+    <tr>
+      <td><a href="#" onclick="openLead(${r.id});return false"><b>${esc(r.company)}</b></a></td>
+      <td>${esc(r.assigned_name || r.assigned_to)}</td>
+      <td>${r.secondary_owner_name
+            ? esc(r.secondary_owner_name)
+            : '<span class="sec-tag">no monitor</span>'}</td>
+      <td>${esc(r.arrived)}</td>
+      ${ageCell(r)}
+      <td class="num age-hot">${r.overdue_by == null ? '—' : esc(r.overdue_by)+'h'}</td>
+    </tr>`).join('');
+}
+
+async function load(){
+  const sla = document.getElementById('sla').value || 24;
+  document.getElementById('slaLabel').textContent = sla;
+  const j = await jf('/api/triage/summary?sla=' + encodeURIComponent(sla));
+  if(!j || !j.ok) return;
+  renderHeadline(j.headline);
+  renderBuckets(j.buckets);
+  renderUnassigned(j.unassigned);
+  renderStalled(j.not_actioned);
+}
+
+async function assign(leadId, role, code){
+  const body = {lead_id: leadId};
+  body[role] = code;
+  const j = await jf('/api/triage/assign',
+                     {method:'POST', body: JSON.stringify(body)});
+  if(!j || !j.ok){
+    alert((j && j.error) || 'Assignment failed');
+    load();                       // put the pickers back as they were
+    return;
+  }
+  // The counts come back with the response, so the headline and the
+  // buckets update without reloading the whole dashboard.
+  renderHeadline(j.headline);
+  renderBuckets(j.buckets);
+  if(role === 'primary' && code){
+    const row = document.getElementById('t' + leadId);
+    if(row){
+      row.classList.add('done');
+      setTimeout(()=>{ row.remove();
+        if(!document.querySelectorAll('#unassigned tr').length) load();
+      }, 600);
+    }
+  }
+}
+
+(async function(){
+  EMPS = await jf('/api/employees');
+  if(!Array.isArray(EMPS)) EMPS = [];
+  EMPS = EMPS.filter(m => m.is_active !== false);
+  load();
+})();
+</script>
+</div><!-- /crm-wrap -->
+</body>
+</html>
