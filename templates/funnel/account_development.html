@@ -70,12 +70,25 @@ function setMode(m){
   document.getElementById('tValue').classList.toggle('active', m==='value');
   drawFunnel();
 }
-async function loadData(){
+/* One place that reads the filter inputs, so a drill-through can
+   never apply different filters than the chart above it. */
+function filterQuery(){
   const q = new URLSearchParams();
-  const add = (k, id) => {const v = document.getElementById(id).value.trim(); if (v) q.set(k, v);};
-  add('pic','fPic'); add('vertical','fVert'); add('industry','fInd');
-  add('country','fCtry'); add('account','fAcct'); add('financial_year','fFy');
-  add('date_from','fFrom'); add('date_to','fTo');
+  const add = (k, id) => {const el = document.getElementById(id);
+    const v = el ? el.value.trim() : ''; if (v) q.set(k, v);};
+  add('pic','fPic');
+  add('vertical','fVert');
+  add('industry','fInd');
+  add('country','fCtry');
+  add('account','fAcct');
+  add('financial_year','fFy');
+  add('date_from','fFrom');
+  add('date_to','fTo');
+  return q;
+}
+
+async function loadData(){
+  const q = filterQuery();
   const j = await jfetch('{{ url_prefix }}/api/funnel/account-development?' + q.toString());
   STAGES = j.stages || [];
   drawFunnel();
@@ -95,7 +108,8 @@ function drawFunnel(){
     const y = 10 + i * rowH;
     const g = document.createElementNS('http://www.w3.org/2000/svg','g');
     g.setAttribute('class','stage');
-    g.setAttribute('onclick', `alert('Stage: ${s.stage} — drill-through coming next iteration')`);
+    g.setAttribute('onclick', `drill('${String(s.stage).replace(/'/g, "\\'")}')`);
+    g.setAttribute('style', 'cursor:pointer');
     const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
     rect.setAttribute('x', x); rect.setAttribute('y', y);
     rect.setAttribute('width', w); rect.setAttribute('height', rowH - 4);
@@ -121,7 +135,8 @@ function drawFunnel(){
 function drawTable(){
   const tbody = document.querySelector('#tbl tbody');
   tbody.innerHTML = STAGES.map(s => `
-    <tr>
+    <tr style="cursor:pointer" title="Show the records behind this stage"
+        onclick="drill('${String(s.stage).replace(/'/g, "\\'")}')">
       <td><b>${esc(s.stage)}</b></td>
       <td>${s.count}</td>
       <td>${fmtINR(s.value)}</td>
@@ -130,6 +145,45 @@ function drawTable(){
       <td>${s.conversion_pct_to_next==null?'—':(s.conversion_pct_to_next+'%')}</td>
     </tr>`).join('');
 }
+
+/* Clicking a stage lists the records behind the number, using the same
+   filters the chart used so the two always agree. */
+async function drill(stage){
+  const card = document.getElementById('drillCard');
+  const body = document.getElementById('drillBody');
+  document.getElementById('drillTtl').textContent = stage;
+  card.style.display = '';
+  body.innerHTML = '<div class="panel"><span class="spinner"></span> Loading…</div>';
+  card.scrollIntoView({behavior:'smooth', block:'nearest'});
+
+  const p = new URLSearchParams(filterQuery());
+  p.set('stage', stage);
+  const r = await fetch('{{ url_prefix }}/api/funnel/account-development/records?' + p.toString(),
+                        {credentials:'same-origin'});
+  const d = await r.json();
+  if(!d.ok){
+    body.innerHTML = '<div class="panel err">' + esc(d.error || 'Could not load') + '</div>';
+    return;
+  }
+  document.getElementById('drillTtl').textContent =
+    stage + ' — ' + d.count + ' record' + (d.count === 1 ? '' : 's');
+  if(!d.records.length){
+    body.innerHTML = '<div class="empty">Nothing at this stage with the '
+      + 'current filters.</div>';
+    return;
+  }
+  body.innerHTML = '<div class="table-wrap"><table>'
+    + '<thead><tr><th>Name</th><th>Details</th></tr></thead><tbody>'
+    + d.records.map(x =>
+        `<tr style="cursor:pointer"><td><b><a href="{{ url_prefix }}${x.route}">`
+        + `${esc(x.name)}</a></b></td><td class="meta">${esc(x.meta || '—')}</td></tr>`
+      ).join('')
+    + '</tbody></table></div>'
+    + (d.truncated ? '<div class="meta" style="padding:10px 16px">Showing the '
+        + 'first 500 — narrow the filters to see the rest.</div>' : '');
+}
+function closeDrill(){ document.getElementById('drillCard').style.display='none'; }
+
 loadData();
 </script>
 </div><!-- /crm-wrap -->

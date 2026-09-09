@@ -577,7 +577,7 @@ def api_funnel_project_intelligence():
     return jsonify(stages=_project_intelligence_funnel(f))
 
 
-def _sales_funnel(f):
+def _sales_funnel(f, with_ids=False):
     """§68 — the commercial funnel end to end.
 
     Deliberately crosses entities: an account that never became an
@@ -657,11 +657,14 @@ def _sales_funnel(f):
     # it monotonic, which is what makes it a funnel.
     rolled = []
     carried = set()
+    members = {}
     for name, _count, value, ids in reversed(layers):
         if ids is not None:
             carried = carried | ids
+            members[name] = set(carried)
             rolled.append((name, len(carried), value))
         else:
+            members[name] = set(carried)
             rolled.append((name, _count, value))
     layers = list(reversed(rolled))
 
@@ -682,7 +685,10 @@ def _sales_funnel(f):
     top = out[0]['count'] if out else 0
     for row in out:
         row['pct_of_top'] = round(row['count'] / top * 100, 1) if top else 0
-    return out
+    # The drill-through needs the accounts behind each number, and they
+    # must come from the same roll-up the chart drew — otherwise the list
+    # and the figure above it disagree.
+    return (out, members) if with_ids else out
 
 
 @bp.route('/api/funnel/sales', methods=['GET'])
@@ -691,6 +697,71 @@ def api_funnel_sales():
     f = _pick_filters()
     return jsonify(ok=True, stages=_sales_funnel(f), filters={
         k: (str(v) if v else '') for k, v in f.items()})
+
+
+@bp.route('/api/funnel/<which>/records', methods=['GET'])
+@_require_auth
+def api_funnel_records(which):
+    """The records behind one bar — "Quoted 182" becomes the 182.
+
+    Built from the same helpers and the same filters the chart used, so
+    the list can never disagree with the number above it.
+    """
+    from app import Company
+
+    stage = (request.args.get('stage') or '').strip()
+    if not stage:
+        return jsonify(ok=False, error='No stage given'), 400
+    f = _pick_filters()
+    records = []
+
+    if which == 'sales':
+        _stages, members = _sales_funnel(f, with_ids=True)
+        if stage not in members:
+            return jsonify(ok=False, error=f'Unknown stage "{stage}"'), 404
+        ids = members[stage]
+        rows = (Company.query.filter(Company.id.in_(ids or [0]))
+                .order_by(Company.name).all()) if ids else []
+        records = [{
+            'id': c.id, 'name': c.name,
+            'meta': ' · '.join(x for x in (c.city, c.country, c.industry)
+                               if x),
+            'route': f'/companies/{c.id}',
+        } for c in rows]
+
+    elif which == 'account-development':
+        raw = _ACCT_DEV_STAGE_MAP.get(stage)
+        if raw is None:
+            return jsonify(ok=False, error=f'Unknown stage "{stage}"'), 404
+        for c in _accounts_by_stage(raw, f):
+            records.append({
+                'id': c.id, 'name': c.name,
+                'meta': ' · '.join(x for x in (c.dev_stage, c.city,
+                                               c.pic_emp_code) if x),
+                'route': f'/companies/{c.id}',
+            })
+        records.sort(key=lambda r: r['name'] or '')
+
+    elif which == 'project-intelligence':
+        raw = _PROJECT_STAGE_MAP.get(stage)
+        if raw is None:
+            return jsonify(ok=False, error=f'Unknown stage "{stage}"'), 404
+        for p in _projects_by_stage(raw, f):
+            records.append({
+                'id': p.id, 'name': getattr(p, 'name', '') or f'Project #{p.id}',
+                'meta': ' · '.join(str(x) for x in (
+                    getattr(p, 'stage', ''), getattr(p, 'pic_emp_code', ''))
+                    if x),
+                'route': f'/app?company={p.id}',
+            })
+        records.sort(key=lambda r: r['name'] or '')
+
+    else:
+        return jsonify(ok=False, error=f'Unknown funnel "{which}"'), 404
+
+    return jsonify(ok=True, funnel=which, stage=stage,
+                   count=len(records), records=records[:500],
+                   truncated=len(records) > 500)
 
 
 @bp.route('/funnels/sales')

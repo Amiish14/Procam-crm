@@ -68,8 +68,17 @@
   <div id="fn" class="fn"><div class="empty">Loading…</div></div>
 </div></div>
 
+<div class="card" id="drillCard" style="display:none">
+  <div class="card-hd">
+    <div class="card-ttl" id="drillTtl">Records</div>
+    <button class="btn tiny ghost" onclick="closeDrill()">Close</button>
+  </div>
+  <div id="drillBody"></div>
+</div>
+
 <div class="card">
-  <div class="card-hd"><div class="card-ttl">Stage detail</div></div>
+  <div class="card-hd"><div class="card-ttl">Stage detail</div>
+    <span class="meta">Click any stage to see the records behind it</span></div>
   <div class="table-wrap"><table id="tbl">
     <thead><tr><th>Stage</th><th class="num">Accounts</th>
       <th class="num">Value (INR)</th><th class="num">Conversion</th>
@@ -128,7 +137,9 @@ function draw(stages){
       + '<div class="fn-stage">' + esc(s.stage)
       + '<small>' + s.pct_of_top + '% of top</small></div>'
       + '<div class="fn-track"><div class="fn-bar" style="width:' + width
-      + '%;opacity:' + shade.toFixed(2) + '" title="' + esc(s.stage) + '">'
+      + '%;opacity:' + shade.toFixed(2) + ';cursor:pointer"'
+      + ' title="Show the ' + v + ' behind ' + esc(s.stage) + '"'
+      + ' onclick="drill(\'' + esc(s.stage).replace(/'/g, "\\'") + '\')">'
       + '<span class="fn-n">' + (MODE === 'value' ? inr(v) : v.toLocaleString('en-IN')) + '</span>'
       + (s.conversion_pct_from_previous !== null
          ? '<span class="fn-pct">' + s.conversion_pct_from_previous + '% carried through</span>' : '')
@@ -142,7 +153,10 @@ function draw(stages){
 
 function table(stages){
   document.querySelector('#tbl tbody').innerHTML = stages.map(function(s){
-    return '<tr><td><b>' + esc(s.stage) + '</b></td>'
+    return '<tr style="cursor:pointer" onclick="drill(\''
+      + esc(s.stage).replace(/'/g, "\\'") + '\')"'
+      + ' title="Show the records behind this stage">'
+      + '<td><b>' + esc(s.stage) + '</b></td>'
       + '<td class="num">' + s.count.toLocaleString('en-IN') + '</td>'
       + '<td class="num">' + inr(s.value) + '</td>'
       + '<td class="num">' + (s.conversion_pct_from_previous === null ? '—'
@@ -152,6 +166,56 @@ function table(stages){
       + '<td class="num">' + s.pct_of_top + '%</td></tr>';
   }).join('');
 }
+/* Clicking a stage shows the records behind the number — the same
+   filters the chart used, so the list and the figure always agree. */
+async function drill(stage){
+  var card = document.getElementById('drillCard');
+  var body = document.getElementById('drillBody');
+  document.getElementById('drillTtl').textContent = stage;
+  card.style.display = '';
+  body.innerHTML = '<div class="panel"><span class="spinner"></span> Loading…</div>';
+  card.scrollIntoView({behavior:'smooth', block:'nearest'});
+
+  var p = new URLSearchParams();
+  p.set('stage', stage);
+  var map = {vertical:'fVert', industry:'fInd', source:'fSrc', pic:'fPic'};
+  Object.keys(map).forEach(function(k){
+    var v = (document.getElementById(map[k]).value || '').trim();
+    if(v) p.set(k, v);
+  });
+
+  var r = await fetch('{{ url_prefix }}/api/funnel/sales/records?' + p.toString(),
+                      {credentials:'same-origin'});
+  var d = await r.json();
+  if(!d.ok){
+    body.innerHTML = '<div class="panel err">' + esc(d.error || 'Could not load') + '</div>';
+    return;
+  }
+  document.getElementById('drillTtl').textContent =
+    stage + ' — ' + d.count + ' account' + (d.count === 1 ? '' : 's');
+
+  if(!d.records.length){
+    body.innerHTML = '<div class="empty">No accounts reached this stage '
+      + 'with the current filters.</div>';
+    return;
+  }
+  body.innerHTML = '<div class="table-wrap"><table>'
+    + '<thead><tr><th>Account</th><th>Details</th></tr></thead><tbody>'
+    + d.records.map(function(x){
+        return '<tr onclick="location.href=\'{{ url_prefix }}' + x.route
+          + '\'" style="cursor:pointer"><td><b><a href="{{ url_prefix }}'
+          + x.route + '">' + esc(x.name) + '</a></b></td>'
+          + '<td class="meta">' + esc(x.meta || '—') + '</td></tr>';
+      }).join('')
+    + '</tbody></table></div>'
+    + (d.truncated ? '<div class="meta" style="padding:10px 16px">Showing the '
+        + 'first 500 — narrow the filters to see the rest.</div>' : '');
+}
+
+function closeDrill(){
+  document.getElementById('drillCard').style.display = 'none';
+}
+
 load();
 </script>
 

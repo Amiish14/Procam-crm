@@ -82,7 +82,12 @@ def test_rendered_links_carry_the_prefix(client, path):
     if r.status_code in (302, 404):
         pytest.skip(f'{path} → {r.status_code}')
     assert r.status_code == 200, f'{path} → {r.status_code}'
-    bad = [u for u in _LINK.findall(r.get_data(as_text=True))
+    html = r.get_data(as_text=True)
+    # Script bodies build URLs from template literals, so a correctly
+    # prefixed "/CRM${x.route}" reads as a bare path to this scan. Client
+    # calls have their own guard (test_no_client_side_fetch_bypasses...).
+    html = re.sub(r'<script\b.*?</script>', '', html, flags=re.S | re.I)
+    bad = [u for u in _LINK.findall(html)
            if not u.startswith(_PREFIX + '/')]
     assert not bad, f'{path} has links that bypass {_PREFIX}: {bad[:5]}'
 
