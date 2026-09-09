@@ -1974,15 +1974,22 @@ async function openDeepLink(){
     return (Number.isInteger(n) && n > 0 && String(n) === raw) ? n : NaN;
   };
 
-  for(const name of ['opp', 'lead']){           // first recognised wins
+  // First recognised parameter wins, in this order.
+  const ROUTES = {
+    opp:     openOppDeepLink,
+    lead:    openLeadDeepLink,
+    account: openAccountDeepLink,
+    company: openCompanyDeepLink,
+    contact: openContactDeepLink,
+  };
+  for(const name of ['opp', 'lead', 'account', 'company', 'contact']){
     const id = readId(name);
     if(id === null) continue;
     if(Number.isNaN(id)){
       deepLinkNotFound(name, q.get(name));
       return;
     }
-    if(name === 'opp') await openOppDeepLink(id);
-    else               await openLeadDeepLink(id);
+    await ROUTES[name](id);
     return;
   }
   // Nothing recognised — leave the dashboard exactly as it was.
@@ -2017,8 +2024,97 @@ async function openOppDeepLink(oppId){
   await openOpp(o.lead_id);
 }
 
+async function openAccountDeepLink(accountId){
+  nav('accounts');
+  // acctOpen() fetches by id already but returns silently when the
+  // record is missing, so check first and report the failure.
+  const r = await api('/api/accounts/' + accountId);
+  if(!r || !r.ok){ deepLinkNotFound('account', accountId); return; }
+  await acctOpen(accountId);
+}
+
+async function openCompanyDeepLink(projectId){
+  nav('projects');
+  const r = await api('/api/projects/' + projectId);
+  if(!r || !r.ok){ deepLinkNotFound('company', projectId); return; }
+  await prjOpen(projectId);
+}
+
+async function openContactDeepLink(contactId){
+  const c = await api('/api/contacts/' + contactId);
+  if(!c || !c.id){ deepLinkNotFound('contact', contactId); return; }
+  await openContact(contactId, c);
+}
+
+/* Open one contact.
+
+   There is no contacts detail view — Global CRM renders cards with no
+   click target, and openCt() opens the blank new-contact modal, so it
+   cannot be reused. Rather than build a whole view for one record, the
+   contact is rendered as a detail panel at the top of Global CRM, which
+   is where a person looks for a contact anyway, with a route through to
+   its organisation's own page. */
+async function openContact(id, preloaded){
+  nav('contacts');
+  const c = preloaded || await api('/api/contacts/' + id);
+  if(!c || !c.id){ deepLinkNotFound('contact', id); return; }
+
+  const host = g('pg-contacts');
+  if(!host) return;
+  const old = g('contactDetail');
+  if(old) old.remove();
+
+  const line = (label, value, href) => value
+    ? '<div style="margin-bottom:6px"><span style="font-size:10.5px;'
+      + 'font-weight:700;letter-spacing:.06em;text-transform:uppercase;'
+      + 'color:var(--text-3)">' + label + '</span><br>'
+      + (href ? '<a href="' + href + '">' + e(value) + '</a>' : e(value))
+      + '</div>'
+    : '';
+
+  const box = document.createElement('div');
+  box.className = 'card';
+  box.id = 'contactDetail';
+  box.innerHTML =
+    '<div style="padding:18px 22px;border-left:3px solid var(--red)">'
+    + '<div style="display:flex;justify-content:space-between;'
+      + 'align-items:flex-start;gap:12px;flex-wrap:wrap">'
+      + '<div><div style="font-size:19px;font-weight:700;color:var(--ink);'
+        + 'letter-spacing:-.01em">' + e(c.name || '') + '</div>'
+        + (c.designation ? '<div style="font-size:13px;color:var(--text-2)">'
+            + e(c.designation) + '</div>' : '')
+        + (c.company ? '<div style="font-size:13px;margin-top:3px">'
+            + (c.company_id
+               ? '<a href="' + crmUrl('/companies/' + c.company_id) + '">'
+                 + e(c.company) + ' →</a>'
+               : e(c.company)) + '</div>' : '')
+      + '</div>'
+      + '<button class="btn btn-ghost btn-sm" '
+        + 'onclick="document.getElementById(\'contactDetail\').remove()">'
+        + 'Close</button>'
+    + '</div>'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fit,'
+      + 'minmax(180px,1fr));gap:14px;margin-top:16px;font-size:13px">'
+      + line('Email', c.email, c.email ? 'mailto:' + c.email : null)
+      + line('Mobile', c.mobile, c.mobile ? 'tel:' + c.mobile : null)
+      + line('Phone', c.phone, c.phone ? 'tel:' + c.phone : null)
+      + line('Location', [c.city, c.country].filter(Boolean).join(', '))
+      + line('Industry', c.industry)
+      + line('Owner', c.assigned_to)
+    + '</div>'
+    + (c.notes ? '<div style="margin-top:14px;font-size:13px;'
+        + 'color:var(--text-2);line-height:1.7">' + e(c.notes) + '</div>' : '')
+    + '</div>';
+  host.insertBefore(box, host.firstChild);
+  box.scrollIntoView({block: 'nearest'});
+}
+
 function deepLinkNotFound(kind, id, why){
-  const page = (kind === 'opp') ? 'opp' : 'leads';
+  const PAGE = {opp: 'opp', lead: 'leads', account: 'accounts',
+                company: 'projects', contact: 'contacts'};
+  const LABEL = {opp: 'Opportunity', lead: 'Lead', account: 'Account',
+                 company: 'Project', contact: 'Contact'};
+  const page = PAGE[kind] || 'leads';
   nav(page);
   const host = g('pg-' + page);
   if(!host) return;
@@ -2031,9 +2127,8 @@ function deepLinkNotFound(kind, id, why){
     '<div style="padding:16px 20px;border-left:3px solid var(--red)">'
     + '<b style="color:var(--ink)">Record not found</b>'
     + '<div style="margin-top:5px;color:var(--text-2);font-size:13px">'
-    + e(why || ((kind === 'opp' ? 'Opportunity' : 'Lead') + ' '
-                + String(id) + ' does not exist, or you do not have '
-                + 'access to it.'))
+    + e(why || ((LABEL[kind] || 'Record') + ' ' + String(id)
+                + ' does not exist, or you do not have access to it.'))
     + '</div></div>';
   host.insertBefore(box, host.firstChild);
 }

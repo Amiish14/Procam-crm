@@ -1887,6 +1887,31 @@ def api_create_contact():
             db.session.commit()
     return jsonify({'ok': True, 'id': ct.id})
 
+@app.route('/api/contacts/<int:cid>', methods=['GET'])
+@require_auth
+def api_contact_by_id(cid):
+    """Fetch one contact by id, for deep links.
+
+    The list is capped at 200 and filtered by owner for non-admins, so a
+    deep link needs its own path. Same visibility rule as the list, so
+    this cannot reach a contact the list would have hidden.
+    """
+    contact = Contact.query.get(cid)
+    if contact is None:
+        return jsonify({'error': 'Contact not found', 'id': cid}), 404
+    if (session.get('role') != 'admin'
+            and contact.assigned_to != session.get('emp_code')):
+        return jsonify({'error': 'Contact not found', 'id': cid}), 404
+
+    body = contact.to_dict()
+    # So the detail can offer a route to the organisation's own page.
+    body['company_id'] = getattr(contact, 'company_id', None)
+    if body['company_id']:
+        company = Company.query.get(body['company_id'])
+        body['company_name'] = company.name if company else ''
+    return jsonify(body)
+
+
 @app.route('/api/contacts/<int:cid>', methods=['PUT'])
 @require_auth
 def api_update_contact(cid):

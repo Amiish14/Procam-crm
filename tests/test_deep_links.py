@@ -152,8 +152,9 @@ def test_the_app_dispatches_deep_links_on_startup():
 
 
 def test_the_dispatcher_handles_both_parameters():
+    """Part A's two, still routed after Part B widened the loop to five."""
     html = open(_TEMPLATE).read()
-    assert "for(const name of ['opp', 'lead'])" in html
+    assert "'opp', 'lead'" in html
     assert 'openOppDeepLink' in html and 'openLeadDeepLink' in html
 
 
@@ -182,3 +183,79 @@ def test_home_links_are_untouched():
     html = open(_TEMPLATE).read()
     assert 'crm-brand' not in html or '/app?' not in html.split(
         'crm-brand')[1][:200]
+
+
+# ── Part B: accounts, companies and contacts ─────────────────────────
+def test_contact_by_id_returns_the_record(world):
+    with flask_app.app_context():
+        acme_id = Company.query.filter_by(name='Acme').first().id
+        ct = _main.Contact(name='Rita Shah', company='Acme',
+                           company_id=acme_id, assigned_to='DLADM',
+                           email='rita@acme.com')
+        db.session.add(ct)
+        db.session.commit()
+        cid = ct.id
+
+    body = _c().get(f'/api/contacts/{cid}').get_json()
+    assert body['id'] == cid
+    assert body['name'] == 'Rita Shah'
+    assert body['company_id'] == acme_id
+    assert body['company_name'] == 'Acme', \
+        'the detail needs a route through to the organisation'
+
+
+def test_unknown_contact_is_404(world):
+    assert _c().get('/api/contacts/999999999').status_code == 404
+
+
+def test_contact_by_id_respects_the_list_visibility_rule(world):
+    """It must not become a way past the owner filter the list applies."""
+    with flask_app.app_context():
+        theirs = _main.Contact(name='Someone Else', assigned_to='DLADM')
+        db.session.add(theirs)
+        db.session.commit()
+        cid = theirs.id
+    assert _c('DLREP').get(f'/api/contacts/{cid}').status_code == 404
+
+
+def test_the_dispatcher_covers_all_five_parameters():
+    html = open(_TEMPLATE).read()
+    assert "['opp', 'lead', 'account', 'company', 'contact']" in html
+    for fn in ('openAccountDeepLink', 'openCompanyDeepLink',
+               'openContactDeepLink'):
+        assert f'async function {fn}(' in html
+
+
+def test_there_is_an_id_based_contact_handler():
+    """openCt() takes no argument and opens the blank new-contact modal,
+    so it cannot be reused for this."""
+    html = open(_TEMPLATE).read()
+    assert 'async function openContact(id, preloaded)' in html
+    assert 'function openCt(){' in html, 'the zero-arg handler must remain'
+    assert 'openCt(id)' not in html, 'openCt must not be repurposed'
+
+
+def test_not_found_names_the_right_view_for_each_kind():
+    html = open(_TEMPLATE).read()
+    assert "account: 'accounts'" in html
+    assert "company: 'projects'" in html
+    assert "contact: 'contacts'" in html
+
+
+def test_company_360_deep_links_contact_names():
+    tpl = os.path.join(_ROOT, 'templates', 'company', 'detail.html')
+    src = open(tpl).read()
+    assert '/app?contact={{ p.id }}' in src, \
+        'contact names must link into the app'
+    assert 'mailto:{{ p.email }}' in src, \
+        'the mailto on the email is a different action and stays'
+
+
+def test_company_360_link_style_is_consistent():
+    """Same tab, same markup as the working ?opp= / ?lead= links."""
+    src = open(os.path.join(_ROOT, 'templates', 'company',
+                            'detail.html')).read()
+    for param in ('opp', 'lead', 'contact'):
+        assert f'href="{{{{ url_prefix }}}}/app?{param}=' in src
+    assert 'target="_blank"' not in src.split('?contact=')[0][-300:], \
+        'contact links should open in the same tab, like the others'

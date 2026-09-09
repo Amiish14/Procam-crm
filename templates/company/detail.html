@@ -122,7 +122,11 @@
       <div class="table-wrap"><table>
         <thead><tr><th>Name</th><th>Designation</th><th>Contact</th></tr></thead>
         <tbody>{% for p in data.people %}
-          <tr><td><b>{{ p.name }}</b></td><td>{{ p.designation or '—' }}</td>
+          {# The name deep-links into the app, matching the ?opp= / ?lead=
+             links above: same tab, same styling. The mailto stays on the
+             email, which is a different action. #}
+          <tr><td><b><a href="{{ url_prefix }}/app?contact={{ p.id }}">{{ p.name }}</a></b></td>
+              <td>{{ p.designation or '—' }}</td>
               <td>{% if p.email %}<a href="mailto:{{ p.email }}">{{ p.email }}</a>{% endif %}
                   {% if p.phone %}<div class="meta">{{ p.phone }}</div>{% endif %}</td></tr>
         {% endfor %}</tbody></table></div>
