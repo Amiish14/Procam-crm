@@ -311,8 +311,15 @@ class Lead(db.Model):
     # Pipeline
     stage            = db.Column(db.String(40), default='New Opportunity')
     procam_vertical  = db.Column(db.String(60))
-    assigned_to      = db.Column(db.String(100))   # emp_code
+    assigned_to      = db.Column(db.String(100))   # emp_code — primary PIC
     assigned_name    = db.Column(db.String(100))
+    # Secondary PIC — a monitor/backup, not a co-owner. Mirrors the
+    # primary pair above rather than using crm_lead_members, because the
+    # primary owner is a column: splitting the pair across a column and a
+    # table would make every list view and the triage dashboard join for
+    # a field they filter on.
+    secondary_owner      = db.Column(db.String(100), index=True)
+    secondary_owner_name = db.Column(db.String(100))
     followup_date    = db.Column(db.Date)
     notes            = db.Column(db.Text)
     history          = db.Column(db.Text)
@@ -376,6 +383,8 @@ class Lead(db.Model):
             'assigned_to': self.assigned_to or '', 'assigned_name': self.assigned_name or '',
             'followup': sd(self.followup_date), 'notes': self.notes or '',
             'history': self.history or '',
+            'secondary_owner': self.secondary_owner or '',
+            'secondary_owner_name': self.secondary_owner_name or '',
             'phone_call_date': sd(self.phone_call_date),
             'intro_mail_date': sd(self.intro_mail_date),
             'meeting_date': sd(self.meeting_date),
@@ -681,6 +690,40 @@ class LeadStageHistory(db.Model):
             'id': self.id, 'lead_id': self.lead_id,
             'from_stage': self.from_stage or '',
             'to_stage': self.to_stage,
+            'changed_at': str(self.changed_at)[:16],
+            'changed_by': self.changed_by or '',
+            'note': self.note or '',
+        }
+
+
+class LeadAssignmentHistory(db.Model):
+    """Who owned a lead, when, and who put them there.
+
+    There was no assignment history: Lead.history is a free-text notes
+    field and LeadStageHistory records stage only, so a reassignment left
+    no trace and "who had this before me?" had no answer. Both the
+    primary and the secondary are recorded on every change.
+    """
+    __tablename__ = 'lead_assignment_history'
+    id            = db.Column(db.Integer, primary_key=True)
+    lead_id       = db.Column(db.Integer, db.ForeignKey('leads.id'),
+                              nullable=False, index=True)
+    from_primary    = db.Column(db.String(100))
+    to_primary      = db.Column(db.String(100))
+    from_secondary  = db.Column(db.String(100))
+    to_secondary    = db.Column(db.String(100))
+    changed_at    = db.Column(db.DateTime, default=datetime.utcnow,
+                              index=True)
+    changed_by    = db.Column(db.String(20))
+    note          = db.Column(db.String(200))
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'lead_id': self.lead_id,
+            'from_primary': self.from_primary or '',
+            'to_primary': self.to_primary or '',
+            'from_secondary': self.from_secondary or '',
+            'to_secondary': self.to_secondary or '',
             'changed_at': str(self.changed_at)[:16],
             'changed_by': self.changed_by or '',
             'note': self.note or '',
@@ -1312,19 +1355,23 @@ def api_update_lead(lid):
             except: pass
         elif k in d and not d[k]:
             setattr(lead, v, None)
-    # Reassignment — admin only
-    notify_emp = None
-    if 'assigned_to' in d and session.get('role')=='admin':
-        changed = (lead.assigned_to or '') != (d['assigned_to'] or '')
-        lead.assigned_to = d['assigned_to']
-        emp2 = Employee.query.filter_by(emp_code=d['assigned_to']).first()
-        lead.assigned_name = emp2.name if emp2 else d['assigned_to']
-        if changed:
-            notify_emp = emp2          # tell them after the commit succeeds
+    # Reassignment — admin only. Both PICs go through the one service so
+    # the validation, the history row and the notifications cannot be
+    # skipped by taking a different endpoint.
+    if ('assigned_to' in d or 'secondary_owner' in d) \
+            and session.get('role') == 'admin':
+        from app.services import lead_assignment
+        ok, err = lead_assignment.assign(
+            lead,
+            primary_code=d.get('assigned_to') if 'assigned_to' in d else None,
+            secondary_code=(d.get('secondary_owner')
+                            if 'secondary_owner' in d else None),
+            actor=session.get('emp_code'))
+        if not ok:
+            db.session.rollback()
+            return jsonify({'error': err}), 400
     lead.updated_at = datetime.utcnow()
     db.session.commit()
-    if notify_emp is not None:
-        _notify_assignment(lead, notify_emp)
     # Auto-create/update contact
     _auto_save_contact(lead)
     return jsonify({'ok': True})
@@ -1427,36 +1474,35 @@ def api_lead_attachment_download(lid, aid):
     resp.headers['Cache-Control'] = 'no-store'
     return resp
 
-def _notify_assignment(lead, employee):
-    """Email an employee that a lead is now theirs. Best-effort: a failure
-    here must never surface to the caller or roll back the assignment."""
-    if employee is None:
-        return
-    try:
-        from email_ingest import notifier
-        notifier.notify_lead_assigned(
-            lead, employee, assigned_by=session.get('name') or '')
-    except Exception:                                            # noqa: BLE001
-        app.logger.exception('assignment notification failed for lead %s',
-                             getattr(lead, 'id', '?'))
-
-
 @app.route('/api/leads/bulk-assign', methods=['POST'])
 @require_auth
 @require_admin
 def api_bulk_assign():
+    from app.services import lead_assignment
     d = request.get_json()
     ids = d.get('ids', [])
-    emp_code = d.get('emp_code','')
-    emp = Employee.query.filter_by(emp_code=emp_code).first()
-    if not emp:
+    emp_code = d.get('emp_code', '')
+    secondary = (d.get('secondary_owner') or '').strip()
+
+    err = lead_assignment.validate(emp_code, secondary)
+    if err:
+        return jsonify({'error': err}), 400
+    if not Employee.query.filter_by(emp_code=emp_code).first():
         return jsonify({'error': 'Employee not found'}), 404
-    Lead.query.filter(Lead.id.in_(ids)).update(
-        {'assigned_to': emp_code, 'assigned_name': emp.name}, synchronize_session=False)
-    db.session.commit()
+
+    # Row by row rather than a bulk UPDATE: each lead needs its own
+    # history entry and its own notification, and the previous owner
+    # differs per row.
+    done = 0
     for lead in Lead.query.filter(Lead.id.in_(ids)).all():
-        _notify_assignment(lead, emp)
-    return jsonify({'ok': True, 'count': len(ids)})
+        ok, err = lead_assignment.assign(
+            lead, primary_code=emp_code,
+            secondary_code=secondary if 'secondary_owner' in d else None,
+            actor=session.get('emp_code'), note='bulk assign')
+        if ok:
+            done += 1
+    db.session.commit()
+    return jsonify({'ok': True, 'count': done})
 
 @app.route('/api/leads/import', methods=['POST'])
 @require_auth
@@ -2856,6 +2902,19 @@ def api_lead_history(lid):
             'from_stage': h.from_stage or '',
             'to_stage': h.to_stage or '',
             'note': h.note or '', 'by': h.changed_by or '',
+        })
+    # Reassignments belong in the same timeline: "why did this stall?" is
+    # usually answered by when it changed hands.
+    for a in (LeadAssignmentHistory.query.filter_by(lead_id=lid)
+              .order_by(LeadAssignmentHistory.changed_at.desc()).all()):
+        events.append({
+            'kind': 'assignment',
+            'when': str(a.changed_at)[:16] if a.changed_at else '',
+            'from_primary': a.from_primary or '',
+            'to_primary': a.to_primary or '',
+            'from_secondary': a.from_secondary or '',
+            'to_secondary': a.to_secondary or '',
+            'note': a.note or '', 'by': a.changed_by or '',
         })
     events.sort(key=lambda x: x.get('when') or '', reverse=True)
     return jsonify(events)

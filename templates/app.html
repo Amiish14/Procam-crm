@@ -1664,11 +1664,12 @@ window.CRMToast = (function(){
   <div class="card" style="margin-bottom:0">
     <div class="card-hd"><div class="card-ttl" id="asCnt">—</div>
       <div style="display:flex;gap:8px;align-items:center">
-        <select class="fi" id="blkU" style="width:180px"></select>
+        <select class="fi" id="blkU" style="width:170px" title="Primary PIC"><option value="">Primary PIC…</option></select>
+        <select class="fi" id="blkU2" style="width:170px" title="Secondary PIC — monitor/backup"><option value="">Secondary (optional)…</option></select>
         <button class="btn btn-red btn-sm" onclick="bulkAssign()">Assign selected</button>
       </div>
     </div>
-    <div class="tw"><table><thead><tr><th><input type="checkbox" id="asAll" onchange="togAll(this)"></th><th>Company</th><th>Industry</th><th>State</th><th>Current Assignee</th><th>Source</th></tr></thead><tbody id="asTb"></tbody></table></div>
+    <div class="tw"><table><thead><tr><th><input type="checkbox" id="asAll" onchange="togAll(this)"></th><th>Company</th><th>Industry</th><th>State</th><th>Primary PIC</th><th>Secondary</th><th>Source</th></tr></thead><tbody id="asTb"></tbody></table></div>
   </div>
 </div>
 
@@ -2794,6 +2795,9 @@ async function openLd(id){
   g('ldSub').textContent=(l.project?l.project+' · ':'')+[l.state,l.industry].filter(Boolean).join(' · ');
   const isAdmin=ME.role==='admin';
   const uOpts=EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('');
+  // Optional, and blank by default — a secondary is encouraged, never
+  // forced, so the picker must open on "nobody".
+  const sOpts='<option value="">— none —</option>'+EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.secondary_owner?' selected':''}>${e(em.name)}</option>`).join('');
   g('ldBdy').innerHTML=`
     ${renderEmailSummaryCard(l)}
     ${l.history||l.notes?`<div class="fmg"><label class="fml">Background</label><div class="hist">${e((l.history||l.notes||'').substring(0,400))}</div></div>`:''}
@@ -2812,7 +2816,8 @@ async function openLd(id){
     <div class="fm-s">Contact information</div>
     <div class="fmr"><div class="fmg"><label class="fml">Contact person</label><input class="fmc" id="lPic" value="${e(l.pic||'')}"></div><div class="fmg"><label class="fml">Designation</label><input class="fmc" id="lDes" value="${e(l.designation||'')}"></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="lEm" value="${e(l.email||'')}"></div><div class="fmg"><label class="fml">Phone</label><input class="fmc" id="lPh" value="${e(l.phone||'')}"></div></div>
-    <div class="fmr"><div class="fmg"><label class="fml">Assigned to</label><select class="fmc" id="lAsgn" ${isAdmin?'':'disabled'}>${uOpts}</select></div><div class="fmg"><label class="fml">Procam vertical</label><select class="fmc" id="lVt">${['Heavy Transport','Project Freight','Warehousing','Installation'].map(v=>`<option${v===l.procam_vertical?' selected':''}>${v}</option>`).join('')}</select></div></div>
+    <div class="fmr"><div class="fmg"><label class="fml">Primary PIC</label><select class="fmc" id="lAsgn" ${isAdmin?'':'disabled'}>${uOpts}</select></div><div class="fmg"><label class="fml">Secondary PIC <span style="font-weight:400;color:var(--text-3)">— monitor / backup</span></label><select class="fmc" id="lAsgn2" ${isAdmin?'':'disabled'}>${sOpts}</select></div></div>
+    <div class="fmr"><div class="fmg"><label class="fml">Procam vertical</label><select class="fmc" id="lVt">${['Heavy Transport','Project Freight','Warehousing','Installation'].map(v=>`<option${v===l.procam_vertical?' selected':''}>${v}</option>`).join('')}</select></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Next follow-up</label><input type="date" class="fmc" id="lFu" value="${l.followup||''}"></div><div class="fmg"><label class="fml">Onboarded date</label><input class="fmc" value="${l.onboarded_date||'—'}" disabled style="background:var(--surface-2);color:var(--text-3)"></div></div>
     <div class="fmg"><label class="fml">Notes / call summary</label><textarea class="fmc" id="lNotes" rows="3">${e(l.notes||'')}</textarea></div>
     ${l.linkedin?`<div style="font-size:12.5px;margin-top:8px"><a href="${e(l.linkedin)}" target="_blank">LinkedIn profile</a></div>`:''}
@@ -2835,7 +2840,9 @@ async function saveLd(){
   const data={
     pic:g('lPic')?.value, designation:g('lDes')?.value,
     email:g('lEm')?.value, phone:g('lPh')?.value,
-    assigned_to:g('lAsgn')?.value, procam_vertical:g('lVt')?.value,
+    assigned_to:g('lAsgn')?.value,
+    secondary_owner:g('lAsgn2')?.value ?? '',
+    procam_vertical:g('lVt')?.value,
     followup:g('lFu')?.value, notes:g('lNotes')?.value,
     phone_call_date:g('lPC')?.value, intro_mail_date:g('lIM')?.value,
     meeting_date:g('lMT')?.value, rfq_date:g('lRQ')?.value,
@@ -3840,7 +3847,8 @@ async function rAssign(){
     <td><input type="checkbox" class="ac" value="${l.id}"></td>
     <td><div class="td-m">${e(l.company)}</div><div class="td-s">${e(l.industry||'')}</div></td>
     <td style="font-size:11.5px">${e(l.industry||'—')}</td><td style="font-size:11.5px">${e(l.state||'—')}</td>
-    <td><select class="fi" style="width:160px;padding:5px" onchange="assignOne(${l.id},this.value)"><option value="">— Assign —</option>${EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('')}</select></td>
+    <td><select class="fi" style="width:150px;padding:5px" onchange="assignOne(${l.id},this.value)"><option value="">— Assign —</option>${EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('')}</select></td>
+    <td><select class="fi" style="width:150px;padding:5px" onchange="assignOne(${l.id},'${e(l.assigned_to||'')}',this.value)"><option value="">— none —</option>${EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.secondary_owner?' selected':''}>${e(em.name)}</option>`).join('')}</select></td>
     <td>${srb(l.source)}</td>
   </tr>`).join('');
   // Populate industry filter if empty
@@ -3850,17 +3858,27 @@ async function rAssign(){
   }
   // Bulk user select
   if(g('blkU').children.length<2) g('blkU').insertAdjacentHTML('beforeend',EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join(''));
+  if(g('blkU2') && g('blkU2').children.length<2) g('blkU2').insertAdjacentHTML('beforeend',EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join(''));
 }
-async function assignOne(id,ec){
-  await api(`/api/leads/${id}`,{method:'PUT',body:JSON.stringify({assigned_to:ec})});
+async function assignOne(id,ec,sec){
+  const body={assigned_to:ec};
+  if(sec!==undefined) body.secondary_owner=sec;
+  const r=await api(`/api/leads/${id}`,{method:'PUT',body:JSON.stringify(body)});
+  if(r && r.error){toast(r.error,'err');return false;}
   toast('Assigned ✓','ok');
+  return true;
 }
 function togAll(el){document.querySelectorAll('.ac').forEach(c=>c.checked=el.checked);}
 async function bulkAssign(){
   const ec=g('blkU').value;if(!ec){toast('Select a team member','err');return;}
+  const sec=g('blkU2')?g('blkU2').value:'';
+  if(sec && sec===ec){toast('Primary and secondary must be different people','err');return;}
   const ids=[...document.querySelectorAll('.ac:checked')].map(c=>parseInt(c.value));
   if(!ids.length){toast('Select leads first','err');return;}
-  const r=await api('/api/leads/bulk-assign',{method:'POST',body:JSON.stringify({ids,emp_code:ec})});
+  const body={ids,emp_code:ec};
+  if(sec) body.secondary_owner=sec;
+  const r=await api('/api/leads/bulk-assign',{method:'POST',body:JSON.stringify(body)});
+  if(r.error){toast(r.error,'err');return;}
   if(r.ok){rAssign();toast(`${r.count} leads assigned ✓`,'ok');}
 }
 
