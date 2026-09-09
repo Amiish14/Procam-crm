@@ -1,16 +1,22 @@
-"""Business card OCR via Claude Vision (Phase 12).
+"""Business card extraction — Claude Vision, checked by a deterministic parser.
 
 Two entry points:
 
-    extract_business_card(image_bytes, mime='image/jpeg')
+    extract_business_card(image_bytes, mime='image/jpeg', card_text=None)
         → {'extracted': dict, 'raw': str, 'error': str | None}
 
     find_duplicates(extracted: dict, db)
         → {'accounts': [...], 'contacts': [...]}
 
-Both are safe to call without an API key — the extractor returns an
-`error` string and the endpoint falls back to a human review with an
-empty extraction rather than failing the upload.
+Vision was the only path, which made it a single point of failure: no
+API key, no credit, or a malformed response and the reviewer got an empty
+form. app/services/card_parse.py is now layered underneath it as
+
+    a fallback     when the model returns nothing but text is available
+    a cross-check  disagreements are named, not silently resolved
+    a validation   the model's shape is forced into the contract
+
+Both entry points remain safe to call without an API key.
 """
 from __future__ import annotations
 
@@ -44,21 +50,44 @@ Do not add any commentary. Return only the JSON object. If a field is not visibl
 
 
 def extract_business_card(image_bytes: bytes,
-                          mime: str = 'image/jpeg') -> dict:
-    """Send an image to Claude Vision and parse a JSON response.
+                          mime: str = 'image/jpeg',
+                          card_text: str = None) -> dict:
+    """Extract a card. Vision where available, deterministic always.
 
-    Never raises — always returns a dict of the shape
+    `card_text` is any text already read off the card — pasted by the
+    user, or produced by an OCR step if one is ever added. When Vision
+    is unavailable this is the whole extraction; when both are present
+    the two are cross-checked.
+
+    Never raises — always returns
     ``{'extracted': dict, 'raw': str, 'error': str | None}``.
     """
+    from app.services import card_parse
+
+    fallback = card_parse.parse(card_text) if card_text else None
+
+    def finish(model_out, raw, error):
+        if model_out and fallback:
+            merged = card_parse.cross_check(model_out, fallback)
+        elif model_out:
+            merged = model_out
+        elif fallback:
+            merged = fallback
+            error = error or None
+        else:
+            return {'extracted': {}, 'raw': raw, 'error': error}
+        out = card_parse.to_contact_fields(merged)
+        out['conflicts'] = merged.get('conflicts') or []
+        out['raw_text'] = merged.get('raw_text') or (card_text or '')
+        return {'extracted': out, 'raw': raw, 'error': error}
+
     api_key = os.environ.get('ANTHROPIC_API_KEY')
     if not api_key:
-        return {'extracted': {}, 'raw': '',
-                'error': 'ANTHROPIC_API_KEY not configured'}
+        return finish(None, '', 'ANTHROPIC_API_KEY not configured')
     try:
         import anthropic
     except Exception as exc:                                        # pragma: no cover
-        return {'extracted': {}, 'raw': '',
-                'error': f'anthropic package unavailable: {exc}'}
+        return finish(None, '', f'anthropic package unavailable: {exc}')
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
@@ -81,12 +110,14 @@ def extract_business_card(image_bytes: bytes,
                        if hasattr(b, 'text')]).strip()
         m = re.search(r'\{[\s\S]*\}', raw)
         parsed = json.loads(m.group(0)) if m else {}
-        # Coerce values to strings — the prompt asks for empty strings not
-        # nulls, but defensively coerce anyway.
-        parsed = {k: ('' if v is None else str(v)) for k, v in parsed.items()}
-        return {'extracted': parsed, 'raw': raw, 'error': None}
+        if not isinstance(parsed, dict):
+            # A model that answers with a list or a string must not be
+            # allowed to bypass validation.
+            return finish(None, raw, 'model returned a non-object')
+        from app.services import card_parse as _cp
+        return finish(_cp.normalise(parsed), raw, None)
     except Exception as exc:
-        return {'extracted': {}, 'raw': '', 'error': str(exc)}
+        return finish(None, '', str(exc))
 
 
 def _domain_of(url_or_email: str) -> str:
@@ -118,8 +149,28 @@ def find_duplicates(extracted: dict, db) -> dict:
     if not extracted:
         return matches
 
-    email        = (extracted.get('email') or '').strip().lower()
-    phone        = (extracted.get('mobile') or '').strip()
+    from app.services.card_parse import normalise_phone
+
+    # Every address and number on the card, not just the primary — a
+    # duplicate found on the second number is still a duplicate, and
+    # creating the contact anyway is how the same person ends up in the
+    # CRM three times.
+    # The union of the lists and the singular fields, never one or the
+    # other: the review screen edits `email`/`mobile`, so preferring the
+    # list would check the extraction the reviewer just corrected.
+    def _all(list_key, *single_keys):
+        vals = [v for v in (extracted.get(list_key) or []) if v]
+        vals += [extracted.get(k) for k in single_keys if extracted.get(k)]
+        seen, out = set(), []
+        for v in vals:
+            k = str(v).strip().lower()
+            if k and k not in seen:
+                seen.add(k)
+                out.append(str(v).strip())
+        return out
+
+    emails = [e.lower() for e in _all('emails', 'email')]
+    phones = _all('phones', 'mobile', 'telephone')
     company_name = (extracted.get('company') or '').strip()
     person_name  = (extracted.get('name') or '').strip()
     website      = _domain_of(extracted.get('website') or '')
@@ -141,18 +192,27 @@ def find_duplicates(extracted: dict, db) -> dict:
         pass
 
     try:
-        if email:
+        for email in emails:
             for c in Contact.query.filter(
                     Contact.email.ilike(email)).limit(3).all():
                 matches['contacts'].append(
                     {'id': c.id, 'name': c.name, 'score': 100,
-                     'reason': 'email exact'})
-        if phone:
-            for c in Contact.query.filter(
-                    Contact.mobile == phone).limit(3).all():
-                matches['contacts'].append(
-                    {'id': c.id, 'name': c.name, 'score': 100,
-                     'reason': 'mobile exact'})
+                     'reason': f'email {email}'})
+        if phones:
+            # Compared on digits: "+91 98200-11223" and "09820011223" are
+            # one number, and an exact string match would miss it.
+            wanted = {normalise_phone(p) for p in phones}
+            wanted.discard('')
+            if wanted:
+                for c in Contact.query.filter(
+                        db.or_(Contact.mobile.isnot(None),
+                               Contact.phone.isnot(None))).limit(4000).all():
+                    for existing in (c.mobile, c.phone):
+                        if existing and normalise_phone(existing) in wanted:
+                            matches['contacts'].append(
+                                {'id': c.id, 'name': c.name, 'score': 100,
+                                 'reason': f'phone {existing}'})
+                            break
         if person_name:
             for c in Contact.query.filter(
                     Contact.name.ilike(f'%{person_name}%')).limit(3).all():

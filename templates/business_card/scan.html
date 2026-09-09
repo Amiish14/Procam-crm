@@ -22,6 +22,18 @@
     </div>
     <div class="muted">Accepts JPG, PNG, HEIC, WEBP, PDF. Up to 8&nbsp;MB.</div>
   </label>
+
+  <!-- Extraction from the image needs the Vision service. When it is
+       unavailable, typed or pasted card text is parsed on the server and
+       fills the same review form, so the scanner still works. -->
+  <details id="text-fallback" style="margin-top:12px">
+    <summary style="cursor:pointer;font-size:13px;color:var(--text-2)">
+      Add the card text (optional — used to cross-check, and to extract
+      when the image service is unavailable)
+    </summary>
+    <textarea id="card-text" rows="6" style="width:100%;margin-top:8px"
+      placeholder="Paste or type the card exactly as printed, one line per line:&#10;Rajesh Kumar Sharma&#10;Senior Manager - Logistics&#10;Ambuja Cement Limited&#10;Mobile: +91 98200 11223&#10;rajesh.sharma@ambujacement.com"></textarea>
+  </details>
   <div id="upload-msg" class="err" style="display:none"></div>
 </div>
 
@@ -33,6 +45,9 @@
 <div class="card" id="review-card" style="display:none">
   <h2>Review Extracted Fields</h2>
   <div id="ocr-error" class="err" style="display:none"></div>
+  <img id="card-image" alt="The scanned business card" style="display:none;
+       max-width:100%;max-height:260px;border-radius:8px;margin-bottom:16px;
+       border:1px solid var(--border)">
   <div class="grid" id="fields"></div>
 
   <h2>Possible Duplicates</h2>
@@ -68,6 +83,21 @@
     ['linkedin_url','LinkedIn'],
   ];
 
+  // A card often carries three numbers and two addresses. The Contact
+  // record holds one email and two numbers, so the rest would be lost
+  // silently — they are shown here instead, one click from the field.
+  function extras(ex, key, targetId){
+    const all = (ex[key] || []).filter(Boolean);
+    if (all.length < 2) return '';
+    return '<div class="muted" style="font-size:11.5px;margin-top:4px">'
+      + 'also on the card: '
+      + all.slice(1).map(v =>
+          `<a href="#" class="pick-extra" data-target="${targetId}" `
+          + `data-value="${String(v).replace(/"/g,'&quot;')}">`
+          + String(v).replace(/</g,'&lt;') + '</a>').join(' · ')
+      + '</div>';
+  }
+
   const drop = $('drop');
   const file = $('file');
   drop.addEventListener('dragover', e=>{e.preventDefault();drop.classList.add('dragover')});
@@ -88,6 +118,8 @@
     try{
       const fd = new FormData();
       fd.append('file', f);
+      const typed = ($('card-text').value || '').trim();
+      if (typed) fd.append('card_text', typed);
       const r = await fetch('{{ url_prefix }}/api/business-cards/upload', {method:'POST', body:fd});
       const j = await r.json();
       if (!j.ok) throw new Error(j.error || 'Upload failed');
@@ -113,16 +145,39 @@
 
     const wrap = $('fields'); wrap.innerHTML = '';
     const ex = card.extracted || {};
+    // Fields where the image and the text disagreed. Flagged rather than
+    // silently resolved — the reviewer can see the card.
+    const conflicts = new Set(ex.conflicts || []);
+    const EXTRA_OF = {email: 'emails', mobile: 'phones', telephone: 'phones'};
     FIELDS.forEach(([k,label])=>{
       const div = document.createElement('div');
       div.className = 'field';
       const isTA = (k === 'address');
-      div.innerHTML = `<label>${label}</label>`+
+      const flagged = conflicts.has(k);
+      div.innerHTML = `<label>${label}${flagged
+          ? ' <span style="color:var(--amber,#b45309);font-weight:600">· check this</span>'
+          : ''}</label>`+
         (isTA
           ? `<textarea id="f_${k}" rows="2">${(ex[k]||'').replace(/</g,'&lt;')}</textarea>`
-          : `<input id="f_${k}" value="${(ex[k]||'').replace(/"/g,'&quot;')}">`);
+          : `<input id="f_${k}" value="${(ex[k]||'').replace(/"/g,'&quot;')}"${
+              flagged ? ' style="border-color:var(--amber,#b45309)"' : ''}>`)
+        + (EXTRA_OF[k] ? extras(ex, EXTRA_OF[k], 'f_'+k) : '');
       wrap.appendChild(div);
     });
+    wrap.querySelectorAll('.pick-extra').forEach(a=>{
+      a.onclick = ev => {
+        ev.preventDefault();
+        const t = $(a.dataset.target);
+        if (t) { t.value = a.dataset.value; t.focus(); }
+      };
+    });
+
+    // The card as photographed, beside the fields read off it.
+    const img = $('card-image');
+    if (img) {
+      if (card.image_url) { img.src = card.image_url; img.style.display='block'; }
+      else { img.style.display = 'none'; }
+    }
 
     const dup = card.dup_matches || {accounts:[], contacts:[]};
     const accBox = $('dup-accounts'); accBox.innerHTML='';

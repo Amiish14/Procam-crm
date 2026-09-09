@@ -15,6 +15,7 @@ import mimetypes
 import os
 
 from flask import (Blueprint, jsonify, render_template, request, session,
+                   url_for,
                    current_app)
 
 from app import db
@@ -85,7 +86,11 @@ def api_upload():
     except Exception as exc:
         return jsonify(error=f'Could not re-read upload: {exc}'), 500
 
-    result = extract_business_card(img_bytes, mime=mime)
+    # Text read off the card by whatever means — pasted by the user, or
+    # from an OCR step if one is added later. With no Vision credit this
+    # is the only thing that makes the scanner work at all.
+    card_text = (request.form.get('card_text') or '').strip() or None
+    result = extract_business_card(img_bytes, mime=mime, card_text=card_text)
     extracted = result.get('extracted') or {}
     dup = find_duplicates(extracted, db)
 
@@ -104,10 +109,47 @@ def api_upload():
 
     payload = row.to_dict()
     payload['ocr_error'] = result.get('error')
+    payload['image_url'] = url_for('business_card.card_image',
+                                   card_id=row.id)
     return jsonify(ok=True, card=payload)
 
 
 # ─── Review payload ──────────────────────────────────────────────────────
+@bp.route('/business-cards/<int:card_id>/image')
+@_require_auth
+def card_image(card_id):
+    """The photographed card, shown beside the fields read off it.
+
+    send_safe_download() forces an attachment download, which cannot be
+    rendered in an <img>, so this serves inline instead — with the same
+    nosniff and sandbox headers, an image-only mimetype, and the stored
+    path confined to the upload root so a tampered row cannot read an
+    arbitrary file off the server.
+    """
+    from flask import send_file, abort
+    from app.utils.uploads import _upload_root
+
+    row = BusinessCardImport.query.get_or_404(card_id)
+    path = row.image_path or ''
+    if not path:
+        abort(404)
+    root = os.path.realpath(_upload_root())
+    real = os.path.realpath(path)
+    if not real.startswith(root + os.sep) or not os.path.isfile(real):
+        abort(404)
+
+    mime, _ = mimetypes.guess_type(real)
+    if mime not in ('image/jpeg', 'image/png', 'image/gif', 'image/webp',
+                    'image/tiff', 'image/bmp', 'application/pdf'):
+        abort(404)
+
+    resp = send_file(real, mimetype=mime, as_attachment=False)
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    resp.headers['Content-Security-Policy'] = "sandbox; default-src 'none'"
+    resp.headers['Cache-Control'] = 'private, max-age=300'
+    return resp
+
+
 @bp.route('/api/business-cards/<int:card_id>', methods=['GET'])
 @_require_auth
 def api_get(card_id):
@@ -136,6 +178,21 @@ def api_save(card_id):
 
     person_name  = (fields.get('name') or '').strip()
     company_name = (fields.get('company') or '').strip()
+
+    if choice == 'new' and not data.get('confirm_duplicate'):
+        # Duplicates were shown at upload, but the reviewer edits the
+        # fields before saving — an email corrected here can collide with
+        # a contact the original extraction never matched. Checked again
+        # against what is actually about to be written.
+        again = find_duplicates(fields, db)
+        if again.get('contacts'):
+            row.dup_matches = again
+            db.session.commit()
+            return jsonify(ok=False, duplicate=True,
+                           matches=again,
+                           error='This person may already be in the CRM.'
+                                 ' Link to the existing record, or confirm'
+                                 ' to create a new one.'), 409
 
     if choice == 'link':
         if link_account_id:
