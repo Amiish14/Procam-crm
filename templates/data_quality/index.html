@@ -59,7 +59,10 @@
   {% for c in checks %}
   <div class="dq-card {{ 'clear' if c.count == 0 else c.severity }}">
     <div class="dq-n">
-      {%- if c.count is none %}—{% else %}{{ '{:,}'.format(c.count) }}{% endif -%}
+      {%- if c.count is none %}—
+      {%- elif c.count %}<a href="{{ url_prefix }}/admin/data-quality/{{ c.key }}"
+        style="color:inherit">{{ '{:,}'.format(c.count) }}</a>
+      {%- else %}{{ '{:,}'.format(c.count) }}{% endif -%}
     </div>
     <div class="dq-l">{{ c.label }}</div>
     <div class="dq-w">
@@ -68,7 +71,11 @@
       {%- else %}{{ c.why }}{% endif -%}
     </div>
     {% if c.count and not c.error %}
-      <div><a class="btn tiny" href="{{ url_prefix }}{{ c.route }}">Go and fix</a></div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap">
+        <a class="btn tiny" href="{{ url_prefix }}/admin/data-quality/{{ c.key }}">
+          Show the {{ '{:,}'.format(c.count) }}</a>
+        <a class="btn tiny ghost" href="{{ url_prefix }}{{ c.route }}">Go and fix</a>
+      </div>
     {% endif %}
   </div>
   {% endfor %}

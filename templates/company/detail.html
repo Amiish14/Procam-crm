@@ -71,20 +71,25 @@
 </div>
 
 <div class="grid3">
-  <div class="kpi"><div class="label">Opportunities</div>
-    <div class="value">{{ k.opportunities }}</div></div>
-  <div class="kpi success"><div class="label">Won</div>
-    <div class="value">{{ k.won }}</div></div>
+  <a class="kpi" href="#sec-opps" title="Show the opportunities">
+    <div class="label">Opportunities</div>
+    <div class="value">{{ k.opportunities }}</div></a>
+  <a class="kpi success" href="#sec-opps" title="Show the opportunities">
+    <div class="label">Won</div>
+    <div class="value">{{ k.won }}</div></a>
   <div class="kpi"><div class="label">Won value (INR)</div>
     <div class="value">{{ '{:,.0f}'.format(k.won_value) }}</div></div>
   <div class="kpi"><div class="label">Win rate</div>
     <div class="value">{{ (k.win_rate ~ '%') if k.win_rate is not none else '—' }}</div></div>
-  <div class="kpi"><div class="label">Leads</div>
-    <div class="value">{{ k.leads }}</div></div>
-  <div class="kpi"><div class="label">Contacts</div>
-    <div class="value">{{ k.contacts }}</div></div>
-  <div class="kpi"><div class="label">Activities</div>
-    <div class="value">{{ k.activities }}</div></div>
+  <a class="kpi" href="#sec-leads" title="Show the leads">
+    <div class="label">Leads</div>
+    <div class="value">{{ k.leads }}</div></a>
+  <a class="kpi" href="#sec-people" title="Show the contacts">
+    <div class="label">Contacts</div>
+    <div class="value">{{ k.contacts }}</div></a>
+  <a class="kpi" href="#sec-timeline" title="Show the activity timeline">
+    <div class="label">Activities</div>
+    <div class="value">{{ k.activities }}</div></a>
   <div class="kpi"><div class="label">RFQs</div>
     <div class="value">{{ k.rfqs }}</div></div>
   <div class="kpi"><div class="label">Quotes</div>
@@ -94,14 +99,15 @@
     <div class="value">{{ k.overdue_tasks }}</div></div>
   <div class="kpi"><div class="label">Open tasks</div>
     <div class="value">{{ k.open_tasks }}</div></div>
-  <div class="kpi"><div class="label">Lost</div>
-    <div class="value">{{ k.lost }}</div></div>
+  <a class="kpi" href="#sec-opps" title="Show the opportunities">
+    <div class="label">Lost</div>
+    <div class="value">{{ k.lost }}</div></a>
 </div>
 
 <div class="grid2">
   <div>
     <div class="card">
-      <div class="card-hd"><div class="card-ttl">Opportunities</div>
+      <div class="card-hd" id="sec-opps"><div class="card-ttl">Opportunities</div>
         <span class="b sN">{{ data.opportunities|length }}</span></div>
       {% if data.opportunities %}
       <div class="table-wrap"><table>
@@ -116,7 +122,7 @@
     </div>
 
     <div class="card">
-      <div class="card-hd"><div class="card-ttl">People</div>
+      <div class="card-hd" id="sec-people"><div class="card-ttl">People</div>
         <span class="b sN">{{ data.people|length }}</span></div>
       {% if data.people %}
       <div class="table-wrap"><table>
@@ -239,7 +245,7 @@
 
   <div>
     <div class="card">
-      <div class="card-hd"><div class="card-ttl">Relationship history</div>
+      <div class="card-hd" id="sec-timeline"><div class="card-ttl">Relationship history</div>
         <span class="b sN">{{ data.timeline|length }}</span></div>
       <div class="panel">
         {% if data.timeline %}
@@ -259,7 +265,7 @@
     </div>
 
     <div class="card">
-      <div class="card-hd"><div class="card-ttl">Leads</div>
+      <div class="card-hd" id="sec-leads"><div class="card-ttl">Leads</div>
         <span class="b sN">{{ data.leads|length }}</span></div>
       {% if data.leads %}
       <div class="table-wrap"><table>

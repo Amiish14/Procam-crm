@@ -37,8 +37,26 @@
     <tbody>
       {% for r in rows %}
         <tr>
+          {# One renderer serves all 33 reports, so linking here makes
+             every one of them drillable. An employee code goes straight
+             to that person's PIC 360; an account name goes to the
+             Company Master search, which is one click from the record —
+             the reports carry the name, not the id. #}
           {% for col in meta.columns %}
-            <td>{{ r.get(col.key, '') }}</td>
+            {% set v = r.get(col.key, '') %}
+            <td{{ ' class=num' if col.key in ('count','won_inr','total',
+                  'activities','accounts','rfqs','contacts_developed',
+                  'leads','sla_hours','elapsed_hours','priority') }}>
+            {%- if v and col.key in ('owner_user','owner','user','pic') -%}
+              <a href="{{ url_prefix }}/people/{{ v }}">{{ v }}</a>
+            {%- elif v and col.key == 'account' and not v.startswith('(') -%}
+              <a href="{{ url_prefix }}/companies?q={{ v|urlencode }}">{{ v }}</a>
+            {%- elif v and col.key == 'name' and r.get('id') -%}
+              <a href="{{ url_prefix }}/companies/{{ r.get('id') }}">{{ v }}</a>
+            {%- else -%}
+              {{ v }}
+            {%- endif -%}
+            </td>
           {% endfor %}
         </tr>
       {% endfor %}

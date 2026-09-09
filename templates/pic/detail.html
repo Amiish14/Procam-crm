@@ -48,10 +48,12 @@
 </div>
 
 <div class="grid3">
-  <div class="kpi{{ ' danger' if w.overdue_tasks else '' }}">
-    <div class="label">Overdue tasks</div><div class="value">{{ w.overdue_tasks }}</div></div>
-  <div class="kpi"><div class="label">Open tasks</div>
-    <div class="value">{{ w.open_tasks }}</div></div>
+  <a class="kpi{{ ' danger' if w.overdue_tasks else '' }}" href="#sec-tasks"
+     title="Show the tasks">
+    <div class="label">Overdue tasks</div><div class="value">{{ w.overdue_tasks }}</div></a>
+  <a class="kpi" href="#sec-tasks" title="Show the tasks">
+    <div class="label">Open tasks</div>
+    <div class="value">{{ w.open_tasks }}</div></a>
   <div class="kpi"><div class="label">Completed tasks</div>
     <div class="value">{{ w.completed_tasks }}</div></div>
   <div class="kpi"><div class="label">SLA hit rate</div>
@@ -61,8 +63,9 @@
   <div class="kpi"><div class="label">Open leads</div>
     <div class="value">{{ w.open_leads }}</div>
     <div class="meta">{{ w.leads }} in total</div></div>
-  <div class="kpi"><div class="label">Accounts owned</div>
-    <div class="value">{{ w.accounts }}</div></div>
+  <a class="kpi" href="#sec-accounts" title="Show the accounts">
+    <div class="label">Accounts owned</div>
+    <div class="value">{{ w.accounts }}</div></a>
   <div class="kpi"><div class="label">Opportunities</div>
     <div class="value">{{ w.opportunities }}</div></div>
   <div class="kpi success"><div class="label">Won</div>
@@ -80,7 +83,7 @@
 
 <div class="grid2">
   <div class="card">
-    <div class="card-hd"><div class="card-ttl">Open tasks</div>
+    <div class="card-hd" id="sec-tasks"><div class="card-ttl">Open tasks</div>
       <span class="b {{ 'sL' if w.overdue_tasks else 'sN' }}">{{ w.open_tasks }}</span></div>
     {% if data.tasks %}
     <div class="table-wrap"><table>
@@ -96,7 +99,7 @@
   </div>
 
   <div class="card">
-    <div class="card-hd"><div class="card-ttl">Accounts owned</div>
+    <div class="card-hd" id="sec-accounts"><div class="card-ttl">Accounts owned</div>
       <span class="b sN">{{ w.accounts }}</span></div>
     {% if data.accounts %}
     <div class="table-wrap"><table>
@@ -111,7 +114,7 @@
 </div>
 
 <div class="card">
-  <div class="card-hd"><div class="card-ttl">Activity — last 30 days</div>
+  <div class="card-hd" id="sec-activity"><div class="card-ttl">Activity — last 30 days</div>
     <span class="b sN">{{ data.activity|length }}</span></div>
   {% if data.activity %}
   <div class="table-wrap"><table>

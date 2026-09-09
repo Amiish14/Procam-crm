@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ label }} — Data Quality</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Data Quality</div>
+    <h1>{{ label }}</h1>
+    <div class="crm-sub">{{ why }}</div>
+  </div>
+  <div class="toolbar">
+    <a class="btn" href="{{ url_prefix }}/admin/data-quality">← All checks</a>
+  </div>
+</div>
+
+<div class="card"><div class="panel" style="display:flex;gap:26px;
+     align-items:baseline;flex-wrap:wrap">
+  <div><b style="font-size:26px;color:var(--p-ink);
+       font-variant-numeric:tabular-nums">{{ '{:,}'.format(count) }}</b>
+    <span style="color:var(--p-text-2)"> record{{ '' if count == 1 else 's' }}</span></div>
+  {% if truncated %}
+  <span class="meta">Showing the first 500 — fix these and reload for the rest.</span>
+  {% endif %}
+</div></div>
+
+{% if count == 0 %}
+  <div class="empty">Nothing to fix here.</div>
+
+{% elif grouped %}
+  {# Duplicate companies: the finding IS the grouping, so show it that way. #}
+  {% for g in groups %}
+  <div class="card">
+    <div class="card-hd"><div class="card-ttl">{{ g.name }}</div>
+      <span class="b sR">{{ g.records|length }} records</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Company</th><th>Details</th></tr></thead>
+      <tbody>{% for r in g.records %}
+        <tr><td><b><a href="{{ url_prefix }}{{ r.route }}">{{ r.name }}</a></b>
+            <span class="meta"> #{{ r.id }}</span></td>
+            <td class="meta">{{ r.meta or '—' }}</td></tr>
+      {% endfor %}</tbody></table></div>
+  </div>
+  {% endfor %}
+  <div class="note">Merge these with
+    <code>scripts/2026_09_11_company_dedup.py</code> — it previews first and
+    every merge can be reversed.</div>
+
+{% else %}
+  <div class="card"><div class="table-wrap"><table>
+    <thead><tr><th>Record</th><th>Details</th></tr></thead>
+    <tbody>{% for r in records %}
+      <tr{% if r.route %} onclick="location.href='{{ url_prefix }}{{ r.route }}'"
+          style="cursor:pointer"{% endif %}>
+        <td>{% if r.route %}<b><a href="{{ url_prefix }}{{ r.route }}">{{ r.name }}</a></b>
+            {% else %}<b>{{ r.name }}</b>{% endif %}</td>
+        <td class="meta">{{ r.meta or '—' }}</td></tr>
+    {% endfor %}</tbody></table></div></div>
+
+  {% if key in ('unowned_leads', 'leads_of_leavers') %}
+  <div class="note">Assign these in bulk from
+    <a href="{{ url_prefix }}/admin/leads?unowned=1">Bulk Leads</a> — select,
+    then assign to a person.</div>
+  {% elif key == 'pending_mappings' %}
+  <div class="note">Decide these on the
+    <a href="{{ url_prefix }}/app">Data Mapping</a> screen — one decision
+    resolves every record carrying that name.</div>
+  {% endif %}
+{% endif %}
+
+</div><!-- /crm-wrap -->
+</body>
+</html>

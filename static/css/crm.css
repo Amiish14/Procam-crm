@@ -438,3 +438,31 @@ dialog::backdrop{background:rgba(10,11,15,.42);backdrop-filter:blur(2px)}
 @media (max-width:520px){
   .grid3,.grid2{grid-template-columns:1fr}
 }
+
+/* ── Drill-through affordance ─────────────────────────────────────
+   Anything that opens the records behind it says so the same way across
+   the portal: a caret that fills in on hover. A number you can open
+   should look different from one you cannot. */
+a.kpi, a.tile{
+  text-decoration:none; color:inherit; cursor:pointer; position:relative;
+}
+a.kpi::after, a.tile::after{
+  content:'›'; position:absolute; top:12px; right:14px;
+  font-size:17px; line-height:1; color:var(--p-text-4);
+  transition:color var(--dur-out), transform var(--dur-out);
+}
+a.kpi:hover, a.tile:hover{
+  border-color:var(--p-border-strong); box-shadow:var(--el-2);
+  color:inherit;
+}
+a.kpi:hover::after, a.tile:hover::after{
+  color:var(--p-red); transform:translateX(2px);
+}
+a.kpi:hover .label, a.tile:hover .label{ color:var(--p-red); }
+
+/* Rows that open a record get the same treatment. */
+tbody tr[onclick]{ cursor:pointer; }
+tbody tr[onclick]:hover td{ background:var(--p-surface-2); }
+
+/* Section headings are jump targets; keep them clear of the sticky bar. */
+.card-hd[id]{ scroll-margin-top:72px; }

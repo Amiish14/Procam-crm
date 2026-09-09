@@ -188,6 +188,98 @@ CHECKS = [
 ]
 
 
+# How to describe one row of each kind, and where to go and fix it.
+def _describe(key, row):
+    """Turn a record into something a person can act on."""
+    from app import Lead, Opportunity, Company, Contact
+
+    if isinstance(row, Lead):
+        return {'id': row.id,
+                'name': row.company or f'Lead #{row.id}',
+                'meta': ' · '.join(x for x in (
+                    row.project, row.stage,
+                    (f'owner {row.assigned_to}' if row.assigned_to
+                     else 'no owner')) if x),
+                'route': f'/app?lead={row.id}'}
+    if isinstance(row, Opportunity):
+        return {'id': row.id,
+                'name': row.opp_number or f'Opportunity #{row.id}',
+                'meta': ' · '.join(x for x in (
+                    row.stage,
+                    (f'{float(row.value_inr):,.0f} INR'
+                     if row.value_inr else 'no value'),
+                    (f'owner {row.owner_emp_code}' if row.owner_emp_code
+                     else 'no owner')) if x),
+                'route': (f'/companies/{row.company_id}' if row.company_id
+                          else f'/app?opp={row.id}')}
+    if isinstance(row, Company):
+        return {'id': row.id, 'name': row.name,
+                'meta': ' · '.join(x for x in (
+                    row.industry, row.city,
+                    (f'PIC {row.pic_emp_code}' if row.pic_emp_code
+                     else 'no account owner')) if x),
+                'route': f'/companies/{row.id}'}
+    if isinstance(row, Contact):
+        return {'id': row.id, 'name': row.name,
+                'meta': ' · '.join(x for x in (
+                    row.designation, row.company) if x),
+                'route': f'/app?contact={row.id}'}
+
+    # TaskInstance and anything else
+    return {'id': getattr(row, 'id', None),
+            'name': (getattr(row, 'entity_display', None)
+                     or getattr(row, 'task_key', None)
+                     or f'Record #{getattr(row, "id", "?")}'),
+            'meta': ' · '.join(str(x) for x in (
+                getattr(row, 'status', ''),
+                getattr(row, 'owner_user_id', '') or 'no owner') if x),
+            'route': getattr(row, 'action_route', '') or ''}
+
+
+def records_for(key, limit=500):
+    """The records behind one Data Quality number.
+
+    A count with no way to reach what it counts is a complaint, not a
+    tool — this is what makes each figure actionable.
+    """
+    entry = next((c for c in CHECKS if c[0] == key), None)
+    if entry is None:
+        return None
+    _key, label, why, severity, route, fn = entry
+
+    count, detail = fn()
+
+    # Duplicate companies come back as {normalised name: [Company, ...]}
+    # rather than a query, because the finding IS the grouping.
+    if key == 'dupe_companies':
+        groups = []
+        for name, rows in sorted((detail or {}).items()):
+            groups.append({
+                'name': name,
+                'records': [_describe(key, r) for r in rows],
+            })
+        return {'key': key, 'label': label, 'why': why,
+                'severity': severity, 'count': count, 'grouped': True,
+                'groups': groups[:limit],
+                'truncated': len(groups) > limit}
+
+    rows = []
+    if detail is not None:
+        try:
+            rows = detail.limit(limit + 1).all()
+        except Exception:
+            try:
+                rows = detail.all()[:limit + 1]
+            except Exception:
+                rows = []
+
+    truncated = len(rows) > limit
+    return {'key': key, 'label': label, 'why': why, 'severity': severity,
+            'count': count, 'grouped': False,
+            'records': [_describe(key, r) for r in rows[:limit]],
+            'truncated': truncated}
+
+
 def summary():
     out = []
     for key, label, why, severity, route, fn in CHECKS:

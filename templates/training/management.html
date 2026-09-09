@@ -31,8 +31,10 @@
     <th class="num">Progress</th><th class="num">Average</th><th>Status</th></tr></thead>
   <tbody>
     {% for p in people %}
-    <tr>
-      <td><b>{{ p.name }}</b><div class="meta">{{ p.emp_code }}</div></td>
+    <tr onclick="location.href='{{ url_prefix }}/people/{{ p.emp_code }}'"
+        style="cursor:pointer" title="Open this person's workload">
+      <td><b><a href="{{ url_prefix }}/people/{{ p.emp_code }}">{{ p.name }}</a></b>
+        <div class="meta">{{ p.emp_code }}</div></td>
       <td>{{ p.vertical or '—' }}</td>
       <td class="num">{{ p.completed }} / {{ p.levels }}</td>
       <td class="num">{{ p.percent }}%</td>

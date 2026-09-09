@@ -22,3 +22,23 @@ def page():
 @require('admin.master')
 def api():
     return jsonify(ok=True, checks=dq.summary())
+
+
+@bp.route('/admin/data-quality/<key>')
+@require('admin.master')
+def detail(key):
+    """The records behind one number."""
+    data = dq.records_for(key)
+    if data is None:
+        return render_template('data_quality/index.html',
+                               checks=dq.summary(), critical=[], total=0), 404
+    return render_template('data_quality/detail.html', **data)
+
+
+@bp.route('/api/data-quality/<key>')
+@require('admin.master')
+def api_detail(key):
+    data = dq.records_for(key)
+    if data is None:
+        return jsonify(ok=False, error=f'Unknown check "{key}"'), 404
+    return jsonify(ok=True, **data)
