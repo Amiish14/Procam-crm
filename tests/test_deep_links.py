@@ -259,3 +259,59 @@ def test_company_360_link_style_is_consistent():
         assert f'href="{{{{ url_prefix }}}}/app?{param}=' in src
     assert 'target="_blank"' not in src.split('?contact=')[0][-300:], \
         'contact links should open in the same tab, like the others'
+
+
+# ─── WP1 · the contact cards themselves ──────────────────────────────────
+def test_contact_cards_carry_their_id():
+    """openContact(id) existed and worked; nothing on screen called it.
+
+    The People cards had cursor:pointer styling and no click target at
+    all, so every contact was unreachable except by deep link.
+    """
+    html = open(_TEMPLATE).read()
+    card = html.split('class="contact-card"')[1][:400]
+    assert 'data-contact-id="${c.id}"' in card, \
+        'the card must carry the database id it opens'
+
+
+def test_contact_cards_are_wired_to_the_existing_handler():
+    html = open(_TEMPLATE).read()
+    assert 'function ctCardClicks(' in html
+    assert 'openContact(id)' in html, \
+        'cards must reuse openContact, not a second implementation'
+    assert "host.addEventListener('click', ctCardClicks)" in html, \
+        'delegated, because the cards are re-rendered on every tab switch'
+
+
+def test_a_link_inside_a_card_does_not_also_open_the_card():
+    """mailto: and tel: are different actions from "open this contact"."""
+    html = open(_TEMPLATE).read()
+    body = html.split('function ctCardClicks(')[1][:300]
+    assert "closest('a')" in body and 'return' in body, \
+        'a click on a link inside the card must not navigate the card'
+
+
+def test_contact_cards_offer_mail_and_phone_actions():
+    html = open(_TEMPLATE).read()
+    card = html.split('class="contact-card"')[1][:1400]
+    assert 'href="mailto:${e(c.email)}"' in card
+    assert 'href="tel:' in card
+
+
+def test_each_global_crm_tab_has_its_own_empty_state():
+    """One "No contacts yet" was shown under Companies and Overseas
+    Agents too, where it named the wrong kind of record."""
+    html = open(_TEMPLATE).read()
+    assert "person: 'No contacts yet'" in html
+    assert "company: 'No companies yet'" in html
+    assert "agent: 'No agents yet'" in html
+    assert html.count(
+        "'<div style=\"text-align:center;padding:48px;color:var(--text-3)\">"
+        "No contacts yet</div>'") == 0, \
+        'the hard-coded single empty state should be gone'
+
+
+def test_contact_cards_are_keyboard_reachable():
+    html = open(_TEMPLATE).read()
+    card = html.split('class="contact-card"')[1][:400]
+    assert 'tabindex="0"' in card and 'role="button"' in card
