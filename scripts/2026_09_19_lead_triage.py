@@ -31,6 +31,13 @@ except ImportError:
 
 PERM = 'admin.triage'
 
+#: Bootstrap accounts, which are not people. PCM001 is seeded from
+#: ADMIN_INITIAL_PASSWORD so the portal can be opened on a fresh install;
+#: it belongs to nobody, and widening what it can reach widens what a
+#: leaked bootstrap password reaches. New permissions are granted to
+#: named employees, never to it.
+BOOTSTRAP_ACCOUNTS = {'PCM001'}
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -47,7 +54,11 @@ def main():
                 'Refusing to run: no employees in this database.')
 
         changed = []
+        skipped = []
         for prof in AccessProfile.query.all():
+            if prof.emp_code in BOOTSTRAP_ACCOUNTS:
+                skipped.append(prof.emp_code)
+                continue
             perms = list(prof.perm_set())
             if args.down:
                 if PERM in perms:
@@ -67,6 +78,8 @@ def main():
             print('== DRY-RUN — nothing written ==')
         for code, what in changed:
             print(f'  {what} {PERM} to {code}')
+        for code in skipped:
+            print(f'  skipped {code} — bootstrap account, not a person')
         if not changed:
             print(f'  no stored profile needed a change — admins and the '
                   f'super admin already hold {PERM} by default.')
