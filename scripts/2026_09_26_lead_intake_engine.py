@@ -185,6 +185,54 @@ def _has_table(conn, name):
         {'n': name}).fetchone())
 
 
+#: Free-mail domains say nothing about which company someone works for,
+#: so mapping one to an account would attach every gmail sender to it.
+_GENERIC_DOMAINS = frozenset({
+    'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.in', 'yahoo.in',
+    'hotmail.com', 'outlook.com', 'live.com', 'aol.com', 'rediffmail.com',
+    'icloud.com', 'me.com', 'protonmail.com', 'zoho.com', 'mail.com',
+    'ymail.com', 'msn.com', 'gmx.com', 'yopmail.com',
+})
+
+
+def _domains_from_history(conn):
+    """{company_id: [domain, ...]} learned from records already linked.
+
+    The Account Master holds no websites, so deriving from that column
+    alone would seed nothing. But 11,000 leads and every contact already
+    carry a sender address and a company link — which is a far better
+    source anyway: it is the domain people actually write from, not the
+    one on the marketing site.
+
+    A domain is only accepted when every record carrying it points at the
+    same company. One domain seen against two accounts is ambiguous, and
+    guessing would silently assign a customer's mail to the wrong owner.
+    """
+    owner = {}          # domain -> company_id, or None once ambiguous
+    for table, addr_col in (('leads', 'email'), ('contacts', 'email')):
+        try:
+            rows = conn.execute(text(
+                f"SELECT company_id, lower({addr_col}) FROM {table} "
+                f"WHERE company_id IS NOT NULL AND {addr_col} LIKE '%@%'"
+            )).fetchall()
+        except Exception:
+            continue
+        for company_id, addr in rows:
+            domain = (addr or '').rsplit('@', 1)[-1].strip()
+            if not domain or '.' not in domain or domain in _GENERIC_DOMAINS:
+                continue
+            if domain in owner and owner[domain] != company_id:
+                owner[domain] = None            # two accounts claim it
+            else:
+                owner.setdefault(domain, company_id)
+
+    out = {}
+    for domain, company_id in owner.items():
+        if company_id:
+            out.setdefault(company_id, []).append(domain)
+    return out
+
+
 def _domain_from_website(url):
     s = (url or '').strip().lower()
     if not s:
@@ -210,6 +258,7 @@ def up(conn, dry):
     seedable = conn.execute(text(
         "SELECT COUNT(*) FROM companies WHERE website IS NOT NULL "
         "AND website != ''")).scalar() or 0
+    from_history = len(_domains_from_history(conn))
 
     if dry:
         print('== DRY-RUN — nothing written ==')
@@ -221,8 +270,10 @@ def up(conn, dry):
         print(f'  WOULD create: vendor_domains, email_classifications')
         print(f'  WOULD seed {len(SEED_VENDORS)} vendor domain(s)')
         print(f'  WOULD seed {len(REJECTION_REASONS)} rejection reason(s)')
-        print(f'  WOULD derive email_domains for up to {seedable} '
-              f'company/companies that have a website')
+        print(f'  WOULD derive email_domains from a website for up to '
+              f'{seedable} company/companies')
+        print(f'  WOULD derive email_domains from linked leads and contacts '
+              f'for {from_history} company/companies')
         print('\n  No ingestion behaviour changes. Existing leads untouched.')
         return
 
@@ -250,7 +301,24 @@ def up(conn, dry):
     # Derive a mail domain from each website. Domain matching is what
     # makes auto-assignment work on day one; without this every account
     # would need its domains typed in by hand first.
+    # Start from what people actually write from, then fill any gap with
+    # the website column.
+    history = _domains_from_history(conn)
     derived = 0
+    for cid, domains in history.items():
+        existing = conn.execute(text(
+            'SELECT email_domains FROM companies WHERE id = :i'),
+            {'i': cid}).fetchone()
+        if existing is None or existing[0]:
+            continue
+        conn.execute(text(
+            'UPDATE companies SET email_domains = :d WHERE id = :i'),
+            {'d': json.dumps(sorted(set(domains))), 'i': cid})
+        derived += 1
+    print(f'  derived email_domains from linked leads/contacts for '
+          f'{derived} company/companies')
+
+    from_site = 0
     rows = conn.execute(text(
         "SELECT id, website, email_domains FROM companies "
         "WHERE website IS NOT NULL AND website != ''")).fetchall()
@@ -258,13 +326,14 @@ def up(conn, dry):
         if existing:
             continue
         domain = _domain_from_website(website)
-        if not domain:
+        if not domain or domain in _GENERIC_DOMAINS:
             continue
         conn.execute(text(
             'UPDATE companies SET email_domains = :d WHERE id = :i'),
             {'d': json.dumps([domain]), 'i': cid})
-        derived += 1
-    print(f'  derived email_domains for {derived} company/companies')
+        from_site += 1
+    print(f'  derived email_domains from a website for {from_site} '
+          f'company/companies')
 
     seeded = 0
     for domain, kind in SEED_VENDORS:

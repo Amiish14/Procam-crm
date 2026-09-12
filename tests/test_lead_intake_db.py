@@ -282,3 +282,59 @@ def test_recording_never_breaks_ingestion(world):
         d = li.Decision(li.Klass.NEW_LEAD, step=10, reason='x')
         assert lidb.record(d, {'from': None, 'subject': None}) is not None \
             or True
+
+
+# ─── seeding account domains from history ────────────────────────────────
+def test_domains_are_learned_from_records_already_linked(world):
+    """The Account Master holds no websites in production, so deriving
+    from that column alone seeds nothing. Leads already carry the domain
+    people actually write from."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        'intake_mig',
+        os.path.join(_ROOT, 'scripts', '2026_09_26_lead_intake_engine.py'))
+    mig = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mig)
+
+    with flask_app.app_context():
+        acct = Company(name='History Derived Ltd', is_active=True)
+        db.session.add(acct)
+        db.session.flush()
+        for addr in ('one@historyderived.com', 'two@historyderived.com'):
+            db.session.add(Lead(company='History Derived Ltd',
+                                company_id=acct.id, email=addr,
+                                source='email', stage='New Opportunity'))
+        # A free-mail sender must not map the account.
+        db.session.add(Lead(company='History Derived Ltd',
+                            company_id=acct.id, email='someone@gmail.com',
+                            source='email', stage='New Opportunity'))
+        db.session.commit()
+
+        found = mig._domains_from_history(db.session)
+        assert 'historyderived.com' in found.get(acct.id, [])
+        assert 'gmail.com' not in found.get(acct.id, [])
+
+
+def test_a_domain_claimed_by_two_accounts_is_assigned_to_neither(world):
+    """Guessing would silently route a customer's mail to the wrong owner."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        'intake_mig2',
+        os.path.join(_ROOT, 'scripts', '2026_09_26_lead_intake_engine.py'))
+    mig = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mig)
+
+    with flask_app.app_context():
+        a = Company(name='Claimant A', is_active=True)
+        b = Company(name='Claimant B', is_active=True)
+        db.session.add_all([a, b])
+        db.session.flush()
+        db.session.add(Lead(company='Claimant A', company_id=a.id,
+                            email='x@contested.com', source='email'))
+        db.session.add(Lead(company='Claimant B', company_id=b.id,
+                            email='y@contested.com', source='email'))
+        db.session.commit()
+
+        found = mig._domains_from_history(db.session)
+        assert 'contested.com' not in found.get(a.id, [])
+        assert 'contested.com' not in found.get(b.id, [])
