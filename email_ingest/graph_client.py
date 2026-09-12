@@ -34,9 +34,15 @@ log = logging.getLogger(__name__)
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 GRAPH_SCOPE = ["https://graph.microsoft.com/.default"]
 DEFAULT_TIMEOUT = 30
+# conversationId and the RFC-822 threading headers are what let a reply be
+# recognised as a reply. Without them the only way to tell is the subject
+# line, which people edit. They cost nothing to request and cannot be
+# backfilled later, so they are collected whether or not anything reads
+# them yet.
 DEFAULT_SELECT = (
     "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
-    "body,bodyPreview,internetMessageId,isRead,hasAttachments"
+    "body,bodyPreview,internetMessageId,isRead,hasAttachments,"
+    "conversationId,internetMessageHeaders"
 )
 
 

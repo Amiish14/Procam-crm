@@ -396,6 +396,20 @@ class Lead(db.Model):
     # note, if that lead was already overwritten before the fix landed.
     original_email_source      = db.Column(db.String(32))
 
+    # ── Thread identity ─────────────────────────────────────────────
+    # Without these a reply can only be recognised from its subject
+    # line, which people edit. Collected from Graph whether or not
+    # anything reads them yet — they cannot be backfilled.
+    conversation_id   = db.Column(db.String(200), index=True)
+    in_reply_to       = db.Column(db.String(400), index=True)
+    references_header = db.Column(db.Text)
+
+    # ── Why this email became a lead ────────────────────────────────
+    classification   = db.Column(db.String(32), index=True)
+    lead_confidence  = db.Column(db.Integer)      # 0-100
+    duplicate_score  = db.Column(db.Integer)      # 0-100
+    rejection_reason = db.Column(db.String(80))   # from master_items
+
     def to_dict(self):
         def sd(d): return str(d) if d else ''
         return {
@@ -438,6 +452,11 @@ class Lead(db.Model):
             # at the top of the lead detail modal.
             'email_extracted': (json.loads(self.email_extracted_json)
                                 if self.email_extracted_json else None),
+            'conversation_id': self.conversation_id or '',
+            'classification': self.classification or '',
+            'lead_confidence': self.lead_confidence,
+            'duplicate_score': self.duplicate_score,
+            'rejection_reason': self.rejection_reason or '',
             'original_email': {
                 'subject': self.original_email_subject or '',
                 'from': self.original_email_from or '',
@@ -583,6 +602,16 @@ class Company(db.Model):
     # Nullable & default-safe so every legacy Company row loads unchanged.
     dev_stage         = db.Column(db.String(60), nullable=True)
     pic_emp_code      = db.Column(db.String(20), nullable=True, index=True)
+    # A lead needs two owners on arrival, so the account has to carry
+    # both. `industry` is what the customer does; `vertical` is which
+    # Procam desk handles them — not the same thing, and only the second
+    # can route a lead.
+    secondary_pic_emp_code = db.Column(db.String(20), nullable=True, index=True)
+    backup_pic_emp_code    = db.Column(db.String(20), nullable=True)
+    vertical               = db.Column(db.String(80), nullable=True, index=True)
+    # `website` is a marketing URL and a group may send from several
+    # domains, so mail-domain matching gets its own list.
+    email_domains          = db.Column(db.JSON, default=list)
     strategic_flag    = db.Column(db.Boolean, default=False)
     priority          = db.Column(db.String(20), default='Medium')
     last_activity_at  = db.Column(db.DateTime, nullable=True, index=True)
@@ -769,6 +798,94 @@ class LeadAssignmentHistory(db.Model):
         }
 
 
+class VendorDomain(db.Model):
+    """Domains that supply us rather than buy from us.
+
+    Seeded by hand and grown from rejection reasons: a domain rejected
+    repeatedly as rate sourcing is proposed for this table rather than
+    added silently, because a mistake here stops a real customer's mail
+    becoming a lead.
+    """
+    __tablename__ = 'vendor_domains'
+    id          = db.Column(db.Integer, primary_key=True)
+    domain      = db.Column(db.String(200), nullable=False, unique=True,
+                            index=True)
+    vendor_type = db.Column(db.String(40))   # transporter | shipping line |
+                                             # airline | CHA | agent | other
+    # manual | learned_from_rejections
+    learned_from = db.Column(db.String(40), default='manual')
+    rejection_count = db.Column(db.Integer, default=0)
+    is_active   = db.Column(db.Boolean, default=True, index=True)
+    added_by    = db.Column(db.String(20))
+    created_at  = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'domain': self.domain,
+            'vendor_type': self.vendor_type or '',
+            'learned_from': self.learned_from or '',
+            'rejection_count': self.rejection_count or 0,
+            'is_active': bool(self.is_active),
+        }
+
+
+class EmailClassification(db.Model):
+    """One row per decision, and the human correction if one came.
+
+    This is the training set. It is written whether or not anything
+    reads it yet: a week not recorded is a week of labels that cannot be
+    recovered later.
+    """
+    __tablename__ = 'email_classifications'
+    id            = db.Column(db.Integer, primary_key=True)
+    message_id    = db.Column(db.String(400), index=True)
+    conversation_id = db.Column(db.String(200), index=True)
+    subject       = db.Column(db.String(500))
+    from_addr     = db.Column(db.String(320), index=True)
+    from_domain   = db.Column(db.String(200), index=True)
+
+    classification  = db.Column(db.String(32), nullable=False, index=True)
+    decided_by      = db.Column(db.String(40))   # which step fired
+    reason          = db.Column(db.String(300))
+    confidence      = db.Column(db.Integer)
+    duplicate_score = db.Column(db.Integer)
+    matched_lead_id = db.Column(db.Integer, index=True)
+    created_lead_id = db.Column(db.Integer, index=True)
+
+    # ── The correction, when a human disagrees ──────────────────────
+    corrected_to       = db.Column(db.String(32), index=True)
+    correction_reason  = db.Column(db.String(80))
+    corrected_by       = db.Column(db.String(20))
+    corrected_at       = db.Column(db.DateTime)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    @property
+    def was_wrong(self):
+        return bool(self.corrected_to
+                    and self.corrected_to != self.classification)
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'message_id': self.message_id or '',
+            'subject': self.subject or '',
+            'from_addr': self.from_addr or '',
+            'from_domain': self.from_domain or '',
+            'classification': self.classification,
+            'decided_by': self.decided_by or '',
+            'reason': self.reason or '',
+            'confidence': self.confidence,
+            'duplicate_score': self.duplicate_score,
+            'matched_lead_id': self.matched_lead_id,
+            'created_lead_id': self.created_lead_id,
+            'corrected_to': self.corrected_to or '',
+            'correction_reason': self.correction_reason or '',
+            'corrected_by': self.corrected_by or '',
+            'was_wrong': self.was_wrong,
+            'created_at': str(self.created_at)[:16] if self.created_at else '',
+        }
+
+
 class LeadEmail(db.Model):
     """Every email on a lead — the enquiry that started it and every
     reply since.  Append-only from the application's point of view.
@@ -794,6 +911,9 @@ class LeadEmail(db.Model):
     # draft | sent | received
     status        = db.Column(db.String(16), default='received')
     message_id    = db.Column(db.String(400), index=True)
+    conversation_id   = db.Column(db.String(200), index=True)
+    in_reply_to       = db.Column(db.String(400), index=True)
+    references_header = db.Column(db.Text)
     created_at    = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -936,6 +1056,13 @@ class EmailEvent(db.Model):
     lead_id              = db.Column(db.Integer, db.ForeignKey('leads.id'),
                                      nullable=True, index=True)
     payload_json         = db.Column(db.Text)
+    # This table already logs every message with a status and a reason,
+    # so the classification belongs here rather than in a parallel one.
+    classification       = db.Column(db.String(32), index=True)
+    confidence           = db.Column(db.Integer)
+    duplicate_score      = db.Column(db.Integer)
+    matched_lead_id      = db.Column(db.Integer, index=True)
+    decided_by           = db.Column(db.String(40))   # which rule fired
 
     def to_dict(self):
         return {

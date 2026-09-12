@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 _SELECT = ("$select=id,internetMessageId,subject,from,toRecipients,"
            "ccRecipients,receivedDateTime,conversationId,body,bodyPreview,"
-           "hasAttachments")
+           "hasAttachments,internetMessageHeaders")
 
 # Graph writes the mailbox into a notification's `resource` in more than one
 # shape, and not the shape the subscription was created with:

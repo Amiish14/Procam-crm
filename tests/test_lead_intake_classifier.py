@@ -1,0 +1,334 @@
+"""The intake decision tree — §03 of the design.
+
+The mailbox creates a lead per email that looks like logistics. These
+tests are the fifteen scenarios from the design's §11, plus the branches
+they do not reach.
+
+The classifier is pure — every database lookup is behind Context — so it
+is loaded straight from its file and exercised against dicts.
+"""
+import importlib.util
+import os
+import sys
+
+import pytest
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_spec = importlib.util.spec_from_file_location(
+    'lead_intake_under_test',
+    os.path.join(_ROOT, 'app', 'services', 'lead_intake.py'))
+li = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(li)
+
+K = li.Klass
+PROCAM = 'procamgroup.in'
+
+
+def msg(subject='', body='', frm='buyer@tatasteel.com', to=None, cc=None,
+        conversation=None, in_reply_to=None, references=None,
+        attachments=None, has_attachments=False, **extra):
+    m = {
+        'subject': subject,
+        'body': {'content': body},
+        'from': {'emailAddress': {'address': frm}},
+        'toRecipients': [{'emailAddress': {'address': a}}
+                         for a in (to or ['leads@procamgroup.in'])],
+        'ccRecipients': [{'emailAddress': {'address': a}} for a in (cc or [])],
+        'hasAttachments': has_attachments,
+        'attachments': attachments or [],
+    }
+    if conversation:
+        m['conversationId'] = conversation
+    hdrs = []
+    if in_reply_to:
+        hdrs.append({'name': 'In-Reply-To', 'value': in_reply_to})
+    if references:
+        hdrs.append({'name': 'References', 'value': references})
+    if hdrs:
+        m['internetMessageHeaders'] = hdrs
+    m.update(extra)
+    return m
+
+
+def ctx(**kw):
+    kw.setdefault('internal_domains', [PROCAM])
+    return li.Context(**kw)
+
+
+RFQ_BODY = ("Dear Procam, we have a requirement to move a 220 MT transformer "
+            "from JNPT to Vadodara. Over-dimensional cargo. Please quote by "
+            "Friday. Contact +91 98200 11223.")
+
+
+# ─── subject parsing, which everything downstream leans on ───────────────
+@pytest.mark.parametrize('subject,expected', [
+    ('RFQ - transformer movement', 'fresh'),
+    ('RE: RFQ - transformer movement', 'reply'),
+    ('Re: RFQ', 'reply'),
+    ('RE: RE: RE: RFQ', 'reply'),
+    ('FW: RFQ', 'forward'),
+    ('Fwd: RFQ', 'forward'),
+    ('FWD: RFQ', 'forward'),
+    ('AW: RFQ', 'reply'),        # German auto-prefix
+    ('RE[2]: RFQ', 'reply'),
+    ('Reference our RFQ', 'fresh'),   # must not fire on a word starting "re"
+])
+def test_the_prefix_is_read_correctly(subject, expected):
+    assert li.subject_kind(subject) == expected
+
+
+@pytest.mark.parametrize('subject,expected', [
+    ('RE: RFQ - transformer', 'RFQ - transformer'),
+    ('FW: RE: FW: RFQ - transformer', 'RFQ - transformer'),
+    ('RFQ - transformer', 'RFQ - transformer'),
+])
+def test_prefixes_are_stripped_for_matching(subject, expected):
+    assert li.strip_prefixes(subject) == expected
+
+
+def test_thread_headers_are_read_from_graphs_shape():
+    m = msg(conversation='AAQk123', in_reply_to='<a@x.com>',
+            references='<a@x.com> <b@x.com>')
+    keys = li.thread_keys(m)
+    assert keys['conversation_id'] == 'AAQk123'
+    assert keys['in_reply_to'] == '<a@x.com>'
+    assert keys['reference_ids'] == ['<a@x.com>', '<b@x.com>']
+
+
+# ─── §11 scenarios ───────────────────────────────────────────────────────
+def test_a_fresh_rfq_from_a_client_creates_a_lead():
+    d = li.classify(msg(subject='RFQ - Heavy transport requirement',
+                        body=RFQ_BODY), ctx())
+    assert d.klass == K.NEW_LEAD
+    assert d.creates_lead
+    assert d.confidence >= 80
+
+
+def test_a_thread_match_wins_over_everything():
+    """Deterministic and final — no score, no model."""
+    d = li.classify(
+        msg(subject='RFQ - Heavy transport requirement', body=RFQ_BODY,
+            conversation='AAQk123'),
+        ctx(find_by_thread=lambda **kw: 4242))
+    assert d.klass == K.EXISTING
+    assert d.lead_id == 4242
+    assert d.step == 3
+    assert not d.creates_lead
+
+
+def test_a_rewritten_subject_cannot_defeat_the_headers():
+    """Headers win over subject text — the whole point of Phase 0."""
+    d = li.classify(
+        msg(subject='Completely different subject line',
+            in_reply_to='<original@tatasteel.com>'),
+        ctx(find_by_thread=lambda **kw: 77))
+    assert d.klass == K.EXISTING
+    assert d.lead_id == 77
+
+
+def test_a_reply_on_a_known_subject_appends():
+    d = li.classify(msg(subject='RE: RFQ - transformer', body=RFQ_BODY),
+                    ctx(find_by_subject=lambda **kw: 9))
+    assert d.klass == K.REPLY
+    assert d.lead_id == 9
+    assert not d.creates_lead
+
+
+def test_a_reply_with_no_match_goes_to_review_not_to_a_lead():
+    d = li.classify(msg(subject='RE: RFQ - transformer', body=RFQ_BODY), ctx())
+    assert d.klass == K.REVIEW
+    assert d.needs_review
+    assert not d.creates_lead
+
+
+def test_a_forward_with_no_match_goes_to_review():
+    """Could be a new enquiry inside, or a thread we lost. A person can
+    tell in seconds; guessing loses an RFQ or invents one."""
+    d = li.classify(msg(subject='FW: RFQ - new requirement', body=RFQ_BODY),
+                    ctx())
+    assert d.klass == K.REVIEW
+    assert d.needs_review
+
+
+def test_an_employee_forward_of_a_client_rfq_becomes_a_lead():
+    """The parser has already promoted the external sender; the tree must
+    not then treat it as internal correspondence."""
+    d = li.classify(
+        msg(subject='FW: RFQ - Heavy transport', body=RFQ_BODY,
+            frm='buyer@tatasteel.com', _forward_resolved=True),
+        ctx(find_by_thread=lambda **kw: None))
+    assert d.klass in (K.NEW_LEAD, K.REVIEW)
+    assert d.klass != K.INTERNAL
+
+
+def test_an_employee_ccing_the_mailbox_never_creates_a_lead():
+    d = li.classify(
+        msg(subject='Transformer movement update', body=RFQ_BODY,
+            frm='sales@procamgroup.in', to=['buyer@tatasteel.com'],
+            cc=['leads@procamgroup.in']),
+        ctx())
+    assert d.klass in (K.INTERNAL, K.EXISTING)
+    assert not d.creates_lead
+
+
+def test_an_employee_ccing_on_a_known_enquiry_appends_to_it():
+    d = li.classify(
+        msg(subject='Transformer movement update', body=RFQ_BODY,
+            frm='sales@procamgroup.in', to=['buyer@tatasteel.com']),
+        ctx(find_by_subject=lambda **kw: 55))
+    assert d.klass == K.EXISTING
+    assert d.lead_id == 55
+
+
+def test_a_quotation_we_sent_moves_the_lead_to_quoted():
+    d = li.classify(
+        msg(subject='Our quotation - transformer movement',
+            body='Dear sir, please find attached our quotation for the '
+                 'transformer movement. Rate valid 30 days.',
+            frm='sales@procamgroup.in', to=['buyer@tatasteel.com']),
+        ctx(find_by_subject=lambda **kw: 31))
+    assert d.klass == K.QUOTE
+    assert d.lead_id == 31
+    assert not d.creates_lead
+
+
+def test_a_quotation_attachment_is_enough_on_its_own():
+    d = li.classify(
+        msg(subject='Transformer movement', body='As discussed.',
+            frm='sales@procamgroup.in', to=['buyer@tatasteel.com'],
+            attachments=[{'name': 'Procam_Quotation_4471.pdf'}]),
+        ctx(find_by_subject=lambda **kw: 12))
+    assert d.klass == K.QUOTE
+
+
+def test_a_rate_request_to_a_supplier_is_not_a_lead():
+    d = li.classify(
+        msg(subject='Rate required Mundra to Chennai',
+            body='Please provide your best rate for a 40ft trailer.',
+            frm='ops@procamgroup.in', to=['sales@sometransport.com']),
+        ctx())
+    assert d.klass == K.RATE_SOURCING
+    assert not d.creates_lead
+
+
+def test_a_known_vendor_writing_in_is_rate_sourcing():
+    d = li.classify(
+        msg(subject='Our rates for your enquiry', body=RFQ_BODY,
+            frm='sales@xyzshippingline.com'),
+        ctx(is_vendor_domain=lambda d_: d_ == 'xyzshippingline.com',
+            find_by_subject=lambda **kw: 88))
+    assert d.klass == K.RATE_SOURCING
+    assert d.lead_id == 88
+
+
+def test_a_duplicate_appends_instead_of_creating():
+    d = li.classify(msg(subject='RFQ - transformer', body=RFQ_BODY),
+                    ctx(duplicate_score=lambda **kw: (85, 501)))
+    assert d.klass == K.DUPLICATE
+    assert d.lead_id == 501
+    assert d.duplicate_score == 85
+
+
+def test_an_uncertain_duplicate_goes_to_review():
+    d = li.classify(msg(subject='RFQ - transformer', body=RFQ_BODY),
+                    ctx(duplicate_score=lambda **kw: (45, 501)))
+    assert d.klass == K.REVIEW
+    assert d.needs_review
+
+
+def test_a_genuine_second_enquiry_is_not_blocked():
+    """Today's 30-day same-domain rule blocks this. It must not."""
+    d = li.classify(
+        msg(subject='RFQ - second consignment, Kandla to Jamnagar',
+            body='New requirement, 3 reactors, 180 MT each. Please quote.'),
+        ctx(duplicate_score=lambda **kw: (20, None)))
+    assert d.klass == K.NEW_LEAD
+    assert d.creates_lead
+
+
+def test_an_attachment_carries_the_signal_when_the_body_does_not():
+    d = li.classify(
+        msg(subject='Requirement', body='Please find attached.',
+            has_attachments=True,
+            attachments=[{'name': 'RFQ_Heavy_Transport.xlsx'}]),
+        ctx())
+    assert d.klass == K.NEW_LEAD
+
+
+def test_marketing_mail_is_not_a_lead():
+    d = li.classify(
+        msg(subject='Webinar: the future of freight',
+            body='Join our webinar. Unsubscribe here.',
+            frm='news@logisticssaas.com'),
+        ctx(has_logistics_content=lambda m: False))
+    assert d.klass == K.NON_BUSINESS
+
+
+def test_nothing_but_class_a_ever_creates_a_lead():
+    for klass in (K.EXISTING, K.INTERNAL, K.DUPLICATE, K.REPLY, K.FORWARD,
+                  K.RATE_SOURCING, K.QUOTE, K.NON_BUSINESS, K.REVIEW):
+        assert klass not in K.CREATES_LEAD
+
+
+# ─── confidence ──────────────────────────────────────────────────────────
+def test_a_reply_scores_below_a_fresh_enquiry():
+    fresh = li.lead_confidence(msg(subject='RFQ - transformer', body=RFQ_BODY),
+                               ctx(), kind='fresh')
+    reply = li.lead_confidence(msg(subject='RE: RFQ - transformer',
+                                   body=RFQ_BODY), ctx(), kind='reply')
+    assert reply < fresh - 20, 'a reply must not score like a new enquiry'
+
+
+def test_the_score_can_go_down():
+    """The parser's score only ever adds, which is the bug this fixes."""
+    plain = li.lead_confidence(msg(subject='RFQ', body=RFQ_BODY), ctx())
+    ours = li.lead_confidence(msg(subject='RFQ', body=RFQ_BODY), ctx(),
+                              sender_is_internal=True)
+    assert ours < plain
+
+
+def test_a_quotation_scores_far_below_an_enquiry():
+    enquiry = li.lead_confidence(msg(subject='RFQ', body=RFQ_BODY), ctx())
+    quote = li.lead_confidence(
+        msg(subject='RFQ', body='Please find attached our quotation.'), ctx())
+    assert quote < enquiry
+
+
+@pytest.mark.parametrize('score', [0, 100])
+def test_confidence_stays_in_range(score):
+    v = li.lead_confidence(msg(subject='x' * 200, body='y' * 500), ctx())
+    assert 0 <= v <= 100
+
+
+# ─── duplicate weights ───────────────────────────────────────────────────
+def test_a_thread_match_alone_is_decisive():
+    assert li.score_duplicate({'same_thread': True}) == 100
+
+
+def test_weights_accumulate_and_cap():
+    assert li.score_duplicate({'same_sender_and_subject': True}) == 55
+    assert li.score_duplicate({'same_sender_and_subject': True,
+                               'same_attachment_name': True}) == 85
+    assert li.score_duplicate({'same_thread': True,
+                               'same_reference': True}) == 100
+
+
+def test_no_signals_is_not_a_duplicate():
+    assert li.score_duplicate({}) == 0
+    assert li.score_duplicate(None) == 0
+
+
+# ─── robustness ──────────────────────────────────────────────────────────
+@pytest.mark.parametrize('bad', [{}, {'subject': None}, {'from': None},
+                                 {'body': None}, {'toRecipients': None}])
+def test_a_malformed_message_does_not_crash_the_tree(bad):
+    d = li.classify(bad, ctx())
+    assert d.klass in li.Klass.LABELS
+
+
+def test_every_decision_explains_itself():
+    """A classification nobody can argue with is a classification nobody
+    can fix."""
+    d = li.classify(msg(subject='RFQ - transformer', body=RFQ_BODY), ctx())
+    assert d.step and d.reason
+    assert d.to_dict()['label']

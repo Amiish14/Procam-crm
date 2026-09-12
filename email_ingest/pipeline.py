@@ -27,6 +27,71 @@ from .graph_client import GraphClient
 log = logging.getLogger(__name__)
 
 
+def _thread_of(msg):
+    """Conversation and RFC-822 threading headers, in one shape."""
+    try:
+        from app.services import lead_intake as _li
+        return _li.thread_keys(msg)
+    except Exception:
+        return {}
+
+
+def _attach_to_lead(db, decision, msg, extracted, log):
+    """File an email that is not a new lead against the lead it belongs to.
+
+    This is what stops the mailbox being a shredder: a reply, a forward,
+    a quotation or a rate request all carry information about a live
+    enquiry, and dropping them because they are "not a lead" loses it.
+    An email with no lead to attach to is recorded and left alone.
+    """
+    if not decision.lead_id:
+        return None
+    try:
+        from app import LeadEmail, Lead
+        from app.services import lead_intake as _li
+
+        message_id = (msg.get('internetMessageId') or '').strip() or None
+        if message_id and LeadEmail.query.filter_by(
+                lead_id=decision.lead_id, message_id=message_id).first():
+            return None                      # already on the trail
+
+        keys = _thread_of(msg)
+        from_addr = _li.sender(msg)
+        row = LeadEmail(
+            lead_id=decision.lead_id,
+            direction=('outbound' if decision.klass == _li.Klass.QUOTE
+                       or decision.klass == _li.Klass.RATE_SOURCING
+                       else 'inbound'),
+            from_addr=from_addr or None,
+            to_addr=', '.join(_li.recipients(msg, 'toRecipients')) or None,
+            cc=', '.join(_li.recipients(msg, 'ccRecipients')) or None,
+            subject=(msg.get('subject') or '')[:500] or None,
+            body=(_li.body_text(msg) or '')[:8000] or None,
+            sent_or_received_at=email_parser.received_datetime(msg),
+            source='ingested',
+            status='received',
+            message_id=message_id,
+            conversation_id=keys.get('conversation_id'),
+            in_reply_to=keys.get('in_reply_to'),
+            references_header=keys.get('references'),
+        )
+        db.session.add(row)
+
+        # A quotation going out moves the enquiry on. Nothing else here
+        # changes a lead's stage — an inbound reply is information, not
+        # progress, and pretending otherwise would corrupt the pipeline.
+        if decision.klass == _li.Klass.QUOTE:
+            lead = db.session.get(Lead, decision.lead_id)
+            if lead is not None and (lead.stage or '') not in (
+                    'Quoted', 'Won', 'Lost', 'Not Interested'):
+                lead.stage = 'Quoted'
+        return row
+    except Exception:
+        log.exception('could not attach %s to lead %s',
+                      msg.get('internetMessageId'), decision.lead_id)
+        return None
+
+
 def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
     # v2026-08 — respect EMAIL_INGESTION_MODE. In mailbox mode the
     # webhook drives ingestion and this polled path becomes a no-op
@@ -182,6 +247,40 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     )
                     continue
 
+                # ── Intake classification ────────────────────────────
+                # The parser has said this is logistics content. The
+                # question the classifier answers is different: is it a
+                # *new enquiry*, or a reply, a forward, our own quotation
+                # or a rate request to a supplier? Only one of ten
+                # classes creates a lead.
+                decision = None
+                try:
+                    from app.services import lead_intake as _li
+                    from app.services import lead_intake_db as _lidb
+                    msg_for_class = dict(msg)
+                    msg_for_class['_forward_resolved'] = bool(
+                        extracted.get('forward_resolved'))
+                    decision = _li.classify(msg_for_class,
+                                            _lidb.build_context())
+                except Exception:
+                    log.exception('intake classification failed for %s — '
+                                  'falling through to the old rules',
+                                  msg_id_internet)
+
+                if decision is not None and not decision.creates_lead:
+                    _lidb.record(decision, msg)
+                    _attach_to_lead(db, decision, msg, extracted, log)
+                    try:
+                        db.session.commit()
+                    except Exception:
+                        db.session.rollback()
+                    stats["skipped"] += 1
+                    skip_counter[f'{decision.klass}: {decision.reason}'] += 1
+                    log.info('classified %s as %s (step %s) — %s',
+                             msg_id_internet, decision.klass, decision.step,
+                             decision.reason)
+                    continue
+
                 received_at = email_parser.received_datetime(msg)
                 sender_email = (extracted.get("email") or "").strip().lower()
                 sender_domain = sender_email.split("@", 1)[1] if "@" in sender_email else ""
@@ -193,10 +292,12 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     skip_counter["existing lead: same email"] += 1
                     continue
 
-                # DB dedup 2: same domain has an existing lead in the last
-                # 30 days → skip (avoids duplicating a company that already
-                # contacted us via a different person recently).
-                if sender_domain and sender_domain in existing_recent_domains:
+                # DB dedup 2: same domain within 30 days. Kept only as a
+                # fallback for when the classifier could not run: it
+                # blocks a customer's genuine second enquiry, which the
+                # duplicate score at step 9 does not.
+                if decision is None and sender_domain \
+                        and sender_domain in existing_recent_domains:
                     stats["skipped"] += 1
                     skip_counter[f"existing lead: same domain <{DEDUP_DOMAIN_WINDOW_DAYS}d"] += 1
                     continue
@@ -375,6 +476,12 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     original_email_from=(merged.get("email_primary") or "")[:320],
                     original_email_received_at=received_at,
                     original_email_source='ingested',
+                    conversation_id=(msg.get('conversationId') or None),
+                    in_reply_to=_thread_of(msg).get('in_reply_to'),
+                    references_header=_thread_of(msg).get('references'),
+                    classification=(decision.klass if decision else None),
+                    lead_confidence=(decision.confidence if decision else None),
+                    duplicate_score=(decision.duplicate_score if decision else None),
                     opp_notes=json.dumps({
                         "signals": extracted.get("signals", {}),
                         "confidence": extracted.get("confidence", 0.0),

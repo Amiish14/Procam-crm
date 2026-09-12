@@ -98,6 +98,10 @@ SYSTEM_LISTS = [
     ('task_type',       'Task Type',   'Categories of task.'),
     ('priority',        'Priority',    'Priority levels.'),
     ('source',          'Lead Source', 'Where an opportunity came from.'),
+    ('lead_rejection_reason', 'Lead Rejection Reason',
+     'Why a system-created lead was rejected. Each reason is a training '
+     'signal, so the list is deliberately specific — "Other" is the only '
+     'one that teaches nothing.'),
     ('project_stage',   'Project Stage',  'Project intelligence stages.'),
     ('account_stage',   'Account Stage',  'Account development stages.'),
 ]
