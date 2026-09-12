@@ -185,11 +185,19 @@ def test_two_rejections_are_a_coincidence_not_a_pattern(world):
 
 def test_nothing_applies_itself(world):
     """An auto-learned rule that quietly drops a customer's mail is worse
-    than the noise it removes."""
+    than the noise it removes.
+
+    proposals() is called first: reading the proposals is the moment an
+    auto-apply would fire, so a test that never reads them cannot catch
+    one.
+    """
     _rejected('notyet.com', 'Vendor Rate Sourcing', n=4)
     with flask_app.app_context():
+        props = learning.proposals()
+        assert any(p['key'] == 'vendor:notyet.com' for p in props), \
+            'the fixture should produce a proposal to begin with'
         assert VendorDomain.query.filter_by(domain='notyet.com').first() \
-            is None, 'a proposal must not apply itself'
+            is None, 'reading a proposal must not apply it'
 
 
 def test_applying_a_proposal_creates_the_rule(world):
