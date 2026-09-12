@@ -1,6 +1,7 @@
-# Lead Ingestion — one inbox, capture everything
+# Lead Ingestion — one inbox, classify before creating
 
-_v2026-09-01._
+_v2026-09-12. Supersedes v2026-09-01, which described the
+capture-everything policy this engine replaced._
 
 ```
 Employee receives a lead
@@ -9,24 +10,81 @@ leads@procamgroup.in
         ↓ Graph webhook → /api/email/webhook
 CRM unwraps the forward and pulls out the ORIGINAL prospect
         ↓
+Intake engine classifies it  ──► not a lead? filed with a reason,
+        ↓ it is a lead              nothing deleted
+Account resolved → two PICs assigned → vertical recommended
+        ↓
 Lead row (source=email, stage="New Opportunity")
 ```
 
-## 1. The mailbox is the filter
+## 1. Classify first, then create
 
-`leads@procamgroup.in` exists for exactly one purpose: employees forward
-leads into it. So **every message that arrives becomes a Lead**. There is
-no content filtering, no confidence threshold, no junk detection, no
-"is this really a lead?" check. If it reached the inbox, someone decided
-it belongs in the CRM, and silently dropping mail loses business.
+**This section was rewritten on 2026-09-12 and reverses the previous
+policy.** Until then every message that arrived became a Lead. Against
+the real mailbox that produced 2,076 leads from 2,076 messages, of which
+roughly three quarters were replies, forwards of enquiries already held,
+internal mail, supplier quotes and newsletters.
 
-The only message ever skipped is one that was **already ingested**
-(deduped on `internetMessageId`, so a webhook retry cannot double-insert).
+The engine now decides what a message is *before* a lead exists. Ten
+outcomes, in [`app/services/lead_intake.py`](../app/services/lead_intake.py):
 
-Anything the parser considers unusual — an auto-reply, a bulk sender, a
-message with no cargo/route/RFQ signal — is recorded as a **`triage_tag`**
-in the Lead's `opp_notes` and the Lead is created regardless. The tag is a
-label for sorting in the UI, never a reason to reject.
+| | Outcome | What happens |
+|---|---|---|
+| A | New lead | Lead created, account resolved, two PICs assigned |
+| B | Existing lead communication | Appended to the lead it belongs to |
+| C | Reply to an existing RFQ | Appended |
+| D | Internal Procam email | Filed, no lead |
+| E | Rate sourcing / vendor | Filed to the Rate Sourcing tab |
+| F | Forward of an existing RFQ | Appended |
+| G | Quote submission | Filed, reference and amount extracted |
+| H | Duplicate | Held against the lead it may duplicate |
+| I | Non-business | Filed |
+| J | Needs review | Waits for a person in Lead Review |
+
+The tree is **pure** — every database lookup goes through a `Context`
+object — so it is tested against dictionaries with no database at all.
+
+### Nothing is dropped and nothing is deleted
+
+A message that does not become a lead is still recorded in full, as an
+`EmailClassification` row with the reason it was filed that way. That is
+both the audit trail and the training set. A wrong decision is one click
+to reverse in Lead Review, and the reversal is itself recorded.
+
+### Measured effect
+
+Against the live mailbox: **2,076 messages → 493 leads**, a 76% reduction
+in noise, with the review queue settling at 59 items. The dry run that
+produced those numbers is `scripts/classify_mailbox_dryrun.py`, and it is
+read-only.
+
+### The order matters
+
+Steps 1 to 9 are deterministic facts — a thread match, a Procam sender, a
+known supplier domain, the logistics gate. Only step 10 is a judgement,
+and only step 10 has a confidence score. An email with no body and no
+attachment cannot reach "new lead" at all, however its subject scores:
+that rule exists because a customer forwarded our own company profile
+back to us and it scored 62 on the words in our own tagline.
+
+### Where a model is involved, and where it is not
+
+Phase 4 consults an LLM at **step 10 only**, and only when the score
+lands between 25 and 79. It cannot overturn a thread match, a Procam
+sender, a vendor match or the logistics gate; it cannot name a lead to
+attach to; and an opinion under 70% confidence is recorded but not
+applied. It is off unless `LEAD_INTAKE_AI=on` and a key are both set.
+Every opinion is stored beside the rule's own answer so the two can be
+compared. See [`lead_intake_ai.py`](../app/services/lead_intake_ai.py).
+
+### Screens
+
+| Screen | Who | What it is for |
+|---|---|---|
+| `/lead-review` | Sales + Admin | The queue. Accept, reject with a reason, or reclassify |
+| `/accounts/owners` | Admin | Two PICs per account — the mapping that makes assignment automatic |
+| `/intake-intelligence` | Admin | Accuracy, what the corrections suggest, what the model said |
+| `/triage` | Admin | Lead triage across the whole funnel |
 
 ## 2. One inbox, and only one
 
@@ -154,6 +212,15 @@ so the "LEAD SUMMARY · FROM INBOUND EMAIL" card renders exactly as before.
 | `EMAIL_INGESTION_MODE` | `mailbox` | Webhook-driven, real-time ingestion |
 | `EMAIL_WEBHOOK_SECRET` | random string | Graph echoes it on every notification |
 | `EMAIL_INGEST_SKIP_DOMAINS` | `procamlogistics.com,procamgroup.in` | Which domains count as "internal" for forward unwrapping — **not** a lead filter |
+
+## Which path actually runs
+
+Production ingests through
+[`email_ingest/single_message.py`](../email_ingest/single_message.py) —
+`process_single_message()` — which both the webhook and the poll call.
+That is where the intake engine is wired in. `pipeline.py` is the older
+batch path and is **not** what runs; a change made only there has no
+effect on live mail.
 
 ## Known difference: the retired poll path
 
