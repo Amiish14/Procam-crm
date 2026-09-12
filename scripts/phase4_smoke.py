@@ -43,17 +43,88 @@ def as_message(row):
     }
 
 
+def _band_report():
+    """How often Phase 4 can fire at all.
+
+    This is the number that decides whether the model is worth having
+    switched on, and it is knowable without asking the model anything.
+    """
+    total = EmailClassification.query.count()
+    scored = (EmailClassification.query
+              .filter(EmailClassification.confidence.isnot(None)).count())
+    in_band = (EmailClassification.query
+               .filter(EmailClassification.confidence >= ai.CONSULT_ABOVE,
+                       EmailClassification.confidence < ai.CONSULT_BELOW)
+               .count())
+    step10 = (EmailClassification.query
+              .filter(EmailClassification.decided_by.like('%10%')).count())
+
+    print(f'  {total} classifications recorded')
+    print(f'  {scored} carry a confidence score '
+          f'({100 * scored // max(total, 1)}%)')
+    print(f'  {step10} were decided at step 10')
+    print(f'  {in_band} land in the {ai.CONSULT_ABOVE}-'
+          f'{ai.CONSULT_BELOW - 1} band the model is asked about '
+          f'({100 * in_band // max(total, 1)}%)')
+
+    buckets = (db_session_counts())
+    if buckets:
+        print('\n  confidence distribution:')
+        for lo, n in buckets:
+            print(f'    {lo:>3}-{lo + 9:<3} {"#" * min(n, 50)} {n}')
+    print()
+
+
+def db_session_counts():
+    """Confidence in tens, so the shape of the scoring is visible."""
+    from sqlalchemy import func
+    try:
+        rows = (EmailClassification.query
+                .with_entities((EmailClassification.confidence / 10) * 10,
+                               func.count())
+                .filter(EmailClassification.confidence.isnot(None))
+                .group_by((EmailClassification.confidence / 10) * 10)
+                .order_by((EmailClassification.confidence / 10) * 10)
+                .all())
+        return [(int(lo or 0), n) for lo, n in rows]
+    except Exception:
+        return []
+
+
+def _loudly(msg):
+    """ai.opinion() without the safety net, so a failure names itself."""
+    text = ai._as_prompt(msg)
+    if not text.strip():
+        print('         (nothing to send — empty body and subject)')
+        return None
+    try:
+        raw, model = ai._ask(text)
+    except Exception as exc:
+        print(f'         CALL FAILED {type(exc).__name__}: {str(exc)[:200]}')
+        return None
+    parsed = ai._parse(raw)
+    if parsed is None:
+        print(f'         UNPARSEABLE: {str(raw)[:200]}')
+        return None
+    parsed.model = model
+    return parsed
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--limit', type=int, default=25)
     ap.add_argument('--corrected', action='store_true',
                     help='only rows a human has already ruled on')
+    ap.add_argument('--why', action='store_true',
+                    help='show why a call failed instead of swallowing it')
     args = ap.parse_args()
 
     with app.app_context():
         if not ai.is_enabled():
             print('Phase 4 is off. Needs LEAD_INTAKE_AI=on and a key.')
             return 1
+
+        _band_report()
 
         q = (EmailClassification.query
              .filter(EmailClassification.confidence.isnot(None),
@@ -72,7 +143,10 @@ def main():
         rules_right = model_right = judged = 0
 
         for r in rows:
-            op = ai.opinion(as_message(r))
+            if args.why:
+                op = _loudly(as_message(r))
+            else:
+                op = ai.opinion(as_message(r))
             asked += 1
             if op is None:
                 print(f'  #{r.id:<6} {"no answer":<14} {(r.subject or "")[:58]}')

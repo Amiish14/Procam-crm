@@ -148,13 +148,16 @@ def opinion(msg, rule_decision=None):
             return None
         parsed.model = model
         return parsed
-    except Exception:
-        # Deliberately silent to the caller: the rules already have an
-        # answer, and an intake path that fails when a third party is
-        # slow is worse than one with no model.
+    except Exception as exc:
+        # Silent to the caller, not to the log. The rules already have an
+        # answer and an intake path that fails when a third party is slow
+        # would be worse than one with no model — but a failure nobody
+        # can diagnose is how a permanently broken model goes unnoticed.
         try:
             from app import app as flask_app
-            flask_app.logger.info('intake AI unavailable, rules stand')
+            flask_app.logger.info(
+                'intake AI unavailable, rules stand: %s: %s',
+                type(exc).__name__, str(exc)[:300])
         except Exception:
             pass
         return None
