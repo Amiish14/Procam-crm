@@ -166,16 +166,41 @@ def duplicate_score(msg=None, subject=None, from_addr=None, window_days=30):
 
 
 # ─── logistics content — step 8, reusing the parser's own judgement ──────
+#: Parser skip reasons that mean "this is not business mail at all".
+#: The parser reports several; only one of them was being honoured, so a
+#: forwarded newsletter from a no-reply address reached the confidence
+#: step and landed in Admin Review instead of being set aside. Five of
+#: the first twenty-five review items in the real mailbox were
+#: newsletters for exactly this reason.
+_NON_BUSINESS_REASONS = (
+    'not logistics-related',
+    'no-reply sender',
+    'auto-reply',
+    'bounce',
+    'bulk',
+    'newsletter',
+    'marketing',
+    'empty message',
+)
+
+
 def has_logistics_content(msg):
-    """The parser already decides this at parser.py:974. Reused rather
-    than reimplemented so the two cannot drift apart."""
+    """Whether this is business mail worth considering at all.
+
+    The parser already makes this judgement at parser.py:799 and :974,
+    and reports it as a skip reason. Reused rather than reimplemented so
+    the two cannot drift apart — but every reason it gives is honoured,
+    not just the one about cargo keywords.
+    """
     try:
         from email_ingest import parser as email_parser
-        extracted = email_parser.extract(msg)
+        extracted = email_parser.extract_lead(msg)
         if not extracted:
             return False
-        reason = extracted.get('skip_reason') or ''
-        return 'not logistics-related' not in reason
+        reason = (extracted.get('skip_reason') or '').lower()
+        if not reason:
+            return True
+        return not any(marker in reason for marker in _NON_BUSINESS_REASONS)
     except Exception:
         return True         # never lose a lead to a parser failure
 

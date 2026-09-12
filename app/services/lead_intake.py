@@ -425,49 +425,71 @@ def classify(msg, ctx=None):
 
 
 # ─── confidence ──────────────────────────────────────────────────────────
+def confidence_parts(msg, ctx=None, *, sender_is_internal=False,
+                     kind='fresh', from_domain=''):
+    """The score broken into named contributions.
+
+    Returned rather than just summed so a threshold can be argued with:
+    "this RFQ scored 45" is not actionable, "it scored 45 because a
+    forward costs 10 and the body matched a quote phrase for 30" is.
+    """
+    ctx = ctx or Context()
+    text = searchable_text(msg)
+    low = text.lower()
+    parts = [('base', 40)]
+
+    if re.search(r'\b(rfq|rfp|rfi|tender|quotation|quote|enquiry|inquiry)\b', low):
+        parts.append(('asks for a price', 25))
+    if re.search(r'\b(cargo|consignment|shipment|container|freight|cbm|'
+                 r'tonnes?|mts?|odc|breakbulk|trailer|vessel|awb|bl|'
+                 r'transport|transportation|logistics|haulage|movement|'
+                 r'clearance|warehous\w*|charter|rigging|axle)\b', low):
+        parts.append(('logistics vocabulary', 15))
+    if re.search(r'\b(from|ex|origin)\b.{0,40}\b(to|destination)\b', low) \
+            or re.search(r'\b\w+\s*(?:–|-|→|to)\s*\w+\s*(?:port|icd|cfs)\b', low):
+        parts.append(('a route', 10))
+    if re.search(r'(\+?\d[\d\s\-()]{8,})', text):
+        parts.append(('a phone number', 5))
+    if msg.get('hasAttachments') or attachment_names(msg):
+        parts.append(('an attachment', 5))
+    if re.search(r'\b(rfq|enquiry|tender|quotation)[\s_\-/]*(no|number|ref|#)?'
+                 r'[\s_\-/:]*[a-z0-9][a-z0-9\-/]{3,}', low):
+        parts.append(('an enquiry reference', 10))
+
+    if kind == 'reply':
+        parts.append(('a reply', -30))
+    elif kind == 'forward':
+        # A forward is how most client mail reaches this mailbox, so it
+        # is barely evidence against a new enquiry at all.
+        parts.append(('a forward', -3))
+    if sender_is_internal:
+        parts.append(('sent by us', -25))
+    if ctx.is_vendor_domain(from_domain) or vendor_domain_hint(from_domain):
+        parts.append(('a supplier domain', -15))
+    quote_phrase = _contains_any(text, _QUOTE_PHRASES)
+    if quote_phrase:
+        parts.append((f'quotation wording ({quote_phrase!r})', -30))
+    rate_phrase = _contains_any(text, _RATE_REQUEST_PHRASES)
+    if rate_phrase:
+        parts.append((f'rate-request wording ({rate_phrase!r})', -20))
+    if re.search(r'\b(unsubscribe|newsletter|webinar|no longer wish)\b', low):
+        parts.append(('newsletter wording', -40))
+
+    return parts
+
+
 def lead_confidence(msg, ctx=None, *, sender_is_internal=False, kind='fresh',
                     from_domain=''):
-    """0–100. Extends the parser's score with the signals it cannot see.
+    """0-100. Extends the parser's score with the signals it cannot see.
 
     The parser's score at parser.py:940 only ever goes up, which is why a
     well-written reply from a real customer scores highly and becomes a
     lead. These weights can subtract.
     """
-    ctx = ctx or Context()
-    text = searchable_text(msg)
-    low = text.lower()
-    score = 40                      # a plausible email starts mid-scale
-
-    # Positive — the customer is asking for something.
-    if re.search(r'\b(rfq|rfp|rfi|tender|quotation|quote|enquiry|inquiry)\b', low):
-        score += 25
-    if re.search(r'\b(cargo|consignment|shipment|container|freight|cbm|'
-                 r'tonnes?|mts?|odc|breakbulk|trailer|vessel|awb|bl)\b', low):
-        score += 15
-    if re.search(r'\b(from|ex|origin)\b.{0,40}\b(to|destination)\b', low):
-        score += 10
-    if re.search(r'(\+?\d[\d\s\-()]{8,})', text):
-        score += 5
-    if msg.get('hasAttachments') or attachment_names(msg):
-        score += 5
-
-    # Negative — the signals that make it not a new enquiry.
-    if kind == 'reply':
-        score -= 30
-    elif kind == 'forward':
-        score -= 10             # forwards are often genuine hand-offs
-    if sender_is_internal:
-        score -= 25
-    if ctx.is_vendor_domain(from_domain) or vendor_domain_hint(from_domain):
-        score -= 15
-    if _contains_any(text, _QUOTE_PHRASES):
-        score -= 30
-    if _contains_any(text, _RATE_REQUEST_PHRASES):
-        score -= 20
-    if re.search(r'\b(unsubscribe|newsletter|webinar|no longer wish)\b', low):
-        score -= 40
-
-    return max(0, min(100, score))
+    total = sum(v for _name, v in confidence_parts(
+        msg, ctx, sender_is_internal=sender_is_internal, kind=kind,
+        from_domain=from_domain))
+    return max(0, min(100, total))
 
 
 # ─── duplicate scoring ───────────────────────────────────────────────────

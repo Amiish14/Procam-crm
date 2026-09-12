@@ -413,3 +413,68 @@ def test_a_relayed_reply_is_still_a_reply():
         ctx())
     assert d.klass in (K.REPLY, K.REVIEW)
     assert not d.creates_lead
+
+
+# ─── calibration against the real mailbox ────────────────────────────────
+REAL_SUBJECTS = [
+    'RFQ-DLI-26-0056 | Road Transportation – Nhava Sheva to Pune',
+    'RFQ-DLI-26-0054 – ODC Transportation by Axle Pullers',
+    'Invitation for Supply of MHE W/o Operator- In-Plant',
+    'RFQ for India shipment (CGTR)',
+    'Quotation// Enquiry TMILL/0095/2026-27',
+    'FOB Laem Chabang to ICD Dadri / HMC Polymer',
+    'REQUEST FOR PRICE DETAILS - FCA - Kotka 48600, Finland',
+]
+
+
+@pytest.mark.parametrize('subject', REAL_SUBJECTS)
+def test_real_client_enquiries_clear_the_confidence_floor(subject):
+    """Subjects taken verbatim from the live mailbox, all of which the
+    first calibration run sent to Admin Review.
+
+    They arrive forwarded by a colleague, which is how nearly every
+    client enquiry reaches this mailbox — so a forward can only be weak
+    evidence against a new enquiry, not strong.
+
+    Caveat worth keeping in view: the subjects are real, the bodies are
+    invented. This pins the mechanism, not the calibration. Only a dry
+    run over the actual mailbox can confirm the threshold, and these
+    tests must not be mistaken for that.
+    """
+    m = msg(subject='Fw: ' + subject,
+            body='Please find the enquiry below. Kindly quote.',
+            frm='sales@procamgroup.in',
+            _forward_resolved=True,
+            _resolved_sender='buyer@clientcompany.com')
+    score = li.lead_confidence(m, ctx(), kind='forward')
+    assert score >= 50, (
+        f'{subject!r} scored {score}: '
+        + '  '.join(f'{n} {v:+d}'
+                    for n, v in li.confidence_parts(m, ctx(), kind='forward')))
+
+
+def test_the_score_can_be_explained():
+    """"It scored 45" is not actionable; the breakdown is."""
+    parts = li.confidence_parts(
+        msg(subject='RFQ - transformer', body=RFQ_BODY), ctx())
+    names = [n for n, _v in parts]
+    assert 'base' in names
+    assert any('price' in n for n in names)
+    raw = sum(v for _n, v in parts)
+    # lead_confidence clamps to 0-100; the parts are the unclamped truth.
+    assert li.lead_confidence(
+        msg(subject='RFQ - transformer', body=RFQ_BODY), ctx()) \
+        == max(0, min(100, raw))
+
+
+def test_a_forwarded_newsletter_is_not_sent_to_a_human():
+    """Five of the first twenty-five review items were forwarded
+    newsletters."""
+    d = li.classify(
+        msg(subject='Fw: SCC Online Newsletter Vol.14 Issue 773',
+            body='This week in law. Unsubscribe here.',
+            frm='sales@procamgroup.in', _forward_resolved=True,
+            _resolved_sender='newsletter@scconline.com'),
+        ctx(has_logistics_content=lambda m: False))
+    assert d.klass == K.NON_BUSINESS
+    assert not d.needs_review

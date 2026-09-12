@@ -45,6 +45,9 @@ def main():
     ap.add_argument('--limit', type=int, default=500)
     ap.add_argument('--show', help='print every message in this class')
     ap.add_argument('--csv', help='write the labelled sample here')
+    ap.add_argument('--explain', action='store_true',
+                    help='with --show, break the confidence score into its '
+                         'named parts so a threshold can be argued with')
     args = ap.parse_args()
 
     from app import app as flask_app                          # noqa: E402
@@ -118,6 +121,17 @@ def main():
             if args.show and d.klass == args.show:
                 print(f'  {row["received"]}  {row["from"][:34]:<36}'
                       f'{row["subject"][:52]}')
+                if args.explain:
+                    parts = li.confidence_parts(
+                        probe, ctx,
+                        sender_is_internal=(
+                            li.domain_of(li.effective_sender(probe))
+                            in ctx.internal_domains),
+                        kind=li.subject_kind(msg.get('subject') or ''),
+                        from_domain=li.domain_of(li.effective_sender(probe)))
+                    total = max(0, min(100, sum(v for _n, v in parts)))
+                    bits = '  '.join(f'{nm} {v:+d}' for nm, v in parts)
+                    print(f'{"":>23}→ {total}  = {bits}')
 
         if not scanned:
             print('  No messages in the window. Widen --days.')
