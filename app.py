@@ -3988,18 +3988,26 @@ from email_ingest import service as _mail_service
 def api_email_webhook():
     """Graph subscription callback.
 
-    * GET  — Graph subscription-validation handshake. Returns the
-             validationToken query param verbatim as text/plain.
+    * validationToken present — Graph's subscription handshake. Echo it
+             back verbatim as text/plain, whatever the method.
     * POST — Actual notification. Payload = { value: [ ...notifications ] }.
              Processed inside handle_notification(); status recorded per
              message on the EmailEvent table.
     """
-    # 1. Handshake — Graph sends validationToken on subscription create.
+    # 1. Handshake. Graph sends this as a POST with the token in the query
+    #    string, not a GET — and it is sent when creating *and* renewing a
+    #    subscription. Answering it only on GET meant every create and
+    #    renew failed with "did not return the expected validation token",
+    #    and the leads mailbox subscription has been dead since 2 Sept.
+    #
+    #    It is answered before any mode check: this is Graph verifying the
+    #    endpoint exists, and refusing it because ingestion happens to be
+    #    paused would make the subscription unrecoverable.
     token = (request.args.get('validationToken') or '')[:1024]
+    if token:
+        from flask import Response
+        return Response(token, mimetype='text/plain', status=200)
     if request.method == 'GET':
-        if token:
-            from flask import Response
-            return Response(token, mimetype='text/plain', status=200)
         return ('', 400)
 
     # 2. Notification body.
