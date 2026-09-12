@@ -433,6 +433,18 @@ def classify(msg, ctx=None):
         decided = Decision(Klass.REVIEW, step=10, confidence=confidence,
                            duplicate_score=score, needs_review=True,
                            reason=f'low confidence ({confidence}%)')
+    elif not has_substance(msg):
+        # An email with nothing in it has told us nothing. The subject
+        # can clear the bar on vocabulary alone: "Procam Group — India's
+        # Integrated Logistics & Heavy-Lift Project Cargo Specialist"
+        # scored 62 with an empty body — our own tagline, forwarded back
+        # to us — and created a lead. There is no enquiry to be
+        # confident about, so a person looks.
+        decided = Decision(Klass.REVIEW, step=10, confidence=confidence,
+                           duplicate_score=score, needs_review=True,
+                           reason=f'nothing in the message to judge — '
+                                  f'{confidence}% came from the subject '
+                                  f'line alone')
     else:
         decided = Decision(Klass.NEW_LEAD, step=10, confidence=confidence,
                            duplicate_score=score,
@@ -453,6 +465,22 @@ def classify(msg, ctx=None):
 
 
 # ─── confidence ──────────────────────────────────────────────────────────
+def has_substance(msg):
+    """Whether there is anything here to judge.
+
+    Deliberately generous: "Pls quote" is nine characters and is a real
+    enquiry, so anything at all in the body counts, and so does an
+    attachment — most enquiries arrive as "please find attached". What
+    this rejects is the genuinely empty message, where every point of
+    the score came from words in the subject.
+    """
+    if (body_text(msg) or '').strip():
+        return True
+    if msg.get('hasAttachments') or attachment_names(msg):
+        return True
+    return bool((msg.get('_attachment_text') or '').strip())
+
+
 def confidence_parts(msg, ctx=None, *, sender_is_internal=False,
                      kind='fresh', from_domain=''):
     """The score broken into named contributions.

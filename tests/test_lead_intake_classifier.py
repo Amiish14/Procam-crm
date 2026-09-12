@@ -541,3 +541,91 @@ def test_a_borderline_message_still_reaches_a_person():
     d = li.classify(m, ctx())
     assert 25 <= (d.confidence or 0) < 50
     assert d.klass == K.REVIEW
+
+
+# ─── an empty message is not an enquiry ──────────────────────────────────
+#
+# Lead 11670: a customer forwarded our own company profile back to us.
+# Empty body, and the subject was our tagline. Base 40 plus 'logistics
+# vocabulary' 15 cleared the 50 threshold and a lead was created from a
+# message that said nothing.
+_OUR_OWN_TAGLINE = ("Fw: Procam Group – India's Integrated Logistics & "
+                    "Heavy-Lift Project Cargo Specialist")
+
+
+def _the_real_one(**over):
+    """Lead 11670 as it actually arrived.
+
+    _forward_resolved is True with an empty _resolved_sender: the parser
+    reported it had unwrapped the forward while producing no sender and
+    no body. That is what let it past step 5 and into the score.
+    """
+    m = msg(subject=_OUR_OWN_TAGLINE, body='',
+            frm='sanjay.singh15@motherson.com')
+    m['_forward_resolved'] = True
+    m.update(over)
+    return m
+
+
+def test_an_empty_body_does_not_become_a_lead_on_subject_words_alone():
+    d = li.classify(_the_real_one(), li.Context())
+    assert d.klass == K.REVIEW
+    assert d.needs_review is True
+    assert 'nothing in the message' in d.reason
+
+
+def test_the_score_is_still_reported_so_the_call_can_be_argued_with():
+    """It did clear the bar. Hiding that would make the rule unarguable."""
+    d = li.classify(_the_real_one(), li.Context())
+    assert d.confidence >= 50
+
+
+def test_please_find_attached_is_still_a_lead():
+    """The gate must not catch the way most real enquiries arrive."""
+    d = li.classify(
+        msg(subject='RFQ for breakbulk movement Airoli to Kandla', body='',
+            attachments=[{'name': 'RFQ_Heavy_Transport.xlsx'}]),
+        li.Context())
+    assert d.klass == K.NEW_LEAD
+
+
+def test_nine_characters_of_body_is_enough():
+    """"Pls quote" is a real enquiry. The gate rejects empty, not short."""
+    d = li.classify(msg(subject='RFQ breakbulk cargo movement Airoli',
+                        body='Pls quote'), li.Context())
+    assert d.klass == K.NEW_LEAD
+
+
+def test_whitespace_is_not_content():
+    assert li.has_substance(msg(subject='x', body='   \n\n \t ')) is False
+
+
+def test_a_body_preview_counts_as_content():
+    """Graph gives a preview where the full body was not fetched."""
+    m = msg(subject='x', body='')
+    m['bodyPreview'] = 'We need a quote for 40 MT to Kandla'
+    assert li.has_substance(m) is True
+
+
+def test_attachment_text_counts_as_content():
+    m = msg(subject='x', body='')
+    m['_attachment_text'] = 'Origin Airoli Destination Kandla 40 MT'
+    assert li.has_substance(m) is True
+
+
+def test_the_gate_does_not_touch_deterministic_answers():
+    """A thread match is a fact. An empty reply on a known thread still
+    belongs to its lead — the gate sits at step 10 and nowhere else."""
+    ctx = li.Context(find_by_thread=lambda **kw: 42)
+    d = li.classify(_the_real_one(), ctx)
+    assert d.klass == K.FORWARD
+    assert d.lead_id == 42
+    assert d.step != 10
+
+
+def test_an_empty_message_that_scores_low_is_still_parked_not_reviewed():
+    """The gate raises the bar for creating a lead. It does not drag
+    obvious noise into the queue for a person to read."""
+    d = li.classify(msg(subject='Unsubscribe from our newsletter', body='',
+                        frm='news@example.com'), li.Context())
+    assert d.klass == K.NON_BUSINESS
