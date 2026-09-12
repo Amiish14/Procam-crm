@@ -88,15 +88,19 @@ def up(conn, dry):
                       'ix_email_classifications_review_state '
                       'ON email_classifications (review_state)'))
 
-    # A decision that produced a lead was, in effect, already accepted.
-    # Everything else is waiting for someone to look at it.
+    # Only the decisions that actually asked for a person belong in the
+    # queue. Marking every non-lead 'pending' would open the review
+    # screen with a backlog of things the classifier decided correctly —
+    # a thread match and an internal email are settled, not waiting.
     n1 = conn.execute(text(
         "UPDATE email_classifications SET review_state = 'accepted' "
-        'WHERE review_state IS NULL AND created_lead_id IS NOT NULL')).rowcount
+        'WHERE review_state IS NULL AND ('
+        '  created_lead_id IS NOT NULL '
+        "  OR classification != 'J_needs_review')")).rowcount
     n2 = conn.execute(text(
         "UPDATE email_classifications SET review_state = 'pending' "
         'WHERE review_state IS NULL')).rowcount
-    print(f'  marked {n1} accepted, {n2} pending')
+    print(f'  marked {n1} settled, {n2} waiting for review')
 
 
 def down(conn, dry, confirmed):
