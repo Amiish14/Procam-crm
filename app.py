@@ -386,6 +386,9 @@ class Lead(db.Model):
         def sd(d): return str(d) if d else ''
         return {
             'id': self.id, 'source': self.source, 'company': self.company,
+            # The lead screen uses this to decide whether legacy text in
+            # `notes` is a customer enquiry or somebody's note.
+            'email_message_id': self.email_message_id or '',
             'project': self.project or '', 'industry': self.industry or '',
             'cost': self.cost_million or 0, 'products': self.products or '',
             'state': self.state or '', 'city': self.city or '', 'country': self.country or 'India',

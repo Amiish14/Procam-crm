@@ -162,8 +162,9 @@ def up(conn, dry):
         print(f'  WOULD preserve {len(from_email)} email-sourced lead(s) '
               f'into original_email_body')
         print(f'  WOULD copy the same text into lead_notes (flagged)')
-        print(f'  leads with notes but no source email: {len(plain)} '
-              f'(left alone — these are genuine notes)')
+        print(f'  WOULD file {len(plain)} note(s) from leads with no source '
+              f'email into lead_notes\n     (their original_email_body is '
+              f'left empty — these are notes, not enquiries)')
         print(f'\n  Probably already destroyed by a note: {len(looks_lost)}')
         for lid, company, snippet, _mid in looks_lost[:15]:
             print(f'    lead #{lid:<6} {(company or "")[:28]:<30} '
@@ -212,6 +213,22 @@ def up(conn, dry):
         "               WHERE migrated_from_legacy = 1)"
     )).rowcount
     print(f'  copied into lead_notes (flagged migrated): {noted}')
+
+    # Leads with notes but no source email: that text is somebody's note,
+    # so it belongs in the note log. Skipped, it would sit forever in a
+    # column nothing writes any more and no screen lists.
+    plain_noted = conn.execute(text(
+        "INSERT INTO lead_notes (lead_id, note_text, note_type, author, "
+        "  author_name, migrated_from_legacy, is_deleted, created_at, "
+        "  updated_at) "
+        "SELECT id, notes, 'general', NULL, 'migrated', 1, 0, "
+        "       created_at, created_at "
+        "FROM leads WHERE notes IS NOT NULL AND notes != '' "
+        "AND (email_message_id IS NULL OR email_message_id = '') "
+        "AND id NOT IN (SELECT lead_id FROM lead_notes "
+        "               WHERE migrated_from_legacy = 1)"
+    )).rowcount
+    print(f'  non-email leads whose notes became notes: {plain_noted}')
 
     seeded = conn.execute(text(
         "INSERT INTO lead_emails (lead_id, direction, from_addr, subject, "

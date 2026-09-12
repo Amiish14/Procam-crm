@@ -298,3 +298,28 @@ def test_the_save_handler_does_not_send_notes():
     save = html.split('async function saveLd()')[1][:900]
     assert "notes:g('lNotes')" not in save, \
         'Save still posts the notes field over the email'
+
+
+# ─── legacy text is labelled for what it is ──────────────────────────────
+def test_the_lead_payload_says_whether_it_came_from_email(client):
+    """The screen decides from this whether legacy `notes` is an enquiry
+    or a note — on 9,500-odd records, guessing wrong mislabels them."""
+    lid = _email_lead('Provenance Ltd')
+    assert client.get(f'/api/leads/{lid}').get_json()['email_message_id']
+
+    with flask_app.app_context():
+        manual = Lead(company='Hand Typed Ltd', source='manual',
+                      notes='met them at the expo')
+        db.session.add(manual)
+        db.session.commit()
+        mid = manual.id
+    d = client.get(f'/api/leads/{mid}').get_json()
+    assert d['email_message_id'] == ''
+    assert d['source'] == 'manual'
+
+
+def test_a_manual_lead_is_not_shown_as_having_an_email():
+    html = open(os.path.join(_ROOT, 'templates', 'app.html')).read()
+    assert 'const legacyIsEmail' in html
+    assert 'Earlier note (before the notes split)' in html, \
+        'legacy text on a non-email lead must not be called an email'
