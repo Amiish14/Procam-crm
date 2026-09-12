@@ -323,3 +323,22 @@ def test_a_manual_lead_is_not_shown_as_having_an_email():
     assert 'const legacyIsEmail' in html
     assert 'Earlier note (before the notes split)' in html, \
         'legacy text on a non-email lead must not be called an email'
+
+
+# ─── §5 · the buttons say what they do ───────────────────────────────────
+def test_the_lead_delete_button_says_it_deletes_the_lead():
+    """It sits beside Save in the same footer as the notes block, so
+    "Delete" alone reads as "delete this note"."""
+    html = open(os.path.join(_ROOT, 'templates', 'app.html')).read()
+    assert 'Delete lead</button>' in html
+    assert '>🗑 Delete</button>' not in html, 'the bare label is ambiguous'
+
+
+def test_cancel_discards_only_the_unsaved_note():
+    html = open(os.path.join(_ROOT, 'templates', 'app.html')).read()
+    assert 'function clearLeadNote(' in html
+    body = html.split('function clearLeadNote(')[1][:300]
+    assert 'box.value' in body
+    for forbidden in ('/emails', 'original_email', 'method:'):
+        assert forbidden not in body, \
+            f'Cancel must not touch anything but the textarea ({forbidden})'
