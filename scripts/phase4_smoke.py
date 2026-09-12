@@ -71,22 +71,25 @@ def _band_report():
     if buckets:
         print('\n  confidence distribution:')
         for lo, n in buckets:
-            print(f'    {lo:>3}-{lo + 9:<3} {"#" * min(n, 50)} {n}')
+            edge = ' (in band)' if 20 <= lo < 80 else ''
+            print(f'    {lo:>3}-{lo + 9:<3} {"#" * min(n, 50)} {n}{edge}')
     print()
 
 
 def db_session_counts():
-    """Confidence in tens, so the shape of the scoring is visible."""
-    from sqlalchemy import func
+    """Confidence in tens, so the shape of the scoring is visible.
+
+    Bucketed in Python. SQLite's division here came back as a float, so
+    the first version of this printed every raw score back as its own
+    "bucket" and looked like a distribution while showing nothing.
+    """
+    from collections import Counter
     try:
-        rows = (EmailClassification.query
-                .with_entities((EmailClassification.confidence / 10) * 10,
-                               func.count())
-                .filter(EmailClassification.confidence.isnot(None))
-                .group_by((EmailClassification.confidence / 10) * 10)
-                .order_by((EmailClassification.confidence / 10) * 10)
-                .all())
-        return [(int(lo or 0), n) for lo, n in rows]
+        scores = [c for (c,) in EmailClassification.query
+                  .with_entities(EmailClassification.confidence)
+                  .filter(EmailClassification.confidence.isnot(None)).all()]
+        counts = Counter(min(int(c), 100) // 10 * 10 for c in scores)
+        return sorted(counts.items())
     except Exception:
         return []
 

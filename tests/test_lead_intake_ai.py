@@ -297,3 +297,91 @@ def test_reviewable_still_works_without_a_decision():
 
     payload = db._reviewable({'subject': 'hi', 'body': {'content': 'b'}})
     assert payload['body'] == 'b'
+
+
+# ─── Groq rejects its own malformed JSON as a 400 ────────────────────────
+class _FakeGroq:
+    """Enough of the OpenAI client to exercise the retry."""
+
+    def __init__(self, fail_strict=False, reply='{"classification":'
+                                                '"new_lead","confidence":88,'
+                                                '"reason":"quote request"}',
+                 error='json_validate_failed'):
+        self.fail_strict, self.reply, self.error = fail_strict, reply, error
+        self.calls = []
+        self.chat = type('c', (), {'completions': self})()
+
+    def create(self, **kw):
+        self.calls.append(kw)
+        if self.fail_strict and 'response_format' in kw:
+            raise RuntimeError(f'Error code: 400 - {self.error}')
+        msg = type('m', (), {'content': self.reply})()
+        return type('r', (), {
+            'choices': [type('ch', (), {'message': msg})()],
+            'usage': type('u', (), {'total_tokens': 300})()})()
+
+
+def _with_groq(monkeypatch, fake):
+    import openai
+    monkeypatch.setenv('GROQ_API_KEY', 'test-key')
+    monkeypatch.setattr(openai, 'OpenAI', lambda **kw: fake)
+
+
+def test_a_json_validate_400_is_retried_without_the_constraint(monkeypatch):
+    """Groq 400s when the model's own output fails its JSON check.
+
+    That is a rejected request, not a bad answer — the model usually
+    answers fine when asked without the constraint, and _parse digs the
+    JSON out of prose anyway.
+    """
+    fake = _FakeGroq(fail_strict=True)
+    _with_groq(monkeypatch, fake)
+
+    raw, model = ai._ask_groq('From: a@b.com\nSubject: rfq')
+
+    assert len(fake.calls) == 2
+    assert 'response_format' in fake.calls[0]
+    assert 'response_format' not in fake.calls[1]
+    assert ai._parse(raw).klass == K.NEW_LEAD
+
+
+def test_the_retry_happens_once_and_only_for_that_error(monkeypatch):
+    """A timeout is not a formatting problem. Retrying it wastes the
+    budget and delays the rules that were going to stand anyway."""
+    fake = _FakeGroq(fail_strict=True, error='rate_limit_exceeded')
+    _with_groq(monkeypatch, fake)
+
+    with pytest.raises(RuntimeError):
+        ai._ask_groq('From: a@b.com\nSubject: rfq')
+    assert len(fake.calls) == 1
+
+
+def test_a_second_failure_is_a_real_failure(monkeypatch):
+    class AlwaysFails(_FakeGroq):
+        def create(self, **kw):
+            self.calls.append(kw)
+            raise RuntimeError('Error code: 400 - json_validate_failed')
+
+    fake = AlwaysFails()
+    _with_groq(monkeypatch, fake)
+
+    with pytest.raises(RuntimeError):
+        ai._ask_groq('From: a@b.com\nSubject: rfq')
+    assert len(fake.calls) == 2       # tried strict, tried loose, stopped
+
+
+def test_the_caller_still_sees_none_when_both_attempts_fail(monkeypatch):
+    """opinion() never raises, however the call failed."""
+    class AlwaysFails(_FakeGroq):
+        def create(self, **kw):
+            raise RuntimeError('Error code: 400 - json_validate_failed')
+
+    _with_groq(monkeypatch, AlwaysFails())
+    monkeypatch.setenv('LEAD_INTAKE_AI', 'on')
+    assert ai.opinion({'subject': 'rfq', 'body': {'content': 'quote please'},
+                       'from': {'emailAddress': {'address': 'a@b.com'}}}) is None
+
+
+def test_there_is_room_for_a_reason_without_truncating_the_json():
+    """A cut-off answer is not valid JSON, which is what caused the 400."""
+    assert ai._MAX_TOKENS >= 300

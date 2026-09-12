@@ -44,12 +44,15 @@ CONSULT_ABOVE = 25
 
 _TIMEOUT = float(os.environ.get('LEAD_INTAKE_AI_TIMEOUT', '12'))
 _MAX_BODY = 4000
+#: Enough that a reason cannot be cut off mid-JSON, which Groq
+#: rejects as a malformed request rather than returning.
+_MAX_TOKENS = 400
 
 _PROMPT = """You classify emails arriving at a freight and project-logistics \
 company's shared enquiry mailbox.
 
 Decide what THIS email is. Answer with JSON only:
-{"classification": "...", "confidence": 0-100, "reason": "one short sentence"}
+{"classification": "...", "confidence": 0-100, "reason": "under 20 words"}
 
 classification must be exactly one of:
   new_lead       a customer asking us to quote or move something — a new
@@ -195,15 +198,29 @@ def _ask_groq(text):
     client = OpenAI(api_key=os.environ['GROQ_API_KEY'],
                     base_url='https://api.groq.com/openai/v1',
                     timeout=_TIMEOUT)
-    resp = client.chat.completions.create(
-        model=model,
-        temperature=0,
-        max_tokens=200,
-        response_format={'type': 'json_object'},
-        messages=[{'role': 'system', 'content': _PROMPT},
-                  {'role': 'user', 'content': text}])
-    _record_spend(getattr(getattr(resp, 'usage', None), 'total_tokens', 0))
-    return resp.choices[0].message.content, model
+
+    def call(strict):
+        kw = {'response_format': {'type': 'json_object'}} if strict else {}
+        resp = client.chat.completions.create(
+            model=model, temperature=0, max_tokens=_MAX_TOKENS,
+            messages=[{'role': 'system', 'content': _PROMPT},
+                      {'role': 'user', 'content': text}],
+            **kw)
+        _record_spend(
+            getattr(getattr(resp, 'usage', None), 'total_tokens', 0))
+        return resp.choices[0].message.content
+
+    try:
+        return call(strict=True), model
+    except Exception as exc:
+        # Groq's json_object mode rejects the whole request when the
+        # model's own output does not validate — a 400, not a bad
+        # answer. Asking again without the constraint usually works,
+        # and _parse() already digs the JSON out of prose. One retry:
+        # a second failure is a real failure.
+        if 'json_validate_failed' not in str(exc):
+            raise
+        return call(strict=False), model
 
 
 def _ask_anthropic(text):
@@ -214,7 +231,7 @@ def _ask_anthropic(text):
     client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'],
                                  timeout=_TIMEOUT)
     msg = client.messages.create(
-        model=model, max_tokens=200, temperature=0,
+        model=model, max_tokens=_MAX_TOKENS, temperature=0,
         system=_PROMPT,
         messages=[{'role': 'user', 'content': text}])
     out = ''.join(b.text for b in msg.content if hasattr(b, 'text'))
