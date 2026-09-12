@@ -42,6 +42,69 @@ def _internet_message_id(msg: dict) -> Optional[str]:
     return msg.get('internetMessageId') or msg.get('id')
 
 
+def _thread_keys(msg):
+    """Conversation and RFC-822 threading headers, in one shape."""
+    try:
+        from app.services import lead_intake as _li
+        return _li.thread_keys(msg)
+    except Exception:
+        return {}
+
+
+def _file_against_lead(db, decision, msg, extracted, log):
+    """File an email that is not a new lead against the lead it belongs to.
+
+    This is the difference between a classifier and a shredder. A reply,
+    a forward, a quotation or a rate request all carry information about
+    a live enquiry; declining to create a *lead* is not a reason to lose
+    the *email*. One with no lead to attach to is recorded and left.
+    """
+    if not decision.lead_id:
+        return None
+    try:
+        from app import LeadEmail, Lead
+        from app.services import lead_intake as _li
+
+        message_id = (msg.get('internetMessageId') or '').strip() or None
+        if message_id and LeadEmail.query.filter_by(
+                lead_id=decision.lead_id, message_id=message_id).first():
+            return None                       # already on the trail
+
+        keys = _thread_keys(msg)
+        outbound = decision.klass in (_li.Klass.QUOTE, _li.Klass.RATE_SOURCING)
+        row = LeadEmail(
+            lead_id=decision.lead_id,
+            direction='outbound' if outbound else 'inbound',
+            from_addr=_li.sender(msg) or None,
+            to_addr=', '.join(_li.recipients(msg, 'toRecipients')) or None,
+            cc=', '.join(_li.recipients(msg, 'ccRecipients')) or None,
+            subject=(msg.get('subject') or '')[:500] or None,
+            body=(_li.body_text(msg) or '')[:8000] or None,
+            sent_or_received_at=email_parser.received_datetime(msg),
+            source='ingested',
+            status='received',
+            message_id=message_id,
+            conversation_id=keys.get('conversation_id'),
+            in_reply_to=keys.get('in_reply_to'),
+            references_header=keys.get('references'),
+        )
+        db.session.add(row)
+
+        # A quotation going out moves the enquiry on. Nothing else here
+        # changes a stage: an inbound reply is information, not progress,
+        # and advancing a lead on one would corrupt the pipeline.
+        if decision.klass == _li.Klass.QUOTE:
+            lead = db.session.get(Lead, decision.lead_id)
+            if lead is not None and (lead.stage or '') not in (
+                    'Quoted', 'Won', 'Lost', 'Not Interested'):
+                lead.stage = 'Quoted'
+        return row
+    except Exception:
+        log.exception('could not file %s against lead %s',
+                      msg.get('internetMessageId'), decision.lead_id)
+        return None
+
+
 def process_single_message(graph, mailbox: str, msg: dict) -> dict:
     """Process ONE Graph message into a Lead. Idempotent — safe to call
     multiple times for the same message; only the first call creates a
@@ -125,10 +188,47 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
             return {'status': 'skipped', 'reason': blocked,
                     'lead_id': None, 'internet_message_id': imid}
         sender_domain = sender_email.split('@', 1)[1] if '@' in sender_email else ''
-        # DB dedup by email / recent domain intentionally REMOVED. Users
-        # explicitly asked for zero-skip behaviour; same customer emailing
-        # a second time creates a second lead row, and the sales team can
-        # merge or close in the UI.
+
+        # ── Intake classification ─────────────────────────────────────
+        # This path was deliberately zero-skip: a parser reason was a
+        # label, DB dedup was removed, and a second email from the same
+        # customer made a second lead. That is what filled the CRM with
+        # replies, forwards, our own quotations and rate requests to
+        # shipping lines.
+        #
+        # The classifier answers a different question from the parser:
+        # not "is this logistics?" but "is this a NEW enquiry?". Only one
+        # of ten classes creates a lead — and nothing is dropped, because
+        # everything else is filed against the lead it belongs to.
+        decision = None
+        try:
+            from app.services import lead_intake as _li
+            from app.services import lead_intake_db as _lidb
+            msg_for_class = dict(msg)
+            msg_for_class['_forward_resolved'] = bool(
+                extracted.get('forward_resolved'))
+            decision = _li.classify(msg_for_class, _lidb.build_context())
+            log.info('intake %s → %s (step %s, conf %s) %s',
+                     imid, decision.klass, decision.step,
+                     decision.confidence, decision.reason)
+        except Exception:
+            log.exception('intake classification failed for %s — '
+                          'creating the lead rather than losing it', imid)
+
+        if decision is not None and not decision.creates_lead:
+            try:
+                _lidb.record(decision, msg)
+                _file_against_lead(db, decision, msg, extracted, log)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                log.exception('could not file %s against lead %s',
+                              imid, decision.lead_id)
+            return {'status': 'skipped',
+                    'reason': f'{decision.klass}: {decision.reason}',
+                    'lead_id': decision.lead_id,
+                    'classification': decision.klass,
+                    'internet_message_id': imid}
 
         # ── Build Lead payload — shared enricher, same summary card poll uses.
         try:
@@ -160,12 +260,19 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
             # sorts on created_at, so a backfill or a replay would otherwise
             # bunch old mail at the top under today's timestamp.
             received = email_parser.received_datetime(msg) or datetime.utcnow()
+            _keys = _thread_keys(msg)
             lead = Lead(
                 source            = 'email',
                 stage             = 'New Opportunity',
                 email_message_id  = imid,
                 created_at        = received,
                 onboarded_date    = received.date(),
+                conversation_id   = _keys.get('conversation_id'),
+                in_reply_to       = _keys.get('in_reply_to'),
+                references_header = _keys.get('references'),
+                classification    = (decision.klass if decision else None),
+                lead_confidence   = (decision.confidence if decision else None),
+                duplicate_score   = (decision.duplicate_score if decision else None),
                 **lead_kwargs,
             )
             db.session.add(lead)
@@ -187,6 +294,16 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
                 )
             except Exception:
                 log.exception('attachments save failed for lead %s', lead.id)
+
+            # The created leads are the labels most worth having: they
+            # are the ones a human might reject.
+            if decision is not None:
+                try:
+                    from app.services import lead_intake_db as _lidb2
+                    _lidb2.record(decision, msg, created_lead_id=lead.id)
+                except Exception:
+                    log.exception('could not record the classification for '
+                                  'lead %s', lead.id)
 
             db.session.commit()
             return {'status': 'created', 'lead_id': lead.id,

@@ -372,3 +372,49 @@ def test_a_recorded_decision_names_the_lead_it_created(world):
         assert row.classification == li.Klass.NEW_LEAD
         assert row.confidence == 88
         assert row.decided_by == 'step_10'
+
+
+# ─── the classifier must sit in the path production actually runs ────────
+def test_the_live_ingestion_path_classifies():
+    """The poll and the webhook both call
+    single_message.process_single_message(). pipeline.run_ingest is an
+    older batch path that production never executes — wiring the
+    classifier only into that one left it running on no mail at all.
+    """
+    src = open(os.path.join(_ROOT, 'email_ingest',
+                            'single_message.py')).read()
+    assert '_li.classify(' in src, \
+        'process_single_message must classify before creating a lead'
+    assert 'not decision.creates_lead' in src, \
+        'the classification must gate lead creation, not merely annotate it'
+    assert '_lidb.record(' in src or '_lidb2.record(' in src, \
+        'decisions must be recorded on the live path'
+
+
+def test_both_entry_points_reach_the_same_function():
+    """If a third ingestion path appears, it has to go through here too."""
+    poll = open(os.path.join(_ROOT, 'scripts',
+                             '2026_09_02_poll_leads_mailbox.py')).read()
+    hook = open(os.path.join(_ROOT, 'email_ingest', 'webhook.py')).read()
+    assert 'process_single_message' in poll
+    assert 'process_single_message' in hook
+
+
+def test_a_non_lead_is_filed_rather_than_dropped():
+    """Declining to create a lead is not a reason to lose the email."""
+    src = open(os.path.join(_ROOT, 'email_ingest',
+                            'single_message.py')).read()
+    assert 'def _file_against_lead(' in src
+    body = src.split('def _file_against_lead(')[1][:3000]
+    assert 'LeadEmail(' in body, 'the email must land on the lead trail'
+    assert "lead.stage = 'Quoted'" in body, \
+        'a quotation should move the enquiry on'
+
+
+def test_the_created_lead_keeps_its_thread_identity():
+    src = open(os.path.join(_ROOT, 'email_ingest',
+                            'single_message.py')).read()
+    import re
+    for field in ('conversation_id', 'in_reply_to', 'references_header'):
+        assert re.search(rf'{field}\s*=\s*_keys\.get', src), \
+            f'{field} must be stored on the lead it was ingested from'
