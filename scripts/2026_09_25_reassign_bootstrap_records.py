@@ -165,11 +165,21 @@ def main():
         if args.clear_provenance:
             print(f'  cleared {cleared} provenance row(s) to NULL')
         left = survey(db)
-        remaining = sum(v[2] for g in left.values() for v in g.values())
-        print(f'  rows still naming {CODE}: {remaining}')
-        if remaining:
+        blocking = sum(v[2] for g in ('live', 'provenance')
+                       for v in left[g].values())
+        own = sum(v[2] for v in left['own'].values())
+        print(f'  rows still naming {CODE}: {blocking + own}')
+        if own:
+            print(f'    {own} of those are the account\'s own rows, which the '
+                  f'delete script\n    removes along with it — they do not '
+                  f'block anything.')
+        if blocking:
             print('  (the account cannot be deleted until these are zero — '
                   'run with\n   --clear-provenance, or leave it deactivated)')
+        else:
+            print('  Nothing blocking. '
+                  'scripts/2026_09_24_lock_bootstrap_account.py --delete '
+                  'will now work.')
 
 
 if __name__ == '__main__':

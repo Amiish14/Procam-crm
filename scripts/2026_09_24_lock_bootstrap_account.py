@@ -50,6 +50,17 @@ CODE = 'PCM001'
 
 #: Columns whose name matches the emp-code heuristic but which hold
 #: something else entirely.
+#: Rows that ARE the account rather than references to it. They are
+#: deleted along with it: an access profile for an employee that no
+#: longer exists is not history, it is a dangling grant.
+_OWN_ROWS = (
+    ('access_profiles', 'emp_code'),
+    ('training_progress', 'emp_code'),
+    ('training_certificates', 'emp_code'),
+)
+
+#: Columns whose name matches the emp-code heuristic but which hold
+#: something else entirely.
 _NOT_EMP_CODES = {
     ('lead_attachments', 'size_bytes'),
     ('rfqs', 'quote_by_date'),
@@ -77,6 +88,8 @@ def find_references(db, code):
             name = col['name']
             if (table, name) in _NOT_EMP_CODES:
                 continue
+            if (table, name) in _OWN_ROWS:
+                continue      # deleted with the account, see _drop_own_rows
             if not any(k in name for k in ('emp_code', '_by', 'author',
                                            'owner', 'assigned_to',
                                            'user_id', 'pic_emp')):
@@ -93,6 +106,25 @@ def find_references(db, code):
             if n:
                 found[f'{table}.{name}'] = n
     return found
+
+
+def _drop_own_rows(db, code, dry):
+    """Remove the rows that belong to the account itself."""
+    removed = {}
+    for table, col in _OWN_ROWS:
+        try:
+            n = db.session.execute(db.text(
+                f'SELECT COUNT(*) FROM {table} WHERE {col} = :c'),
+                {'c': code}).scalar() or 0
+        except Exception:
+            continue
+        if not n:
+            continue
+        removed[f'{table}.{col}'] = n
+        if not dry:
+            db.session.execute(db.text(
+                f'DELETE FROM {table} WHERE {col} = :c'), {'c': code})
+    return removed
 
 
 def main():
@@ -161,6 +193,13 @@ def main():
             else:
                 print(f'\n  Nothing references {CODE}.')
 
+            own = _drop_own_rows(db, CODE, args.check)
+            if own:
+                verb = 'WOULD also remove' if args.check else 'also removed'
+                print(f'  {verb} the account\'s own rows:')
+                for where, count in sorted(own.items()):
+                    print(f'    {count:>6}  {where}')
+
             if args.check:
                 print(f'\n== DRY-RUN — nothing written ==')
                 print(f'  WOULD delete the {CODE} row.')
@@ -168,10 +207,10 @@ def main():
             db.session.delete(pcm)
             db.session.commit()
             print(f'\n  {CODE} deleted.')
-            print(f'  It is seeded on first boot from ADMIN_INITIAL_PASSWORD, '
-                  f'so it will come\n  back if the app ever starts against a '
-                  f'database with no PCM001 row.\n  Remove ADMIN_INITIAL_'
-                  f'PASSWORD from .env to stop that.')
+            print(f'  It will not come back: init_db only seeds the '
+                  f'bootstrap account when no\n  other active admin exists, '
+                  f'and there are {len(others)}. Restart and re-check to '
+                  f'confirm.')
             return
 
         if pcm.is_active is False:
