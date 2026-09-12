@@ -98,6 +98,11 @@ SYSTEM_LISTS = [
     ('task_type',       'Task Type',   'Categories of task.'),
     ('priority',        'Priority',    'Priority levels.'),
     ('source',          'Lead Source', 'Where an opportunity came from.'),
+    ('reassignment_reason', 'Reassignment Reason',
+     'Why a lead moved to a different owner (§16).'),
+    ('intake_learning_dismissed', 'Dismissed Intake Proposals',
+     'Learning proposals an admin has declined, so they stop being '
+     'suggested. Not a vocabulary anyone edits by hand.'),
     ('lead_rejection_reason', 'Lead Rejection Reason',
      'Why a system-created lead was rejected. Each reason is a training '
      'signal, so the list is deliberately specific — "Other" is the only '

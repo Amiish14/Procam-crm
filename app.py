@@ -1636,12 +1636,15 @@ def api_update_lead(lid):
     if ('assigned_to' in d or 'secondary_owner' in d) \
             and session.get('role') == 'admin':
         from app.services import lead_assignment
+        # §16 — the reason rides along with the change, into the same
+        # history row, so the two can never drift apart.
+        _reason = (d.get('reassignment_reason') or '').strip() or None
         ok, err = lead_assignment.assign(
             lead,
             primary_code=d.get('assigned_to') if 'assigned_to' in d else None,
             secondary_code=(d.get('secondary_owner')
                             if 'secondary_owner' in d else None),
-            actor=session.get('emp_code'))
+            actor=session.get('emp_code'), note=_reason)
         if not ok:
             db.session.rollback()
             return jsonify({'error': err}), 400

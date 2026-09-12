@@ -47,6 +47,34 @@ class _IntakeDisabled(Exception):
     """Raised to skip classification when LEAD_INTAKE_MODE=off."""
 
 
+def _stamp_quote(lead, mail_row, got, log):
+    """Write the quote facts onto the lead's opp_notes.
+
+    opp_notes is already the lead's JSON side-channel, so this adds to it
+    rather than claiming new columns for something only quote emails
+    carry.
+    """
+    import json as _json
+    try:
+        current = _json.loads(lead.opp_notes or '{}')
+        if not isinstance(current, dict):
+            current = {}
+    except Exception:
+        current = {}
+    quote = {k: (str(v) if v is not None else None) for k, v in got.items()}
+    quote['recorded_from'] = mail_row.message_id if mail_row else None
+    current['last_quote'] = quote
+    lead.opp_notes = _json.dumps(current, default=str)
+    if got.get('amount'):
+        try:
+            lead.quoted_amount_inr = (got['amount']
+                                      if got.get('currency') in (None, 'INR')
+                                      else lead.quoted_amount_inr)
+        except Exception:
+            pass
+    log.info('quote recorded on lead %s: %s', lead.id, quote)
+
+
 def _thread_keys(msg):
     """Conversation and RFC-822 threading headers, in one shape."""
     try:
@@ -100,9 +128,23 @@ def _file_against_lead(db, decision, msg, extracted, log):
         # and advancing a lead on one would corrupt the pipeline.
         if decision.klass == _li.Klass.QUOTE:
             lead = db.session.get(Lead, decision.lead_id)
-            if lead is not None and (lead.stage or '') not in (
-                    'Quoted', 'Won', 'Lost', 'Not Interested'):
-                lead.stage = 'Quoted'
+            if lead is not None:
+                if (lead.stage or '') not in ('Quoted', 'Won', 'Lost',
+                                              'Not Interested'):
+                    lead.stage = 'Quoted'
+                # §6 — record what was quoted, not just that something
+                # was. A stage change with no reference or amount tells
+                # nobody anything a month later.
+                try:
+                    from app.services import quote_details
+                    got = quote_details.extract(
+                        f"{msg.get('subject') or ''}\n{_li.body_text(msg)}",
+                        received=email_parser.received_datetime(msg),
+                        attachments=_li.attachment_names(msg))
+                    _stamp_quote(lead, row, got, log)
+                except Exception:
+                    log.exception('quote detail extraction failed for %s',
+                                  decision.lead_id)
         return row
     except Exception:
         log.exception('could not file %s against lead %s',
@@ -299,6 +341,26 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
             # sorts on created_at, so a backfill or a replay would otherwise
             # bunch old mail at the top under today's timestamp.
             received = email_parser.received_datetime(msg) or datetime.utcnow()
+            # §17 — recommend a vertical where the Account Master has
+            # not settled it. A recommendation, recorded with its
+            # confidence so a person can overrule it.
+            _vertical = lead_kwargs.get('procam_vertical')
+            try:
+                from app.services import lead_vertical
+                from app.services import lead_intake_db as _lvdb
+                _acct, _ = _lvdb.resolve_account(
+                    extracted.get('email') or sender_email)
+                _guess, _conf, _why = lead_vertical.recommend(
+                    f"{extracted.get('subject') or ''}\n"
+                    f"{extracted.get('body_text') or ''}",
+                    account_vertical=(_acct.vertical if _acct else None))
+                if _guess and (not _vertical or _conf >= 80):
+                    lead_kwargs['procam_vertical'] = _guess
+                    log.info('vertical %s (%s%%) for %s — %s',
+                             _guess, _conf, imid, _why)
+            except Exception:
+                log.exception('vertical recommendation failed for %s', imid)
+
             _keys = _thread_keys(msg)
             lead = Lead(
                 source            = 'email',

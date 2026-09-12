@@ -2845,6 +2845,7 @@ async function openLd(id){
     <div class="fmr"><div class="fmg"><label class="fml">Contact person</label><input class="fmc" id="lPic" value="${e(l.pic||'')}"></div><div class="fmg"><label class="fml">Designation</label><input class="fmc" id="lDes" value="${e(l.designation||'')}"></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="lEm" value="${e(l.email||'')}"></div><div class="fmg"><label class="fml">Phone</label><input class="fmc" id="lPh" value="${e(l.phone||'')}"></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Primary PIC</label><select class="fmc" id="lAsgn" ${isAdmin?'':'disabled'}>${uOpts}</select></div><div class="fmg"><label class="fml">Secondary PIC <span style="font-weight:400;color:var(--text-3)">— monitor / backup</span></label><select class="fmc" id="lAsgn2" ${isAdmin?'':'disabled'}>${sOpts}</select></div></div>
+    <div class="fmr"><div class="fmg"><label class="fml">If changing the PIC, why? <span style="font-weight:400;color:var(--text-3)">— recorded in the assignment history</span></label><select class="fmc" id="lReasgn" ${isAdmin?'':'disabled'}>${['','Different geography','Different service vertical','Different customer relationship owner','Capacity / workload','Specialist required','Incorrect automatic assignment','Other'].map(r=>`<option value="${e(r)}">${e(r||'— not changing the PIC —')}</option>`).join('')}</select></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Procam vertical</label><select class="fmc" id="lVt">${['Heavy Transport','Project Freight','Warehousing','Installation'].map(v=>`<option${v===l.procam_vertical?' selected':''}>${v}</option>`).join('')}</select></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Next follow-up</label><input type="date" class="fmc" id="lFu" value="${l.followup||''}"></div><div class="fmg"><label class="fml">Onboarded date</label><input class="fmc" value="${l.onboarded_date||'—'}" disabled style="background:var(--surface-2);color:var(--text-3)"></div></div>
     <div class="fmg">
@@ -2999,6 +3000,7 @@ async function saveLd(){
     email:g('lEm')?.value, phone:g('lPh')?.value,
     assigned_to:g('lAsgn')?.value,
     secondary_owner:g('lAsgn2')?.value ?? '',
+    reassignment_reason:g('lReasgn')?.value || '',
     procam_vertical:g('lVt')?.value,
     followup:g('lFu')?.value,
     // `notes` is deliberately not sent. It is the field that held the

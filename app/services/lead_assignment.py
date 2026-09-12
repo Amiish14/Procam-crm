@@ -44,6 +44,21 @@ def validate(primary_code, secondary_code):
     return None
 
 
+#: §16 — why a lead moved. A dropdown rather than free text, so the
+#: pattern across many reassignments is countable: "incorrect automatic
+#: assignment" recurring against one account says the Account Master is
+#: wrong, which free text would never surface.
+REASSIGNMENT_REASONS = (
+    'Different geography',
+    'Different service vertical',
+    'Different customer relationship owner',
+    'Capacity / workload',
+    'Specialist required',
+    'Incorrect automatic assignment',
+    'Other',
+)
+
+
 def assign(lead, primary_code=None, secondary_code=None, actor=None,
            note=None, notify=True, _defer_commit=False):
     """Set the primary and/or secondary PIC on a lead.

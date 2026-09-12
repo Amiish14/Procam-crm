@@ -133,6 +133,38 @@ def api_reclassify(cid):
     return jsonify(ok=True, counts=svc.review_counts())
 
 
+# ─── Learning — §11, Phase 3 ─────────────────────────────────────────────
+@bp.route('/api/intake/proposals', methods=['GET'])
+@require(_PERM)
+def api_proposals():
+    from app.intake import learning
+    return jsonify(ok=True, proposals=learning.proposals())
+
+
+@bp.route('/api/intake/proposals/apply', methods=['POST'])
+@require(_PERM)
+def api_apply_proposal():
+    from app.intake import learning
+    key = (request.get_json(silent=True) or {}).get('key') or ''
+    ok, msg = learning.apply_proposal(key, actor=_actor())
+    if not ok:
+        db.session.rollback()
+        return jsonify(ok=False, error=msg), 400
+    db.session.commit()
+    return jsonify(ok=True, message=msg)
+
+
+@bp.route('/api/intake/proposals/dismiss', methods=['POST'])
+@require(_PERM)
+def api_dismiss_proposal():
+    from app.intake import learning
+    key = (request.get_json(silent=True) or {}).get('key') or ''
+    ok, err = learning.dismiss_proposal(key, actor=_actor())
+    if not ok:
+        return jsonify(ok=False, error=err), 400
+    return jsonify(ok=True)
+
+
 # ─── Intelligence ────────────────────────────────────────────────────────
 @bp.route('/intake-intelligence')
 @require(_PERM)
