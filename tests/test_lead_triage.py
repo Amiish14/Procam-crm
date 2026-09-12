@@ -112,8 +112,11 @@ def _plain_client():
 def test_the_unassigned_count_is_the_live_one(world):
     with flask_app.app_context():
         h = triage.headline(NOW)
-        queued = {r['company'] for r in triage.unassigned_rows(NOW)}
-    assert h['unassigned_total'] == len(queued)
+        rows = triage.unassigned_rows(NOW)
+    # Compared on ids, not company names: two leads from the same company
+    # are two rows in the queue and one name in a set.
+    assert h['unassigned_total'] == len({r['id'] for r in rows})
+    queued = {r['company'] for r in rows}
     for company in MINE:
         assert company in queued, f'{company} is unassigned and not queued'
 
