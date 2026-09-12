@@ -106,7 +106,7 @@ class Context:
     def __init__(self, *, internal_domains=(), find_by_thread=None,
                  find_by_subject=None, duplicate_score=None,
                  is_vendor_domain=None, has_logistics_content=None,
-                 quote_reference=None):
+                 quote_reference=None, ai_opinion=None):
         self.internal_domains = {d.lower().lstrip('@')
                                  for d in (internal_domains or ())}
         self.find_by_thread = find_by_thread or (lambda **kw: None)
@@ -115,6 +115,10 @@ class Context:
         self.is_vendor_domain = is_vendor_domain or (lambda d: False)
         self.has_logistics_content = has_logistics_content or (lambda m: True)
         self.quote_reference = quote_reference or (lambda text: None)
+        # Phase 4. Behind the Context like every other lookup, so the
+        # tree stays pure and a model is never reached in a test that
+        # did not ask for one.
+        self.ai_opinion = ai_opinion
 
 
 class Decision:
@@ -426,14 +430,26 @@ def classify(msg, ctx=None):
                         duplicate_score=score,
                         reason=f'no sign of an enquiry ({confidence}%)')
     if confidence < 50:
-        return Decision(Klass.REVIEW, step=10, confidence=confidence,
-                        duplicate_score=score, needs_review=True,
-                        reason=f'low confidence ({confidence}%)')
+        decided = Decision(Klass.REVIEW, step=10, confidence=confidence,
+                           duplicate_score=score, needs_review=True,
+                           reason=f'low confidence ({confidence}%)')
+    else:
+        decided = Decision(Klass.NEW_LEAD, step=10, confidence=confidence,
+                           duplicate_score=score,
+                           needs_review=confidence < 80,
+                           reason=f'new enquiry ({confidence}% confidence)')
 
-    return Decision(Klass.NEW_LEAD, step=10, confidence=confidence,
-                    duplicate_score=score,
-                    needs_review=confidence < 80,
-                    reason=f'new enquiry ({confidence}% confidence)')
+    # Phase 4 — a second opinion, and only here. Everything above this
+    # point is a fact: a thread match, a Procam sender, a known supplier.
+    # A model has nothing to add to those and could only make them
+    # wrong. It is reached last, on the uncertain band alone, and the
+    # rule's own answer is kept beside whatever it says.
+    if ctx.ai_opinion is not None:
+        try:
+            decided = ctx.ai_opinion(msg, decided) or decided
+        except Exception:
+            pass                    # the rule already has an answer
+    return decided
 
 
 # ─── confidence ──────────────────────────────────────────────────────────
