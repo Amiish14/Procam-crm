@@ -27,3 +27,9 @@ httpx>=0.27,<0.28
 # CRM Phase 7 — quote PDF generation. Graceful fallback (print view) if
 # not installed, so this is safe to install lazily.
 reportlab>=4.0,<5
+
+# CRM v2026-09 — attachment intelligence (§20). Reads the requirement out
+# of an attached RFQ when the body is only "please find attached".
+# app/services/attachment_text.py degrades to spreadsheets and text if
+# this is absent, so the CRM runs without it.
+pypdf==5.1.0

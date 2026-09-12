@@ -74,6 +74,7 @@ def _attach_to_lead(db, decision, msg, extracted, log):
             conversation_id=keys.get('conversation_id'),
             in_reply_to=keys.get('in_reply_to'),
             references_header=keys.get('references'),
+            intake_class=decision.klass,
         )
         db.session.add(row)
 

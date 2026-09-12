@@ -257,10 +257,15 @@ def searchable_text(msg):
     # Filename separators become spaces: "RFQ_Heavy_Transport.xlsx" has no
     # word boundary after RFQ, so \brfq\b would never match it.
     files = ' '.join(re.sub(r'[_\-.]+', ' ', n) for n in attachment_names(msg))
+    # §20 — the requirement is often inside the attachment, not the body.
+    # Supplied by the caller because reading a file is I/O and this
+    # module stays pure; absent, the filenames still carry some signal.
+    inside = msg.get('_attachment_text') or ''
     return '\n'.join(filter(None, [
         msg.get('subject') or '',
         body_text(msg),
         files,
+        inside[:20000],
     ]))
 
 

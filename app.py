@@ -923,6 +923,10 @@ class LeadEmail(db.Model):
     conversation_id   = db.Column(db.String(200), index=True)
     in_reply_to       = db.Column(db.String(400), index=True)
     references_header = db.Column(db.Text)
+    # Which intake class filed this email. Rate-sourcing and quote mail
+    # already land here; without the label they cannot be separated from
+    # the customer conversation, which is all the §7 tab needs.
+    intake_class  = db.Column(db.String(32), index=True)
     created_at    = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -939,6 +943,7 @@ class LeadEmail(db.Model):
             'created_by': self.created_by or '',
             'source': self.source or '',
             'status': self.status or '',
+            'intake_class': self.intake_class or '',
         }
 
 
@@ -3267,9 +3272,18 @@ def api_lead_emails(lid):
     enquiry rather than an empty thread.
     """
     lead = _require_lead_access(lid)
-    rows = (LeadEmail.query.filter_by(lead_id=lid)
-            .order_by(LeadEmail.sent_or_received_at.asc(),
-                      LeadEmail.id.asc()).all())
+    q = LeadEmail.query.filter_by(lead_id=lid)
+    # §7 — ?kind=rate_sourcing gives the supplier correspondence on its
+    # own, ?kind=customer gives the conversation without it. Same rows,
+    # separated by the class that filed them.
+    kind = (request.args.get('kind') or '').strip()
+    if kind == 'rate_sourcing':
+        q = q.filter(LeadEmail.intake_class == 'G_rate_sourcing')
+    elif kind == 'customer':
+        q = q.filter(db.or_(LeadEmail.intake_class.is_(None),
+                            LeadEmail.intake_class != 'G_rate_sourcing'))
+    rows = q.order_by(LeadEmail.sent_or_received_at.asc(),
+                      LeadEmail.id.asc()).all()
     out = [r.to_dict() for r in rows]
     if not out and lead.original_email_body:
         out.append({

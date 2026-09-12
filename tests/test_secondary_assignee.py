@@ -245,8 +245,12 @@ def test_bulk_assign_sets_both_and_records_each_lead(client):
             lead = db.session.get(Lead, lid)
             assert lead.assigned_to == 'PIC001'
             assert lead.secondary_owner == 'PIC002'
-            assert LeadAssignmentHistory.query.filter_by(
-                lead_id=lid).count() == 1, 'bulk assign skipped the history'
+            # Counted by what this call wrote, not by total rows for the
+            # id: leads deleted outside the API endpoint can leave
+            # history behind, and SQLite reuses their ids.
+            mine = LeadAssignmentHistory.query.filter_by(
+                lead_id=lid, to_primary='PIC001', note='bulk assign').count()
+            assert mine == 1, 'bulk assign skipped the history'
 
 
 def test_bulk_assign_refuses_the_same_person_twice(client):

@@ -2867,14 +2867,19 @@ async function openLd(id){
       <div id="lNoteList" style="margin-top:10px"></div>
     </div>
     <div class="fmg">
-      <label class="fml">Email trail</label>
+      <label class="fml">Email trail <span style="font-weight:400;color:var(--text-3)">— the customer conversation</span></label>
       <div id="lMailTrail" style="font-size:12.5px;color:var(--text-3)">Loading…</div>
+    </div>
+    <div class="fmg">
+      <label class="fml">Rate sourcing <span style="font-weight:400;color:var(--text-3)">— what we asked suppliers, kept out of the customer thread</span></label>
+      <div id="lRateSrc" style="font-size:12.5px;color:var(--text-3)">Loading…</div>
     </div>
     ${l.linkedin?`<div style="font-size:12.5px;margin-top:8px"><a href="${e(l.linkedin)}" target="_blank">LinkedIn profile</a></div>`:''}
   `;
   g('ldMob').style.display='flex';
   loadLeadNotes(l.id);
   loadMailTrail(l.id);
+  loadRateSourcing(l.id);
 }
 
 /* ── Notes: their own store, their own render ──────────────────────
@@ -2944,11 +2949,37 @@ async function deleteLeadNote(leadId, noteId){
 }
 
 /* ── Email trail: read-only, oldest first ───────────────────────── */
+/* §7 — supplier correspondence on its own. It belongs to the enquiry
+   but not to the conversation with the customer, and mixing the two
+   makes both harder to read. */
+async function loadRateSourcing(id){
+  const host = g('lRateSrc');
+  if(!host) return;
+  let rows = [];
+  try { rows = await api('/api/leads/'+id+'/emails?kind=rate_sourcing'); }
+  catch(err){ rows = []; }
+  if(!Array.isArray(rows) || !rows.length){
+    host.innerHTML = '<div style="font-size:12px;color:var(--text-3)">'
+                   + 'No supplier correspondence on this enquiry.</div>';
+    return;
+  }
+  host.innerHTML = rows.map(m=>`
+    <details style="border:1px solid var(--border-2);border-radius:var(--r);padding:8px 10px;margin-bottom:6px">
+      <summary style="cursor:pointer;font-size:12px">
+        <b>${m.direction==='outbound'?'Asked':'Received'}</b>
+        ${m.subject?'· '+e(m.subject):''}
+        ${m.to_addr?'· '+e(m.to_addr):''}${m.from_addr&&m.direction!=='outbound'?'· '+e(m.from_addr):''}
+        <span style="color:var(--text-3)">${e(fmtIST(m.at))}</span>
+      </summary>
+      <pre style="margin:8px 0 0;font-family:'Inter',monospace;font-size:12px;white-space:pre-wrap;word-wrap:break-word;max-height:200px;overflow-y:auto;color:var(--text)">${e(m.body)}</pre>
+    </details>`).join('');
+}
+
 async function loadMailTrail(id){
   const host = g('lMailTrail');
   if(!host) return;
   let rows = [];
-  try { rows = await api('/api/leads/'+id+'/emails'); } catch(err){ rows = []; }
+  try { rows = await api('/api/leads/'+id+'/emails?kind=customer'); } catch(err){ rows = []; }
   if(!Array.isArray(rows) || !rows.length){
     host.innerHTML = '<div style="font-size:12px;color:var(--text-3)">'
                    + 'No emails recorded on this lead.</div>';

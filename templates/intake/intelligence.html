@@ -31,6 +31,17 @@
   .bar .v{text-align:right;font-variant-numeric:tabular-nums;
           color:var(--text-2);font-size:12.5px}
   h2{font-size:17px;margin:26px 0 8px}
+  .prop{border:1px solid var(--border);background:var(--card);
+        border-radius:var(--r);padding:13px 15px;margin-bottom:9px}
+  .prop .ptitle{font-weight:600;font-size:14px;color:var(--ink)}
+  .prop .pdetail{font-size:12.5px;color:var(--text-2);margin-top:3px}
+  .prop .pex{font-size:11.5px;color:var(--text-3);margin-top:4px;
+             font-style:italic}
+  .prop .pacts{display:flex;gap:8px;align-items:center;margin-top:9px;
+               flex-wrap:wrap}
+  .prop .ev{font-family:'IBM Plex Mono',monospace;font-size:11px;
+            color:var(--text-3);margin-right:auto}
+  .prop .pmsg{font-size:12px}
   .note{font-size:12.5px;color:var(--text-2);margin-bottom:10px;max-width:70ch}
 </style>
 </head>
@@ -68,6 +79,13 @@ decided it was. Only <b>New Lead / RFQ</b> creates a lead.</div>
 sender. A high share at step 10 means most decisions rest on the
 confidence score rather than on hard evidence.</div>
 <div class="bars" id="steps"></div>
+
+<h2>What the corrections suggest</h2>
+<div class="note">Rules proposed from what people have corrected. Nothing
+applies itself — a rule that quietly starts dropping a real customer's
+mail is worse than the noise it removes, so each one waits for a
+decision.</div>
+<div id="proposals" style="margin-bottom:22px"></div>
 
 <h2>Why leads were rejected</h2>
 <div class="note">Each reason is a training signal: a domain rejected
@@ -141,6 +159,57 @@ async function load(){
 
   const maxR = Math.max(...(j.by_reason.map(r => r.count)), 1);
   bars('reasons', j.by_reason.map(r => ({label: r.reason, count: r.count})), maxR);
+  loadProposals();
+}
+
+async function loadProposals(){
+  const host = document.getElementById('proposals');
+  const j = await jf('/api/intake/proposals');
+  if(!j || !j.ok) return;
+  if(!j.proposals.length){
+    host.innerHTML = '<div class="empty" style="padding:18px">'
+      + 'Nothing to suggest yet. Proposals appear once the same '
+      + 'correction has been made three times — two is coincidence.</div>';
+    return;
+  }
+  host.innerHTML = j.proposals.map(p => `
+    <div class="prop" id="p${btoa(p.key).replace(/=/g,'')}">
+      <div class="ptitle">${esc(p.title)}</div>
+      <div class="pdetail">${esc(p.detail)}</div>
+      ${p.examples && p.examples.length
+        ? `<div class="pex">e.g. ${p.examples.map(esc).join(' · ')}</div>` : ''}
+      <div class="pacts">
+        <span class="ev">${p.evidence} correction${p.evidence===1?'':'s'}</span>
+        ${p.kind === 'observation' ? ''
+          : `<button class="btn btn-sm success" onclick="applyProp('${esc(p.key)}')">Apply</button>`}
+        <button class="btn btn-sm" onclick="dismissProp('${esc(p.key)}')">Dismiss</button>
+        <span class="pmsg"></span>
+      </div>
+    </div>`).join('');
+}
+
+function propNode(key){
+  return document.getElementById('p' + btoa(key).replace(/=/g,''));
+}
+async function applyProp(key){
+  const node = propNode(key), msg = node.querySelector('.pmsg');
+  const r = await fetch('{{ url_prefix }}/api/intake/proposals/apply',
+    {method:'POST', headers:{'Content-Type':'application/json',
+                             'X-CSRFToken': CSRF},
+     body: JSON.stringify({key})});
+  const j = await r.json();
+  msg.textContent = (j && (j.message || j.error)) || '';
+  msg.style.color = j && j.ok ? 'var(--green,#1f6b3f)' : 'var(--red)';
+  if(j && j.ok) node.style.opacity = .45;
+}
+async function dismissProp(key){
+  const node = propNode(key);
+  await fetch('{{ url_prefix }}/api/intake/proposals/dismiss',
+    {method:'POST', headers:{'Content-Type':'application/json',
+                             'X-CSRFToken': CSRF},
+     body: JSON.stringify({key})});
+  node.style.opacity = .3;
+  node.querySelector('.pmsg').textContent = 'Dismissed — it will not be suggested again.';
 }
 load();
 </script>

@@ -286,3 +286,108 @@ def test_retention_keeps_anything_that_produced_a_lead_or_was_corrected():
     src = open(os.path.join(_ROOT, 'scripts', 'intake_retention.py')).read()
     assert 'created_lead_id.is_(None)' in src
     assert 'corrected_at.is_(None)' in src
+
+
+# ─── §20 attachment intelligence ─────────────────────────────────────────
+at = _pure('at_test', 'app/services/attachment_text.py')
+
+
+def test_a_spreadsheet_rfq_is_read(tmp_path):
+    """"Please find attached" is the whole body of many real enquiries;
+    the requirement is in the file."""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(['Cargo', 'Origin', 'Destination', 'Weight MT'])
+    ws.append(['Transformer', 'JNPT', 'Vadodara', 220])
+    path = tmp_path / 'RFQ_Heavy_Transport.xlsx'
+    wb.save(path)
+
+    text = at.extract(str(path))
+    assert 'Transformer' in text and 'Vadodara' in text and '220' in text
+
+
+def test_the_attachment_lifts_a_bare_body_over_the_line():
+    """The §20 example: a body of "Please find attached" plus a real RFQ
+    spreadsheet must read as an enquiry."""
+    bare = li.lead_confidence(
+        {'subject': 'Requirement', 'body': {'content': 'Please find attached.'},
+         'attachments': [{'name': 'sheet.xlsx'}]}, li.Context())
+    withtext = li.lead_confidence(
+        {'subject': 'Requirement', 'body': {'content': 'Please find attached.'},
+         'attachments': [{'name': 'sheet.xlsx'}],
+         '_attachment_text': 'RFQ Cargo Transformer Origin JNPT '
+                             'Destination Vadodara 220 MT please quote'},
+        li.Context())
+    assert withtext > bare
+    assert withtext >= 50
+
+
+def test_an_unreadable_attachment_is_silent_not_fatal():
+    """Losing a lead because a PDF was malformed is the worse failure."""
+    assert at.extract('/nonexistent/whatever.pdf') == ''
+    assert at.extract('') == ''
+    assert at.extract_many([]) == ''
+
+
+def test_the_text_is_capped():
+    assert at.MAX_CHARS_PER_FILE <= 50000
+    assert at.MAX_CHARS_TOTAL <= 200000
+
+
+def test_pdf_support_is_reported_not_assumed():
+    """The module must run without pypdf installed."""
+    assert isinstance(at.pdf_supported(), bool)
+    src = open(os.path.join(_ROOT, 'app', 'services',
+                            'attachment_text.py')).read()
+    assert 'except Exception:\n        return \'\'' in src or \
+        'def pdf_supported' in src
+
+
+# ─── §7 rate sourcing separated from the conversation ────────────────────
+def test_the_trail_can_be_split_by_class(world):
+    from app import Lead, LeadEmail
+    c = flask_app.test_client()
+    with c.session_transaction() as s:
+        s.update(emp_code='LFTADM', name='Leftover Admin', role='admin',
+                 vertical='All')
+    with flask_app.app_context():
+        lead = Lead(company='Split Ltd', source='email')
+        db.session.add(lead)
+        db.session.flush()
+        db.session.add(LeadEmail(lead_id=lead.id, direction='inbound',
+                                 body='the customer enquiry',
+                                 intake_class='A_new_lead'))
+        db.session.add(LeadEmail(lead_id=lead.id, direction='outbound',
+                                 body='asked the shipping line',
+                                 intake_class='G_rate_sourcing'))
+        db.session.commit()
+        lid = lead.id
+
+    everything = c.get(f'/api/leads/{lid}/emails').get_json()
+    customer = c.get(f'/api/leads/{lid}/emails?kind=customer').get_json()
+    suppliers = c.get(f'/api/leads/{lid}/emails?kind=rate_sourcing').get_json()
+
+    assert len(everything) == 2
+    assert [m['body'] for m in customer] == ['the customer enquiry']
+    assert [m['body'] for m in suppliers] == ['asked the shipping line']
+
+
+def test_unlabelled_trail_rows_stay_with_the_customer_conversation(world):
+    """Rows filed before the label existed must not vanish from the view
+    they have always appeared in."""
+    from app import Lead, LeadEmail
+    c = flask_app.test_client()
+    with c.session_transaction() as s:
+        s.update(emp_code='LFTADM', name='Leftover Admin', role='admin',
+                 vertical='All')
+    with flask_app.app_context():
+        lead = Lead(company='Legacy Trail Ltd', source='email')
+        db.session.add(lead)
+        db.session.flush()
+        db.session.add(LeadEmail(lead_id=lead.id, direction='inbound',
+                                 body='an old email', intake_class=None))
+        db.session.commit()
+        lid = lead.id
+    customer = c.get(f'/api/leads/{lid}/emails?kind=customer').get_json()
+    assert len(customer) == 1

@@ -120,6 +120,7 @@ def _file_against_lead(db, decision, msg, extracted, log):
             conversation_id=keys.get('conversation_id'),
             in_reply_to=keys.get('in_reply_to'),
             references_header=keys.get('references'),
+            intake_class=decision.klass,
         )
         db.session.add(row)
 
@@ -271,6 +272,12 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
             # it. Everything downstream reasons about the sender.
             msg_for_class['_resolved_sender'] = (
                 extracted.get('email') or '')
+            # §20 — Graph gives us names here, not content; the files
+            # themselves are fetched after the lead exists. What is
+            # available pre-lead is the names, so anything richer waits
+            # for the attachment pass below and is applied then.
+            msg_for_class['_attachment_text'] = (
+                msg.get('_attachment_text') or '')
             decision = _li.classify(msg_for_class, _lidb.build_context())
             log.info('intake %s → %s (step %s, conf %s) %s',
                      imid, decision.klass, decision.step,
@@ -395,6 +402,31 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
                 )
             except Exception:
                 log.exception('attachments save failed for lead %s', lead.id)
+
+            # §20 — now the files are on disk, read them. The lead
+            # already exists, so this cannot change whether it was
+            # created; what it can do is fill in a vertical and a
+            # confidence that the body alone could not support, which is
+            # exactly the "please find attached" case.
+            try:
+                from app.services import attachment_text
+                inside = attachment_text.for_lead(lead.id)
+                if inside:
+                    from app.services import lead_vertical
+                    guess, conf, why = lead_vertical.recommend(
+                        f"{extracted.get('subject') or ''}\n{inside}",
+                        account_vertical=lead.procam_vertical)
+                    if guess and conf >= 80 and guess != lead.procam_vertical:
+                        log.info('vertical revised to %s (%s%%) for lead %s '
+                                 'from its attachments — %s',
+                                 guess, conf, lead.id, why)
+                        lead.procam_vertical = guess
+                    if not (lead.original_email_body or '').strip():
+                        # The body really was just "please find attached".
+                        lead.original_email_body = inside[:8000]
+            except Exception:
+                log.exception('attachment text pass failed for lead %s',
+                              lead.id)
 
             # The created leads are the labels most worth having: they
             # are the ones a human might reject.
