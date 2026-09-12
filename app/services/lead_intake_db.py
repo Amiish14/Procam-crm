@@ -298,6 +298,8 @@ def record(decision, msg, *, created_lead_id=None):
             duplicate_score=decision.duplicate_score,
             matched_lead_id=decision.lead_id,
             created_lead_id=created_lead_id,
+            payload=_reviewable(msg),
+            review_state='pending' if decision.needs_review else 'accepted',
         )
         db.session.add(row)
         return row
@@ -307,6 +309,27 @@ def record(decision, msg, *, created_lead_id=None):
         except Exception:
             pass
         return None
+
+
+def _reviewable(msg):
+    """The parts of a message a reviewer needs, and no more.
+
+    Capped: this is kept for every message, and storing whole HTML
+    bodies for thousands of newsletters would cost more than the review
+    queue is worth.
+    """
+    try:
+        return {
+            'to': li.recipients(msg, 'toRecipients')[:10],
+            'cc': li.recipients(msg, 'ccRecipients')[:10],
+            'received': (msg.get('receivedDateTime') or '')[:19],
+            'body': (li.body_text(msg) or '')[:4000],
+            'attachments': li.attachment_names(msg)[:20],
+            'resolved_sender': msg.get('_resolved_sender') or '',
+            'forward_resolved': bool(msg.get('_forward_resolved')),
+        }
+    except Exception:
+        return {}
 
 
 def correct(classification_row, corrected_to, *, reason=None, by=None):

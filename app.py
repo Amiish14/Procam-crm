@@ -858,6 +858,13 @@ class EmailClassification(db.Model):
     corrected_by       = db.Column(db.String(20))
     corrected_at       = db.Column(db.DateTime)
 
+    # Enough of the message to review it and, if the reviewer disagrees,
+    # to create the lead it should have been. Without this the review
+    # queue can only show a subject line and cannot act on it.
+    payload = db.Column(db.JSON, default=dict)
+    # pending | accepted | rejected | reclassified
+    review_state = db.Column(db.String(16), default='pending', index=True)
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
     @property
@@ -882,6 +889,8 @@ class EmailClassification(db.Model):
             'correction_reason': self.correction_reason or '',
             'corrected_by': self.corrected_by or '',
             'was_wrong': self.was_wrong,
+            'review_state': self.review_state or 'pending',
+            'payload': dict(self.payload or {}),
             'created_at': str(self.created_at)[:16] if self.created_at else '',
         }
 
@@ -1728,7 +1737,12 @@ def api_delete_lead(lid):
 
     # Cascade: remove dependent rows to avoid orphans (LeadAttachment stores
     # a lead_id foreign key; other tables reference the lead loosely).
-    for model in (LeadAttachment, LeadNote, LeadEmail):
+    # SQLite hands a deleted row's id to the next insert, so anything
+    # left behind here does not just linger — it attaches itself to
+    # whichever lead takes the id next. The audit snapshot above is what
+    # preserves the history; these rows must go.
+    for model in (LeadAttachment, LeadNote, LeadEmail,
+                  LeadAssignmentHistory, LeadActivity, LeadStageHistory):
         try:
             model.query.filter_by(lead_id=lid).delete(
                 synchronize_session=False)
@@ -4379,6 +4393,7 @@ for _mod_path, _bp_name in [
     ('app.bulk_admin.routes',    'bulk_admin_bp'),
     ('app.training.routes',      'training_bp'),
     ('app.triage.routes',        'triage_bp'),
+    ('app.intake.routes',        'intake_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])

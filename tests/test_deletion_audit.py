@@ -153,3 +153,28 @@ def test_info_logging_is_not_discarded():
     import logging
     assert flask_app.logger.getEffectiveLevel() <= logging.INFO, \
         'app.logger.info is still being discarded'
+
+
+def test_deleting_a_lead_leaves_no_history_for_the_next_one(client):
+    """SQLite hands a deleted row's id to the next insert. Anything left
+    behind attaches itself to whichever lead takes that id next — so a
+    brand-new lead would open showing someone else's assignment history.
+    """
+    from app import LeadAssignmentHistory, LeadEmail, LeadNote
+    lid = _lead('Cascade Check Ltd', assigned_to='DELADM')
+    with flask_app.app_context():
+        db.session.add(LeadAssignmentHistory(
+            lead_id=lid, to_primary='DELADM', changed_by='DELADM'))
+        db.session.add(LeadEmail(lead_id=lid, direction='inbound',
+                                 body='an email'))
+        db.session.add(LeadActivity(lead_id=lid, kind='call'))
+        db.session.commit()
+
+    client.delete(f'/api/leads/{lid}', json={'reason': 'cascade test'})
+
+    with flask_app.app_context():
+        for model in (LeadAssignmentHistory, LeadEmail, LeadNote,
+                      LeadActivity):
+            left = model.query.filter_by(lead_id=lid).count()
+            assert left == 0, \
+                f'{model.__name__} left {left} row(s) for the next lead'

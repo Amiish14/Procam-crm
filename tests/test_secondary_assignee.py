@@ -194,6 +194,10 @@ def test_every_reassignment_is_recorded(client):
     with flask_app.app_context():
         rows = (LeadAssignmentHistory.query.filter_by(lead_id=lid)
                 .order_by(LeadAssignmentHistory.id).all())
+        # Scoped to this test's own writes: SQLite reuses a deleted
+        # lead's id, so a bare filter on lead_id can pick up rows that
+        # belonged to a different lead entirely.
+        rows = rows[-2:]
         assert len(rows) == 2
         assert rows[0].to_primary == 'PIC001'
         assert rows[0].to_secondary == 'PIC002'

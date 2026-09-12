@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Intake Intelligence — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .head2{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));
+         gap:1px;background:var(--border);border:1px solid var(--border);
+         margin-bottom:22px}
+  .h2c{background:var(--card);padding:16px 18px}
+  .h2c .n{font-size:32px;font-weight:700;font-variant-numeric:tabular-nums;
+          line-height:1.05}
+  .h2c .l{font-size:11px;font-weight:700;letter-spacing:.06em;
+          text-transform:uppercase;color:var(--text-3);margin-bottom:5px}
+  .h2c .s{font-size:12px;color:var(--text-2);margin-top:4px;line-height:1.4}
+  .h2c.na .n{color:var(--text-3);font-size:22px;font-weight:500}
+
+  /* one bar chart, drawn to a single scale */
+  .bars{display:flex;flex-direction:column;gap:7px;margin:6px 0 22px}
+  .bar{display:grid;grid-template-columns:200px 1fr 74px;gap:12px;
+       align-items:center;font-size:13px}
+  .bar .t{color:var(--ink-2)}
+  .bar .track{background:var(--surface-2);height:20px;border-radius:3px;
+              overflow:hidden}
+  .bar .fill{height:100%;background:var(--ink-2);border-radius:3px}
+  .bar.lead .fill{background:var(--green,#1f6b3f)}
+  .bar.review .fill{background:var(--amber,#b45309)}
+  .bar .v{text-align:right;font-variant-numeric:tabular-nums;
+          color:var(--text-2);font-size:12.5px}
+  h2{font-size:17px;margin:26px 0 8px}
+  .note{font-size:12.5px;color:var(--text-2);margin-bottom:10px;max-width:70ch}
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <h1>Intake Intelligence</h1>
+    <div style="color:var(--text-2);font-size:13px;margin-top:4px">
+      What the classifier decided, and how often a person disagreed.
+    </div>
+  </div>
+  <div>
+    <select id="days" onchange="load()" style="padding:6px 9px">
+      <option value="7">Last 7 days</option>
+      <option value="30" selected>Last 30 days</option>
+      <option value="90">Last 90 days</option>
+    </select>
+    <a class="btn" href="{{ url_prefix }}/lead-review">Lead Review</a>
+    <a class="btn" href="{{ url_prefix }}/accounts/owners">Account Owners</a>
+  </div>
+</div>
+
+<div class="head2" id="head"></div>
+
+<h2>What arrived</h2>
+<div class="note">Every message the mailbox handled, by what the classifier
+decided it was. Only <b>New Lead / RFQ</b> creates a lead.</div>
+<div class="bars" id="classes"></div>
+
+<h2>Which rule decided</h2>
+<div class="note">Steps 1–5 are deterministic — a thread match or a Procam
+sender. A high share at step 10 means most decisions rest on the
+confidence score rather than on hard evidence.</div>
+<div class="bars" id="steps"></div>
+
+<h2>Why leads were rejected</h2>
+<div class="note">Each reason is a training signal: a domain rejected
+repeatedly as rate sourcing should become a known supplier.</div>
+<div class="bars" id="reasons"></div>
+
+<script>
+const CSRF = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+
+async function jf(u){
+  if (u.charAt(0) === '/' && u.indexOf('{{ url_prefix }}') !== 0) u = '{{ url_prefix }}' + u;
+  const r = await fetch(u, {headers:{'X-CSRFToken': CSRF}});
+  return r.json();
+}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+function card(label, value, sub, cls){
+  return `<div class="h2c ${cls||''}"><div class="l">${esc(label)}</div>
+    <div class="n">${esc(value)}</div><div class="s">${sub||''}</div></div>`;
+}
+
+function bars(host, rows, max){
+  const el = document.getElementById(host);
+  if(!rows.length){
+    el.innerHTML = '<div class="empty" style="padding:18px">Nothing yet.</div>';
+    return;
+  }
+  el.innerHTML = rows.map(r => `
+    <div class="bar ${r.cls || ''}">
+      <div class="t">${esc(r.label)}</div>
+      <div class="track"><div class="fill" style="width:${
+        max ? Math.max(1, Math.round(100 * r.count / max)) : 0}%"></div></div>
+      <div class="v">${r.count}${r.pct != null ? ' · ' + r.pct + '%' : ''}</div>
+    </div>`).join('');
+}
+
+async function load(){
+  const days = document.getElementById('days').value;
+  const j = await jf('/api/intake/intelligence?days=' + days);
+  if(!j || !j.ok) return;
+
+  const acc = j.accuracy == null
+    ? card('Classification accuracy', 'not yet measurable',
+           'Accuracy is only meaningful over decisions a person has '
+           + 'actually reviewed. Nothing has been reviewed yet.', 'na')
+    : card('Classification accuracy', j.accuracy + '%',
+           `${j.reviewed} reviewed · ${j.wrong} corrected`);
+
+  document.getElementById('head').innerHTML =
+      card('Noise reduction', j.noise_reduction + '%',
+           `${j.noise} of ${j.total} messages did not need a lead`)
+    + card('Leads created', j.leads_created,
+           `from ${j.total} message(s) in ${j.days} days`)
+    + card('Waiting for review', j.pending,
+           j.pending ? '<a href="{{ url_prefix }}/lead-review">open the queue</a>'
+                     : 'the queue is clear')
+    + acc;
+
+  const maxC = Math.max(...j.by_class.map(c => c.count), 1);
+  bars('classes', j.by_class.map(c => ({
+    label: c.label, count: c.count, pct: c.pct,
+    cls: c.klass === 'A_new_lead' ? 'lead'
+       : c.klass === 'J_needs_review' ? 'review' : ''
+  })), maxC);
+
+  const maxS = Math.max(...j.by_step.map(s => s.count), 1);
+  bars('steps', j.by_step.map(s => ({
+    label: s.step.replace('step_', 'step '), count: s.count, pct: s.pct
+  })), maxS);
+
+  const maxR = Math.max(...(j.by_reason.map(r => r.count)), 1);
+  bars('reasons', j.by_reason.map(r => ({label: r.reason, count: r.count})), maxR);
+}
+load();
+</script>
+</div><!-- /crm-wrap -->
+</body>
+</html>

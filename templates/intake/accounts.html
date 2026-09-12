@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Account Owners — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+        gap:1px;background:var(--border);border:1px solid var(--border);
+        margin-bottom:20px}
+  .k{background:var(--card);padding:13px 15px}
+  .k .n{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;
+        line-height:1.1}
+  .k .l{font-size:11.5px;color:var(--text-2);margin-top:3px;line-height:1.35}
+  .k.good .n{color:var(--green,#1f6b3f)}
+  .k.warn .n{color:var(--red)}
+
+  td select,td input{padding:4px 6px;font-size:12px;width:100%;
+    background:var(--surface);color:var(--ink);
+    border:1px solid var(--border-2);border-radius:3px}
+  td.narrow{width:150px}
+  tr.dirty{background:var(--amber-tint,#fff8e1)}
+  tr.saved{background:var(--green-tint,#e4f0e8)}
+  .gap0 td:first-child{border-left:3px solid var(--red)}
+  .gap1 td:first-child{border-left:3px solid var(--amber,#b45309)}
+  .gap2 td:first-child{border-left:3px solid var(--green,#1f6b3f)}
+  .rowmsg{font-size:11.5px;color:var(--red);padding:2px 0 0}
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <h1>Account Owners</h1>
+    <div style="color:var(--text-2);font-size:13px;margin-top:4px">
+      A lead from an account with both a domain and two owners assigns
+      itself. Everything filled in here is a lead nobody has to route.
+    </div>
+  </div>
+  <div>
+    <a class="btn" href="{{ url_prefix }}/lead-review">Lead Review</a>
+    <a class="btn" href="{{ url_prefix }}/intake-intelligence">Intelligence</a>
+  </div>
+</div>
+
+<div class="kpis" id="kpis"></div>
+
+<div class="filters" style="margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+  <input id="q" placeholder="Search accounts…" style="width:240px;padding:6px 9px"
+         onkeyup="if(event.key==='Enter')load()">
+  <label style="font-size:13px;display:flex;gap:6px;align-items:center">
+    <input type="checkbox" id="missing" onchange="load()" checked>
+    Only accounts missing an owner
+  </label>
+  <button class="btn btn-sm" onclick="load()">Refresh</button>
+  <span style="font-size:12px;color:var(--text-3)" id="shown"></span>
+</div>
+
+<div class="tw">
+<table>
+  <thead><tr>
+    <th>Account</th><th>Vertical</th>
+    <th>Primary PIC</th><th>Secondary PIC</th><th>Backup</th>
+    <th>Email domains</th><th></th>
+  </tr></thead>
+  <tbody id="rows"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+</table>
+</div>
+
+<script>
+const CSRF = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+const PEOPLE = {{ people|tojson }};
+const VERTICALS = {{ verticals|tojson }};
+
+async function jf(u, o){
+  o = o || {};
+  o.headers = Object.assign({'Content-Type':'application/json',
+                             'X-CSRFToken': CSRF}, o.headers || {});
+  if (u.charAt(0) === '/' && u.indexOf('{{ url_prefix }}') !== 0) u = '{{ url_prefix }}' + u;
+  const r = await fetch(u, o);
+  return r.json();
+}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+function peopleOptions(sel){
+  return '<option value="">— none —</option>' + PEOPLE.map(p =>
+    `<option value="${esc(p.code)}"${p.code===sel?' selected':''}>${esc(p.name)}</option>`
+  ).join('');
+}
+function verticalOptions(sel){
+  return '<option value="">— none —</option>' + VERTICALS.map(v =>
+    `<option${v===sel?' selected':''}>${esc(v)}</option>`).join('');
+}
+
+function renderKpis(s){
+  const el = (cls, n, l) => `<div class="k ${cls}"><div class="n">${n}</div>
+    <div class="l">${l}</div></div>`;
+  document.getElementById('kpis').innerHTML =
+      el('good', s.auto_assignable, 'assign themselves today<br>(domain + primary)')
+    + el('', s.with_both, 'have both owners')
+    + el('warn', s.no_owner, 'have no owner at all')
+    + el('', s.with_domain, 'have an email domain')
+    + el('', s.total, 'active accounts');
+}
+
+function renderRows(rows){
+  const tb = document.getElementById('rows');
+  document.getElementById('shown').textContent = rows.length + ' shown';
+  if(!rows.length){
+    tb.innerHTML = '<tr><td colspan="7" class="empty">'
+      + 'Every account here has its owners set.</td></tr>';
+    return;
+  }
+  tb.innerHTML = rows.map(r => `
+    <tr id="r${r.id}" class="gap${r.ownership}">
+      <td><b>${esc(r.name)}</b>
+        ${r.can_auto_assign
+          ? '<div style="font-size:11px;color:var(--green,#1f6b3f)">assigns itself</div>'
+          : '<div style="font-size:11px;color:var(--text-3)">needs a domain and a primary</div>'}
+        <div class="rowmsg" id="m${r.id}"></div></td>
+      <td class="narrow"><select id="v${r.id}" onchange="dirty(${r.id})">${verticalOptions(r.vertical)}</select></td>
+      <td class="narrow"><select id="p${r.id}" onchange="dirty(${r.id})">${peopleOptions(r.primary)}</select></td>
+      <td class="narrow"><select id="s${r.id}" onchange="dirty(${r.id})">${peopleOptions(r.secondary)}</select></td>
+      <td class="narrow"><select id="b${r.id}" onchange="dirty(${r.id})">${peopleOptions(r.backup)}</select></td>
+      <td><input id="d${r.id}" value="${esc(r.domain_text)}"
+                 placeholder="tatasteel.com, tatasteel.co.in"
+                 oninput="dirty(${r.id})"></td>
+      <td style="width:80px"><button class="btn btn-sm" onclick="save(${r.id})">Save</button></td>
+    </tr>`).join('');
+}
+
+function dirty(id){
+  const row = document.getElementById('r'+id);
+  row.classList.add('dirty'); row.classList.remove('saved');
+}
+
+async function save(id, confirmDomains){
+  const g = p => document.getElementById(p+id).value;
+  const msg = document.getElementById('m'+id);
+  msg.textContent = '';
+  const body = {primary:g('p'), secondary:g('s'), backup:g('b'),
+                vertical:g('v'), domains:g('d')};
+  if(confirmDomains) body.confirm_domains = true;
+
+  const j = await jf('/api/intake/accounts/'+id, {method:'PUT',
+                                                  body: JSON.stringify(body)});
+  if(j && j.domain_conflict){
+    const who = j.clashes.map(c => c.name + ' (' + c.domains.join(', ') + ')')
+                         .join('; ');
+    if(confirm(j.error + '\n\nAlready claimed by: ' + who
+             + '\n\nSave anyway?')){
+      return save(id, true);
+    }
+    msg.textContent = 'Not saved — domain belongs to ' + who;
+    return;
+  }
+  if(!j || !j.ok){ msg.textContent = (j && j.error) || 'Could not save'; return; }
+
+  const row = document.getElementById('r'+id);
+  row.classList.remove('dirty'); row.classList.add('saved');
+  if(j.summary) renderKpis(j.summary);
+}
+
+async function load(){
+  const params = new URLSearchParams();
+  if(document.getElementById('missing').checked) params.set('missing','1');
+  const q = document.getElementById('q').value.trim();
+  if(q) params.set('q', q);
+  const j = await jf('/api/intake/accounts?' + params.toString());
+  if(!j || !j.ok) return;
+  renderKpis(j.summary);
+  renderRows(j.accounts);
+}
+load();
+</script>
+</div><!-- /crm-wrap -->
+</body>
+</html>
