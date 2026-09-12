@@ -118,22 +118,38 @@ def _enforce():
     if ours_id:
         print(f'\nRenewing {ours_id}…')
         res = _sub.renew(ours_id)
-        # Persist the id so a later --renew invocation still knows it.
-        try:
-            with open('/var/www/procam-crm/.leads_subscription_id', 'w') as f:
-                f.write(ours_id + '\n')
-        except Exception:
-            pass
+        _save_sub_id(ours_id)
         return res
 
     print('\nNo sanctioned subscription found. Creating one…')
     res = _sub.create()
-    try:
-        with open('/var/www/procam-crm/.leads_subscription_id', 'w') as f:
-            f.write(res.get('id', '') + '\n')
-    except Exception:
-        pass
+    _save_sub_id(res.get('id'))
     return res
+
+
+#: Where the timer reads the current subscription id from. The systemd
+#: unit does `--renew "$(cat …)" || --create`, so if a create does not
+#: write here the next run renews a dead id, 404s, and creates yet
+#: another subscription — one more on the mailbox every night, none of
+#: them ever renewed.
+_SUB_ID_PATH = os.environ.get(
+    'LEADS_SUBSCRIPTION_ID_FILE',
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 '.leads_subscription_id'))
+
+
+def _save_sub_id(sub_id):
+    if not sub_id:
+        return
+    try:
+        with open(_SUB_ID_PATH, 'w') as fh:
+            fh.write(str(sub_id).strip() + '\n')
+        print(f'  subscription id saved to {_SUB_ID_PATH}')
+    except Exception as exc:
+        # Worth shouting about: silently failing here is what makes the
+        # nightly renew accumulate subscriptions.
+        print(f'  !! could not save the subscription id to '
+              f'{_SUB_ID_PATH}: {exc}')
 
 
 def main():
@@ -156,6 +172,7 @@ def main():
         print('\nCreating subscription…')
         try:
             res = _sub.create()
+            _save_sub_id(res.get('id'))
             print(json.dumps(res, indent=2, default=str))
             print('\n▶ Done. Forward a test email to '
                   + (_mail.crm_inbox_email() or 'the mailbox')
@@ -169,6 +186,7 @@ def main():
         sub_id = args[1]
         try:
             res = _sub.renew(sub_id)
+            _save_sub_id(res.get('id') or sub_id)
             print(json.dumps(res, indent=2, default=str))
         except Exception as e:
             print(f'!! renew failed: {e}')
