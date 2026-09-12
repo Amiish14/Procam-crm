@@ -266,6 +266,11 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     log.exception('intake classification failed for %s — '
                                   'falling through to the old rules',
                                   msg_id_internet)
+                else:
+                    if decision is not None:
+                        log.info('intake %s → %s (step %s, conf %s)',
+                                 msg_id_internet, decision.klass,
+                                 decision.step, decision.confidence)
 
                 if decision is not None and not decision.creates_lead:
                     _lidb.record(decision, msg)
@@ -535,6 +540,19 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                 except Exception:
                     log.exception("email trail seed failed for lead %s",
                                   lead.id)
+
+                # Record the decision that let this lead in. Only the
+                # non-lead branch was recording, which left the created
+                # leads — the ones a human might reject, and therefore
+                # the most valuable labels there are — out of the
+                # training set entirely.
+                if decision is not None:
+                    try:
+                        from app.services import lead_intake_db as _lidb
+                        _lidb.record(decision, msg, created_lead_id=lead.id)
+                    except Exception:
+                        log.exception('could not record the classification '
+                                      'for lead %s', lead.id)
 
                 stats["created"] += 1
                 pending_since_commit += 1

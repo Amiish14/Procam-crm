@@ -338,3 +338,37 @@ def test_a_domain_claimed_by_two_accounts_is_assigned_to_neither(world):
         found = mig._domains_from_history(db.session)
         assert 'contested.com' not in found.get(a.id, [])
         assert 'contested.com' not in found.get(b.id, [])
+
+
+# ─── recording covers both branches ──────────────────────────────────────
+def test_the_pipeline_records_a_classification_on_both_branches():
+    """Recording only on the non-lead branch left created leads — the
+    ones a human might reject, and so the most valuable labels there
+    are — out of the training set entirely.
+    """
+    src = open(os.path.join(_ROOT, 'email_ingest', 'pipeline.py')).read()
+    calls = src.count('_lidb.record(')
+    assert calls >= 2, (
+        'record() must be called when a lead is created as well as when '
+        f'one is not — found {calls} call site(s)')
+    assert 'created_lead_id=lead.id' in src, \
+        'a recorded classification must name the lead it produced'
+
+
+def test_a_recorded_decision_names_the_lead_it_created(world):
+    with flask_app.app_context():
+        lead = Lead(company='Recorded Ltd', source='email',
+                    email='buyer@recordedltd.com', stage='New Opportunity')
+        db.session.add(lead)
+        db.session.flush()
+
+        d = li.Decision(li.Klass.NEW_LEAD, step=10, confidence=88,
+                        reason='new enquiry (88% confidence)')
+        row = lidb.record(d, msg(subject='RFQ - new', mid='<created@x.com>'),
+                          created_lead_id=lead.id)
+        db.session.commit()
+
+        assert row.created_lead_id == lead.id
+        assert row.classification == li.Klass.NEW_LEAD
+        assert row.confidence == 88
+        assert row.decided_by == 'step_10'
