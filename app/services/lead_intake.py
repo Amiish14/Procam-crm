@@ -413,6 +413,13 @@ def classify(msg, ctx=None):
     confidence = lead_confidence(msg, ctx,
                                  sender_is_internal=sender_is_internal,
                                  kind=kind, from_domain=from_domain)
+    if confidence < 25:
+        # Not a borderline call. A newsletter scoring 2 or 12 does not
+        # need a person to look at it — and it is parked, not deleted,
+        # so a mistake here is recoverable.
+        return Decision(Klass.NON_BUSINESS, step=10, confidence=confidence,
+                        duplicate_score=score,
+                        reason=f'no sign of an enquiry ({confidence}%)')
     if confidence < 50:
         return Decision(Klass.REVIEW, step=10, confidence=confidence,
                         duplicate_score=score, needs_review=True,
@@ -466,12 +473,22 @@ def confidence_parts(msg, ctx=None, *, sender_is_internal=False,
         parts.append(('sent by us', -25))
     if ctx.is_vendor_domain(from_domain) or vendor_domain_hint(from_domain):
         parts.append(('a supplier domain', -15))
-    quote_phrase = _contains_any(text, _QUOTE_PHRASES)
-    if quote_phrase:
-        parts.append((f'quotation wording ({quote_phrase!r})', -30))
-    rate_phrase = _contains_any(text, _RATE_REQUEST_PHRASES)
-    if rate_phrase:
-        parts.append((f'rate-request wording ({rate_phrase!r})', -20))
+    # Direction decides what these phrases mean. "our best offer" from
+    # us is a quotation going out; from a customer it is them asking us
+    # to quote, which is the definition of an enquiry. Penalising both
+    # cost real RFQs 30 points each — "FOB Laem Chabang to ICD Dadri"
+    # scored 27 on a body that was asking us for a price.
+    if sender_is_internal:
+        quote_phrase = _contains_any(text, _QUOTE_PHRASES)
+        if quote_phrase:
+            parts.append((f'we are quoting ({quote_phrase!r})', -30))
+        rate_phrase = _contains_any(text, _RATE_REQUEST_PHRASES)
+        if rate_phrase:
+            parts.append((f'we are asking a supplier ({rate_phrase!r})', -20))
+    else:
+        # A customer using this wording is asking for a price.
+        if _contains_any(text, _RATE_REQUEST_PHRASES):
+            parts.append(('the customer is asking us to quote', +10))
     if re.search(r'\b(unsubscribe|newsletter|webinar|no longer wish)\b', low):
         parts.append(('newsletter wording', -40))
 

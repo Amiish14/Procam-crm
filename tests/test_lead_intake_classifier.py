@@ -478,3 +478,66 @@ def test_a_forwarded_newsletter_is_not_sent_to_a_human():
         ctx(has_logistics_content=lambda m: False))
     assert d.klass == K.NON_BUSINESS
     assert not d.needs_review
+
+
+# ─── direction decides what the wording means ────────────────────────────
+def test_a_customer_asking_for_our_best_rate_is_an_enquiry():
+    """Verbatim from the mailbox: "Inquiry / Project 41010447_OCP" scored
+    42 because the customer's own words — "our best offer", "please
+    provide your best rate" — were read as us quoting a supplier. That is
+    the phrasing of an RFQ, not of a quotation.
+    """
+    m = msg(subject='Fw: Inquiry / Project 41010447+448_OCP / Structural steel',
+            body='Dear Procam, please provide your best rate for the '
+                 'movement from Antwerp to Nhava Sheva. Awaiting our best '
+                 'offer by Friday.',
+            frm='sales@procamgroup.in', _forward_resolved=True,
+            _resolved_sender='mg@g-p-solutions.de')
+    d = li.classify(m, ctx())
+    assert d.klass == K.NEW_LEAD, (
+        f'{d.klass} at step {d.step}: '
+        + '  '.join(f'{n} {v:+d}' for n, v in
+                    li.confidence_parts(m, ctx(), kind='forward')))
+
+
+def test_the_same_wording_from_us_is_still_a_quotation():
+    """The rule is direction, not vocabulary."""
+    d = li.classify(
+        msg(subject='Transformer movement',
+            body='Dear sir, please find attached our quotation.',
+            frm='sales@procamgroup.in', to=['buyer@tatasteel.com']),
+        ctx(find_by_subject=lambda **kw: 7))
+    assert d.klass == K.QUOTE
+
+
+def test_a_customer_asking_a_supplier_question_is_not_rate_sourcing():
+    d = li.classify(
+        msg(subject='Fw: FOB Laem Chabang to ICD Dadri',
+            body='Kindly share your rate for this movement. '
+                 'Awaiting our offer.',
+            frm='sales@procamgroup.in', _forward_resolved=True,
+            _resolved_sender='bharat.kumar@uflexltd.com'),
+        ctx())
+    assert d.klass != K.RATE_SOURCING
+    assert d.creates_lead or d.needs_review
+
+
+def test_an_obvious_newsletter_does_not_cost_a_human_a_look():
+    """Scoring 2 is not a borderline call. It is parked, not deleted."""
+    m = msg(subject='Fw: Dubai Jumeirah Beach Luxury w. Daily Breakfast',
+            body='Book now. Unsubscribe here.',
+            frm='sales@procamgroup.in', _forward_resolved=True,
+            _resolved_sender='email@m.luxuryescapes.com')
+    d = li.classify(m, ctx())
+    assert d.klass == K.NON_BUSINESS
+    assert not d.needs_review
+
+
+def test_a_borderline_message_still_reaches_a_person():
+    """The floor must not swallow the genuinely uncertain."""
+    m = msg(subject='Fw: Requirement', body='Please advise on the below.',
+            frm='sales@procamgroup.in', _forward_resolved=True,
+            _resolved_sender='someone@clientco.com')
+    d = li.classify(m, ctx())
+    assert 25 <= (d.confidence or 0) < 50
+    assert d.klass == K.REVIEW
