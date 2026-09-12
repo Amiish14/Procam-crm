@@ -3741,7 +3741,21 @@ def init_db():
         # but is idempotent — after the first boot it only fixes must_change_pw
         # if the admin never logged in yet. Password is NEVER exposed in source.
         pcm = Employee.query.filter_by(emp_code='PCM001').first()
-        if not pcm:
+        # Only bootstrap when there is genuinely no way in. PCM001 exists
+        # so a fresh install can be opened at all; once real
+        # administrators exist it is a standing credential nobody owns,
+        # and recreating it on every boot would silently undo a decision
+        # to remove it.
+        _real_admin = (Employee.query
+                       .filter(Employee.emp_code != 'PCM001',
+                               Employee.is_active.is_(True),
+                               Employee.role.in_(('admin', 'procam_admin')))
+                       .first())
+        if not pcm and _real_admin is not None:
+            app.logger.info(
+                'PCM001 absent and %s is an active admin — not re-seeding '
+                'the bootstrap account.', _real_admin.emp_code)
+        elif not pcm:
             initial_pw = os.environ.get('ADMIN_INITIAL_PASSWORD')
             if not initial_pw or len(initial_pw) < 12:
                 raise RuntimeError(
