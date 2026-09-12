@@ -367,7 +367,14 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     email2=(merged["email_secondary"] or None),
                     phone2=(merged["phone_secondary"] or None),
                     procam_vertical=merged["procam_vertical"],
-                    notes=(extracted.get("body_text") or "")[:8000],
+                    # The body used to be stored here, where the Notes /
+                    # call summary box would overwrite it. It now goes to
+                    # original_email_body, which nothing else writes.
+                    original_email_body=(extracted.get("body_text") or "")[:8000],
+                    original_email_subject=(extracted.get("subject") or "")[:500],
+                    original_email_from=(merged.get("email_primary") or "")[:320],
+                    original_email_received_at=received_at,
+                    original_email_source='ingested',
                     opp_notes=json.dumps({
                         "signals": extracted.get("signals", {}),
                         "confidence": extracted.get("confidence", 0.0),
@@ -406,6 +413,21 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     stats["errors"] += 1
                     pending_since_commit = 0
                     continue
+
+                # Row 1 of the email trail, so the thread opens with the
+                # enquiry rather than only the preserved columns.
+                try:
+                    from email_ingest.trail import record_inbound
+                    record_inbound(
+                        db, lead,
+                        subject=extracted.get("subject"),
+                        from_addr=merged.get("email_primary"),
+                        body=(extracted.get("body_text") or "")[:8000],
+                        received_at=received_at,
+                        message_id=msg_id_internet)
+                except Exception:
+                    log.exception("email trail seed failed for lead %s",
+                                  lead.id)
 
                 stats["created"] += 1
                 pending_since_commit += 1

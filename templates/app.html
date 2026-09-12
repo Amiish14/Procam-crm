@@ -2760,14 +2760,29 @@ function renderEmailSummaryCard(l){
       </div>
     </div>` : '';
 
-  /* v2026-08 — collapsible original email under the clean summary. */
-  const rawText = (l && l.notes) ? String(l.notes) : '';
+  /* The original enquiry, from the column that only the ingest writes.
+     It used to read l.notes — the same field the Notes box saved over,
+     which is how the customer's email got destroyed by the first note
+     anyone wrote. l.notes remains only as the fallback for leads that
+     have not been migrated yet, and is never written from here. */
+  const oe = (l && l.original_email) || null;
+  const rawText = oe ? String(oe.body || '')
+                     : ((l && l.notes) ? String(l.notes) : '');
+  const oeWarn = (oe && oe.source === 'migrated_from_notes')
+    ? '<div style="margin:8px 0 0;padding:8px 10px;background:var(--amber-tint,#fff8e1);'
+      + 'border-left:3px solid var(--amber,#b45309);font-size:11.5px;color:var(--text-2)">'
+      + 'Recovered from the old combined field. If a note had already '
+      + 'overwritten this lead\'s email, what you see may be that note.'
+      + '</div>'
+    : '';
   const rawHtml = rawText ? `
     <details style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border-2);">
       <summary style="cursor:pointer;font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:var(--p-text-2);outline:none;user-select:none;">
         Show original email
       </summary>
+      ${oe && oe.subject ? `<div style="margin:10px 0 0;font-size:12px;color:var(--text-2)"><b>${e(oe.subject)}</b>${oe.from?' — from '+e(oe.from):''}${oe.received_at?' · '+e(oe.received_at):''}</div>`:''}
       <pre style="margin:10px 0 0;padding:12px 14px;background:var(--p-surface-3);border-radius:var(--rd);font-family:'Inter','JetBrains Mono',monospace;font-size:12px;color:var(--p-ink-2);white-space:pre-wrap;word-wrap:break-word;line-height:1.55;max-height:280px;overflow-y:auto;">${e(rawText)}</pre>
+      ${oeWarn}
     </details>` : '';
 
   return `
@@ -2819,10 +2834,129 @@ async function openLd(id){
     <div class="fmr"><div class="fmg"><label class="fml">Primary PIC</label><select class="fmc" id="lAsgn" ${isAdmin?'':'disabled'}>${uOpts}</select></div><div class="fmg"><label class="fml">Secondary PIC <span style="font-weight:400;color:var(--text-3)">— monitor / backup</span></label><select class="fmc" id="lAsgn2" ${isAdmin?'':'disabled'}>${sOpts}</select></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Procam vertical</label><select class="fmc" id="lVt">${['Heavy Transport','Project Freight','Warehousing','Installation'].map(v=>`<option${v===l.procam_vertical?' selected':''}>${v}</option>`).join('')}</select></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Next follow-up</label><input type="date" class="fmc" id="lFu" value="${l.followup||''}"></div><div class="fmg"><label class="fml">Onboarded date</label><input class="fmc" value="${l.onboarded_date||'—'}" disabled style="background:var(--surface-2);color:var(--text-3)"></div></div>
-    <div class="fmg"><label class="fml">Notes / call summary</label><textarea class="fmc" id="lNotes" rows="3">${e(l.notes||'')}</textarea></div>
+    <div class="fmg">
+      <label class="fml">Notes / call summary</label>
+      <textarea class="fmc" id="lNotes" rows="3" placeholder="Add a call note, meeting summary or internal remark…"></textarea>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+        <select class="fmc" id="lNoteType" style="width:auto;padding:4px 8px;font-size:12px">
+          <option value="general">General</option>
+          <option value="call">Call</option>
+          <option value="meeting">Meeting</option>
+          <option value="email_followup">Email follow-up</option>
+        </select>
+        <button type="button" class="btn btn-sm" onclick="addLeadNote()">Add note</button>
+        <span style="font-size:11.5px;color:var(--text-3)">
+          Each note is kept separately — nothing is overwritten.
+        </span>
+      </div>
+      <div id="lNoteList" style="margin-top:10px"></div>
+    </div>
+    <div class="fmg">
+      <label class="fml">Email trail</label>
+      <div id="lMailTrail" style="font-size:12.5px;color:var(--text-3)">Loading…</div>
+    </div>
     ${l.linkedin?`<div style="font-size:12.5px;margin-top:8px"><a href="${e(l.linkedin)}" target="_blank">LinkedIn profile</a></div>`:''}
   `;
   g('ldMob').style.display='flex';
+  loadLeadNotes(l.id);
+  loadMailTrail(l.id);
+}
+
+/* ── Notes: their own store, their own render ──────────────────────
+   Nothing in here touches an email field; the endpoints it calls have
+   no email field to touch. */
+const NOTE_LABEL = {general:'Note', call:'Call', meeting:'Meeting',
+                    email_followup:'Email follow-up'};
+
+async function loadLeadNotes(id){
+  const host = g('lNoteList');
+  if(!host) return;
+  let rows = [];
+  try { rows = await api('/api/leads/'+id+'/notes'); } catch(err){ rows = []; }
+  if(!Array.isArray(rows) || !rows.length){
+    host.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:6px 0">'
+                   + 'No notes yet.</div>';
+    return;
+  }
+  host.innerHTML = rows.map(nt=>`
+    <div style="border-left:2px solid var(--border-2);padding:6px 0 6px 10px;margin-bottom:6px">
+      <div style="font-size:11px;color:var(--text-3);display:flex;gap:8px;align-items:center">
+        <b style="color:var(--ink-2)">${e(NOTE_LABEL[nt.note_type]||'Note')}</b>
+        <span>${e(nt.author_name||'')}</span>
+        <span>${e(nt.created_at)}</span>
+        ${nt.migrated_from_legacy
+          ? '<span title="Rescued from the old combined field — may be email text" style="color:var(--amber,#b45309)">migrated</span>'
+          : ''}
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto;padding:1px 7px;font-size:11px"
+                onclick="deleteLeadNote(${nt.lead_id},${nt.id})"
+                title="Delete this note only — the email is not affected">Delete note</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--text);white-space:pre-wrap;margin-top:3px">${e(nt.note_text)}</div>
+    </div>`).join('');
+}
+
+async function addLeadNote(){
+  const box = g('lNotes');
+  const text = (box?.value || '').trim();
+  if(!text){ toast('Write something first','err'); return; }
+  const r = await api('/api/leads/'+activeId+'/notes',
+    {method:'POST', body: JSON.stringify(
+      {note_text:text, note_type:g('lNoteType')?.value || 'general'})});
+  if(r && r.ok){
+    box.value = '';
+    loadLeadNotes(activeId);
+    toast('Note added ✓','ok');
+  } else {
+    toast((r && r.error) || 'Could not add the note','err');
+  }
+}
+
+async function deleteLeadNote(leadId, noteId){
+  if(!confirm('Delete this note? The original email and the rest of the '
+            + 'lead are not affected.')) return;
+  const r = await api('/api/leads/'+leadId+'/notes/'+noteId, {method:'DELETE'});
+  if(r && r.ok){ loadLeadNotes(leadId); toast('Note deleted ✓','ok'); }
+  else toast('Could not delete the note','err');
+}
+
+/* ── Email trail: read-only, oldest first ───────────────────────── */
+async function loadMailTrail(id){
+  const host = g('lMailTrail');
+  if(!host) return;
+  let rows = [];
+  try { rows = await api('/api/leads/'+id+'/emails'); } catch(err){ rows = []; }
+  if(!Array.isArray(rows) || !rows.length){
+    host.innerHTML = '<div style="font-size:12px;color:var(--text-3)">'
+                   + 'No emails recorded on this lead.</div>';
+    return;
+  }
+  host.innerHTML = rows.map(m=>{
+    const inbound = m.direction === 'inbound';
+    const tag = inbound ? 'Received' : (m.status === 'draft' ? 'Draft' : 'Sent');
+    const colour = inbound ? 'var(--ink-2)' : 'var(--p-text-2,var(--text-2))';
+    return `
+    <details style="border:1px solid var(--border-2);border-radius:var(--r);padding:8px 10px;margin-bottom:6px">
+      <summary style="cursor:pointer;font-size:12px;color:${colour}">
+        <b>${tag}</b>
+        ${m.subject ? '· '+e(m.subject) : ''}
+        ${m.from_addr ? '· '+e(m.from_addr) : ''}
+        <span style="color:var(--text-3)">${e(fmtIST(m.at))}</span>
+      </summary>
+      <pre style="margin:8px 0 0;font-family:'Inter',monospace;font-size:12px;white-space:pre-wrap;word-wrap:break-word;max-height:240px;overflow-y:auto;color:var(--text)">${e(m.body)}</pre>
+    </details>`;
+  }).join('')
+   + '<div style="font-size:11px;color:var(--text-3);margin-top:2px">'
+   + 'Read-only. Emails are never edited or deleted from here.</div>';
+}
+
+/* Stored UTC, read in India. */
+function fmtIST(ts){
+  if(!ts) return '';
+  const d = new Date(ts.replace(' ','T') + 'Z');
+  if(isNaN(d)) return ts;
+  return d.toLocaleString('en-IN', {timeZone:'Asia/Kolkata',
+    year:'numeric', month:'short', day:'2-digit',
+    hour:'2-digit', minute:'2-digit'}) + ' IST';
 }
 
 function setStg(s){
@@ -2843,7 +2977,10 @@ async function saveLd(){
     assigned_to:g('lAsgn')?.value,
     secondary_owner:g('lAsgn2')?.value ?? '',
     procam_vertical:g('lVt')?.value,
-    followup:g('lFu')?.value, notes:g('lNotes')?.value,
+    followup:g('lFu')?.value,
+    // `notes` is deliberately not sent. It is the field that held the
+    // original email, and sending it back is what destroyed it. Notes go
+    // to /api/leads/<id>/notes as their own records.
     phone_call_date:g('lPC')?.value, intro_mail_date:g('lIM')?.value,
     meeting_date:g('lMT')?.value, rfq_date:g('lRQ')?.value,
   };
@@ -2924,7 +3061,24 @@ async function newLead(){
     },
   });
 }
-function orFromLd(){if(!activeId)return;const id=activeId;closeLd();nav('outreach');setTimeout(()=>{g('orId').value=id;loadOR();},150);}
+function orFromLd(){
+  if(!activeId)return;
+  const id=activeId;
+  closeLd();
+  nav('outreach');
+  setTimeout(()=>{g('orId').value=id;loadOR();},150);
+}
+
+/* Record what was drafted against the lead, so the trail holds the reply
+   as well as the enquiry. Appends a row — it cannot overwrite one. */
+async function recordDraftOnTrail(leadId, subject, body, toAddr){
+  if(!leadId || !(body||'').trim()) return null;
+  try{
+    return await api('/api/leads/'+leadId+'/emails', {method:'POST',
+      body: JSON.stringify({subject:subject||'', body:body,
+                            to_addr:toAddr||'', status:'draft'})});
+  }catch(err){ return null; }
+}
 
 // ── OPP MODAL ──
 async function openOpp(id){
@@ -3077,8 +3231,16 @@ Format:
 function copyMail(){navigator.clipboard.writeText(g('aiTxt').textContent).then(()=>toast('Copied ✓','ok'));}
 async function markSent(){
   const id=g('orId').value;if(!id)return;
+  // Record it on the trail first, so the outbound email survives even if
+  // the lead update below fails.
+  const txt=(g('aiTxt')?.textContent||'').trim();
+  if(txt){
+    const subj=(txt.match(/^Subject:\s*(.+)$/m)||[])[1]||'';
+    await api(`/api/leads/${id}/emails`,{method:'POST',body:JSON.stringify(
+      {subject:subj, body:txt, status:'sent'})}).catch(()=>{});
+  }
   await api(`/api/leads/${id}`,{method:'PUT',body:JSON.stringify({intro_mail_date:new Date().toISOString().split('T')[0],stage:'Call Done'})});
-  toast('Intro mail marked sent ✓','ok');
+  toast('Intro mail marked sent ✓ — added to the email trail','ok');
 }
 
 // ── GLOBAL CRM ──

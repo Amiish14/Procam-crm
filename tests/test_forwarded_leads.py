@@ -82,9 +82,12 @@ def test_forwarded_lead_uses_the_original_sender_not_the_forwarder():
     assert "Hi team, please log this one." not in extracted["body_text"]
     # v2026-09-02 — forwarder provenance must NOT appear anywhere in the
     # customer record: no header, no covering note, no opp_notes key.
-    assert "Forwarded to CRM by" not in kw["notes"]
-    assert EMPLOYEE not in kw["notes"]
-    assert "Their note" not in kw["notes"]
+    # The body now lands in original_email_body: `notes` also backed the
+    # Notes / call summary box, so an enquiry stored there was destroyed
+    # by the first note anyone wrote.
+    assert "Forwarded to CRM by" not in kw["original_email_body"]
+    assert EMPLOYEE not in kw["original_email_body"]
+    assert "Their note" not in kw["original_email_body"]
     opp = json.loads(kw["opp_notes"])
     assert "forwarded_by" not in opp
     assert "forward_note" not in opp
@@ -234,7 +237,7 @@ def test_unresolvable_forward_captures_the_lead_but_blanks_the_contact():
     merged = json.loads(kw["email_extracted_json"])
     assert merged["needs_review"] is True
     # The body is preserved so a human can pick the prospect out of it.
-    assert "trailer" in kw["notes"].lower()
+    assert "trailer" in kw["original_email_body"].lower()
 
 
 def test_internal_mail_with_no_forward_structure_blanks_the_contact():

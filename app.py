@@ -368,6 +368,20 @@ class Lead(db.Model):
     # Rendered as a "Lead Summary" card at the top of the lead detail modal.
     email_extracted_json = db.Column(db.Text, nullable=True)
 
+    # ── The original inbound enquiry ────────────────────────────────
+    # It used to live in `notes`, which is also what the Notes / call
+    # summary box binds to — so the first note anyone wrote replaced the
+    # customer's enquiry. These columns are written once, at creation,
+    # and never by any note-saving path.
+    original_email_subject     = db.Column(db.String(500))
+    original_email_from        = db.Column(db.String(320))
+    original_email_received_at = db.Column(db.DateTime)
+    original_email_body        = db.Column(db.Text)
+    # ingested | migrated_from_notes | recovered_from_mailbox
+    # Provenance matters here: a migrated body may actually be somebody's
+    # note, if that lead was already overwritten before the fix landed.
+    original_email_source      = db.Column(db.String(32))
+
     def to_dict(self):
         def sd(d): return str(d) if d else ''
         return {
@@ -407,6 +421,14 @@ class Lead(db.Model):
             # at the top of the lead detail modal.
             'email_extracted': (json.loads(self.email_extracted_json)
                                 if self.email_extracted_json else None),
+            'original_email': {
+                'subject': self.original_email_subject or '',
+                'from': self.original_email_from or '',
+                'received_at': (str(self.original_email_received_at)[:19]
+                                if self.original_email_received_at else ''),
+                'body': self.original_email_body or '',
+                'source': self.original_email_source or '',
+            } if self.original_email_body else None,
             # Files attached to this lead — populated by email ingest from
             # Graph API attachments, or manually uploaded later. Renders as
             # a list under the "Lead Summary" card in the UI.
@@ -727,6 +749,87 @@ class LeadAssignmentHistory(db.Model):
             'changed_at': str(self.changed_at)[:16],
             'changed_by': self.changed_by or '',
             'note': self.note or '',
+        }
+
+
+class LeadEmail(db.Model):
+    """Every email on a lead — the enquiry that started it and every
+    reply since.  Append-only from the application's point of view.
+
+    Row 1 is the inbound enquiry.  Drafting or sending a reply adds a
+    row; nothing ever rewrites an existing one, which is the whole point
+    after the notes field ate the original email.
+    """
+    __tablename__ = 'lead_emails'
+    id            = db.Column(db.Integer, primary_key=True)
+    lead_id       = db.Column(db.Integer, db.ForeignKey('leads.id'),
+                              nullable=False, index=True)
+    direction     = db.Column(db.String(10), nullable=False)  # inbound|outbound
+    from_addr     = db.Column(db.String(320))
+    to_addr       = db.Column(db.Text)
+    cc            = db.Column(db.Text)
+    subject       = db.Column(db.String(500))
+    body          = db.Column(db.Text)
+    sent_or_received_at = db.Column(db.DateTime, index=True)
+    created_by    = db.Column(db.String(20))
+    # ingested | drafted_in_crm | sent_in_crm | migrated_from_notes
+    source        = db.Column(db.String(32))
+    # draft | sent | received
+    status        = db.Column(db.String(16), default='received')
+    message_id    = db.Column(db.String(400), index=True)
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'lead_id': self.lead_id,
+            'direction': self.direction,
+            'from_addr': self.from_addr or '',
+            'to_addr': self.to_addr or '',
+            'cc': self.cc or '',
+            'subject': self.subject or '',
+            'body': self.body or '',
+            'at': (str(self.sent_or_received_at)[:19]
+                   if self.sent_or_received_at else ''),
+            'created_by': self.created_by or '',
+            'source': self.source or '',
+            'status': self.status or '',
+        }
+
+
+class LeadNote(db.Model):
+    """The human interaction log — calls, meetings, internal remarks.
+
+    A table rather than a column so notes accumulate instead of
+    overwriting each other, which is the same failure one level down from
+    the bug this replaces.
+    """
+    __tablename__ = 'lead_notes'
+    id         = db.Column(db.Integer, primary_key=True)
+    lead_id    = db.Column(db.Integer, db.ForeignKey('leads.id'),
+                           nullable=False, index=True)
+    note_text  = db.Column(db.Text, nullable=False)
+    # call | meeting | email_followup | general
+    note_type  = db.Column(db.String(24), default='general')
+    author     = db.Column(db.String(20))
+    author_name = db.Column(db.String(100))
+    # Set when the row was rescued out of the old combined field, so a
+    # reader knows it may be email text rather than somebody's note.
+    migrated_from_legacy = db.Column(db.Boolean, default=False)
+    is_deleted = db.Column(db.Boolean, default=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow,
+                           onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'lead_id': self.lead_id,
+            'note_text': self.note_text or '',
+            'note_type': self.note_type or 'general',
+            'author': self.author or '',
+            'author_name': self.author_name or self.author or '',
+            'migrated_from_legacy': bool(self.migrated_from_legacy),
+            'created_at': str(self.created_at)[:16] if self.created_at else '',
+            'updated_at': str(self.updated_at)[:16] if self.updated_at else '',
         }
 
 
@@ -1335,14 +1438,33 @@ def api_update_lead(lid):
         'products':'products','state':'state','city':'city','country':'country',
         'pic':'pic','designation':'designation_pic','email':'email','phone':'phone',
         'email2':'email2','phone2':'phone2','linkedin':'linkedin',
-        'stage':'stage','procam_vertical':'procam_vertical','notes':'notes',
+        'stage':'stage','procam_vertical':'procam_vertical',
+        # 'notes' is deliberately absent. It held the original inbound
+        # email *and* backed the Notes / call summary box, so every note
+        # anyone saved destroyed the customer's enquiry. Notes now live in
+        # lead_notes via /api/leads/<id>/notes; the email lives in
+        # original_email_body and lead_emails. Putting this key back
+        # reopens the data loss.
         'email_sent_flag':'email_sent_flag','week_tag':'week_tag',
         'opp_number':'opp_number','opp_stage':'opp_stage','opp_notes':'opp_notes',
         # v2026-08 — CRM enhancement pack
         'website':'website', 'subsidiaries':'subsidiaries', 'relevance':'relevance',
     }
-    for k,v in fields_map.items():
-        if k in d: setattr(lead, v, d[k])
+    for k, v in fields_map.items():
+        if k in d:
+            setattr(lead, v, d[k])
+
+    # An older client (or a cached page) may still send `notes`. Rather
+    # than ignore it — which loses what the user typed — file it as a
+    # note, which is what they meant by it.
+    incoming_note = (d.get('notes') or '').strip()
+    if incoming_note and incoming_note != (lead.notes or '').strip():
+        emp_ = Employee.query.filter_by(
+            emp_code=session.get('emp_code')).first()
+        db.session.add(LeadNote(
+            lead_id=lead.id, note_text=incoming_note, note_type='general',
+            author=session.get('emp_code'),
+            author_name=emp_.name if emp_ else session.get('name')))
     if 'cost' in d: lead.cost_million = float(d['cost'] or 0)
     if 'estimated_value' in d: lead.estimated_value_inr = _to_dec(d['estimated_value'])
     if 'quoted_amount'   in d: lead.quoted_amount_inr   = _to_dec(d['quoted_amount'])
@@ -2874,6 +2996,132 @@ def api_lead_stage_history(lid):
     hist = (LeadStageHistory.query.filter_by(lead_id=lid)
             .order_by(LeadStageHistory.changed_at.desc()).all())
     return jsonify([h.to_dict() for h in hist])
+
+
+# ─── Notes / call summary ────────────────────────────────────────────
+# Its own store, its own endpoints. The Notes box must never be able to
+# touch email content again: that is enforced here by there being no
+# email field these handlers can write.
+@app.route('/api/leads/<int:lid>/notes', methods=['GET'])
+@require_auth
+def api_lead_notes(lid):
+    _require_lead_access(lid)
+    rows = (LeadNote.query
+            .filter_by(lead_id=lid, is_deleted=False)
+            .order_by(LeadNote.created_at.desc()).all())
+    return jsonify([r.to_dict() for r in rows])
+
+
+@app.route('/api/leads/<int:lid>/notes', methods=['POST'])
+@require_auth
+def api_lead_note_add(lid):
+    _require_lead_access(lid)
+    d = request.get_json(silent=True) or {}
+    text_ = (d.get('note_text') or '').strip()
+    if not text_:
+        return jsonify({'error': 'A note cannot be empty'}), 400
+    kind = (d.get('note_type') or 'general').strip()
+    if kind not in ('call', 'meeting', 'email_followup', 'general'):
+        kind = 'general'
+    emp = Employee.query.filter_by(emp_code=session.get('emp_code')).first()
+    row = LeadNote(lead_id=lid, note_text=text_, note_type=kind,
+                   author=session.get('emp_code'),
+                   author_name=emp.name if emp else session.get('name'))
+    db.session.add(row)
+    db.session.commit()
+    return jsonify({'ok': True, 'note': row.to_dict()})
+
+
+@app.route('/api/leads/<int:lid>/notes/<int:note_id>', methods=['PUT'])
+@require_auth
+def api_lead_note_edit(lid, note_id):
+    _require_lead_access(lid)
+    row = LeadNote.query.filter_by(id=note_id, lead_id=lid).first_or_404()
+    d = request.get_json(silent=True) or {}
+    text_ = (d.get('note_text') or '').strip()
+    if not text_:
+        return jsonify({'error': 'A note cannot be empty'}), 400
+    row.note_text = text_
+    if d.get('note_type') in ('call', 'meeting', 'email_followup', 'general'):
+        row.note_type = d['note_type']
+    db.session.commit()
+    return jsonify({'ok': True, 'note': row.to_dict()})
+
+
+@app.route('/api/leads/<int:lid>/notes/<int:note_id>', methods=['DELETE'])
+@require_auth
+def api_lead_note_delete(lid, note_id):
+    """Deletes one note and nothing else.
+
+    Scoped by lead_id as well as id so a note cannot be deleted through
+    the wrong lead, and soft so a mis-click is recoverable. There is
+    deliberately no endpoint that deletes an email.
+    """
+    _require_lead_access(lid)
+    row = LeadNote.query.filter_by(id=note_id, lead_id=lid).first_or_404()
+    row.is_deleted = True
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+# ─── Email trail ─────────────────────────────────────────────────────
+@app.route('/api/leads/<int:lid>/emails', methods=['GET'])
+@require_auth
+def api_lead_emails(lid):
+    """The whole thread, oldest first — read-only.
+
+    Falls back to the preserved original_email_* columns when no trail
+    row exists yet, so a lead that predates the trail still shows its
+    enquiry rather than an empty thread.
+    """
+    lead = _require_lead_access(lid)
+    rows = (LeadEmail.query.filter_by(lead_id=lid)
+            .order_by(LeadEmail.sent_or_received_at.asc(),
+                      LeadEmail.id.asc()).all())
+    out = [r.to_dict() for r in rows]
+    if not out and lead.original_email_body:
+        out.append({
+            'id': None, 'lead_id': lid, 'direction': 'inbound',
+            'from_addr': lead.original_email_from or '',
+            'to_addr': '', 'cc': '',
+            'subject': lead.original_email_subject or '',
+            'body': lead.original_email_body,
+            'at': (str(lead.original_email_received_at)[:19]
+                   if lead.original_email_received_at else ''),
+            'created_by': '', 'source': lead.original_email_source or '',
+            'status': 'received',
+        })
+    return jsonify(out)
+
+
+@app.route('/api/leads/<int:lid>/emails', methods=['POST'])
+@require_auth
+def api_lead_email_add(lid):
+    """Append an outbound email — a draft, or one recorded as sent.
+
+    Append-only by construction: this creates a row and never updates
+    one, so a reply cannot overwrite the enquiry it answers.
+    """
+    _require_lead_access(lid)
+    d = request.get_json(silent=True) or {}
+    body = (d.get('body') or '').strip()
+    if not body:
+        return jsonify({'error': 'An email needs a body'}), 400
+    status = 'sent' if d.get('status') == 'sent' else 'draft'
+    row = LeadEmail(
+        lead_id=lid, direction='outbound',
+        from_addr=(d.get('from_addr') or '').strip() or None,
+        to_addr=(d.get('to_addr') or '').strip() or None,
+        cc=(d.get('cc') or '').strip() or None,
+        subject=(d.get('subject') or '').strip() or None,
+        body=body,
+        sent_or_received_at=datetime.utcnow(),
+        created_by=session.get('emp_code'),
+        source='sent_in_crm' if status == 'sent' else 'drafted_in_crm',
+        status=status)
+    db.session.add(row)
+    db.session.commit()
+    return jsonify({'ok': True, 'email': row.to_dict()})
 
 
 @app.route('/api/leads/<int:lid>/history', methods=['GET'])

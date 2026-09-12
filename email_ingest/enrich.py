@@ -198,7 +198,10 @@ def build_enriched_lead_kwargs(msg: dict, extracted: dict, *,
     # the forwarder's covering note are deliberately NOT recorded. Who
     # relayed a lead internally is not part of the customer record and must
     # not surface anywhere in the portal.
-    body_notes = (extracted.get("body_text") or "")[:8000]
+    # It goes to original_email_body, not notes: `notes` also backs the
+    # Notes / call summary box, so storing the enquiry there meant the
+    # first note anyone wrote destroyed it.
+    email_body = (extracted.get("body_text") or "")[:8000]
 
     return {
         "company":              (merged["company"] or "Unknown")[:200],
@@ -209,7 +212,10 @@ def build_enriched_lead_kwargs(msg: dict, extracted: dict, *,
         "email2":               merged["email_secondary"] or None,
         "phone2":               merged["phone_secondary"] or None,
         "procam_vertical":      merged["procam_vertical"],
-        "notes":                body_notes,
+        "original_email_body":        email_body,
+        "original_email_subject":     (extracted.get("subject") or "")[:500],
+        "original_email_from":        (merged["email_primary"] or "")[:320] or None,
+        "original_email_source":      'ingested',
         "opp_notes": json.dumps({
             "signals":         extracted.get("signals", {}),
             "confidence":      extracted.get("confidence", 0.0),

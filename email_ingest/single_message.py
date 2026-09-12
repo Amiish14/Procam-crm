@@ -171,6 +171,14 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
             db.session.add(lead)
             db.session.flush()
 
+            # Row 1 of the email trail.
+            try:
+                from email_ingest.trail import record_inbound
+                record_inbound(db, lead, received_at=received,
+                               message_id=imid)
+            except Exception:
+                log.exception('email trail seed failed for lead %s', lead.id)
+
             # ── Attachments ─────────────────────────────────────────────
             try:
                 attachments_mod.save_attachments_for_lead(
