@@ -173,6 +173,17 @@ def recipients(msg, key='toRecipients'):
     return out
 
 
+def effective_sender(msg):
+    """Who the email is really from.
+
+    On a forward the parser has unwrapped, `from` is the Procam employee
+    who relayed it and the customer is inside the body. Every judgement
+    after that — is this internal, is it a vendor, is it a duplicate —
+    has to be made about the customer, not the forwarder.
+    """
+    return (msg.get('_resolved_sender') or '').strip().lower() or sender(msg)
+
+
 def domain_of(address):
     return (address or '').rsplit('@', 1)[-1].strip().lower() \
         if '@' in (address or '') else ''
@@ -293,7 +304,8 @@ def classify(msg, ctx=None):
     """Decide what this email is. Never raises."""
     ctx = ctx or Context()
     subject = (msg.get('subject') or '').strip()
-    from_addr = sender(msg)
+    resolved = bool(msg.get('_forward_resolved'))
+    from_addr = effective_sender(msg)
     from_domain = domain_of(from_addr)
     keys = thread_keys(msg)
     kind = subject_kind(subject)
@@ -301,7 +313,10 @@ def classify(msg, ctx=None):
     to_all = recipients(msg, 'toRecipients')
     cc_all = recipients(msg, 'ccRecipients')
 
-    sender_is_internal = from_domain in ctx.internal_domains
+    # A resolved forward is the customer's mail, relayed. Judging it by
+    # the relayer's address makes every forwarded RFQ look internal.
+    sender_is_internal = (from_domain in ctx.internal_domains
+                          and not resolved)
 
     # ── 3. thread match — deterministic, final, outranks everything ──
     hit = ctx.find_by_thread(
@@ -332,22 +347,21 @@ def classify(msg, ctx=None):
             return Decision(Klass.RATE_SOURCING, step=4, lead_id=match,
                             reason='rate request sent to a supplier')
 
-        # A forward the parser has already unwrapped to an external
-        # original sender is a genuine hand-off; it continues down the
-        # tree as that sender. Anything else from us is correspondence.
-        promoted = bool(msg.get('_forward_resolved'))
-        if not promoted:
-            match = ctx.find_by_subject(subject=stripped,
-                                        counterparties=to_all + cc_all)
-            if match:
-                return Decision(Klass.EXISTING, step=4, lead_id=match,
-                                reason='our own correspondence on a known enquiry')
-            return Decision(
-                Klass.INTERNAL, step=4,
-                reason='sent by a Procam address with the mailbox only copied in')
+        match = ctx.find_by_subject(subject=stripped,
+                                    counterparties=to_all + cc_all)
+        if match:
+            return Decision(Klass.EXISTING, step=4, lead_id=match,
+                            reason='our own correspondence on a known enquiry')
+        return Decision(
+            Klass.INTERNAL, step=4,
+            reason='sent by a Procam address with the mailbox only copied in')
 
     # ── 5. reply / forward prefix with no thread header ──
-    if kind in ('reply', 'forward'):
+    # A forward the parser unwrapped to an external sender is skipped
+    # here: the FW: is how the mail reached us, not evidence of a thread
+    # we already hold. Treating it as one sent 327 of 501 real messages
+    # to Admin Review — every client RFQ an employee had relayed in.
+    if kind in ('reply', 'forward') and not (resolved and kind == 'forward'):
         match = ctx.find_by_subject(
             subject=stripped, counterparties=[from_addr] + to_all + cc_all)
         if match:

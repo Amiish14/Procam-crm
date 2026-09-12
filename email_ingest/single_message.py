@@ -225,6 +225,10 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
             msg_for_class = dict(msg)
             msg_for_class['_forward_resolved'] = bool(
                 extracted.get('forward_resolved'))
+            # The customer's own address, not the colleague who relayed
+            # it. Everything downstream reasons about the sender.
+            msg_for_class['_resolved_sender'] = (
+                extracted.get('email') or '')
             decision = _li.classify(msg_for_class, _lidb.build_context())
             log.info('intake %s → %s (step %s, conf %s) %s',
                      imid, decision.klass, decision.step,

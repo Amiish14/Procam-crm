@@ -365,3 +365,51 @@ def test_the_procam_branch_only_fires_on_a_procam_sender():
         ctx())
     assert d.step != 4
     assert d.klass == K.NEW_LEAD
+
+
+# ─── a relayed client enquiry is the client's, not the relayer's ─────────
+def test_a_relayed_client_rfq_is_judged_by_the_client():
+    """342 of 501 real messages are forwards that unwrap to an external
+    sender. Judging them by the forwarder's address made every one look
+    internal; catching them on the FW: prefix afterwards sent 327 to
+    Admin Review. Both were wrong: this is the customer's enquiry.
+    """
+    d = li.classify(
+        msg(subject='FW: RFQ - Heavy transport requirement', body=RFQ_BODY,
+            frm='sales@procamgroup.in',
+            _forward_resolved=True,
+            _resolved_sender='buyer@tatasteel.com'),
+        ctx())
+    assert d.klass == K.NEW_LEAD, f'got {d.klass} at step {d.step}'
+    assert d.creates_lead
+
+
+def test_the_resolved_sender_is_used_for_every_later_judgement():
+    """A relayed enquiry from a shipping line is still rate sourcing —
+    the check has to run on the customer, not the colleague."""
+    d = li.classify(
+        msg(subject='FW: Our rates', body=RFQ_BODY,
+            frm='sales@procamgroup.in', _forward_resolved=True,
+            _resolved_sender='quotes@xyzshippingline.com'),
+        ctx(is_vendor_domain=lambda d_: d_ == 'xyzshippingline.com'))
+    assert d.klass == K.RATE_SOURCING
+
+
+def test_an_unresolved_forward_from_us_is_still_internal():
+    """Only an unwrapped forward gets the benefit of the doubt."""
+    d = li.classify(
+        msg(subject='FW: some thread', body='see below',
+            frm='sales@procamgroup.in'),
+        ctx())
+    assert d.klass in (K.INTERNAL, K.EXISTING)
+    assert not d.creates_lead
+
+
+def test_a_relayed_reply_is_still_a_reply():
+    """RE: inside a forward is still correspondence, not a new enquiry."""
+    d = li.classify(
+        msg(subject='RE: RFQ - transformer', body=RFQ_BODY,
+            frm='buyer@tatasteel.com'),
+        ctx())
+    assert d.klass in (K.REPLY, K.REVIEW)
+    assert not d.creates_lead

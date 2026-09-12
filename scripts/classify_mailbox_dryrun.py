@@ -90,6 +90,7 @@ def main():
                 probe = dict(msg)
                 probe['_forward_resolved'] = bool(
                     extracted.get('forward_resolved'))
+                probe['_resolved_sender'] = extracted.get('email') or ''
                 if extracted.get('forward_resolved'):
                     unwrapped_forwards[0] += 1
                 d = li.classify(probe, ctx)
