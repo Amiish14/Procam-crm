@@ -205,8 +205,20 @@ def has_logistics_content(msg):
         return True         # never lose a lead to a parser failure
 
 
+def _ai_second_opinion(msg, decided):
+    """Phase 4, wired only when LEAD_INTAKE_AI is on.
+
+    Returns the decision either way: an unavailable model, an
+    unparseable answer or one less certain than the rule leaves the
+    rule's decision exactly as it was.
+    """
+    from app.services import lead_intake_ai as ai
+    return ai.apply(decided, ai.opinion(msg, decided))
+
+
 def build_context():
     """The Context the tree runs against in production."""
+    from app.services import lead_intake_ai as ai
     return li.Context(
         internal_domains=internal_domains(),
         find_by_thread=find_by_thread,
@@ -214,6 +226,7 @@ def build_context():
         duplicate_score=duplicate_score,
         is_vendor_domain=is_vendor_domain,
         has_logistics_content=has_logistics_content,
+        ai_opinion=_ai_second_opinion if ai.is_enabled() else None,
     )
 
 
@@ -298,7 +311,7 @@ def record(decision, msg, *, created_lead_id=None):
             duplicate_score=decision.duplicate_score,
             matched_lead_id=decision.lead_id,
             created_lead_id=created_lead_id,
-            payload=_reviewable(msg),
+            payload=_reviewable(msg, decision),
             review_state='pending' if decision.needs_review else 'accepted',
         )
         db.session.add(row)
@@ -311,7 +324,7 @@ def record(decision, msg, *, created_lead_id=None):
         return None
 
 
-def _reviewable(msg):
+def _reviewable(msg, decision=None):
     """The parts of a message a reviewer needs, and no more.
 
     Capped: this is kept for every message, and storing whole HTML
@@ -319,7 +332,7 @@ def _reviewable(msg):
     queue is worth.
     """
     try:
-        return {
+        out = {
             'to': li.recipients(msg, 'toRecipients')[:10],
             'cc': li.recipients(msg, 'ccRecipients')[:10],
             'received': (msg.get('receivedDateTime') or '')[:19],
@@ -328,6 +341,13 @@ def _reviewable(msg):
             'resolved_sender': msg.get('_resolved_sender') or '',
             'forward_resolved': bool(msg.get('_forward_resolved')),
         }
+        # Phase 4 — what the model said, and whether it was applied, kept
+        # beside the rule's own answer so the two can be compared once
+        # there is enough of both to judge.
+        for key, value in ((decision.extra if decision else None) or {}).items():
+            if key.startswith('ai_') or key == 'rule_class':
+                out[key] = value
+        return out
     except Exception:
         return {}
 
