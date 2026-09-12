@@ -120,6 +120,20 @@ if _url_prefix:
         environ['SCRIPT_NAME'] = _url_prefix
         return _inner_app(environ, start_response)
     app.wsgi_app = _force_script_name
+# ── Logging ──────────────────────────────────────────────────────────
+# Flask attaches a stderr handler but leaves the logger at NOTSET, so it
+# inherits root's WARNING. Errors and warnings reached journald; every
+# app.logger.info did not — including the "lead_delete lid=… by=… reason=…"
+# line that is the only record a lead deletion leaves. 571 leads have been
+# deleted with that line silently discarded.
+#
+# Setting the level is the whole fix; the handler was never missing.
+import logging as _logging                                    # noqa: E402
+
+app.logger.setLevel(
+    getattr(_logging, os.environ.get('LOG_LEVEL', 'INFO').upper(),
+            _logging.INFO))
+
 app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///procam_crm.db')
 if db_url.startswith('postgres://'):
@@ -1548,20 +1562,51 @@ def api_delete_lead(lid):
 
     reason = ((request.get_json(silent=True) or {}).get('reason') or '').strip()
 
+    # ── Audit, BEFORE anything is destroyed ──────────────────────────
+    # The dialog asks the user for a reason "for the audit trail", and
+    # for a long time that reason went only to app.logger — at INFO,
+    # which the logger's level was discarding. So 571 leads were deleted
+    # with no record anywhere of who did it or why, and no way to tell an
+    # accident from housekeeping. deletion_audit already exists for this
+    # and keeps a snapshot, which after a permanent delete is the only
+    # thing that can answer what was there.
+    try:
+        from app.models.audit import DeletionAudit
+        snapshot = lead.to_dict()
+        linked = {}
+        for label, model, col in (
+                ('attachments', LeadAttachment, 'lead_id'),
+                ('activities', LeadActivity, 'lead_id'),
+                ('stage_history', LeadStageHistory, 'lead_id'),
+                ('notes', LeadNote, 'lead_id'),
+                ('emails', LeadEmail, 'lead_id')):
+            try:
+                linked[label] = model.query.filter_by(**{col: lid}).count()
+            except Exception:
+                linked[label] = None
+        db.session.add(DeletionAudit(
+            entity_type='Lead', entity_id=lid, action='delete',
+            reason=reason or None, snapshot=snapshot, linked=linked,
+            performed_by=caller or 'unknown'))
+        db.session.flush()
+    except Exception:
+        # An audit failure must not silently allow an unrecorded delete.
+        db.session.rollback()
+        app.logger.exception('lead_delete audit failed for lid=%s', lid)
+        return jsonify({'error': 'Could not record the deletion for audit — '
+                                 'the lead was not deleted.'}), 500
+
+    app.logger.info('lead_delete lid=%s company=%r by=%s role=%s reason=%r',
+                    lid, lead.company, caller, role, reason)
+
     # Cascade: remove dependent rows to avoid orphans (LeadAttachment stores
     # a lead_id foreign key; other tables reference the lead loosely).
-    try:
-        LeadAttachment.query.filter_by(lead_id=lid).delete(synchronize_session=False)
-    except Exception:
-        pass  # attachments table might not exist in every deployment
-
-    # Audit trail: append a delete note to the caller's activity log if we
-    # have one, so we can trace who purged which lead + why.
-    try:
-        app.logger.info(f'lead_delete lid={lid} company={lead.company!r} '
-                        f'by={caller} role={role} reason={reason!r}')
-    except Exception:
-        pass
+    for model in (LeadAttachment, LeadNote, LeadEmail):
+        try:
+            model.query.filter_by(lead_id=lid).delete(
+                synchronize_session=False)
+        except Exception:
+            pass   # table may not exist in every deployment
 
     db.session.delete(lead)
     db.session.commit()
