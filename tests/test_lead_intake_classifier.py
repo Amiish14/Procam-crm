@@ -332,3 +332,36 @@ def test_every_decision_explains_itself():
     d = li.classify(msg(subject='RFQ - transformer', body=RFQ_BODY), ctx())
     assert d.step and d.reason
     assert d.to_dict()['label']
+
+
+# ─── the forward flag decides 90% of this mailbox ────────────────────────
+def test_an_unwrapped_forward_is_not_treated_as_internal():
+    """The mailbox is fed largely by employees forwarding client mail.
+
+    Without the parser's forward_resolved flag every one of those looks
+    like it came from the Procam employee who relayed it, and lands as
+    Internal. A dry run over 501 real messages reported 71% Internal for
+    exactly that reason.
+    """
+    forwarded = msg(subject='FW: RFQ - Heavy transport requirement',
+                    body=RFQ_BODY, frm='buyer@tatasteel.com',
+                    _forward_resolved=True)
+    d = li.classify(forwarded, ctx())
+    assert d.klass != K.INTERNAL
+
+    # The same message without the flag — the bug — goes elsewhere.
+    unflagged = dict(forwarded)
+    unflagged.pop('_forward_resolved')
+    assert li.classify(unflagged, ctx()).klass != K.NEW_LEAD
+
+
+def test_the_procam_branch_only_fires_on_a_procam_sender():
+    """An external sender must never reach step 4, however the mailbox
+    is addressed."""
+    d = li.classify(
+        msg(subject='RFQ - transformer', body=RFQ_BODY,
+            frm='buyer@tatasteel.com',
+            to=['sales@procamgroup.in'], cc=['leads@procamgroup.in']),
+        ctx())
+    assert d.step != 4
+    assert d.klass == K.NEW_LEAD

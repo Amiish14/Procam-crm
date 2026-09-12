@@ -418,3 +418,35 @@ def test_the_created_lead_keeps_its_thread_identity():
     for field in ('conversation_id', 'in_reply_to', 'references_header'):
         assert re.search(rf'{field}\s*=\s*_keys\.get', src), \
             f'{field} must be stored on the lead it was ingested from'
+
+
+# ─── the kill switch ─────────────────────────────────────────────────────
+def test_there_is_a_way_to_stand_the_classifier_down():
+    """An untuned classifier suppressing a real RFQ costs far more than a
+    duplicate lead, so it must be stoppable in seconds without a code
+    rollback."""
+    src = open(os.path.join(_ROOT, 'email_ingest',
+                            'single_message.py')).read()
+    assert "os.environ.get('LEAD_INTAKE_MODE')" in src
+    assert "_mode == 'off'" in src, 'there must be a full off switch'
+    assert "_mode == 'observe'" in src, \
+        'observe mode is how it earns trust before it suppresses anything'
+
+
+def test_observe_mode_records_but_creates_the_lead_anyway():
+    src = open(os.path.join(_ROOT, 'email_ingest',
+                            'single_message.py')).read()
+    block = src.split("if _mode == 'observe'")[1][:700]
+    assert '_lidb.record(' in block, 'observe must still record the decision'
+    assert 'decision = None' in block, \
+        'observe must fall through to creating the lead'
+
+
+def test_the_dry_run_mirrors_the_production_path():
+    """The first dry run skipped the parser, so no forward ever unwrapped
+    and 71% of real mail came back Internal."""
+    src = open(os.path.join(_ROOT, 'scripts',
+                            'classify_mailbox_dryrun.py')).read()
+    assert 'email_parser.extract_lead(msg)' in src
+    assert "_forward_resolved" in src, \
+        'the dry run must pass the same flag production does'

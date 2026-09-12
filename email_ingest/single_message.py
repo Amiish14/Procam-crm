@@ -23,6 +23,7 @@ list_messages / get_message). Returns a status dict:
 """
 from __future__ import annotations
 import logging
+import os
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -40,6 +41,10 @@ DEDUP_DOMAIN_WINDOW_DAYS = 30
 
 def _internet_message_id(msg: dict) -> Optional[str]:
     return msg.get('internetMessageId') or msg.get('id')
+
+
+class _IntakeDisabled(Exception):
+    """Raised to skip classification when LEAD_INTAKE_MODE=off."""
 
 
 def _thread_keys(msg):
@@ -200,8 +205,21 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
         # not "is this logistics?" but "is this a NEW enquiry?". Only one
         # of ten classes creates a lead — and nothing is dropped, because
         # everything else is filed against the lead it belongs to.
+        # ── Kill switch ───────────────────────────────────────────
+        # LEAD_INTAKE_MODE:
+        #   enforce  (default) classification gates lead creation
+        #   observe  classify and record, but create the lead anyway
+        #   off      do not classify at all
+        #
+        # An untuned classifier suppressing a real RFQ is far more
+        # expensive than a duplicate lead, so there has to be a way to
+        # stand it down in seconds without a code rollback.
+        _mode = (os.environ.get('LEAD_INTAKE_MODE') or 'enforce').lower()
+
         decision = None
         try:
+            if _mode == 'off':
+                raise _IntakeDisabled
             from app.services import lead_intake as _li
             from app.services import lead_intake_db as _lidb
             msg_for_class = dict(msg)
@@ -211,9 +229,26 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
             log.info('intake %s → %s (step %s, conf %s) %s',
                      imid, decision.klass, decision.step,
                      decision.confidence, decision.reason)
+        except _IntakeDisabled:
+            pass
         except Exception:
             log.exception('intake classification failed for %s — '
                           'creating the lead rather than losing it', imid)
+
+        if _mode == 'observe' and decision is not None \
+                and not decision.creates_lead:
+            # Record what it would have done, then create the lead
+            # anyway. This is how the classifier earns trust: it is
+            # measured against real mail before it is allowed to
+            # suppress any of it.
+            try:
+                _lidb.record(decision, msg)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+            log.info('intake OBSERVE %s → would have been %s; creating the '
+                     'lead anyway', imid, decision.klass)
+            decision = None
 
         if decision is not None and not decision.creates_lead:
             try:

@@ -52,6 +52,7 @@ def main():
     from app.services import lead_intake_db as lidb           # noqa: E402
     from email_ingest.graph_client import GraphClient         # noqa: E402
     from email_ingest import service as mail_service          # noqa: E402
+    from email_ingest import parser as email_parser           # noqa: E402
 
     mailbox = mail_service.crm_inbox_email() \
         or os.environ.get('EMAIL_INGEST_MAILBOX')
@@ -69,6 +70,7 @@ def main():
         ctx = lidb.build_context()
         counts = Counter()
         steps = Counter()
+        unwrapped_forwards = [0]
         rows = []
         scanned = 0
 
@@ -77,7 +79,20 @@ def main():
             if scanned > args.limit:
                 break
             try:
-                d = li.classify(msg, ctx)
+                # Mirror production exactly. single_message.py runs the
+                # parser first and passes its forward_resolved flag in;
+                # without it a forwarded client RFQ still looks like it
+                # came from the Procam employee who relayed it, and every
+                # one of them is classified Internal. The first run of
+                # this script skipped that step and reported 71% internal
+                # for exactly that reason.
+                extracted = email_parser.extract_lead(msg) or {}
+                probe = dict(msg)
+                probe['_forward_resolved'] = bool(
+                    extracted.get('forward_resolved'))
+                if extracted.get('forward_resolved'):
+                    unwrapped_forwards[0] += 1
+                d = li.classify(probe, ctx)
             except Exception as exc:
                 counts['ERROR'] += 1
                 print(f'  !! {msg.get("subject", "")[:50]}: {exc}')
@@ -116,9 +131,18 @@ def main():
             mark = '→ LEAD' if klass == li.Klass.NEW_LEAD else ''
             print(f'  {n:>5}  {pct(n, scanned):>5}  {label:<32}{mark}')
 
+        print(f'\n  {unwrapped_forwards[0]} message(s) were forwards that '
+              f'unwrapped to an external sender')
         print(f'\n  which rule decided:')
         for step, n in steps.most_common():
             print(f'  {n:>5}  {pct(n, scanned):>5}  {step}')
+
+        if counts.get(li.Klass.INTERNAL, 0) > scanned * 0.4:
+            print(f'\n  !! {pct(counts[li.Klass.INTERNAL], scanned)} '
+                  f'classified Internal. That is either genuinely how this')
+            print(f'     mailbox is used, or forwards are not unwrapping. '
+                  f'Check a few with')
+            print(f'     --show C_internal before trusting this.')
 
         noise = scanned - creates
         print(f'\n  Would create {creates} lead(s) from {scanned} message(s).')
