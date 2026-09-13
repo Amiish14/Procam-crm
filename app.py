@@ -4123,6 +4123,42 @@ def api_leads_import_commit():
 
 # ─────────────────── INIT DB ───────────────────
 
+SEED_EMPLOYEES_CSV = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'data', 'private', 'seed_employees.csv')
+
+
+def _load_seed_employees(path=SEED_EMPLOYEES_CSV):
+    """Rows for the first-boot employee seed, read from a private CSV.
+
+    The Employee Master holds real names, so it is kept out of git. The
+    file is produced by exporting the Employee Master, one row per
+    employee, with the header
+    emp_code,name,email,department,designation,vertical,role
+    and saved as data/private/seed_employees.csv (git-ignored).
+
+    When the file is absent no employees are seeded; init_db then seeds
+    PCM001 from ADMIN_INITIAL_PASSWORD so a fresh install can still be
+    opened. Returns (emp_code, name, email, department, designation,
+    vertical, role) tuples.
+    """
+    if not os.path.exists(path):
+        return []
+    import csv
+    rows = []
+    with open(path, newline='', encoding='utf-8-sig') as fh:
+        for rec in csv.DictReader(fh):
+            val = {k.strip().lower(): (v or '').strip()
+                   for k, v in rec.items() if k}
+            if not val.get('emp_code'):
+                continue
+            rows.append((val['emp_code'], val.get('name', ''),
+                         val.get('email', ''), val.get('department', ''),
+                         val.get('designation', ''), val.get('vertical', ''),
+                         val.get('role') or 'user'))
+    return rows
+
+
 def init_db():
     with app.app_context():
         # Models that live in app/models are otherwise imported lazily, so
@@ -4261,124 +4297,7 @@ def init_db():
             db.session.rollback()
         # Create employees from PRERNA Employee Master if none exist
         if Employee.query.count() == 0:
-            EMPLOYEES = [
-                # (emp_code, name, email, department, designation, vertical, role)
-            ('EMP3592024', 'Amit Kakkar', '', 'Sales', 'Manager', 'Project Freight', 'presales'),
-            ('EMP3902025', 'Bala Murugan T', '', 'Sales', 'Manager', 'Heavy Transport', 'presales'),
-            ('EMP3892025', 'Bhavin Vinodhbhai Jiilka', '', 'Corporate', 'Head of Accounts & Finance', 'All', 'user'),
-            ('EMP472012', 'Gowdhaman Rajakrishnan', '', 'Operations', 'Asst Vice President', 'Installation', 'presales'),
-            ('EMP182010', 'K Umamaheswara Rao', '', 'Corporate', 'Dy. General Manager', 'All', 'presales'),
-            ('EMP12010', 'Nitin Rawat', '', 'Operations', 'Asst Vice President', 'Installation', 'presales'),
-            ('EMP1282017', 'Pravinkumar Arumugam', '', 'Operations', 'Dy. General Manager', 'Installation', 'presales'),
-            ('EMP112010', 'Sanjeev Kumar Paliwal', '', 'Sales', 'Sr General Manager', 'Project Freight', 'presales'),
-            ('EMP372011', 'Sanjna Vardhan', '', 'Sales', 'Asst Vice President', 'Project Freight', 'presales'),
-            ('EMP3702025', 'Suranjan Aon', '', 'Sales', 'Dy. General Manager', 'Heavy Transport', 'presales'),
-            ('EMP3952025', 'Venkatesh Ramarao Althada', '', 'Sales', 'Manager', 'Heavy Transport', 'user'),
-            ('EMP572012', 'Vijay T V', '', 'Sales', 'Dy. General Manager', 'Heavy Transport', 'presales'),
-            ('EMP4022025', 'Vikrant Vats', '', 'Operations', 'Sr. Manager', 'Warehousing', 'user'),
-            ('EMP3292023', 'Zahid Khan', '', 'Operations', 'Project Manager', 'Installation', 'presales'),
-            ('EMP1552018', 'Abhishek Singh', '', 'Sales', 'Sr. Executive', 'Heavy Transport', 'user'),
-            ('EMP3602024', 'Ahmad Ali', '', 'Operations', 'Supervisor', 'Installation', 'user'),
-            ('EMP212010', 'Ajit Kumar Das', '', 'Sales', 'Operator', 'Heavy Transport', 'user'),
-            ('EMP3672025', 'Akash Prabu', '', 'Operations', 'HSE Officer', 'Installation', 'user'),
-            ('EMP3822025', 'Akash Somnath Narayne', '', 'Operations', 'Sr. Supervisor', 'Warehousing', 'user'),
-            ('EMP1612018', 'Amit Kumar', '', 'Sales', 'Sr Assistant', 'Heavy Transport', 'user'),
-            ('EMP2802022', 'Amol Bhagvan Nikam', '', 'Operations', 'Asst Manager', 'Warehousing', 'user'),
-            ('EMP3942025', 'Aniket Ray Chaudhuri', '', 'Corporate', 'Executive', 'All', 'user'),
-            ('EMP3152023', 'Anurag Uday Chand', '', 'Operations', 'Manager', 'Warehousing', 'user'),
-            ('EMP2622020', 'Aritra Mitra', '', 'Corporate', 'Sr Supervisor', 'All', 'user'),
-            ('EMP3322023', 'Aryaan  Shaikh', '', 'Sales', 'Sr Executive', 'Project Freight', 'user'),
-            ('EMP3982025', 'Ashitosh Sarjerao Gholap', '', 'Sales', 'Supervisor', 'Heavy Transport', 'user'),
-            ('EMP3852025', 'Avinash Tukaram Ghatul', '', 'Operations', 'Supervisor', 'Warehousing', 'user'),
-            ('EMP3102023', 'Balu Bhagovrao Jogdanad', '', 'Operations', 'Supervisor', 'Warehousing', 'user'),
-            ('EMP3022023', 'Bhushan B Bhagat', '', 'Sales', 'Manager', 'Heavy Transport', 'presales'),
-            ('EMP3132023', 'Bidisha Banerjee', '', 'Corporate', 'Sr Supervisor', 'All', 'user'),
-            ('EMP3732025', 'Bikash  Routh', '', 'Corporate', 'Assistant', 'All', 'user'),
-            ('EMP3162023', 'Birendra Kumar', '', 'Operations', 'Asst Manager', 'Warehousing', 'user'),
-            ('EMP3142023', 'Balkrishnan Sharma', '', 'Sales', 'Sr. Supervisor', 'Heavy Transport', 'user'),
-            ('EMP1492018', 'Chakradhar Sahoo', '', 'Sales', 'Assistant', 'Heavy Transport', 'user'),
-            ('EMP3862025', 'Chandresh Kumar Baijnath Yadav', '', 'Sales', 'Operator', 'Heavy Transport', 'user'),
-            ('EMP2582020', 'Dattaram Mahalim', '', 'Sales', 'Executive', 'Project Freight', 'user'),
-            ('EMP3962025', 'Dhanashree Harishchandra Pawar', '', 'Corporate', 'Accountant', 'All', 'user'),
-            ('EMP2992023', 'Dipanka Talukder', '', 'Corporate', 'Asst Manager', 'All', 'user'),
-            ('EMP3172023', 'Ekbal Chandpasha Shaikh', '', 'Operations', 'Sr. Supervisor', 'Warehousing', 'user'),
-            ('EMP2782022', 'Gajanan Narayan Naglot', '', 'Operations', 'Asst Manager', 'Warehousing', 'user'),
-            ('EMP2122018', 'Gajendra Kumar Giri', '', 'Sales', 'Sr Supervisor', 'Heavy Transport', 'user'),
-            ('EMP3992025', 'Hazarat Ali', '', 'Sales', 'Supervisor', 'Heavy Transport', 'user'),
-            ('EMP2972023', 'Jayanta Kumar Paul', '', 'Corporate', 'Sr Executive', 'All', 'user'),
-            ('EMP3282023', 'Jones George T', '', 'Operations', 'Sr Project Engineer', 'Installation', 'user'),
-            ('EMP3612024', 'Kamar Khan', '', 'Operations', 'Sr Project Engineer', 'Installation', 'user'),
-            ('EMP1062016', 'Kamrul Islam', '', 'Sales', 'Operator', 'Heavy Transport', 'user'),
-            ('EMP3802025', 'Kapil Bekanale', '', 'Operations', 'Sr. Supervisor', 'Warehousing', 'user'),
-            ('EMP3552024', 'Karthikeyan  R', '', 'Operations', 'Project Engineer', 'Installation', 'user'),
-            ('EMP2642021', 'Kumar Satyam Ray', '', 'Sales', 'Sr Executive', 'Project Freight', 'user'),
-            ('EMP242010', 'Laxmi Ram Singh', '', 'Sales', 'Sr Manager', 'Project Freight', 'presales'),
-            ('EMP172010', 'Manjurul Hoque', '', 'Sales', 'Operator', 'Heavy Transport', 'user'),
-            ('EMP4002025', 'Md  Inamuddin', '', 'Operations', 'HSE Officer', 'Installation', 'user'),
-            ('EMP2832022', 'Mohanraj R', '', 'Operations', 'Dy Manager', 'Installation', 'user'),
-            ('EMP3742025', 'Muntazir Alam', '', 'Operations', 'HSE Officer', 'Installation', 'user'),
-            ('EMP3932025', 'Manish Kumar Bhakta', '', 'Sales', 'HSE Officer', 'Heavy Transport', 'user'),
-            ('EMP1082016', 'Nishit Ranjan Das', '', 'Sales', 'Operator', 'Heavy Transport', 'user'),
-            ('EMP3062023', 'Nitin Ambadas Pawar', '', 'Operations', 'Sr. Supervisor', 'Warehousing', 'user'),
-            ('EMP3192023', 'Panjab Dinkar Pise', '', 'Operations', 'Data Entry Operator', 'Warehousing', 'user'),
-            ('EMP1672018', 'Partab Singh', '', 'Sales', 'Assistant', 'Heavy Transport', 'user'),
-            ('EMP3762025', 'Parveen Sharma', '', 'Operations', 'Sr. Supervisor', 'Warehousing', 'user'),
-            ('EMP1662018', 'Phool Chandra Yudhishir', '', 'Sales', 'Assistant', 'Heavy Transport', 'user'),
-            ('EMP3182023', 'Pradip Balasaheb Surse', '', 'Operations', 'Sr. Supervisor', 'Warehousing', 'user'),
-            ('EMP4032025', 'Pramod Kumar', '', 'Operations', 'Sr. Supervisor', 'Installation', 'user'),
-            ('EMP22010', 'Rajeev Ranjan', '', 'Sales', 'Executive', 'Heavy Transport', 'user'),
-            ('EMP2892022', 'Rakesh Dnyaneshwar Rawal', '', 'Operations', 'Supervisor', 'Warehousing', 'user'),
-            ('EMP1322017', 'Ram Mohan Chaubey', '', 'Sales', 'Executive', 'Heavy Transport', 'user'),
-            ('EMP812015', 'Ramesh Yadav Sechae', '', 'Sales', 'Operator', 'Heavy Transport', 'user'),
-            ('EMP2952023', 'Rameshwar Nihalsingh Gusinge', '', 'Operations', 'Asst Manager', 'Warehousing', 'user'),
-            ('EMP3212023', 'Sachin Thakur', '', 'Sales', 'Sr Customer Service Executive', 'Project Freight', 'user'),
-            ('EMP2752021', 'Sagar Bhogle', '', 'Sales', 'Executive', 'Project Freight', 'user'),
-            ('EMP132010', 'Sahadeb Sahoo', '', 'Sales', 'Operator', 'Heavy Transport', 'user'),
-            ('EMP3922025', 'Sajiulah Khan', '', 'Sales', 'HSE Officer', 'Heavy Transport', 'user'),
-            ('EMP482012', 'Saktheeswari Murugavel', '', 'Corporate', 'Sr Manager', 'All', 'presales'),
-            ('EMP3972025', 'Samiksha Chandrakant Vayngankar', '', 'Corporate', 'Accounts Supervisor', 'All', 'user'),
-            ('EMP3772025', 'Sanjay Bhite', '', 'Operations', 'Manager', 'Warehousing', 'presales'),
-            ('EMP1602018', 'Santhosh P', '', 'Sales', 'Assistant', 'Project Freight', 'user'),
-            ('EMP1332017', 'Santosh Kumar', '', 'Operations', 'Asst Manager', 'Installation', 'user'),
-            ('EMP3092023', 'Satish Datta Navghare', '', 'Operations', 'Supervisor', 'Warehousing', 'user'),
-            ('EMP3782025', 'Satish Jadhav', '', 'Operations', 'Supervisor', 'Warehousing', 'user'),
-            ('EMP3842025', 'Saurabh Ramesh Waghmare', '', 'Operations', 'Supervisor', 'Warehousing', 'user'),
-            ('EMP3542024', 'Sayan  Das', '', 'Sales', 'Executive', 'Heavy Transport', 'user'),
-            ('EMP3372024', 'Sayantan Naskar', '', 'Operations', 'SITE ENGINEER', 'Warehousing', 'user'),
-            ('EMP3222023', 'Sayanti  Ghosh', '', 'Corporate', 'Accounts Supervisor', 'All', 'user'),
-            ('EMP2882022', 'Seema Chattopadhyay', '', 'Corporate', 'Manager', 'All', 'user'),
-            ('EMP2982023', 'Sharayu Uday Bhosale', '', 'Sales', 'Asst Manager', 'Project Freight', 'user'),
-            ('EMP2962023', 'Shashidhar Pandurang Naik', '', 'Operations', 'Asst Manager', 'Warehousing', 'user'),
-            ('EMP3202023', 'Shivaji Ashok Dhumal', '', 'Operations', 'Data Entry Operator', 'Warehousing', 'user'),
-            ('EMP3482024', 'Shriram Dattu Patil', '', 'Sales', 'Manager', 'Heavy Transport', 'presales'),
-            ('EMP3912025', 'Shyam Bharti', '', 'Operations', 'Supervisor', 'Installation', 'user'),
-            ('EMP3072023', 'Sohel Mainoor Shaikh', '', 'Operations', 'Sr Supervisor', 'Warehousing', 'user'),
-            ('EMP3642024', 'Souvik Chakraborty', '', 'Operations', 'HSE Officer', 'Warehousing', 'user'),
-            ('EMP3652025', 'Sumit Mondal', '', 'Corporate', 'Accountant', 'All', 'user'),
-            ('EMP3882025', 'Sundhar Rajan S', '', 'Operations', 'Project Engineer', 'Installation', 'user'),
-            ('EMP3532024', 'Suresh  Kumar', '', 'Sales', 'Executive', 'Heavy Transport', 'user'),
-            ('EMP2792022', 'Swapnil Sunil Jadhav', '', 'Operations', 'Asst Manager', 'Warehousing', 'user'),
-            ('EMP3122023', 'Sunita Naga Alkar', '', 'Corporate', 'Assistant', 'All', 'user'),
-            ('EMP1682018', 'Tahirul Haque', '', 'Sales', 'Assistant', 'Heavy Transport', 'user'),
-            ('EMP2482019', 'Tanima Mukherjee', '', 'Corporate', 'Sr Manager', 'All', 'presales'),
-            ('EMP3752025', 'Vikash Dubey', '', 'Operations', 'Project Engineer', 'Installation', 'user'),
-            ('EMP2902022', 'Vipul Sinh Zala', '', 'Operations', 'Manager', 'Warehousing', 'user'),
-            ('EMP3832025', 'Vishal Pundlik Bhokre', '', 'Operations', 'Supervisor', 'Warehousing', 'user'),
-            ('EMP3042023', 'Vishal Raosaheb Magar', '', 'Operations', 'Supervisor', 'Warehousing', 'user'),
-            ('EMP3382024', 'Yogesh Kumar Rajasekaran', '', 'Operations', 'Sr Project Engineer', 'Installation', 'user'),
-            ('EMP4052026', 'Akram Mahmud Mujawar', '', 'Operations', 'Supervisor', 'Warehousing', 'user'),
-            ('EMP4062026', 'Pravin Abasaheb Barde', '', 'Operations', 'Supervisor', 'Warehousing', 'user'),
-            ('EMP4092026', 'Pravin Choudhary', '', 'Operations', 'Sr General Manager', 'Warehousing', 'presales'),
-            ('EMP4042026', 'Guruswami Mohanta', '', 'Operations', 'Supervisor', 'Installation', 'user'),
-            ('EMP4072026', 'Dipanshu Kumar Singh', '', 'Operations', 'Supervisor', 'Installation', 'user'),
-            ('EMP4082026', 'Keshvani Ankit Nileshbhai', '', 'Operations', 'Assistant', 'Installation', 'user'),
-            ('EMP4102026', 'Aurmugam Pandi', '', 'Operations', 'Asst. General Manager', 'Installation', 'presales'),
-            ('DIR12010', 'Nilesh Kumar Sinha', '', 'Corporate', 'Director', 'All', 'admin'),
-            ('DIR22010', 'Francis Xavier', '', 'Sales', 'Director', 'Heavy Transport', 'admin'),
-            ('DIR42010', 'Tg Ramalingam', '', 'Corporate', 'Director', 'All', 'admin'),
-            ('DIR52011', 'S Sethupathy', '', 'Operations', 'Director', 'Installation', 'admin'),
-            ('DIR72012', 'Srinivas M', '', 'Operations', 'Director', 'Warehousing', 'admin'),
-            ]
+            EMPLOYEES = _load_seed_employees()
             for ec, nm, em, dept, desig, vert, role in EMPLOYEES:
                 e = Employee(
                     emp_code=ec, name=nm,
@@ -4391,12 +4310,17 @@ def init_db():
                 # Default password = employee code in lowercase (PRERNA rule)
                 e.set_password(ec.lower())
                 db.session.add(e)
-            # Special: set Nilesh admin password (not forced to change)
-            nilesh = Employee.query.filter_by(emp_code='DIR12010').first()
-            if nilesh:
-                nilesh.must_change_pw = False
+            # The configured director account is not forced to change its
+            # password on first login.
+            director_account = Employee.query.filter_by(emp_code='DIR12010').first()
+            if director_account:
+                director_account.must_change_pw = False
             db.session.commit()
-            print(f"✓ {len(EMPLOYEES)} employees seeded from Employee Master")
+            if EMPLOYEES:
+                print(f"✓ {len(EMPLOYEES)} employees seeded from Employee Master")
+            else:
+                print("✓ No employee seed file at data/private/seed_employees.csv "
+                      "— no employees seeded")
         else:
             print(f"✓ {Employee.query.count()} employees already in database")
 

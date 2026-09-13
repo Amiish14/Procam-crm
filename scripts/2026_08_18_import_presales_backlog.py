@@ -17,8 +17,11 @@ script may have seeded, and un-assigns any leads still pointing at them.
 
 Run:
   cd /var/www/procam-crm
-  env PYTHONPATH=. python scripts/2026_08_18_import_aditya_backlog.py \
-      --file data/imports/aditya_backlog.xlsx
+  env PYTHONPATH=. python scripts/2026_08_18_import_presales_backlog.py \
+      --file data/private/presales_backlog.xlsx
+
+The workbook holds customer contact details, so it is git-ignored. Copy
+it to data/private/presales_backlog.xlsx or pass --file PATH.
 """
 import os
 import sys
@@ -31,7 +34,7 @@ import openpyxl
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import app, db, Lead, Employee, LeadStageHistory  # noqa
 
-DEFAULT_FILE = 'data/imports/aditya_backlog.xlsx'
+DEFAULT_FILE = 'data/private/presales_backlog.xlsx'
 
 def cleanup_intern_users():
     """The pre-sales interns are no longer with the company — remove any
@@ -378,9 +381,17 @@ def import_file(path, dry_run=False):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--file', default=DEFAULT_FILE)
+    ap.add_argument('--file', default=None,
+                    help=f'default: {DEFAULT_FILE}')
     ap.add_argument('--dry-run', action='store_true')
     args = ap.parse_args()
+    if not args.file:
+        # The workbook is not in git, so its absence is the common case on
+        # a fresh checkout; say what to do instead of a bare traceback.
+        if not os.path.exists(DEFAULT_FILE):
+            sys.exit(f'backlog workbook not found at {DEFAULT_FILE}. '
+                     f'Copy it there or pass --file PATH.')
+        args.file = DEFAULT_FILE
     import_file(args.file, dry_run=args.dry_run)
 
 

@@ -14,13 +14,13 @@ Combine as needed. Always previews first; needs --apply to delete.
 
 Examples:
     # See every mailbox-mode lead created today
-    python scripts/2026_08_27_purge_amiish_test_leads.py --mailbox --today
+    python scripts/2026_08_27_purge_test_mailbox_leads.py --mailbox --today
 
     # Same, then delete
-    python scripts/2026_08_27_purge_amiish_test_leads.py --mailbox --today --apply
+    python scripts/2026_08_27_purge_test_mailbox_leads.py --mailbox --today --apply
 
     # Delete specific IDs
-    python scripts/2026_08_27_purge_amiish_test_leads.py --ids 9919,9920,9921 --apply
+    python scripts/2026_08_27_purge_test_mailbox_leads.py --ids 9919,9920,9921 --apply
 """
 import argparse
 import sys, os

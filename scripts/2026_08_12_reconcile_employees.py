@@ -11,6 +11,10 @@ For each row:
   - Preserve existing role / vertical / department / email if present;
     otherwise use defaults from ROLE_HINTS below.
 
+The list holds real names, so it is not kept in git. It is read from
+data/private/reconcile_employees.csv (git-ignored) with the header
+emp_code,name — one row per employee who should have CRM access.
+
 Idempotent — safe to re-run. Never deletes or deactivates existing employees
 that aren't on this list (they stay as-is).
 
@@ -21,7 +25,12 @@ Usage:
                                                                        # employees NOT on the list
                                                                        # (PCM001 super admin is
                                                                        # always preserved)
+    python scripts/2026_08_12_reconcile_employees.py --apply --password-file PATH
+                                                                       # also set the System
+                                                                       # Administrator's password
+                                                                       # from the first line of PATH
 """
+import csv
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import app, db, Employee
@@ -32,45 +41,28 @@ from werkzeug.security import generate_password_hash
 # Authoritative employee list — CRM ACCESS ONLY.
 # Only these people should have CRM logins. Everyone else in the DB gets
 # deactivated when --purge is passed.
-# Ambiguous names on the request had multiple possible matches — my best
-# guess is noted in the comment. Tell me if any are wrong and I'll fix.
 # ──────────────────────────────────────────────────────────────────────
-EMPLOYEES = [
-    ('EMP3702025', 'Suranjan Aon'),                # "Suranjan"
-    ('EMP2992023', 'Dipanka Talukder'),            # "Dipanka"
-    ('EMP2882022', 'Seema Chattopadhyay'),         # "Seema"
-    ('EMP3542024', 'Sayan Das'),                   # "Syan" — best guess
-    ('EMP2972023', 'Jayanta Kumar Paul'),          # "Jayanta"
-    # "RP Shah" — no match in payroll master, SKIPPED. Send me his EMP code.
-    ('DIR12010',   'Nilesh Kumar Sinha'),          # Super Admin
-    ('DIR42010',   'T G Ramalingam'),              # "TGR"
-    ('EMP372011',  'Sanjna Vardhan'),              # "Sanjna"
-    ('EMP472012',  'Gowdhaman Rajakrishnan'),      # "Gowdhaman"
-    ('CON242017',  'Lakshmi Narayan'),             # "Laksmi Narayan"
-    ('EMP2982023', 'Sharayu Uday Bhosale'),        # "Sharayu"
-    ('CON142024',  'Seema Sanjeev Moghe'),         # "Seema Modhe"
-    ('EMP242010',  'Laxmi Ram Singh'),             # "Laxmi"
-    ('EMP3322023', 'Aryaan Shaikh'),               # "Aryan"
-    ('EMP4062026', 'Pravin Abasaheb Barde'),       # "Pravin" — best guess
-    ('DIR72012',   'Srinivas Marella'),            # "Srinivas"
-    ('CON1362025', 'Pravin Choudhary'),            # "Pravin Choudhary"
-    ('EMP3152023', 'Anurag Uday Chand'),           # "Anurag"
-    ('EMP1282017', 'Pravinkumar Arumugam'),        # "Pravin Kumar" — best guess
-    ('DIR52011',   'Sethupathy Sundaram'),         # "Sethupathy"
-    ('EMP2902022', 'Vipul Sinh Zala'),             # "Vipul"
-    ('DIR22010',   'James Francis Xavier'),        # "Francis Xavier"
-    ('EMP572012',  'Vijay T V'),                   # "TV Vijay"
-    ('EMP12010',   'Nitin Rawat'),                 # "Nitin Rawat"
-    ('EMP112010',  'Sanjeev Kumar Paliwal'),       # "Sanjeev Paliwal"
-    ('EMP3592024', 'Amit Kakkar'),                 # "Amit Kakkar"
-    ('EMP3212023', 'Sachin Thakur'),               # "Sachin"
-    ('EMP2642021', 'Kumar Satyam Ray'),            # "Satyam"
-]
+EMPLOYEES_CSV = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'data', 'private', 'reconcile_employees.csv')
+
+
+def load_employees(path=EMPLOYEES_CSV):
+    """(emp_code, name) rows from the private list; [] when it is absent."""
+    if not os.path.exists(path):
+        return []
+    with open(path, newline='', encoding='utf-8-sig') as fh:
+        return [((r.get('emp_code') or '').strip(), (r.get('name') or '').strip())
+                for r in csv.DictReader(fh)
+                if (r.get('emp_code') or '').strip()]
+
+
+EMPLOYEES = load_employees()
 
 
 # Role hints — only used if the record is new AND we don't have a value.
 # By default new employees get role='sales' (regular pre-sales user).
-# Nilesh, TGR, Sethupathy, Francis, Srinivas — DIR* codes — become 'admin'.
+# The directors — DIR* codes — become 'admin'.
 def default_role(emp_code):
     if emp_code.startswith('DIR'):
         return 'admin'
@@ -78,17 +70,18 @@ def default_role(emp_code):
 
 
 # Accounts that must NEVER be deactivated regardless of --purge.
-# (Empty now — the old PCM001 super admin is being retired. DIR12010
-# Nilesh becomes the sole super admin.)
+# (Empty now — the old PCM001 super admin is being retired. The System
+# Administrator (DIR12010) becomes the sole super admin.)
 PROTECTED_EMP_CODES = set()
 
-# Explicit password + role overrides for specific accounts (not the default
+# Explicit role overrides for specific accounts (not the default
 # "password = emp_code, must_change_pw = True" behaviour).
-# DIR12010 Nilesh gets his real chosen password so he doesn't have to
-# reset on first login. Role = admin (super admin).
+# The System Administrator (DIR12010) is not forced to reset on first login
+# and is promoted to admin (super admin). The password itself is never kept
+# in source: it is read from --password-file, and without one the password
+# step is skipped for this account.
 EXPLICIT_OVERRIDES = {
     'DIR12010': {
-        'password': 'Salesforce123',
         'must_change_pw': False,
         'role': 'admin',
     },
@@ -98,12 +91,30 @@ EXPLICIT_OVERRIDES = {
 # a different code that IS on the list, reassign all their leads to the
 # authoritative code so nothing gets lost.
 LEAD_REASSIGN_ON_PURGE = {
-    'EMP4092026': 'CON1362025',   # Pravin Choudhary — duplicate code, keep CON1362025
-    'PCM001':     'DIR12010',     # retire test super admin — transfer to real Nilesh
+    'EMP4092026': 'CON1362025',   # same employee under a duplicate code, keep CON1362025
+    'PCM001':     'DIR12010',     # retire test super admin — transfer to the System Administrator
 }
 
 
-def main(apply_changes: bool, purge_others: bool):
+def read_password_file(argv):
+    """The password in the file named by --password-file PATH, or None."""
+    if '--password-file' not in argv:
+        return None
+    i = argv.index('--password-file')
+    if i + 1 >= len(argv):
+        sys.exit('--password-file needs a PATH')
+    with open(argv[i + 1]) as fh:
+        password = fh.readline().rstrip('\r\n')
+    if not password:
+        sys.exit(f'--password-file {argv[i + 1]} is empty')
+    return password
+
+
+def main(apply_changes: bool, purge_others: bool, override_password=None):
+    if not EMPLOYEES:
+        # An empty list with --purge would deactivate every account.
+        sys.exit(f'employee list not found or empty: {EMPLOYEES_CSV} '
+                 f'(columns emp_code,name). Nothing done.')
     with app.app_context():
         existing_by_code = {e.emp_code: e
                             for e in Employee.query.all()}
@@ -116,9 +127,20 @@ def main(apply_changes: bool, purge_others: bool):
         for emp_code, full_name in EMPLOYEES:
             emp = existing_by_code.get(emp_code)
             override = EXPLICIT_OVERRIDES.get(emp_code, {})
-            init_password = override.get('password', emp_code)
-            must_change = override.get('must_change_pw', True)
+            # Without a supplied password the override cannot skip the
+            # forced change safely, so the password step falls back to the
+            # default for a new account and is skipped for an existing one.
+            skip_password = bool(override) and override_password is None
+            if override and not skip_password:
+                init_password = override_password
+                must_change = override.get('must_change_pw', True)
+            else:
+                init_password = emp_code
+                must_change = True
             role = override.get('role', default_role(emp_code))
+            if skip_password:
+                print(f'  ! {emp_code}: no --password-file given — '
+                      f'password step skipped for this account')
 
             if emp is None:
                 emp = Employee(
@@ -132,7 +154,8 @@ def main(apply_changes: bool, purge_others: bool):
                 if apply_changes:
                     db.session.add(emp)
                 new_count += 1
-                tag = ' (OVERRIDE — custom password, no forced change)' if override else ''
+                tag = (' (OVERRIDE — custom password, no forced change)'
+                       if override and not skip_password else '')
                 print(f'  + NEW  {emp_code:12s}  {full_name}  '
                       f'(role={role}){tag}')
             else:
@@ -143,15 +166,17 @@ def main(apply_changes: bool, purge_others: bool):
                     changes.append('name')
                     name_updated_count += 1
                 # Ensure they can log in
-                emp.password_hash = generate_password_hash(init_password)
-                emp.must_change_pw = must_change
+                if not skip_password:
+                    emp.password_hash = generate_password_hash(init_password)
+                    emp.must_change_pw = must_change
+                    pw_reset_count += 1
                 emp.is_active = True
                 if override:
                     emp.role = role     # explicit overrides also promote role
-                pw_reset_count += 1
                 if override:
                     print(f'  ~ UPDT {emp_code:12s}  {full_name}  '
-                          f'(role={role}, OVERRIDE — custom password)')
+                          f'(role={role}, OVERRIDE'
+                          f'{"" if skip_password else " — custom password"})')
                 elif changes:
                     print(f'  ~ UPDT {emp_code:12s}  {full_name}  '
                           f'(changed: {",".join(changes)})')
@@ -220,11 +245,12 @@ def main(apply_changes: bool, purge_others: bool):
             if purge_others and purge_orphaned_leads:
                 print()
                 print(f'  WARNING: {purge_orphaned_leads} lead(s) are still assigned to')
-                print(f'  now-deactivated employees. Nilesh (DIR12010) will still see')
+                print(f'  now-deactivated employees. The System Administrator (DIR12010) will still see')
                 print(f'  them in the admin view. Reassign via the Assign tab in CRM.')
 
 
 if __name__ == '__main__':
     apply = '--apply' in sys.argv
     purge = '--purge' in sys.argv
-    main(apply_changes=apply, purge_others=purge)
+    main(apply_changes=apply, purge_others=purge,
+         override_password=read_password_file(sys.argv))

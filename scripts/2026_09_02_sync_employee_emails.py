@@ -2,14 +2,16 @@
 """
 v2026-09-02 — Set each CRM employee's official email from the supplied list.
 
-The list in data/employee_emails_2026_09_02.txt is the authoritative source
-of official addresses. This walks every employee in the CRM and finds the
+The list in data/private/employee_emails_2026_09_02.txt is the authoritative
+source of official addresses. It holds personal data, so it is git-ignored;
+the old location data/employee_emails_2026_09_02.txt is still read if the
+file is there. This walks every employee in the CRM and finds the
 address that belongs to them, deriving a probable name from each address's
 local part and fuzzy-matching it against Employee.name:
 
-    rp.shah@procamgroup.in          -> "rp shah"
-    sahadeb.sahoo2012@gmail.com     -> "sahadeb sahoo"
-    PRAVIN.CHOUDHARY@PROCAMGROUP.IN -> "pravin choudhary"
+    first.last@procamgroup.in          -> "first last"
+    firstname.lastname2012@gmail.com   -> "firstname lastname"
+    FIRST.LAST@PROCAMGROUP.IN          -> "first last"
 
 Output is employee-centric, one row per employee, showing what they have
 now and what the official list says:
@@ -26,7 +28,7 @@ Examples:
     python scripts/2026_09_02_sync_employee_emails.py                    # preview
     python scripts/2026_09_02_sync_employee_emails.py --apply
     python scripts/2026_09_02_sync_employee_emails.py --apply --overwrite
-    python scripts/2026_09_02_sync_employee_emails.py --map PCM042=zahid.khan@procamgroup.in --apply
+    python scripts/2026_09_02_sync_employee_emails.py --map PCM042=employee.name@procamgroup.in --apply
 """
 import argparse
 import os
@@ -45,9 +47,25 @@ except ImportError:                                              # pragma: no co
 
 from app import app, db, Employee                             # noqa: E402
 
-DEFAULT_LIST = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    'data', 'employee_emails_2026_09_02.txt')
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_LIST = os.path.join(_ROOT, 'data', 'private',
+                            'employee_emails_2026_09_02.txt')
+# Where the list lived before personal data was moved out of git. Still
+# read so a server that has not moved its copy keeps working.
+LEGACY_LIST = os.path.join(_ROOT, 'data', 'employee_emails_2026_09_02.txt')
+
+
+def resolve_file(explicit):
+    """The address list to read: --file if given, else the private
+    location, else the legacy one. Exits naming both paths when neither
+    exists, rather than failing with a bare FileNotFoundError."""
+    if explicit:
+        return explicit
+    for path in (DEFAULT_LIST, LEGACY_LIST):
+        if os.path.exists(path):
+            return path
+    sys.exit(f'employee email list not found. Place it at {DEFAULT_LIST} '
+             f'(or the old location {LEGACY_LIST}), or pass --file PATH.')
 
 # Words that appear in local parts but never in a person's name.
 _NOISE = re.compile(r'(procam|myprocam|logistics|group|mail|admin)', re.I)
@@ -92,11 +110,13 @@ def main():
                     help='also replace an email that differs from the list')
     ap.add_argument('--include-inactive', action='store_true',
                     help='also process deactivated employees')
-    ap.add_argument('--file', default=DEFAULT_LIST)
+    ap.add_argument('--file', default=None,
+                    help=f'default: {DEFAULT_LIST}')
     ap.add_argument('--threshold', type=float, default=80.0)
     ap.add_argument('--map', action='append', default=[],
                     metavar='EMPCODE=EMAIL', help='force a mapping; repeatable')
     args = ap.parse_args()
+    args.file = resolve_file(args.file)
 
     addresses = load_addresses(args.file)
     guesses = [(a, name_from_email(a)) for a in addresses]

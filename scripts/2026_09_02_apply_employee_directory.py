@@ -2,8 +2,10 @@
 """
 v2026-09-02 — Set Employee.email from the official directory.
 
-data/employee_directory.csv is the authoritative emp_code -> email mapping
-supplied by the business. Matching is EXACT on emp_code — no fuzzy name
+data/private/employee_directory.csv is the authoritative emp_code -> email
+mapping supplied by the business. It holds personal data, so it is
+git-ignored; copy it into data/private/ on the machine that runs this. The
+old location data/employee_directory.csv is still read if the file is there. Matching is EXACT on emp_code — no fuzzy name
 guessing — so an address can never land on the wrong person.
 
 Reports four outcomes per row:
@@ -38,9 +40,24 @@ except ImportError:                                              # pragma: no co
 
 from app import app, db, Employee                             # noqa: E402
 
-DEFAULT_CSV = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    'data', 'employee_directory.csv')
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_CSV = os.path.join(_ROOT, 'data', 'private', 'employee_directory.csv')
+# Where the file lived before personal data was moved out of git. Still
+# read so a server that has not moved its copy keeps working.
+LEGACY_CSV = os.path.join(_ROOT, 'data', 'employee_directory.csv')
+
+
+def resolve_file(explicit):
+    """The directory file to read: --file if given, else the private
+    location, else the legacy one. Exits naming both paths when neither
+    exists, rather than failing with a bare FileNotFoundError."""
+    if explicit:
+        return explicit
+    for path in (DEFAULT_CSV, LEGACY_CSV):
+        if os.path.exists(path):
+            return path
+    sys.exit(f'employee directory not found. Place it at {DEFAULT_CSV} '
+             f'(or the old location {LEGACY_CSV}), or pass --file PATH.')
 
 
 def main():
@@ -50,8 +67,10 @@ def main():
     ap.add_argument('--apply', action='store_true', help='write the changes')
     ap.add_argument('--active-only', action='store_true',
                     help='skip deactivated employees')
-    ap.add_argument('--file', default=DEFAULT_CSV)
+    ap.add_argument('--file', default=None,
+                    help=f'default: {DEFAULT_CSV}')
     args = ap.parse_args()
+    args.file = resolve_file(args.file)
 
     with open(args.file) as fh:
         directory = [r for r in csv.DictReader(fh) if (r.get('emp_code') or '').strip()]

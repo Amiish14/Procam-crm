@@ -21,6 +21,12 @@ instance/
 uploads/
 data/imports/
 
+# Employee and customer lists hold personal data. Scripts read them from
+# data/private/ on the machine that runs them; never commit them.
+data/private/
+data/employee_directory.csv
+data/employee_emails_*.txt
+
 # Runtime state written next to the app on the server
 .leads_subscription_id
 cookies.txt
