@@ -1038,14 +1038,29 @@ class LeadNote(db.Model):
     # reader knows it may be email text rather than somebody's note.
     migrated_from_legacy = db.Column(db.Boolean, default=False)
     is_deleted = db.Column(db.Boolean, default=False, index=True)
+    # Every earlier version of this note, oldest first, as JSON:
+    # [{"note_text", "note_type", "replaced_at", "replaced_by"}]. An edit
+    # used to overwrite the text outright, so the history Family A
+    # requires to be append-only was lost one save at a time. The id
+    # stays stable, so nothing that links to a note breaks.
+    revisions  = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow,
                            onupdate=datetime.utcnow)
+
+    def revision_list(self):
+        import json as _json
+        try:
+            return _json.loads(self.revisions) if self.revisions else []
+        except Exception:
+            return []
 
     def to_dict(self):
         return {
             'id': self.id, 'lead_id': self.lead_id,
             'note_text': self.note_text or '',
+            'revision_count': len(self.revision_list()),
+            'edited': bool(self.revisions),
             'note_type': self.note_type or 'general',
             'author': self.author or '',
             'author_name': self.author_name or self.author or '',
@@ -3307,15 +3322,43 @@ def api_lead_note_add(lid):
 def api_lead_note_edit(lid, note_id):
     _require_lead_access(lid)
     row = LeadNote.query.filter_by(id=note_id, lead_id=lid).first_or_404()
+    if row.is_deleted:
+        return jsonify({'error': 'That note was deleted'}), 404
     d = request.get_json(silent=True) or {}
     text_ = (d.get('note_text') or '').strip()
     if not text_:
         return jsonify({'error': 'A note cannot be empty'}), 400
+    new_type = (d['note_type'] if d.get('note_type') in
+                ('call', 'meeting', 'email_followup', 'general')
+                else row.note_type)
+    if text_ == (row.note_text or '') and new_type == row.note_type:
+        return jsonify({'ok': True, 'note': row.to_dict()})
+
+    # Keep what is being replaced. Family A requires the note history to
+    # be append-only; an edit that overwrote the text in place lost the
+    # earlier version with no trace that it had ever existed.
+    import json as _json
+    history = row.revision_list()
+    history.append({'note_text': row.note_text or '',
+                    'note_type': row.note_type or 'general',
+                    'replaced_at': datetime.utcnow().isoformat()[:19],
+                    'replaced_by': session.get('emp_code') or ''})
+    row.revisions = _json.dumps(history)
     row.note_text = text_
-    if d.get('note_type') in ('call', 'meeting', 'email_followup', 'general'):
-        row.note_type = d['note_type']
+    row.note_type = new_type
     db.session.commit()
     return jsonify({'ok': True, 'note': row.to_dict()})
+
+
+@app.route('/api/leads/<int:lid>/notes/<int:note_id>/revisions',
+           methods=['GET'])
+@require_auth
+def api_lead_note_revisions(lid, note_id):
+    """Every earlier version of a note, oldest first — read-only."""
+    _require_lead_access(lid)
+    row = LeadNote.query.filter_by(id=note_id, lead_id=lid).first_or_404()
+    return jsonify({'ok': True, 'current': row.to_dict(),
+                    'revisions': row.revision_list()})
 
 
 @app.route('/api/leads/<int:lid>/notes/<int:note_id>', methods=['DELETE'])

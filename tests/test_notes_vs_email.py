@@ -475,3 +475,61 @@ def test_the_page_records_the_draft_and_moves_it_on_send(client):
     sent = src[src.index('async function markSent'):]
     sent = sent[:sent.index('\n}\n')]
     assert '/sent`' in sent, 'marking sent must move the draft'
+
+
+# ── A3 — editing a note keeps what it replaced ───────────────────────
+def _note(client, lid, text):
+    return client.post(f'/api/leads/{lid}/notes',
+                       json={'note_text': text}).get_json()['note']
+
+
+def test_editing_a_note_keeps_the_earlier_text(client):
+    """The edit endpoint overwrote note_text in place, so the append-only
+    history Family A requires was lost one save at a time."""
+    lid = _email_lead('Revision Ltd')
+    n = _note(client, lid, 'Called Krishnan, asked for 40 MT rate')
+    client.put(f'/api/leads/{lid}/notes/{n["id"]}',
+               json={'note_text': 'Called Krishnan, asked for 42 MT rate'})
+
+    body = client.get(f'/api/leads/{lid}/notes/{n["id"]}/revisions').get_json()
+    assert body['current']['note_text'] == 'Called Krishnan, asked for 42 MT rate'
+    assert [r['note_text'] for r in body['revisions']] == \
+        ['Called Krishnan, asked for 40 MT rate']
+    assert body['revisions'][0]['replaced_by'] == 'NOTEADM'
+
+
+def test_every_edit_is_kept_in_order(client):
+    lid = _email_lead('Many Edits Ltd')
+    n = _note(client, lid, 'v1')
+    for text in ('v2', 'v3'):
+        client.put(f'/api/leads/{lid}/notes/{n["id"]}', json={'note_text': text})
+    body = client.get(f'/api/leads/{lid}/notes/{n["id"]}/revisions').get_json()
+    assert [r['note_text'] for r in body['revisions']] == ['v1', 'v2']
+    assert body['current']['note_text'] == 'v3'
+    assert body['current']['revision_count'] == 2
+
+
+def test_an_unchanged_save_records_no_revision(client):
+    """Saving the same words twice is not an edit, and should not fill
+    the history with copies."""
+    lid = _email_lead('No Op Edit Ltd')
+    n = _note(client, lid, 'same text')
+    client.put(f'/api/leads/{lid}/notes/{n["id"]}', json={'note_text': 'same text'})
+    body = client.get(f'/api/leads/{lid}/notes/{n["id"]}/revisions').get_json()
+    assert body['revisions'] == []
+
+
+def test_a_deleted_note_cannot_be_edited(client):
+    lid = _email_lead('Deleted Edit Ltd')
+    n = _note(client, lid, 'gone')
+    client.delete(f'/api/leads/{lid}/notes/{n["id"]}')
+    r = client.put(f'/api/leads/{lid}/notes/{n["id"]}', json={'note_text': 'back'})
+    assert r.status_code == 404
+
+
+def test_editing_a_note_never_touches_the_email(client):
+    lid = _email_lead('Edit Leaves Email Ltd')
+    n = _note(client, lid, 'first')
+    client.put(f'/api/leads/{lid}/notes/{n["id"]}', json={'note_text': 'second'})
+    with flask_app.app_context():
+        assert db.session.get(Lead, lid).original_email_body == ENQUIRY
