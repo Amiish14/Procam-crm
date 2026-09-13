@@ -1,0 +1,13 @@
+[Unit]
+Description=Procam CRM — daily Data Quality snapshot
+After=network.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+# Counts only, written once per day per check; a rerun replaces the day's
+# row. Exit 1 means some checks failed and were recorded as gaps; exit 2
+# means nothing was written (usually: the migration has not been applied).
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/data_quality_snapshot.py --quiet
+Nice=10

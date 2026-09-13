@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily Procam CRM Data Quality snapshot
+
+[Timer]
+# After the backup (01:30) and the Copilot index (02:15), so it does not
+# compete with either for the database.
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
