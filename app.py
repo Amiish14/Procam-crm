@@ -5088,6 +5088,7 @@ for _mod_path, _bp_name in [
     ('app.triage.routes',        'triage_bp'),
     ('app.intake.routes',        'intake_bp'),
     ('app.copilot.routes',       'copilot_bp'),
+    ('app.ops.routes',           'ops_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])
