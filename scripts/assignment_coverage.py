@@ -107,9 +107,12 @@ def _samples(since, domains):
         domain = addr.rsplit('@', 1)[1]
         if domain not in want:
             continue
-        # original_email_* only exists on leads captured after that
-        # column was added. Before it, the body lived in notes.
-        text = (body or notes or '').strip()
+        # Only the preserved original. notes is deliberately NOT used
+        # as a fallback: that is the field the Notes-overwrites-the-
+        # enquiry bug corrupted, so on older leads it holds whatever a
+        # salesperson typed over the email. Judging a customer by that
+        # is how this script reported Siemens as non-business.
+        text = (body or '').strip()
         line = (subject or project or '').strip()
         if not text:
             continue        # judged on nothing is not judged
@@ -125,6 +128,29 @@ def _samples(since, domains):
             'ccRecipients': [],
         }
     return found
+
+
+def _preserved(since):
+    """How much of the history kept its enquiry text.
+
+    Without this the reader cannot tell an engine that judged badly from
+    an engine that had nothing to read.
+    """
+    from app import Lead, db
+    try:
+        total = (db.session.query(Lead.id)
+                 .filter(Lead.source == 'email',
+                         Lead.created_at >= since).count())
+        kept = (db.session.query(Lead.id)
+                .filter(Lead.source == 'email', Lead.created_at >= since,
+                        Lead.original_email_body.isnot(None),
+                        Lead.original_email_body != '').count())
+    except Exception:
+        db.session.rollback()
+        return 'could not measure how many enquiries were preserved'
+    pct = round(100 * kept / total) if total else 0
+    return (f'{kept} of {total} email lead(s) still have their original '
+            f'enquiry text ({pct}%).')
 
 
 def _verdicts(samples):
@@ -156,6 +182,9 @@ def main():
     ap.add_argument('--top', type=int, default=25,
                     help='how many unconfigured domains to list')
     ap.add_argument('--days', type=int, default=365)
+    ap.add_argument('--show', type=int, default=0, metavar='N',
+                    help='print what was actually sampled for the top N '
+                         'domains, so a verdict can be checked')
     ap.add_argument('--from', dest='source', default='auto',
                     choices=('auto', 'leads', 'classified'),
                     help='auto uses the lead history when the '
@@ -231,11 +260,19 @@ def main():
 
         gaps.sort(reverse=True)
         head = gaps[:max(args.top * 3, 60)]
-        verdicts = ({} if source == 'classified' else
-                    _verdicts(_samples(since, [g[2] for g in head])))
+        samples = ({} if source == 'classified'
+                   else _samples(since, [g[2] for g in head]))
+        verdicts = _verdicts(samples)
 
-        print(f'\n  {len(verdicts)} of {len(head)} top domains had a '
-              f'stored email to judge.')
+        print(f'\n  {_preserved(since)}')
+        print(f'  {len(verdicts)} of {len(head)} top domains had a stored '
+              f'enquiry to judge.')
+        if args.show:
+            for domain, msg in list(samples.items())[:args.show]:
+                body = msg['body']['content']
+                print(f'\n    --- {domain} ---')
+                print(f'    subject: {msg["subject"][:100]}')
+                print(f'    body   : {body[:240]!r}')
 
         worth, noise, unknown = [], [], []
         for n, lead_n, domain, account in head:
