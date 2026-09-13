@@ -79,6 +79,21 @@ def _lead_chip(lead):
     return {'type': 'lead', 'id': lead.id, 'label': lead.company or 'Lead'}
 
 
+def _nothing_recorded(label, module_hint=''):
+    """The answer for a table that is empty, not a filter that matched.
+
+    "Every RFQ in your scope has been quoted" is true when there are no
+    RFQs, and reads as reassurance. In production both the rfqs and
+    quotes tables held zero rows, so four intents were answering good
+    news about modules nobody has started using. Vacuous truth is the
+    quietest way for a system like this to mislead.
+    """
+    return Result(
+        headline=f'There are no {label} recorded in the CRM at all.',
+        empty=True,
+        notes=([module_hint] if module_hint else []))
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  MY DAY  ·  §5 daily sales
 # ══════════════════════════════════════════════════════════════════════
@@ -264,6 +279,13 @@ def rfqs_unquoted(scope, params):
     from app.models.quote import Quote
     from app.models.rfq import RFQ
 
+    if not sc_mod.rfqs(sc=scope).count():
+        return _nothing_recorded(
+            'RFQs',
+            'The RFQ module has no records yet, so this cannot tell you '
+            'what is outstanding. Leads at the "RFQ Generated" stage are '
+            'a separate count.')
+
     quoted_ids = {q.rfq_id for q in
                   Quote.query.with_entities(Quote.rfq_id)
                   .filter(Quote.rfq_id.isnot(None)).all()}
@@ -309,6 +331,11 @@ def rfqs_unquoted(scope, params):
 def quotes_awaiting_reply(scope, params):
     from app import LeadEmail
     from app.models.quote import Quote
+
+    if not sc_mod.quotes(sc=scope).count():
+        return _nothing_recorded(
+            'quotes',
+            'The Quotes module has no records yet.')
 
     days = int(params.get('days') or 0)
     q = sc_mod.quotes(sc=scope).filter(Quote.status == 'Submitted')
@@ -369,6 +396,10 @@ def quotes_above(scope, params):
     if threshold <= 0:
         return Result(headline='How large? Give me a figure — "quotes above '
                                '50 lakh", for instance.', empty=True)
+
+    if not sc_mod.quotes(sc=scope).count():
+        return _nothing_recorded('quotes',
+                                 'The Quotes module has no records yet.')
 
     found = (sc_mod.quotes(sc=scope)
              .filter(Quote.total_amount >= threshold)
@@ -766,6 +797,9 @@ def accounts_inactive(scope, params):
                   'recent handovers to operations'))
 def handovers_recent(scope, params):
     from app.models.tms_handover import WonHandover
+
+    if not sc_mod.handovers(sc=scope).count():
+        return _nothing_recorded('handovers')
 
     days = int(params.get('days') or 30)
     found = (sc_mod.handovers(sc=scope)

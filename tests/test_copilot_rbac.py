@@ -668,3 +668,52 @@ def test_an_owned_account_still_routes_to_its_owner(world):
         answer = svc.ask(
             f'is {world["theirs"]["account_name"]} already handled', sc=sc)
         assert 'Contact the account owner' in (answer.result.headline or '')
+
+
+def test_an_empty_module_says_so_rather_than_reporting_good_news(world):
+    """Production had zero RFQs and zero quotes, and the answer was
+    "Every RFQ in your scope has been quoted" — true, and read as
+    reassurance about a module nobody has started using. Vacuous truth
+    is the quietest way for this system to mislead."""
+    from app.models.quote import Quote
+    from app.models.rfq import RFQ
+
+    with flask_app.app_context():
+        # the fixture's own rows, set aside for this test only
+        RFQ.query.filter(RFQ.rfq_number.like('R-CP-%')).delete(
+            synchronize_session=False)
+        Quote.query.filter(Quote.quote_number.like('Q-CP-%')).delete(
+            synchronize_session=False)
+        db.session.commit()
+        try:
+            sc = _scope_for('CPADM', DataScope.ALL)
+            for key, word in (('rfqs_unquoted', 'RFQs'),
+                              ('quotes_awaiting_reply', 'quotes'),
+                              ('quotes_above', 'quotes')):
+                r = catalogue.get(key).handler(sc, {'amount': 1})
+                assert r.empty is True, key
+                assert f'no {word} recorded in the CRM at all' in r.headline, \
+                    f'{key}: {r.headline}'
+                assert 'quoted' not in r.headline.lower() or key != \
+                    'rfqs_unquoted'
+        finally:
+            db.session.add(RFQ(rfq_number='R-CP-1', subject='Acct rfq',
+                               account_id=world['mine']['account'],
+                               lead_id=world['mine']['lead'],
+                               lead_driver='CPREP'))
+            db.session.add(Quote(
+                quote_number='Q-CP-1', subject='Acct quote',
+                account_id=world['mine']['account'],
+                lead_id=world['mine']['lead'], prepared_by_id='CPREP',
+                status='Submitted', total_amount=1_000_000))
+            db.session.commit()
+
+
+def test_a_populated_module_still_answers_normally(world):
+    """The other half: "nothing recorded" must not become the answer to
+    everything just because a filter matched nothing."""
+    with flask_app.app_context():
+        sc = _scope_for('CPADM', DataScope.ALL)
+        r = catalogue.get('quotes_above').handler(sc, {'amount': 999_999_999})
+        assert 'no quotes recorded in the CRM at all' not in r.headline
+        assert 'No quotes above' in r.headline
