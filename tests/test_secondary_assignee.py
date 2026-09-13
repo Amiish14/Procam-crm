@@ -57,6 +57,12 @@ def client():
     return c
 
 
+#: §16 makes a reason mandatory when a primary PIC changes. Leads created
+#: through POST /api/leads are owned by their creator, so every "assign"
+#: in this module is a reassignment and carries one.
+REASON = 'Specialist required'
+
+
 def _lead(client, **kw):
     body = {'company': 'Test Co', 'source': 'manual'}
     body.update(kw)
@@ -68,7 +74,7 @@ def _lead(client, **kw):
 # ─── the pair ────────────────────────────────────────────────────────────
 def test_a_lead_saves_with_a_primary_only(client):
     lid = _lead(client, company='Primary Only Ltd')
-    r = client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001'})
+    r = client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001'})
     assert r.status_code == 200
     with flask_app.app_context():
         lead = db.session.get(Lead, lid)
@@ -79,7 +85,7 @@ def test_a_lead_saves_with_a_primary_only(client):
 
 def test_a_lead_takes_an_optional_secondary(client):
     lid = _lead(client, company='Both Ltd')
-    r = client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001',
+    r = client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001',
                                               'secondary_owner': 'PIC002'})
     assert r.status_code == 200
     with flask_app.app_context():
@@ -91,7 +97,7 @@ def test_a_lead_takes_an_optional_secondary(client):
 def test_one_person_cannot_be_both(client):
     """A monitor who is also the owner monitors nobody."""
     lid = _lead(client, company='Same Person Ltd')
-    r = client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001',
+    r = client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001',
                                               'secondary_owner': 'PIC001'})
     assert r.status_code == 400
     assert 'cannot be both' in r.get_json()['error']
@@ -103,14 +109,14 @@ def test_a_leaver_cannot_be_assigned(client):
     """Leads owned by someone who has left is an existing Data Quality
     finding; the assignment path should stop creating more."""
     lid = _lead(client, company='Leaver Ltd')
-    r = client.put(f'/api/leads/{lid}', json={'assigned_to': 'LEFT01'})
+    r = client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'LEFT01'})
     assert r.status_code == 400
     assert 'not an active employee' in r.get_json()['error']
 
 
 def test_the_secondary_can_be_cleared(client):
     lid = _lead(client, company='Clear Ltd')
-    client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001',
+    client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001',
                                           'secondary_owner': 'PIC002'})
     r = client.put(f'/api/leads/{lid}', json={'secondary_owner': ''})
     assert r.status_code == 200
@@ -122,7 +128,7 @@ def test_the_secondary_can_be_cleared(client):
 
 def test_the_lead_payload_exposes_both(client):
     lid = _lead(client, company='Payload Ltd')
-    client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001',
+    client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001',
                                           'secondary_owner': 'PIC002'})
     d = client.get(f'/api/leads/{lid}').get_json()
     assert d['assigned_to'] == 'PIC001'
@@ -133,7 +139,7 @@ def test_the_lead_payload_exposes_both(client):
 # ─── notifications ───────────────────────────────────────────────────────
 def test_both_assignees_are_notified(client):
     lid = _lead(client, company='Notify Ltd')
-    client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001',
+    client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001',
                                           'secondary_owner': 'PIC002'})
     with flask_app.app_context():
         notes = Notification.query.filter_by(entity_type='Lead',
@@ -146,7 +152,7 @@ def test_the_monitor_is_told_they_are_a_monitor(client):
     """If the wording is the same, two people think they own the lead —
     or each assumes the other does."""
     lid = _lead(client, company='Wording Ltd')
-    client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001',
+    client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001',
                                           'secondary_owner': 'PIC002'})
     with flask_app.app_context():
         primary = Notification.query.filter_by(
@@ -164,11 +170,11 @@ def test_an_unchanged_assignee_is_not_notified_again(client):
     """Adding a secondary must not re-notify a primary who has held the
     lead for a month."""
     lid = _lead(client, company='No Spam Ltd')
-    client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001'})
+    client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001'})
     with flask_app.app_context():
         before = Notification.query.filter_by(entity_id=lid,
                                               user_id='PIC001').count()
-    client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001',
+    client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001',
                                           'secondary_owner': 'PIC002'})
     with flask_app.app_context():
         after = Notification.query.filter_by(entity_id=lid,
@@ -178,7 +184,7 @@ def test_an_unchanged_assignee_is_not_notified_again(client):
 
 def test_notifications_link_back_to_the_lead(client):
     lid = _lead(client, company='Link Ltd')
-    client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001'})
+    client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001'})
     with flask_app.app_context():
         n = Notification.query.filter_by(entity_id=lid,
                                          user_id='PIC001').first()
@@ -188,9 +194,9 @@ def test_notifications_link_back_to_the_lead(client):
 # ─── history ─────────────────────────────────────────────────────────────
 def test_every_reassignment_is_recorded(client):
     lid = _lead(client, company='History Ltd')
-    client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001',
+    client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001',
                                           'secondary_owner': 'PIC002'})
-    client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC003'})
+    client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC003'})
     with flask_app.app_context():
         rows = (LeadAssignmentHistory.query.filter_by(lead_id=lid)
                 .order_by(LeadAssignmentHistory.id).all())
@@ -210,10 +216,10 @@ def test_every_reassignment_is_recorded(client):
 
 def test_a_no_op_assignment_writes_no_history(client):
     lid = _lead(client, company='Noop Ltd')
-    client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001'})
+    client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001'})
     with flask_app.app_context():
         before = LeadAssignmentHistory.query.filter_by(lead_id=lid).count()
-    client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001'})
+    client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001'})
     with flask_app.app_context():
         assert LeadAssignmentHistory.query.filter_by(
             lead_id=lid).count() == before
@@ -223,7 +229,7 @@ def test_assignment_shows_in_the_lead_timeline(client):
     """The timeline answers "why did this stall?", and changing hands is
     usually the answer."""
     lid = _lead(client, company='Timeline Ltd')
-    client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001',
+    client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001',
                                           'secondary_owner': 'PIC002'})
     events = client.get(f'/api/leads/{lid}/history').get_json()
     asg = [e for e in events if e['kind'] == 'assignment']
@@ -237,7 +243,7 @@ def test_bulk_assign_sets_both_and_records_each_lead(client):
     ids = [_lead(client, company=f'Bulk {i} Ltd') for i in range(3)]
     r = client.post('/api/leads/bulk-assign',
                     json={'ids': ids, 'emp_code': 'PIC001',
-                          'secondary_owner': 'PIC002'})
+                          'secondary_owner': 'PIC002', 'reason': REASON})
     assert r.status_code == 200
     assert r.get_json()['count'] == 3
     with flask_app.app_context():
@@ -248,8 +254,10 @@ def test_bulk_assign_sets_both_and_records_each_lead(client):
             # Counted by what this call wrote, not by total rows for the
             # id: leads deleted outside the API endpoint can leave
             # history behind, and SQLite reuses their ids.
-            mine = LeadAssignmentHistory.query.filter_by(
-                lead_id=lid, to_primary='PIC001', note='bulk assign').count()
+            mine = (LeadAssignmentHistory.query
+                    .filter_by(lead_id=lid, to_primary='PIC001')
+                    .filter(LeadAssignmentHistory.note.like('%bulk assign%'))
+                    .count())
             assert mine == 1, 'bulk assign skipped the history'
 
 
@@ -273,21 +281,118 @@ def test_a_lead_that_predates_the_column_still_works(client):
     d = client.get(f'/api/leads/{lid}').get_json()
     assert d['assigned_to'] == 'PIC001'
     assert d['secondary_owner'] == ''
-    r = client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC003'})
+    r = client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC003'})
     assert r.status_code == 200
 
 
 def test_a_non_admin_cannot_reassign(client):
     """Unchanged from before: reassignment is admin-only."""
     lid = _lead(client, company='Perms Ltd')
-    client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001'})
+    client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001'})
     other = flask_app.test_client()
     with other.session_transaction() as s:
         s.update(emp_code='PIC002', name='Secondary Person', role='user',
                  vertical='All')
-    other.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC002',
+    other.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC002',
                                          'secondary_owner': 'PIC003'})
     with flask_app.app_context():
         lead = db.session.get(Lead, lid)
         assert lead.assigned_to == 'PIC001'
         assert lead.secondary_owner is None
+
+
+# ── §16 — a reassignment carries a reason ────────────────────────────
+def test_reassigning_without_a_reason_is_refused(client):
+    lid = _lead(client, company='No Reason Ltd')
+    r = client.put(f'/api/leads/{lid}', json={'assigned_to': 'PIC001'})
+    assert r.status_code == 400
+    assert 'reason' in (r.get_json().get('error') or '').lower()
+    with flask_app.app_context():
+        assert db.session.get(Lead, lid).assigned_to != 'PIC001'
+
+
+def test_the_reason_reaches_the_history(client):
+    lid = _lead(client, company='Reason Kept Ltd')
+    client.put(f'/api/leads/{lid}',
+               json={'reassignment_reason': 'Different geography',
+                     'assigned_to': 'PIC001'})
+    with flask_app.app_context():
+        h = (LeadAssignmentHistory.query.filter_by(lead_id=lid,
+                                                   to_primary='PIC001')
+             .order_by(LeadAssignmentHistory.id.desc()).first())
+        assert h is not None and h.note == 'Different geography'
+
+
+def test_a_first_assignment_needs_no_reason(client):
+    """Giving an unassigned lead its first owner is not a reassignment —
+    the ingest, triage and review-accept paths all do exactly this."""
+    from app.services import lead_assignment
+    with flask_app.app_context():
+        lead = Lead(company='Unowned Ltd', source='email', assigned_to=None)
+        db.session.add(lead)
+        db.session.flush()
+        ok, err = lead_assignment.assign(lead, primary_code='PIC001',
+                                         actor=None, note=None)
+        db.session.commit()
+        assert ok, err
+        assert lead.assigned_to == 'PIC001'
+
+
+def test_changing_only_the_secondary_needs_no_reason(client):
+    """§16 makes the reason mandatory for the primary PIC. Adding or
+    changing the monitor is not reassigning the lead."""
+    lid = _lead(client, company='Secondary Only Ltd')
+    client.put(f'/api/leads/{lid}',
+               json={'reassignment_reason': REASON, 'assigned_to': 'PIC001'})
+    r = client.put(f'/api/leads/{lid}', json={'secondary_owner': 'PIC002'})
+    assert r.status_code == 200
+
+
+def test_bulk_reassignment_asks_once_for_a_reason(client):
+    ids = [_lead(client, company=f'Bulk Reason {i} Ltd') for i in range(2)]
+    r = client.post('/api/leads/bulk-assign',
+                    json={'ids': ids, 'emp_code': 'PIC001'})
+    assert r.status_code == 400
+    body = r.get_json()
+    assert body['needs_reason'] is True and body['reassigning'] == 2
+    with flask_app.app_context():
+        for lid in ids:
+            assert db.session.get(Lead, lid).assigned_to != 'PIC001', \
+                'a refused bulk action must change nothing'
+
+
+def test_bulk_rejects_a_reason_not_on_the_list(client):
+    ids = [_lead(client, company='Bulk Bad Reason Ltd')]
+    r = client.post('/api/leads/bulk-assign',
+                    json={'ids': ids, 'emp_code': 'PIC001',
+                          'reason': 'because I said so'})
+    assert r.status_code == 400
+
+
+def test_the_service_is_the_guard_not_the_screen(client):
+    """Every path that changes an owner goes through assign(), so the
+    rule holds for a caller that bypasses the UI entirely."""
+    from app.services import lead_assignment
+    with flask_app.app_context():
+        lead = Lead(company='Direct Call Ltd', source='manual',
+                    assigned_to='PIC002')
+        db.session.add(lead)
+        db.session.flush()
+        ok, err = lead_assignment.assign(lead, primary_code='PIC001',
+                                         actor='NOTADMIN')
+        db.session.rollback()
+        assert ok is False
+        assert err == lead_assignment.REASON_REQUIRED
+
+
+def test_the_assign_screen_asks_for_a_reason_on_reassignment(client):
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, 'templates', 'app.html')) as fh:
+        src = fh.read()
+    one = src[src.index('async function assignOne'):]
+    one = one[:one.index('\n}\n')]
+    assert 'askReassignReason()' in one
+    assert 'reassignment_reason' in one
+    bulk = src[src.index('async function bulkAssign'):]
+    bulk = bulk[:bulk.index('\n}\n')]
+    assert 'needs_reason' in bulk and 'askReassignReason()' in bulk

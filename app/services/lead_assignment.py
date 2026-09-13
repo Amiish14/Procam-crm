@@ -59,6 +59,11 @@ REASSIGNMENT_REASONS = (
 )
 
 
+#: Returned when a primary PIC is changed with no reason given.
+REASON_REQUIRED = ('Choose a reason for changing the primary PIC — it is '
+                   'recorded in the assignment history.')
+
+
 def assign(lead, primary_code=None, secondary_code=None, actor=None,
            note=None, notify=True, _defer_commit=False):
     """Set the primary and/or secondary PIC on a lead.
@@ -79,6 +84,16 @@ def assign(lead, primary_code=None, secondary_code=None, actor=None,
 
     if new_primary == old_primary and new_secondary == old_secondary:
         return True, None                       # nothing to do, no history
+
+    # §16 — a reassignment carries a reason. Only a GENUINE reassignment:
+    # an existing primary being replaced by a different person. Giving an
+    # unassigned lead its first owner is not a reassignment, needs no
+    # reason, and the ingest, triage and review-accept paths all do it.
+    # Enforced here because every path that changes an owner comes
+    # through this function, so no screen can reassign silently.
+    if (old_primary and new_primary and new_primary != old_primary
+            and not (note or '').strip()):
+        return False, REASON_REQUIRED
 
     err = validate(new_primary, new_secondary)
     if err:

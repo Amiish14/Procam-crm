@@ -4086,7 +4086,7 @@ async function rAssign(){
     <td><input type="checkbox" class="ac" value="${l.id}"></td>
     <td><div class="td-m">${e(l.company)}</div><div class="td-s">${e(l.industry||'')}</div></td>
     <td style="font-size:11.5px">${e(l.industry||'—')}</td><td style="font-size:11.5px">${e(l.state||'—')}</td>
-    <td><select class="fi" style="width:150px;padding:5px" onchange="assignOne(${l.id},this.value)"><option value="">— Assign —</option>${EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('')}</select></td>
+    <td><select class="fi" style="width:150px;padding:5px" onchange="assignOne(${l.id},this.value,undefined,'${e(l.assigned_to||'')}',this)"><option value="">— Assign —</option>${EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('')}</select></td>
     <td><select class="fi" style="width:150px;padding:5px" onchange="assignOne(${l.id},'${e(l.assigned_to||'')}',this.value)"><option value="">— none —</option>${EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.secondary_owner?' selected':''}>${e(em.name)}</option>`).join('')}</select></td>
     <td>${srb(l.source)}</td>
   </tr>`).join('');
@@ -4099,11 +4099,39 @@ async function rAssign(){
   if(g('blkU').children.length<2) g('blkU').insertAdjacentHTML('beforeend',EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join(''));
   if(g('blkU2') && g('blkU2').children.length<2) g('blkU2').insertAdjacentHTML('beforeend',EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join(''));
 }
-async function assignOne(id,ec,sec){
+const REASSIGN_REASONS = ['Different geography','Different service vertical',
+  'Different customer relationship owner','Capacity / workload',
+  'Specialist required','Incorrect automatic assignment','Other'];
+
+// §16 — changing an existing primary needs a reason. Asked only for a real
+// reassignment: giving an unassigned lead its first owner needs none.
+function askReassignReason(){
+  const pick = prompt('Why is this lead being reassigned?\n\n' +
+    REASSIGN_REASONS.map((r,i)=>`${i+1}. ${r}`).join('\n') +
+    '\n\nEnter a number:');
+  if(pick === null) return null;                 // cancelled
+  const r = REASSIGN_REASONS[parseInt(pick,10)-1];
+  if(!r){ toast('Pick a number from the list','err'); return null; }
+  return r;
+}
+
+async function assignOne(id,ec,sec,current,selectEl){
   const body={assigned_to:ec};
   if(sec!==undefined) body.secondary_owner=sec;
+  if(current && ec && ec !== current && sec === undefined){
+    const reason = askReassignReason();
+    if(!reason){
+      if(selectEl) selectEl.value = current;      // put the dropdown back
+      return false;
+    }
+    body.reassignment_reason = reason;
+  }
   const r=await api(`/api/leads/${id}`,{method:'PUT',body:JSON.stringify(body)});
-  if(r && r.error){toast(r.error,'err');return false;}
+  if(r && r.error){
+    toast(r.error,'err');
+    if(selectEl && current) selectEl.value = current;
+    return false;
+  }
   toast('Assigned ✓','ok');
   return true;
 }
@@ -4116,7 +4144,15 @@ async function bulkAssign(){
   if(!ids.length){toast('Select leads first','err');return;}
   const body={ids,emp_code:ec};
   if(sec) body.secondary_owner=sec;
-  const r=await api('/api/leads/bulk-assign',{method:'POST',body:JSON.stringify(body)});
+  let r=await api('/api/leads/bulk-assign',{method:'POST',body:JSON.stringify(body)});
+  if(r && r.needs_reason){
+    // Some of the selected leads already belong to someone else. Ask once
+    // for the whole batch rather than failing or skipping them quietly.
+    const reason = askReassignReason();
+    if(!reason){ toast('Bulk assign cancelled — nothing changed','err'); return; }
+    body.reason = reason;
+    r=await api('/api/leads/bulk-assign',{method:'POST',body:JSON.stringify(body)});
+  }
   if(r.error){toast(r.error,'err');return;}
   if(r.ok){rAssign();toast(`${r.count} leads assigned ✓`,'ok');}
 }

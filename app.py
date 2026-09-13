@@ -1898,15 +1898,38 @@ def api_bulk_assign():
     if not Employee.query.filter_by(emp_code=emp_code).first():
         return jsonify({'error': 'Employee not found'}), 404
 
+    leads = Lead.query.filter(Lead.id.in_(ids)).all()
+    reason = (d.get('reason') or '').strip()
+
+    # §16 — moving leads away from an existing owner needs a reason. Asked
+    # for once, up front, rather than silently skipping those rows: a
+    # partial bulk action that reports "done" is worse than a clear
+    # refusal.
+    taking = [l for l in leads
+              if l.assigned_to and l.assigned_to != emp_code]
+    if taking and not reason:
+        return jsonify({
+            'error': (f'{len(taking)} of these leads already have a '
+                      f'different owner. Choose a reason for reassigning '
+                      f'them.'),
+            'needs_reason': True, 'reassigning': len(taking)}), 400
+    if reason and reason not in lead_assignment.REASSIGNMENT_REASONS:
+        return jsonify({'error': 'Choose a reason from the list.'}), 400
+
     # Row by row rather than a bulk UPDATE: each lead needs its own
     # history entry and its own notification, and the previous owner
     # differs per row.
     done = 0
-    for lead in Lead.query.filter(Lead.id.in_(ids)).all():
+    for lead in leads:
         ok, err = lead_assignment.assign(
             lead, primary_code=emp_code,
             secondary_code=secondary if 'secondary_owner' in d else None,
-            actor=session.get('emp_code'), note='bulk assign')
+            actor=session.get('emp_code'),
+            # The reason AND where it came from. Recording only the reason
+            # dropped "bulk assign" from the history, which is the one
+            # detail that tells a later reader this was not a considered
+            # one-lead decision.
+            note=(f'{reason} — bulk assign' if reason else 'bulk assign'))
         if ok:
             done += 1
     db.session.commit()
