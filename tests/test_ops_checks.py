@@ -396,7 +396,12 @@ def test_certificate_problems(ctx, monkeypatch):
     ctx.base_url = 'http://crm.example.test'
     assert C.check_certificate(ctx)['status'] == WARN
     ctx.base_url = 'https://crm.example.test'
-    assert C.check_certificate(ctx)['status'] == UNKNOWN        # no network
+
+    def no_handshake(*a, **kw):
+        raise AssertionError('TLS handshake attempted with --no-network')
+    monkeypatch.setattr(C, '_peer_cert', no_handshake)
+    r = C.check_certificate(ctx)
+    assert r['status'] == UNKNOWN and '--no-network' in r['detail']
     ctx.network = True
 
     def invalid(*a, **kw):
