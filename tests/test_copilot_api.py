@@ -28,8 +28,14 @@ from app.models.access import DataScope                   # noqa: E402
 flask_app.config['WTF_CSRF_ENABLED'] = False
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture()
 def world():
+    """Re-ensured per test, not per module.
+
+    Module scope was not survivable: other suites in the same run wipe
+    and archive leads, and a fixture that builds its world once has no
+    way to notice. Idempotent, so re-running it is cheap.
+    """
     with flask_app.app_context():
         db.create_all()
         for code, role in (('CAADM', 'admin'), ('CAREP', 'user')):
@@ -98,11 +104,17 @@ def test_the_request_cannot_ask_as_somebody_else(world):
 
 
 def test_the_admin_really_does_see_more(world):
-    """The control: without it the test above passes on an empty CRM."""
-    body = _c('CAADM').post('/api/copilot/ask',
-                            json={'q': 'my open leads'}).get_json()
-    names = {r['Company'] for r in body.get('rows', [])}
-    assert 'ApiCo CAREP' in names and 'ApiCo CAADM' in names
+    """The control: without it the test above passes on an empty CRM.
+
+    Counted rather than listed, for the same reason as the streaming
+    test — the visible rows are capped.
+    """
+    rep = _c('CAREP').post('/api/copilot/ask',
+                           json={'q': 'my open leads'}).get_json()
+    adm = _c('CAADM').post('/api/copilot/ask',
+                           json={'q': 'my open leads'}).get_json()
+    assert adm['figures']['count'] > rep['figures']['count']
+    assert rep['figures']['count'] == 1
 
 
 # ── the answer carries what the panel needs ──────────────────────────
@@ -302,3 +314,96 @@ def test_the_brief_is_scoped_like_everything_else(world):
     rep = _c('CAREP').get('/api/copilot/brief').get_json()['brief']
     adm = _c('CAADM').get('/api/copilot/brief').get_json()['brief']
     assert rep['figures'] != adm['figures'] or rep['empty']
+
+
+# ── §6.3 streaming ───────────────────────────────────────────────────
+def _stages(client, question, **extra):
+    """Parse the SSE body into the stages it emitted."""
+    import json
+
+    payload = {'q': question}
+    payload.update(extra)
+    r = client.post('/api/copilot/ask/stream', json=payload)
+    assert r.status_code == 200, r.status_code
+    assert r.mimetype == 'text/event-stream'
+    out = []
+    for block in r.get_data(as_text=True).split('\n\n'):
+        line = block.strip()
+        if line.startswith('data:'):
+            out.append(json.loads(line[5:].strip()))
+    return out
+
+
+def test_streaming_emits_the_stages_in_order(world):
+    stages = [s['stage'] for s in _stages(_c('CAREP'), 'my open leads')]
+    assert stages[0] == 'thinking'
+    assert 'intent' in stages
+    assert 'result' in stages
+    assert stages[-1] == 'done'
+    # the table must arrive before the prose is finished
+    assert stages.index('result') < stages.index('done')
+
+
+def test_the_streamed_answer_matches_the_single_shot_one(world):
+    """Two routes to the same answer must not disagree — a user who
+    reloads onto the fallback path should see the same thing."""
+    streamed = _stages(_c('CAREP'), 'my open leads')[-1]
+    single = _c('CAREP').post('/api/copilot/ask',
+                              json={'q': 'my open leads'}).get_json()
+    assert streamed['intent'] == single['intent']
+    assert streamed['headline'] == single['headline']
+    assert [r['Company'] for r in streamed['rows']] == \
+           [r['Company'] for r in single['rows']]
+
+
+def test_streaming_is_scoped_like_everything_else(world):
+    """Asserted on the count, not the visible rows.
+
+    Answers are capped at ROW_CAP and ordered newest first, so in a full
+    test run another suite's leads can push these off the admin's page.
+    That is the answer working as designed; a test that reads the capped
+    list as the whole result is testing the cap.
+    """
+    rep = _stages(_c('CAREP'), 'my open leads')[-1]
+    assert {r['Company'] for r in rep['rows']} == {'ApiCo CAREP'}
+    assert rep['figures']['count'] == 1
+
+    adm = _stages(_c('CAADM'), 'my open leads')[-1]
+    assert adm['figures']['count'] > rep['figures']['count']
+
+
+def test_anonymous_cannot_stream(world):
+    r = flask_app.test_client().post('/api/copilot/ask/stream',
+                                     json={'q': 'my day'})
+    assert r.status_code == 401
+
+
+def test_a_refused_intent_still_completes_the_stream(world):
+    """A client waiting for 'done' must always get one."""
+    stages = _stages(_c('CAREP'), 'where are we losing')
+    assert stages[-1]['stage'] == 'done'
+    assert 'access' in (stages[-1].get('prose') or '').lower()
+
+
+def test_an_unrecognised_question_completes_the_stream(world):
+    stages = _stages(_c('CAREP'), 'forecast next quarter revenue by region')
+    assert stages[-1]['stage'] == 'done'
+    assert stages[-1]['intent'] is None
+
+
+def test_a_streamed_question_is_audited_once(world):
+    from app.models.copilot import CopilotLog
+
+    with flask_app.app_context():
+        before = CopilotLog.query.count()
+    _stages(_c('CAREP'), 'my open leads')
+    with flask_app.app_context():
+        assert CopilotLog.query.count() == before + 1
+
+
+def test_the_streamed_answer_carries_a_log_id_for_feedback(world):
+    done = _stages(_c('CAREP'), 'my open leads')[-1]
+    assert done.get('log_id')
+    r = _c('CAREP').post('/api/copilot/feedback',
+                         json={'log_id': done['log_id'], 'helpful': True})
+    assert r.status_code == 200

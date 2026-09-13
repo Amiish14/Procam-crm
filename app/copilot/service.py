@@ -515,6 +515,78 @@ def narrate(question, intent, result):
     return prose or result.headline
 
 
+# ── §6.3 streaming ───────────────────────────────────────────────────
+def ask_stream(question, *, sc=None, history=None, actor=None,
+               context=None):
+    """Yield the answer in stages, as it becomes known.
+
+    Deliberately staged rather than token-by-token. The stages are the
+    real milestones — we know the intent before we have the data, and
+    the data before the prose — so the panel can show what it is doing
+    instead of an undifferentiated spinner. Token streaming only has
+    something to add once a model is writing the prose, and it slots
+    into the 'prose' stage when one is.
+
+    Every stage is a complete, valid answer fragment. A client that
+    stops reading early has fewer stages, never a broken one.
+    """
+    import time as _time
+
+    started = _time.time()
+    sc = sc or scope_mod.current()
+    question = (question or '').strip()
+    if not question:
+        yield {'stage': 'done', 'prose': 'Ask me something about the CRM.'}
+        return
+
+    yield {'stage': 'thinking', 'scope_note': _scope_note(sc)}
+
+    key, params, model_used = classify(question, sc, history=history)
+    intent = catalogue.get(key) if key else None
+
+    if intent is None:
+        answer = _unrecognised(question, sc, started)
+        answer.log_id = _audit(question, answer, sc, actor=actor)
+        yield {'stage': 'done', **answer.to_dict()}
+        return
+
+    yield {'stage': 'intent', 'intent': intent.key, 'label': intent.label}
+
+    if intent.permission and not sc.can(intent.permission):
+        answer = _not_entitled(intent, sc, started)
+        answer.log_id = _audit(question, answer, sc, actor=actor)
+        yield {'stage': 'done', **answer.to_dict()}
+        return
+
+    params = dict(params or {})
+    if context:
+        params.setdefault('context', context)
+        if context.get('type') == 'lead' and context.get('id'):
+            params.setdefault('lead_id', context['id'])
+
+    try:
+        result = intent.handler(sc, params)
+    except Exception:
+        _log_exception(intent.key)
+        result = catalogue.Result(
+            headline='Something went wrong reading that from the CRM.',
+            empty=True,
+            notes=['The failure is logged. Nothing was changed.'])
+
+    # The table is ready before the prose is. Send it, so the numbers
+    # are on screen while the sentence is still being written.
+    yield {'stage': 'result', **result.to_dict()}
+
+    prose = (narrate(question, intent, result) if not result.empty
+             else result.headline)
+    ms = int((_time.time() - started) * 1000)
+    answer = Answer(intent_key=intent.key, result=result, prose=prose,
+                    scope_note=_scope_note(sc), ms=ms,
+                    model_used=model_used)
+    answer.log_id = _audit(question, answer, sc, actor=actor)
+    yield {'stage': 'done', **answer.to_dict()}
+
+
 # ── the paths that are not an answer ─────────────────────────────────
 def _unrecognised(question, sc, started):
     suggestions = [i.label for i in catalogue.available(sc)][:6]

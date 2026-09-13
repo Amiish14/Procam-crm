@@ -337,23 +337,119 @@
     var payload = {q: q, history: history.slice(-6)};
     if (context) payload.context = context;
 
-    jf('/api/copilot/ask', {method:'POST', body: JSON.stringify(payload)})
-      .then(function(j){
-        send.disabled = false;
-        if (!j || !j.ok){
+    // §6.3 — stream when the browser can, so the table appears while
+    // the sentence is still being written. Anything older falls back to
+    // the single-shot endpoint and sees the same answer, later.
+    if (window.fetch && window.TextDecoder){
+      streamIt(turn, q, payload);
+    } else {
+      jf('/api/copilot/ask', {method:'POST', body: JSON.stringify(payload)})
+        .then(function(j){
+          send.disabled = false;
+          if (!j || !j.ok){
+            turn.querySelector('.pai-a').textContent =
+              'Something went wrong asking that.';
+            return;
+          }
+          history.push(q);
+          turn.querySelector('.pai-a').innerHTML = renderAnswer(j);
+          wireChips(turn, j);
+          body.scrollTop = body.scrollHeight;
+        })
+        .catch(function(){
+          send.disabled = false;
           turn.querySelector('.pai-a').textContent =
-            'Something went wrong asking that.';
-          return;
+            'Could not reach the CRM. Nothing was changed.';
+        });
+    }
+  }
+
+  var STAGE_LABEL = {thinking: 'Reading the CRM…',
+                     intent: 'Looking up ', result: 'Writing it up…'};
+
+  function streamIt(turn, q, payload){
+    var slot = turn.querySelector('.pai-a');
+    var url = PREFIX + '/api/copilot/ask/stream';
+    var last = null;
+
+    fetch(url, {method: 'POST', headers: {
+                  'Content-Type': 'application/json',
+                  'X-CSRFToken': csrf()},
+                body: JSON.stringify(payload)})
+      .then(function(res){
+        if (!res.ok || !res.body) throw new Error('no stream');
+        var reader = res.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+
+        function pump(){
+          return reader.read().then(function(r){
+            if (r.done){ finish(); return; }
+            buffer += decoder.decode(r.value, {stream: true});
+            var parts = buffer.split('\n\n');
+            buffer = parts.pop();
+            parts.forEach(function(p){
+              var line = p.replace(/^data:\s*/, '').trim();
+              if (!line) return;
+              var msg;
+              try { msg = JSON.parse(line); } catch (e) { return; }
+              onStage(msg);
+            });
+            return pump();
+          });
         }
-        history.push(q);
-        turn.querySelector('.pai-a').innerHTML = renderAnswer(j);
-        wireChips(turn, j);
-        body.scrollTop = body.scrollHeight;
+
+        function onStage(msg){
+          if (msg.stage === 'done'){ last = msg; return; }
+          if (msg.stage === 'result'){
+            // The numbers are ready before the prose. Show them.
+            last = msg;
+            slot.innerHTML = renderAnswer(msg);
+            body.scrollTop = body.scrollHeight;
+            return;
+          }
+          var label = STAGE_LABEL[msg.stage] || '';
+          if (msg.stage === 'intent') label += (msg.label || '') + '…';
+          if (!slot.querySelector('.pai-t')){
+            slot.innerHTML = '<span class="pai-load"></span> ' +
+              '<span class="pai-note" style="font-style:normal">' +
+              esc(label) + '</span>';
+          }
+        }
+
+        function finish(){
+          send.disabled = false;
+          if (!last){
+            slot.textContent = 'Something went wrong asking that.';
+            return;
+          }
+          history.push(q);
+          slot.innerHTML = renderAnswer(last);
+          wireChips(turn, last);
+          body.scrollTop = body.scrollHeight;
+        }
+
+        return pump();
       })
       .catch(function(){
-        send.disabled = false;
-        turn.querySelector('.pai-a').textContent =
-          'Could not reach the CRM. Nothing was changed.';
+        // Streaming refused — ask the ordinary way rather than fail.
+        jf('/api/copilot/ask', {method:'POST',
+                                body: JSON.stringify(payload)})
+          .then(function(j){
+            send.disabled = false;
+            if (!j || !j.ok){
+              slot.textContent = 'Something went wrong asking that.';
+              return;
+            }
+            history.push(q);
+            slot.innerHTML = renderAnswer(j);
+            wireChips(turn, j);
+          })
+          .catch(function(){
+            send.disabled = false;
+            slot.textContent =
+              'Could not reach the CRM. Nothing was changed.';
+          });
       });
   }
 

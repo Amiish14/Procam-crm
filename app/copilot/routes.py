@@ -42,6 +42,48 @@ def api_ask():
     return jsonify(ok=True, **answer.to_dict())
 
 
+@bp.route('/api/copilot/ask/stream', methods=['POST'])
+def api_ask_stream():
+    """§6.3 — the same answer, in stages, over server-sent events.
+
+    The scope is resolved before the generator starts. stream_with_context
+    would keep the request context alive either way, so this is not
+    load-bearing — it is deliberate: the boundary is fixed at the moment
+    the question was asked and cannot be re-read part-way through a
+    response, whatever a later refactor does to the context handling.
+    """
+    import json
+
+    from flask import Response, stream_with_context
+
+    if not _authed():
+        return jsonify(ok=False, error='Not authenticated'), 401
+
+    d = request.get_json(silent=True) or {}
+    ctx = d.get('context')
+    sc = scope_mod.current()
+    actor = _actor()
+
+    def events():
+        try:
+            for chunk in svc.ask_stream(
+                    (d.get('q') or '')[:1000], sc=sc,
+                    history=d.get('history') or [],
+                    context=ctx if isinstance(ctx, dict) else None,
+                    actor=actor):
+                yield f'data: {json.dumps(chunk, default=str)}\n\n'
+        except Exception:
+            yield ('data: ' + json.dumps(
+                {'stage': 'done', 'ok': False,
+                 'prose': 'Something went wrong. Nothing was changed.'})
+                + '\n\n')
+
+    return Response(stream_with_context(events()),
+                    mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache',
+                             'X-Accel-Buffering': 'no'})
+
+
 @bp.route('/api/copilot/suggestions', methods=['GET'])
 def api_suggestions():
     if not _authed():
