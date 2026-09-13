@@ -670,3 +670,87 @@ def test_a_quick_correction_is_recorded_as_training_data(world):
         row = db.session.get(EmailClassification, cid)
         assert row.corrected_to == K.INTERNAL
         assert row.corrected_at is not None
+
+
+# ── B3 — reassignment teaches the owner mapping ──────────────────────
+def _reassign_n(world, n, *, was='VH9', now='OPS9'):
+    from app import Lead, LeadAssignmentHistory
+    with flask_app.app_context():
+        ids = []
+        for i in range(n):
+            lead = Lead(company='Screen Steel Ltd', company_id=world['acct'],
+                        source='email', assigned_to=now)
+            db.session.add(lead)
+            db.session.flush()
+            db.session.add(LeadAssignmentHistory(
+                lead_id=lead.id, from_primary=was, to_primary=now,
+                changed_by='SCRADM', note='Incorrect automatic assignment'))
+            ids.append(lead.id)
+        db.session.commit()
+        return ids
+
+
+def test_repeated_reassignment_away_from_the_default_is_proposed(world):
+    from app import Company
+    from app.intake import learning
+    with flask_app.app_context():
+        c = db.session.get(Company, world['acct'])
+        c.pic_emp_code = 'VH9'
+        db.session.commit()
+    _reassign_n(world, 3)
+    with flask_app.app_context():
+        props = [p for p in learning.proposals()
+                 if p['kind'] == 'account_owner']
+    assert any(p['key'] == f'owner:{world["acct"]}:OPS9' for p in props)
+
+
+def test_two_reassignments_are_not_a_pattern(world):
+    from app.intake import learning
+    from app import Company, LeadAssignmentHistory
+    with flask_app.app_context():
+        LeadAssignmentHistory.query.delete()
+        c = db.session.get(Company, world['acct'])
+        c.pic_emp_code = 'BAK9'
+        db.session.commit()
+    _reassign_n(world, 2, was='BAK9', now='OPS9')
+    with flask_app.app_context():
+        keys = {p['key'] for p in learning.proposals()}
+    assert f'owner:{world["acct"]}:OPS9' not in keys
+
+
+def test_moves_between_non_defaults_teach_nothing_about_the_mapping(world):
+    """A lead passed between two people who are not the account default
+    says nothing about whether the default is right."""
+    from app.intake import learning
+    from app import Company, LeadAssignmentHistory
+    with flask_app.app_context():
+        LeadAssignmentHistory.query.delete()
+        c = db.session.get(Company, world['acct'])
+        c.pic_emp_code = 'VH9'
+        db.session.commit()
+    _reassign_n(world, 4, was='BAK9', now='OPS9')
+    with flask_app.app_context():
+        keys = {p['key'] for p in learning.proposals()}
+    assert f'owner:{world["acct"]}:OPS9' not in keys
+
+
+def test_nothing_changes_until_a_person_applies_it(world):
+    """Proposed, never applied. Changing who owns a customer must not
+    happen because a counter crossed three."""
+    from app import Company, LeadAssignmentHistory
+    from app.intake import learning
+    with flask_app.app_context():
+        LeadAssignmentHistory.query.delete()
+        c = db.session.get(Company, world['acct'])
+        c.pic_emp_code = 'VH9'
+        db.session.commit()
+    _reassign_n(world, 5)
+    with flask_app.app_context():
+        learning.proposals()
+        assert db.session.get(Company, world['acct']).pic_emp_code == 'VH9'
+
+        ok, msg = learning.apply_proposal(f'owner:{world["acct"]}:OPS9',
+                                          actor='SCRADM')
+        db.session.commit()
+        assert ok, msg
+        assert db.session.get(Company, world['acct']).pic_emp_code == 'OPS9'

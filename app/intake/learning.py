@@ -55,6 +55,7 @@ def proposals(days=180, min_evidence=MIN_EVIDENCE):
     out += _block_proposals(rows, min_evidence)
     out += _phrase_proposals(rows, min_evidence)
     out += _misclass_proposals(rows, min_evidence)
+    out += _owner_proposals(days, min_evidence)
     out.sort(key=lambda p: -p['evidence'])
     return [p for p in out if not _is_dismissed(p['key'])]
 
@@ -223,6 +224,69 @@ def _misclass_proposals(rows, min_evidence):
     return out
 
 
+def _owner_proposals(days, min_evidence):
+    """Reassignment is a correction too — of the account's owner mapping.
+
+    When leads that auto-assigned to an account's default PIC keep being
+    moved to the same other person, the default is wrong and every future
+    lead from that account will be wrong the same way. Proposed, never
+    applied: changing who owns a customer is exactly the kind of decision
+    that must not happen because a counter crossed three.
+    """
+    from app import Company, Lead, LeadAssignmentHistory, Employee
+
+    since = datetime.utcnow() - timedelta(days=days)
+    try:
+        moves = (LeadAssignmentHistory.query
+                 .filter(LeadAssignmentHistory.changed_at >= since,
+                         LeadAssignmentHistory.from_primary.isnot(None),
+                         LeadAssignmentHistory.to_primary.isnot(None))
+                 .all())
+    except Exception:
+        return []
+    if not moves:
+        return []
+
+    lead_ids = {m.lead_id for m in moves}
+    company_of = {l.id: l.company_id for l in
+                  Lead.query.with_entities(Lead.id, Lead.company_id)
+                  .filter(Lead.id.in_(list(lead_ids))).all()}
+
+    tally = Counter()
+    for m in moves:
+        company_id = company_of.get(m.lead_id)
+        if not company_id or m.from_primary == m.to_primary:
+            continue
+        tally[(company_id, m.from_primary, m.to_primary)] += 1
+
+    names = {e.emp_code: e.name for e in Employee.query.with_entities(
+        Employee.emp_code, Employee.name).all()}
+    out = []
+    for (company_id, was, now), n in tally.items():
+        if n < min_evidence:
+            continue
+        company = Company.query.get(company_id)
+        # Only a move away from the account's CURRENT default says the
+        # default is wrong. A lead reassigned between two non-defaults
+        # tells us nothing about the mapping.
+        if company is None or company.pic_emp_code != was:
+            continue
+        out.append({
+            'key': f'owner:{company_id}:{now}',
+            'kind': 'account_owner',
+            'title': (f'Make {names.get(now, now)} the default owner of '
+                      f'{company.name}'),
+            'detail': (f'{n} leads auto-assigned to {names.get(was, was)} '
+                       f'were reassigned to {names.get(now, now)} in the '
+                       f'last {days} days. Future leads from this account '
+                       f'would go to {names.get(now, now)} directly.'),
+            'evidence': n,
+            'payload': {'company_id': company_id, 'from': was, 'to': now},
+            'examples': [],
+        })
+    return out
+
+
 # ─── acting on a proposal ────────────────────────────────────────────────
 def _dismissed_key(key):
     return f'intake_learning_dismissed:{key}'[:200]
@@ -266,6 +330,24 @@ def apply_proposal(key, *, actor=None):
         domain = key.split(':', 1)[1]
         ok, msg = _append_blocklist(domain)
         return ok, msg
+
+    if key.startswith('owner:'):
+        from app import Company, Employee
+        try:
+            _, company_id, emp_code = key.split(':', 2)
+            company = Company.query.get(int(company_id))
+        except (ValueError, TypeError):
+            return False, f'Malformed proposal {key}'
+        if company is None:
+            return False, 'That account no longer exists'
+        if not Employee.query.filter_by(emp_code=emp_code,
+                                        is_active=True).first():
+            return False, f'{emp_code} is not an active employee'
+        previous = company.pic_emp_code
+        company.pic_emp_code = emp_code
+        return True, (f'{company.name} now defaults to {emp_code} '
+                      f'(was {previous or "nobody"}). Existing leads keep '
+                      f'their owners.')
 
     if key.startswith('phrase:'):
         # Deliberately not automated. A phrase list lives in source, and
