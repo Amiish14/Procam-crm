@@ -319,6 +319,86 @@ def reclassify(classification_id, *, to_class, reason=None, actor=None):
     return row, None
 
 
+def merge(classification_id, *, lead_id, actor=None):
+    """Attach this email to a lead that already exists — §21.
+
+    Reclassifying to "existing lead communication" records the right
+    answer but leaves the email nowhere: the label is training data, and
+    the trail on the lead is what a salesperson actually reads. This
+    does both, and needs the lead named because the classifier could not
+    work out which one.
+    """
+    from app import EmailClassification, Lead, LeadEmail
+    from app.services import lead_intake_db as lidb
+
+    row = db.session.get(EmailClassification, int(classification_id))
+    if row is None:
+        return None, 'Not found'
+    try:
+        lead = db.session.get(Lead, int(lead_id))
+    except (TypeError, ValueError):
+        return None, 'Give the lead number to merge into'
+    if lead is None:
+        return None, f'There is no lead #{lead_id}'
+
+    payload = row.payload or {}
+    already = (LeadEmail.query
+               .filter_by(lead_id=lead.id, message_id=row.message_id).first()
+               if row.message_id else None)
+    if already is None:
+        db.session.add(LeadEmail(
+            lead_id=lead.id,
+            direction='inbound',
+            from_addr=row.from_addr,
+            to_addr=', '.join(payload.get('to') or []) or None,
+            cc=', '.join(payload.get('cc') or []) or None,
+            subject=(row.subject or '')[:500] or None,
+            body=(payload.get('body') or '')[:8000] or None,
+            source='merged_at_review',
+            status='received',
+            message_id=row.message_id,
+            intake_class=li.Klass.EXISTING,
+        ))
+
+    row.matched_lead_id = lead.id
+    row.review_state = 'merged'
+    lidb.correct(row, li.Klass.EXISTING,
+                 reason='Existing Lead Communication', by=actor)
+    return row, None
+
+
+def reassign(classification_id, *, primary_code, secondary_code=None,
+             reason=None, actor=None):
+    """Put the lead this email produced in front of the right person — §21.
+
+    Only reaches a lead that exists: this row either created one or was
+    merged into one. Reassigning an email that is not yet a lead would
+    be assigning nothing.
+    """
+    from app import EmailClassification, Lead
+    from app.services import lead_assignment
+
+    row = db.session.get(EmailClassification, int(classification_id))
+    if row is None:
+        return None, 'Not found'
+    lead_id = row.created_lead_id or row.matched_lead_id
+    if not lead_id:
+        return None, ('There is no lead to reassign yet — accept it or '
+                      'merge it into an existing lead first.')
+    lead = db.session.get(Lead, lead_id)
+    if lead is None:
+        return None, f'Lead #{lead_id} no longer exists'
+    if not primary_code:
+        return None, 'Pick a primary PIC'
+
+    ok, err = lead_assignment.assign(
+        lead, primary_code=primary_code, secondary_code=secondary_code,
+        actor=actor, note=reason or 'reassigned from lead review')
+    if not ok:
+        return None, err
+    return row, None
+
+
 # ─── Intelligence — §22 ──────────────────────────────────────────────────
 def intelligence(days=30):
     from app import EmailClassification
@@ -372,9 +452,26 @@ def intelligence(days=30):
         # degrades silently by design — losing a lead because a PDF was
         # malformed would be worse than not reading it — but silent to
         # the ingest should not mean invisible to an admin.
+        # §22 — how many of those leads reached an owner without an
+        # admin touching them. The point of the whole engine is that
+        # this number tracks leads_created; a gap between them is
+        # unconfigured account ownership.
+        'auto_assigned': _auto_assigned(since),
         'capabilities': _capabilities(),
         **review_counts(),
     }
+
+
+def _auto_assigned(since):
+    """Leads assigned by the engine, not by a person, in the window."""
+    from app import LeadAssignmentHistory
+    try:
+        return (LeadAssignmentHistory.query
+                .filter(LeadAssignmentHistory.changed_at >= since,
+                        LeadAssignmentHistory.changed_by.is_(None))
+                .count())
+    except Exception:
+        return 0
 
 
 def _capabilities():

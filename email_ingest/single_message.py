@@ -153,6 +153,49 @@ def _file_against_lead(db, decision, msg, extracted, log):
         return None
 
 
+
+def auto_assign_owners(lead, sender_email, *, subject='', body=''):
+    """§12-§15 — give a new lead its two PICs, with no admin.
+
+    The whole point of the engine: a genuine enquiry from a known
+    account reaches its owners on arrival. Until this existed only the
+    review-accept path assigned anyone, so every lead the classifier was
+    confident enough to create straight through — the case §26 says must
+    need no admin at all — arrived with no owner.
+
+    Returns (primary, secondary), either of which may be None. An
+    unmapped account is not a failure: §14 sends it to an admin queue,
+    and the lead is created either way. Never raises — assignment is not
+    worth losing a lead over.
+    """
+    try:
+        from app.services import lead_assignment
+        from app.services import lead_intake_db as _asdb
+
+        account, _how = _asdb.resolve_account(
+            sender_email, text_for_gstin=f'{subject}\n{body}')
+        primary, secondary = _asdb.owners_for(account)
+        if not primary:
+            log.info('lead %s has no configured owner (%s) — unmapped '
+                     'account queue', lead.id,
+                     account.name if account else 'no account')
+            return None, None
+
+        ok, err = lead_assignment.assign(
+            lead, primary_code=primary, secondary_code=secondary,
+            actor=None, note='assigned automatically on intake',
+            _defer_commit=True)
+        if not ok:
+            log.warning('auto-assign refused for lead %s: %s', lead.id, err)
+            return None, None
+        log.info('lead %s auto-assigned to %s / %s',
+                 lead.id, primary, secondary or '-')
+        return primary, secondary
+    except Exception:
+        log.exception('auto-assignment failed for lead %s',
+                      getattr(lead, 'id', '?'))
+        return None, None
+
 def process_single_message(graph, mailbox: str, msg: dict) -> dict:
     """Process ONE Graph message into a Lead. Idempotent — safe to call
     multiple times for the same message; only the first call creates a
@@ -387,6 +430,12 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
             )
             db.session.add(lead)
             db.session.flush()
+
+            auto_assign_owners(
+                lead,
+                extracted.get('email') or sender_email,
+                subject=extracted.get('subject') or '',
+                body=extracted.get('body_text') or '')
 
             # Row 1 of the email trail.
             try:

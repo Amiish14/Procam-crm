@@ -33,6 +33,14 @@
   .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   .acts select{padding:5px 8px;font-size:12px;background:var(--surface);
     color:var(--ink);border:1px solid var(--border-2);border-radius:3px}
+  .acts.second{margin-top:9px;padding-top:9px;
+               border-top:1px dashed var(--border);gap:7px}
+  .acts .al{font-size:11.5px;color:var(--text-3);text-transform:uppercase;
+            letter-spacing:.04em}
+  .acts .sep{width:1px;align-self:stretch;background:var(--border);
+             margin:0 4px}
+  .leadno{width:88px;padding:5px 8px;font-size:12px;background:var(--surface);
+          color:var(--ink);border:1px solid var(--border-2);border-radius:3px}
   .msg{font-size:12px;margin-top:6px}
   .msg.err{color:var(--red)} .msg.ok{color:var(--green,#1f6b3f)}
   .noacct{color:var(--amber,#b45309)}
@@ -64,6 +72,14 @@
 const CSRF = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
 const REASONS = {{ reasons|tojson }};
 const CLASSES = {{ classes|tojson }};
+const PEOPLE = {{ people|tojson }};
+const RE_REASONS = {{ reassign_reasons|tojson }};
+
+function peopleOptions(sel, blank){
+  return `<option value="">${esc(blank)}</option>` + PEOPLE.map(p =>
+    `<option value="${esc(p.code)}"${p.code === sel ? ' selected' : ''}>`
+    + `${esc(p.name)}</option>`).join('');
+}
 
 async function jf(u, o){
   o = o || {};
@@ -132,6 +148,22 @@ function renderItems(items){
         </select>
         <button class="btn btn-sm danger" onclick="reject(${it.id})">Reject</button>
       </div>
+      <div class="acts second">
+        <span class="al">Belongs to a lead we already have</span>
+        <input id="mg${it.id}" class="leadno" type="number" min="1"
+               placeholder="lead #"
+               value="${it.matched_lead_id || ''}">
+        <button class="btn btn-sm" onclick="merge(${it.id})">Merge</button>
+        <span class="sep"></span>
+        <span class="al">Wrong owner</span>
+        <select id="p${it.id}">${peopleOptions(it.primary, 'Primary PIC…')}</select>
+        <select id="s${it.id}">${peopleOptions(it.secondary, 'Secondary…')}</select>
+        <select id="rr${it.id}">
+          <option value="">Reason…</option>
+          ${RE_REASONS.map(r => `<option>${esc(r)}</option>`).join('')}
+        </select>
+        <button class="btn btn-sm" onclick="reassign(${it.id})">Reassign</button>
+      </div>
       <div class="msg" id="m${it.id}"></div>
     </div>`;
   }).join('');
@@ -174,6 +206,34 @@ async function reclassify(id){
                      {method:'POST', body: JSON.stringify({to_class})});
   if(!j || !j.ok) return fail(id, (j && j.error) || 'Could not reclassify');
   done(id, 'Recorded as ' + to_class + '.');
+  renderKpis(j.counts);
+}
+
+async function merge(id){
+  const lead = document.getElementById('mg'+id).value;
+  if(!lead) return fail(id, 'Which lead? Put its number in the box — the '
+                           + 'classifier could not work it out, which is '
+                           + 'why this is here.');
+  const j = await jf('/api/intake/review/'+id+'/merge',
+                     {method:'POST', body: JSON.stringify({lead_id: lead})});
+  if(!j || !j.ok) return fail(id, (j && j.error) || 'Could not merge');
+  done(id, 'Merged into lead #' + j.lead_id + '. The email is on that '
+           + 'lead\u2019s trail; no new lead was created.');
+  renderKpis(j.counts);
+}
+
+async function reassign(id){
+  const primary = document.getElementById('p'+id).value;
+  const secondary = document.getElementById('s'+id).value;
+  const reason = document.getElementById('rr'+id).value;
+  if(!primary) return fail(id, 'Pick a primary PIC.');
+  if(!reason) return fail(id, 'Pick a reason \u2014 it is what makes the '
+                              + 'reassignment worth recording.');
+  const j = await jf('/api/intake/review/'+id+'/reassign',
+                     {method:'POST',
+                      body: JSON.stringify({primary, secondary, reason})});
+  if(!j || !j.ok) return fail(id, (j && j.error) || 'Could not reassign');
+  done(id, 'Lead #' + j.lead_id + ' reassigned.');
   renderKpis(j.counts);
 }
 

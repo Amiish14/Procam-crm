@@ -81,11 +81,18 @@ def api_save_account(company_id):
 @bp.route('/lead-review')
 @require(_PERM)
 def review_page():
+    from app import Employee
     from app.services import lead_intake as li
+    from app.services import lead_assignment
+    people = (Employee.query
+              .filter(Employee.is_active.is_(True))
+              .order_by(Employee.name).all())
     return render_template(
         'intake/review.html',
         reasons=svc.rejection_reasons(),
-        classes=[{'key': k, 'label': v} for k, v in li.Klass.LABELS.items()])
+        classes=[{'key': k, 'label': v} for k, v in li.Klass.LABELS.items()],
+        people=[{'code': e.emp_code, 'name': e.name} for e in people],
+        reassign_reasons=lead_assignment.REASSIGNMENT_REASONS)
 
 
 @bp.route('/api/intake/review', methods=['GET'])
@@ -131,6 +138,37 @@ def api_reclassify(cid):
         return jsonify(ok=False, error=err), 400
     db.session.commit()
     return jsonify(ok=True, counts=svc.review_counts())
+
+
+@bp.route('/api/intake/review/<int:cid>/merge', methods=['POST'])
+@require(_PERM)
+def api_merge(cid):
+    """§21 — attach this email to a lead that already exists."""
+    d = request.get_json(silent=True) or {}
+    row, err = svc.merge(cid, lead_id=d.get('lead_id'), actor=_actor())
+    if err:
+        db.session.rollback()
+        return jsonify(ok=False, error=err), 400
+    db.session.commit()
+    return jsonify(ok=True, lead_id=row.matched_lead_id,
+                   counts=svc.review_counts())
+
+
+@bp.route('/api/intake/review/<int:cid>/reassign', methods=['POST'])
+@require(_PERM)
+def api_reassign(cid):
+    """§21 — put the lead this email produced with the right person."""
+    d = request.get_json(silent=True) or {}
+    row, err = svc.reassign(cid, primary_code=d.get('primary'),
+                            secondary_code=d.get('secondary'),
+                            reason=d.get('reason'), actor=_actor())
+    if err:
+        db.session.rollback()
+        return jsonify(ok=False, error=err), 400
+    db.session.commit()
+    return jsonify(ok=True,
+                   lead_id=row.created_lead_id or row.matched_lead_id,
+                   counts=svc.review_counts())
 
 
 # ─── Learning — §11, Phase 3 ─────────────────────────────────────────────

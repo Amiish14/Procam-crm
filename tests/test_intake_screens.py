@@ -302,3 +302,266 @@ def test_the_screens_call_their_api_under_the_prefix():
         src = open(os.path.join(_ROOT, 'templates', 'intake',
                                 f'{name}.html')).read()
         assert "u.indexOf('{{ url_prefix }}') !== 0" in src, name
+
+
+# ─── §21 — merge into an existing lead ───────────────────────────────────
+@pytest.fixture
+def scratch_lead(world):
+    """A lead whose trail rows are cleaned up, and whose id is not.
+
+    Two ways to break other modules, and this avoids both. Leaving trail
+    rows behind is unsafe because another module deletes leads directly
+    in the session — bypassing the cascade the delete API applies — and
+    SQLite hands the freed id to the next insert, so an orphan reappears
+    on a stranger's lead. But deleting the lead here is equally unsafe:
+    it frees this id, and someone else's orphan lands on whatever takes
+    it. So the trail goes and the empty lead row stays, holding its id
+    out of circulation.
+    """
+    from app import LeadEmail
+    made = []
+
+    def make(subject='Existing RFQ for 40 MT'):
+        with flask_app.app_context():
+            lead = Lead(source='email', stage='New Opportunity',
+                        company='Screen Steel Ltd', project=subject)
+            db.session.add(lead)
+            db.session.commit()
+            made.append(lead.id)
+            return lead.id
+
+    yield make
+
+    with flask_app.app_context():
+        for lead_id in made:
+            LeadEmail.query.filter_by(lead_id=lead_id).delete()
+        db.session.commit()
+
+
+def test_merging_puts_the_email_on_the_lead_it_belongs_to(world, scratch_lead):
+    """Reclassifying records the right answer but leaves the email
+    nowhere. The trail is what a salesperson actually reads."""
+    from app import LeadEmail
+
+    cid = _pending(subject='RE: Existing RFQ for 40 MT')
+    lead_id = scratch_lead()
+
+    with flask_app.app_context():
+        row, err = svc.merge(cid, lead_id=lead_id, actor='SCRADM')
+        assert err is None, err
+        db.session.commit()
+
+        trail = LeadEmail.query.filter_by(lead_id=lead_id).all()
+        assert len(trail) == 1
+        assert trail[0].subject == 'RE: Existing RFQ for 40 MT'
+        assert trail[0].body == 'Please quote for 40 MT.'
+        assert trail[0].source == 'merged_at_review'
+
+
+def test_a_merge_is_recorded_as_a_correction(world, scratch_lead):
+    """It is a label too — the classifier said review, a person said
+    this belongs to a lead. That pair is the training example."""
+    from app import EmailClassification
+
+    cid = _pending(subject='RE: another existing one')
+    lead_id = scratch_lead('another existing one')
+    with flask_app.app_context():
+        svc.merge(cid, lead_id=lead_id, actor='SCRADM')
+        db.session.commit()
+        row = db.session.get(EmailClassification, cid)
+        assert row.review_state == 'merged'
+        assert row.matched_lead_id == lead_id
+        assert row.corrected_to == li.Klass.EXISTING
+        assert row.corrected_at is not None
+
+
+def test_merging_twice_does_not_duplicate_the_trail_row(world, scratch_lead):
+    from app import LeadEmail
+
+    cid = _pending(subject='RE: idempotent merge')
+    lead_id = scratch_lead('idempotent merge')
+    with flask_app.app_context():
+        svc.merge(cid, lead_id=lead_id, actor='SCRADM')
+        db.session.commit()
+        svc.merge(cid, lead_id=lead_id, actor='SCRADM')
+        db.session.commit()
+        assert LeadEmail.query.filter_by(lead_id=lead_id).count() == 1
+
+
+def test_merging_into_a_lead_that_does_not_exist_is_refused(world):
+    cid = _pending(subject='RE: nowhere to go')
+    with flask_app.app_context():
+        row, err = svc.merge(cid, lead_id=999999, actor='SCRADM')
+        assert row is None
+        assert '999999' in err
+
+
+def test_merging_without_a_lead_number_is_refused(world):
+    cid = _pending(subject='RE: no number given')
+    with flask_app.app_context():
+        row, err = svc.merge(cid, lead_id=None, actor='SCRADM')
+        assert row is None
+        assert 'lead number' in err
+
+
+# ─── §21 — reassign from the review screen ───────────────────────────────
+def test_reassigning_moves_the_lead_this_row_created(world, scratch_lead):
+    from app import Lead, EmailClassification
+
+    cid = _pending(subject='RFQ to reassign')
+    lead_id = scratch_lead('RFQ to reassign')
+    with flask_app.app_context():
+        db.session.get(EmailClassification, cid).created_lead_id = lead_id
+        db.session.commit()
+
+        row, err = svc.reassign(cid, primary_code='VH9',
+                                secondary_code='OPS9',
+                                reason='Specialist required', actor='SCRADM')
+        assert err is None, err
+        db.session.commit()
+        lead = db.session.get(Lead, lead_id)
+        assert lead.assigned_to == 'VH9'
+        assert lead.secondary_owner == 'OPS9'
+
+
+def test_the_reassignment_reason_reaches_the_history(world, scratch_lead):
+    from app import Lead, EmailClassification, LeadAssignmentHistory
+
+    cid = _pending(subject='RFQ reassign with reason')
+    lead_id = scratch_lead('RFQ reassign with reason')
+    with flask_app.app_context():
+        db.session.get(EmailClassification, cid).created_lead_id = lead_id
+        db.session.commit()
+        svc.reassign(cid, primary_code='VH9', reason='Different geography',
+                     actor='SCRADM')
+        db.session.commit()
+        h = (LeadAssignmentHistory.query.filter_by(lead_id=lead_id)
+             .order_by(LeadAssignmentHistory.id.desc()).first())
+        assert h is not None
+        assert h.note == 'Different geography'
+
+
+def test_reassigning_an_email_that_is_not_a_lead_yet_is_refused(world):
+    """There is nothing to reassign. Saying so is better than silently
+    doing nothing, which is what an unguarded version would do."""
+    cid = _pending(subject='not a lead yet')
+    with flask_app.app_context():
+        row, err = svc.reassign(cid, primary_code='VH9',
+                                reason='Specialist required')
+        assert row is None
+        assert 'accept it or merge it' in err
+
+
+def test_a_reassignment_needs_a_primary(world, scratch_lead):
+    from app import EmailClassification
+
+    cid = _pending(subject='no primary given')
+    lead_id = scratch_lead('no primary given')
+    with flask_app.app_context():
+        db.session.get(EmailClassification, cid).created_lead_id = lead_id
+        db.session.commit()
+        row, err = svc.reassign(cid, primary_code='', reason='Other')
+        assert row is None
+        assert 'primary' in err.lower()
+
+
+# ─── §12-§15, §26 — the two PICs, without an admin ───────────────────────
+def test_the_intake_path_assigns_owners_itself(world, scratch_lead):
+    """The whole point of the engine, and it was missing.
+
+    Only the review-accept path assigned anyone. A lead the classifier
+    was confident enough to create straight through — the case §26 says
+    must need no admin at all — arrived with no owner.
+    """
+    from app import Lead
+    from email_ingest import single_message
+
+    with flask_app.app_context():
+        svc.save_account_owners(world['acct'], primary='VH9',
+                                secondary='OPS9', backup='',
+                                vertical='Project Logistics',
+                                domains='screensteel.com')
+        db.session.commit()
+
+        lead_id = scratch_lead('auto assign on intake')
+        lead = db.session.get(Lead, lead_id)
+        primary, secondary = single_message.auto_assign_owners(
+            lead, 'buyer@screensteel.com',
+            subject='RFQ 40 MT', body='Please quote.')
+        db.session.commit()
+
+        assert (primary, secondary) == ('VH9', 'OPS9')
+        assert db.session.get(Lead, lead_id).assigned_to == 'VH9'
+        assert db.session.get(Lead, lead_id).secondary_owner == 'OPS9'
+
+
+def test_an_unmapped_account_leaves_the_lead_unassigned_not_lost(
+        world, scratch_lead):
+    """§14 — no configured owner is an admin queue, not a dropped lead."""
+    from app import Lead
+    from email_ingest import single_message
+
+    with flask_app.app_context():
+        lead_id = scratch_lead('nobody owns this domain')
+        lead = db.session.get(Lead, lead_id)
+        primary, secondary = single_message.auto_assign_owners(
+            lead, 'buyer@nobody-knows-this-domain.example')
+        db.session.commit()
+
+        assert (primary, secondary) == (None, None)
+        assert db.session.get(Lead, lead_id) is not None
+
+
+def test_assignment_failing_never_costs_the_lead(world, scratch_lead):
+    """A broken lookup must not take the enquiry down with it."""
+    from app import Lead
+    from email_ingest import single_message
+    from app.services import lead_intake_db as lidb
+
+    real = lidb.resolve_account
+    lidb.resolve_account = lambda *a, **k: 1 / 0
+    try:
+        with flask_app.app_context():
+            lead_id = scratch_lead('assignment explodes')
+            lead = db.session.get(Lead, lead_id)
+            assert single_message.auto_assign_owners(
+                lead, 'buyer@screensteel.com') == (None, None)
+            assert db.session.get(Lead, lead_id) is not None
+    finally:
+        lidb.resolve_account = real
+
+
+def test_auto_assigned_is_reported_on_the_intelligence_dashboard(world):
+    """§22 lists it as a headline. It was only on the triage screen."""
+    with flask_app.app_context():
+        data = svc.intelligence(days=30)
+    assert 'auto_assigned' in data
+    assert isinstance(data['auto_assigned'], int)
+
+
+def test_auto_assigned_counts_the_engine_not_people(world):
+    """An admin reassigning by hand is not automatic assignment.
+
+    Counting both would make the number report success it did not earn.
+    """
+    from app import Lead, LeadAssignmentHistory
+    from app.services import lead_assignment
+
+    with flask_app.app_context():
+        before = svc.intelligence(days=30)['auto_assigned']
+
+        lead = Lead(source='email', stage='New Opportunity',
+                    company='Screen Steel Ltd')
+        db.session.add(lead)
+        db.session.flush()
+        # by a person
+        lead_assignment.assign(lead, primary_code='VH9', actor='SCRADM',
+                               note='by hand')
+        db.session.commit()
+        assert svc.intelligence(days=30)['auto_assigned'] == before
+
+        # by the engine
+        lead_assignment.assign(lead, primary_code='OPS9', actor=None,
+                               note='assigned automatically on intake')
+        db.session.commit()
+        assert svc.intelligence(days=30)['auto_assigned'] == before + 1
