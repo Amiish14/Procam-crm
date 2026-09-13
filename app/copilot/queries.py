@@ -51,6 +51,10 @@ def _cap(rows, total=None):
     return rows[:ROW_CAP], []
 
 
+def _truthy(value):
+    return str(value or '').strip().lower() in ('1', 'true', 'yes', 'only')
+
+
 def _money(v):
     """Indian scales, because a logistics quote is read in lakh and
     crore and '₹4,80,00,000' is not read at all."""
@@ -78,6 +82,130 @@ def _age(dt):
 
 def _lead_chip(lead):
     return {'type': 'lead', 'id': lead.id, 'label': lead.company or 'Lead'}
+
+
+# ── narrowing by service ("only Project Freight") ────────────────────
+#
+# A lead names its service in procam_vertical (the intake engine's
+# words); an account in Company.vertical (the service master's). A row
+# matches when either does, under any spelling of the service — see
+# vocabulary.SERVICE_ALIASES. The sub-selects below read other tables
+# unscoped, which is safe for one reason worth stating: they only ever
+# REMOVE rows from a query that is already scoped. They cannot add one.
+
+def _service_param(params):
+    """The canonical service a params dict asks to narrow to, or ''."""
+    from app.copilot import vocabulary
+
+    raw = str((params or {}).get('vertical') or '').strip()
+    if not raw:
+        return ''
+    return vocabulary.service_in_text(raw) or raw
+
+
+def _narrow_leads_to_service(q, service):
+    from app import Company, Lead
+    from app.copilot import vocabulary
+
+    names = vocabulary.service_aliases(service)
+    if not names:
+        return q
+    return q.filter(or_(
+        Lead.procam_vertical.in_(names),
+        Lead.company_id.in_(Company.query.with_entities(Company.id)
+                            .filter(Company.vertical.in_(names)))))
+
+
+def _narrow_opps_to_service(q, service):
+    from app import Company, Lead, Opportunity
+    from app.copilot import vocabulary
+
+    names = vocabulary.service_aliases(service)
+    if not names:
+        return q
+    return q.filter(or_(
+        Opportunity.company_id.in_(Company.query.with_entities(Company.id)
+                                   .filter(Company.vertical.in_(names))),
+        Opportunity.lead_id.in_(Lead.query.with_entities(Lead.id)
+                                .filter(Lead.procam_vertical.in_(names)))))
+
+
+def _service_filters(service):
+    return {'vertical': service} if service else {}
+
+
+def _clarify(question, options):
+    """A question back instead of a guess, with 2–4 clickable options.
+
+    Every option is a complete question that routes on its own, so
+    clicking one is an ordinary ask — nothing is carried in hidden state.
+    """
+    return Result(
+        headline=question, empty=True,
+        clarification={'question': question,
+                       'options': [{'label': label, 'question': q}
+                                   for label, q in options[:4]]})
+
+
+def _pick_company(scope, params, *, ask=None):
+    """(company, clarification) for the account a question names.
+
+    Order: a name in the question, then an explicit account_id, then the
+    account the panel is open on. A name that matches one account
+    exactly is that account. Otherwise, partial matches inside the
+    viewer's own scope decide: one is taken, several come back as a
+    clarification listing them — never a guess between two customers.
+    Only when nothing in scope matches does it fall back to the first
+    match anywhere, which is what routing answers (§5.1) have always
+    done and must keep doing.
+
+    `ask` formats an option's question from a company name, so each
+    option re-asks the same intent about one account.
+    """
+    from app import Company
+
+    name = (params.get('account') or '').strip()
+    ctx = params.get('context') or {}
+    if not name:
+        cid = params.get('account_id')
+        if not cid and ctx.get('type') in ('company', 'account'):
+            cid = ctx.get('id')
+        try:
+            cid = int(cid) if cid else None
+        except (TypeError, ValueError):
+            cid = None
+        return (db_get(Company, cid) if cid else None), None
+
+    exact = (Company.query.filter(func.lower(Company.name) == name.lower())
+             .order_by(Company.id.asc()).all())
+    if len(exact) == 1:
+        return exact[0], None
+    if len(exact) > 1:
+        scoped = [c for c in exact
+                  if sc_mod.companies(sc=scope)
+                  .filter(Company.id == c.id).first()]
+        return (scoped or exact)[0], None
+
+    partial = (sc_mod.companies(sc=scope)
+               .filter(Company.name.ilike(f'%{name}%'))
+               .order_by(Company.name.asc()).limit(5).all())
+    if len(partial) == 1:
+        return partial[0], None
+    if len(partial) > 1 and ask:
+        return None, _clarify(
+            f'More than one account matches "{name}" — which one?',
+            [(c.name, ask(c.name)) for c in partial])
+    if partial:
+        return partial[0], None
+    return _resolve_company(name), None
+
+
+def db_get(model, ident):
+    from app import db
+    try:
+        return db.session.get(model, int(ident))
+    except (TypeError, ValueError):
+        return None
 
 
 
@@ -169,7 +297,8 @@ def my_day(scope, params):
 #  LEADS
 # ══════════════════════════════════════════════════════════════════════
 @intent('leads_stale', 'Stale leads',
-        params={'days': 'how many days without contact (default 7)'},
+        params={'days': 'how many days without contact (default 7)',
+                'vertical': 'only this service, e.g. Project Freight'},
         personas=('sales', 'head'), phase=1,
         examples=('leads with no activity for 7 days',
                   'which of my leads have gone quiet',
@@ -191,6 +320,9 @@ def leads_stale(scope, params):
     touched = acted | mailed
 
     open_q = sc_mod.leads(sc=scope).filter(~Lead.stage.in_(_TERMINAL))
+    service = _service_param(params)
+    if service:
+        open_q = _narrow_leads_to_service(open_q, service)
     # Columns, not objects: every open lead is still read, because
     # "touched" is a Python set from the one contact definition, but as
     # six-column tuples rather than full rows.
@@ -248,7 +380,7 @@ def leads_stale(scope, params):
         rows=rows,
         figures={'count': len(found), 'days': days,
                  'open_total': len(open_leads), 'never_contacted': never},
-        notes=notes,
+        notes=notes, filters=_service_filters(service),
         sources=['lead_activities.occurred_at',
                  'lead_emails.sent_or_received_at'])
 
@@ -269,6 +401,7 @@ def _lead_row_columns():
 
 
 @intent('leads_open', 'Open leads',
+        params={'vertical': 'only this service, e.g. Project Freight'},
         personas=('sales', 'head'), phase=1,
         examples=('my open leads', 'what leads are open',
                   'show me active leads'))
@@ -276,12 +409,17 @@ def leads_open(scope, params):
     from app import Lead
 
     base = sc_mod.leads(sc=scope).filter(~Lead.stage.in_(_TERMINAL))
+    service = _service_param(params)
+    if service:
+        base = _narrow_leads_to_service(base, service)
     # The headline total is counted in SQL, so it stays exact while only
     # the rows the panel can show are loaded. Lead.id breaks ties in
     # created_at the way the stable sort over a rowid scan used to.
     total = base.count()
     if not total:
-        return Result(headline='No open leads.', empty=True,
+        return Result(headline=('No open leads.' if not service else
+                                f'No open {service} leads.'), empty=True,
+                      filters=_service_filters(service),
                       sources=['leads.stage'])
     found = (base.with_entities(*_lead_row_columns())
              .order_by(Lead.created_at.desc(), Lead.id.asc())
@@ -295,10 +433,12 @@ def leads_open(scope, params):
     return Result(headline=f'{total} open lead(s).',
                   columns=['Company', 'Stage', 'Value', 'Owner', 'Age'],
                   rows=rows, figures={'count': total}, notes=notes,
+                  filters=_service_filters(service),
                   sources=['leads.stage'])
 
 
 @intent('leads_no_next_action', 'Leads with no next action',
+        params={'vertical': 'only this service, e.g. Project Freight'},
         personas=('sales', 'head', 'admin'), phase=1,
         examples=('leads with no follow-up date',
                   'which leads have no next action'))
@@ -308,6 +448,9 @@ def leads_no_next_action(scope, params):
     base = (sc_mod.leads(sc=scope)
             .filter(~Lead.stage.in_(_TERMINAL))
             .filter(Lead.followup_date.is_(None)))
+    service = _service_param(params)
+    if service:
+        base = _narrow_leads_to_service(base, service)
     total = base.count()
     if not total:
         return Result(headline='Every open lead has a next action set.',
@@ -324,6 +467,7 @@ def leads_no_next_action(scope, params):
         headline=f'{total} open lead(s) with no next action recorded.',
         columns=['Company', 'Stage', 'Owner', 'Value'], rows=rows,
         figures={'count': total}, notes=notes,
+        filters=_service_filters(service),
         sources=['leads.followup_date'])
 
 
@@ -331,7 +475,9 @@ def leads_no_next_action(scope, params):
 #  RFQs AND QUOTES
 # ══════════════════════════════════════════════════════════════════════
 @intent('rfqs_unquoted', 'RFQs not yet quoted',
-        permission='module.rfq', personas=('sales', 'head'), phase=1,
+        permission='module.rfq',
+        params={'overdue': 'true for only those past their quote-by date'},
+        personas=('sales', 'head'), phase=1,
         examples=('which RFQs have I not quoted',
                   'RFQs pending quotation', 'unquoted RFQs'))
 def rfqs_unquoted(scope, params):
@@ -370,6 +516,24 @@ def rfqs_unquoted(scope, params):
                      '_chip': {'type': 'rfq', 'id': r.id,
                                'label': r.rfq_number}})
     rows.sort(key=lambda x: (x['Overdue'] != 'yes', x['Received']))
+    if _truthy(params.get('overdue')):
+        # "Overdue RFQs" is the same list cut to the late ones, not a
+        # second definition of late that could drift from this one.
+        rows = [r for r in rows if r['Overdue'] == 'yes']
+        if not rows:
+            return Result(
+                headline=(f'{len(found)} RFQ(s) not yet quoted, none past '
+                          f'its quote-by date.'),
+                empty=True, figures={'count': len(found), 'overdue': 0},
+                filters={'overdue': 'only'},
+                sources=['rfqs.quote_by_date', 'quotes.rfq_id'])
+        capped, notes = _cap(rows, len(rows))
+        return Result(
+            headline=f'{len(rows)} unquoted RFQ(s) past their quote-by date.',
+            columns=['RFQ', 'Subject', 'Received', 'Quote by', 'Owner'],
+            rows=capped, figures={'count': len(rows), 'overdue': overdue},
+            notes=notes, filters={'overdue': 'only'},
+            sources=['rfqs.quote_by_date', 'quotes.rfq_id'])
     rows, notes = _cap(rows, len(found))
     return Result(
         headline=(f'{len(found)} RFQ(s) not yet quoted'
@@ -453,8 +617,11 @@ def quotes_above(scope, params):
     except (TypeError, ValueError):
         threshold = 0
     if threshold <= 0:
-        return Result(headline='How large? Give me a figure — "quotes above '
-                               '50 lakh", for instance.', empty=True)
+        return _clarify('How large? Give me a figure — "quotes above 50 '
+                        'lakh", for instance.',
+                        [('above 10 lakh', 'quotes above 10 lakh'),
+                         ('above 50 lakh', 'quotes above 50 lakh'),
+                         ('above 1 crore', 'quotes above 1 crore')])
 
     if not sc_mod.quotes(sc=scope).count():
         return _nothing_recorded('quotes',
@@ -491,10 +658,13 @@ def last_quote_for_account(scope, params):
     from app.models.quote import Quote
 
     name = (params.get('account') or '').strip()
-    if not name:
+    if not name and not params.get('account_id'):
         return Result(headline='Which customer?', empty=True)
 
-    company = _resolve_company(name)
+    company, ask = _pick_company(
+        scope, params, ask=lambda n: f'what did we last quote {n}')
+    if ask is not None:
+        return ask
     if company is None:
         return Result(headline=f'No account matching "{name}" in the CRM.',
                       empty=True, sources=['companies.name'])
@@ -557,7 +727,8 @@ def quote_turnaround(scope, params):
 # ══════════════════════════════════════════════════════════════════════
 @intent('pipeline_value', 'Pipeline value',
         permission='module.funnels',
-        params={'weighted': 'true to weight by probability'},
+        params={'weighted': 'true to weight by probability',
+                'vertical': 'only this service, e.g. Project Freight'},
         personas=('sales', 'head', 'mgmt'), phase=1,
         examples=("what's my pipeline worth", 'total pipeline value',
                   'weighted pipeline'))
@@ -566,11 +737,15 @@ def pipeline_value(scope, params):
 
     weighted = str(params.get('weighted') or '').lower() in ('1', 'true',
                                                              'yes')
-    opps = (sc_mod.opportunities(sc=scope)
-            .filter(~Opportunity.stage.in_(_TERMINAL)).all())
+    service = _service_param(params)
+    q = sc_mod.opportunities(sc=scope).filter(~Opportunity.stage.in_(_TERMINAL))
+    if service:
+        q = _narrow_opps_to_service(q, service)
+    opps = q.all()
     if not opps:
         return Result(headline='No open opportunities in your scope.',
-                      empty=True, sources=['opportunities.stage'])
+                      empty=True, filters=_service_filters(service),
+                      sources=['opportunities.stage'])
 
     total = sum(float(o.value_inr or 0) for o in opps)
     wtotal = sum(float(o.value_inr or 0) * (o.probability or 0) / 100.0
@@ -592,13 +767,15 @@ def pipeline_value(scope, params):
                   rows=rows,
                   figures={'total': total, 'weighted': wtotal,
                            'count': len(opps)},
+                  filters=_service_filters(service),
                   sources=['opportunities.value_inr',
                            'opportunities.probability'])
 
 
 @intent('top_opportunities', 'Biggest open opportunities',
         permission='module.funnels',
-        params={'limit': 'how many to show (default 20)'},
+        params={'limit': 'how many to show (default 20)',
+                'vertical': 'only this service, e.g. Project Freight'},
         personas=('head', 'mgmt'), phase=1,
         examples=('our 20 biggest opportunities', 'largest open deals',
                   'top opportunities by value'))
@@ -606,9 +783,11 @@ def top_opportunities(scope, params):
     from app import Opportunity
 
     limit = min(int(params.get('limit') or 20), ROW_CAP)
-    found = (sc_mod.opportunities(sc=scope)
-             .filter(~Opportunity.stage.in_(_TERMINAL))
-             .order_by(Opportunity.value_inr.desc().nullslast())
+    service = _service_param(params)
+    q = sc_mod.opportunities(sc=scope).filter(~Opportunity.stage.in_(_TERMINAL))
+    if service:
+        q = _narrow_opps_to_service(q, service)
+    found = (q.order_by(Opportunity.value_inr.desc().nullslast())
              .limit(limit).all())
     if not found:
         return Result(headline='No open opportunities in your scope.',
@@ -621,12 +800,14 @@ def top_opportunities(scope, params):
     return Result(headline=f'The {len(rows)} largest open opportunities.',
                   columns=['Opportunity', 'Title', 'Value', 'Stage', 'Owner'],
                   rows=rows, figures={'count': len(rows)},
+                  filters=_service_filters(service),
                   sources=['opportunities.value_inr'])
 
 
 @intent('stalled_deals', 'Stalled deals',
         permission='module.funnels',
-        params={'days': 'days in the same stage (default 14)'},
+        params={'days': 'days in the same stage (default 14)',
+                'vertical': 'only this service, e.g. Project Freight'},
         personas=('head', 'mgmt'), phase=2,
         examples=('which deals are stuck', 'stalled opportunities',
                   'deals not moving'))
@@ -635,11 +816,14 @@ def stalled_deals(scope, params):
 
     days = int(params.get('days') or 14)
     cutoff = _days_ago(days)
-    found = (sc_mod.opportunities(sc=scope)
-             .filter(~Opportunity.stage.in_(_TERMINAL))
-             .filter(or_(Opportunity.updated_at.is_(None),
-                         Opportunity.updated_at < cutoff))
-             .order_by(Opportunity.value_inr.desc().nullslast()).all())
+    q = (sc_mod.opportunities(sc=scope)
+         .filter(~Opportunity.stage.in_(_TERMINAL))
+         .filter(or_(Opportunity.updated_at.is_(None),
+                     Opportunity.updated_at < cutoff)))
+    service = _service_param(params)
+    if service:
+        q = _narrow_opps_to_service(q, service)
+    found = q.order_by(Opportunity.value_inr.desc().nullslast()).all()
     if not found:
         return Result(headline=f'Nothing has sat still for {days}+ days.',
                       empty=True, sources=['opportunities.updated_at'])
@@ -653,6 +837,7 @@ def stalled_deals(scope, params):
         headline=f'{len(found)} opportunity(s) unchanged for {days}+ days.',
         columns=['Opportunity', 'Value', 'Stage', 'Days still', 'Owner'],
         rows=rows, figures={'count': len(found)}, notes=notes,
+        filters=_service_filters(service),
         sources=['opportunities.updated_at'])
 
 
@@ -689,10 +874,13 @@ def account_owner(scope, params):
     from app import Employee
 
     name = (params.get('account') or '').strip()
-    if not name:
+    if not name and not params.get('account_id'):
         return Result(headline='Which account?', empty=True)
 
-    company = _resolve_company(name)
+    company, ask = _pick_company(scope, params,
+                                 ask=lambda n: f'who handles {n}')
+    if ask is not None:
+        return ask
     if company is None:
         return Result(headline=f'No account matching "{name}" in the CRM.',
                       empty=True, sources=['companies.name'])
@@ -741,10 +929,13 @@ def account_status(scope, params):
     from app.models.quote import Quote
 
     name = (params.get('account') or '').strip()
-    if not name:
+    if not name and not params.get('account_id'):
         return Result(headline='Which account?', empty=True)
 
-    company = _resolve_company(name)
+    company, ask = _pick_company(scope, params,
+                                 ask=lambda n: f'is {n} already a customer')
+    if ask is not None:
+        return ask
     if company is None:
         return Result(
             headline=(f'No account matching "{name}". Treat it as a new '
@@ -1050,26 +1241,133 @@ def loss_analysis(scope, params):
 # ══════════════════════════════════════════════════════════════════════
 #  NEXT BEST ACTION  ·  every suggestion states its reason
 # ══════════════════════════════════════════════════════════════════════
+#: Why a lead needs attention, and how much that reason weighs. A lead's
+#: score is its strongest reason's weight, plus value points, plus
+#: idleness points — all three stated in the answer's notes, so a
+#: salesperson can see why one lead sits above another and disagree.
+NBA_REASON_WEIGHT = {
+    'customer_waiting': 50,   # newest email is the customer's, 1+ day old
+    'followup_overdue': 40,   # the follow-up date has passed
+    'negotiation_idle': 35,   # Under Negotiation, no contact 5+ days
+    'quoted_idle': 30,        # Quoted, no contact 3+ days
+    'rfq_not_quoted': 25,     # RFQ Generated, no contact 3+ days
+    'no_contact_14': 15,      # no contact for 14+ days
+    'never_contacted': 10,    # nothing recorded, open 14+ days
+}
+#: One point per ₹10 lakh of estimated value, capped: value matters, but
+#: a crore-sized lead must not bury a customer who is waiting on a reply.
+NBA_VALUE_POINTS_PER = 1_000_000
+NBA_VALUE_POINTS_MAX = 30
+#: One point per three days without contact, capped.
+NBA_IDLE_POINTS_PER_DAYS = 3
+NBA_IDLE_POINTS_MAX = 20
+#: How far back "the customer is waiting" looks for an unanswered email.
+NBA_WAITING_WINDOW_DAYS = 60
+
+_NBA_NOTE = ('Score = the strongest reason (customer waiting on a reply 50 '
+             '· follow-up overdue 40 · negotiation idle 5+ days 35 · quoted '
+             'and idle 3+ days 30 · RFQ not yet quoted 25 · no contact 14+ '
+             'days 15 · never contacted 10) + 1 point per ₹10 lakh of value '
+             '(max 30) + 1 point per 3 idle days (max 20).')
+
+
+def _waiting_on_us(scope, lead_ids=None):
+    """{lead_id: days} where the newest email in the trail is inbound.
+
+    Read from the scoped email trail, newest per lead, over the last
+    NBA_WAITING_WINDOW_DAYS. An outbound email after it means we replied.
+    """
+    from app import LeadEmail
+
+    q = (sc_mod.emails(sc=scope)
+         .with_entities(LeadEmail.lead_id, LeadEmail.direction,
+                        LeadEmail.sent_or_received_at)
+         .filter(LeadEmail.sent_or_received_at >=
+                 _days_ago(NBA_WAITING_WINDOW_DAYS)))
+    if lead_ids is not None:
+        q = q.filter(LeadEmail.lead_id.in_(list(lead_ids)[:500]))
+    newest = {}
+    for lead_id, direction, when in q.all():
+        if lead_id and when and (lead_id not in newest
+                                 or when > newest[lead_id][1]):
+            newest[lead_id] = ((direction or '').lower(), when)
+    out = {}
+    for lead_id, (direction, when) in newest.items():
+        days = _age(when) or 0
+        if direction == 'inbound' and days >= 1:
+            out[lead_id] = days
+    return out
+
+
+def _nba_reasons(lead, idle, ever_contacted, waiting_days, today):
+    """Every reason that applies to one lead, strongest first:
+    [(key, sentence)]."""
+    out = []
+    if waiting_days is not None:
+        out.append(('customer_waiting',
+                    f'The customer emailed {waiting_days} day(s) ago and the '
+                    f'trail shows no reply since.'))
+    if lead.followup_date and lead.followup_date < today:
+        out.append(('followup_overdue',
+                    f'Follow-up was due {(today - lead.followup_date).days} '
+                    f'days ago.'))
+    if lead.stage == 'Under Negotiation' and idle >= 5:
+        out.append(('negotiation_idle',
+                    f'In negotiation and untouched for {idle} days.'))
+    if lead.stage == 'Quoted' and idle >= 3:
+        out.append(('quoted_idle',
+                    f'Quoted {idle} days ago with no movement since — '
+                    f'follow up.'))
+    if lead.stage == 'RFQ Generated' and idle >= 3:
+        out.append(('rfq_not_quoted',
+                    f'RFQ generated and nothing sent for {idle} days — '
+                    f'the quote is due.'))
+    if idle >= 14:
+        out.append(('no_contact_14', f'No contact for {idle} days.')
+                   if ever_contacted else
+                   ('never_contacted', 'No contact has ever been recorded.'))
+    out.sort(key=lambda kv: -NBA_REASON_WEIGHT[kv[0]])
+    return out
+
+
+def _nba_score(reason_key, value, idle):
+    return (NBA_REASON_WEIGHT[reason_key]
+            + min(NBA_VALUE_POINTS_MAX, value / NBA_VALUE_POINTS_PER)
+            + min(NBA_IDLE_POINTS_MAX, idle / float(NBA_IDLE_POINTS_PER_DAYS)))
+
+
 @intent('next_best_action', 'Who should I call',
-        params={'limit': 'how many suggestions (default 10)'},
+        params={'limit': 'how many suggestions (default 10)',
+                'lead_id': 'one lead, for "what is next here"',
+                'vertical': 'only this service, e.g. Project Freight'},
         personas=('sales', 'head'), phase=3,
         examples=('who should I call this week', 'what should I do next',
                   'next best action'))
 def next_best_action(scope, params):
-    """Ranked by value against staleness, with the reason drawn from the
-    data. A recommendation whose reason the model invented would be a
-    hallucination wearing a suggestion's clothes."""
+    """Ranked by documented reason weights, value and idleness, with the
+    reason drawn from the data. A recommendation whose reason the model
+    invented would be a hallucination wearing a suggestion's clothes.
+
+    With a lead in hand (the panel open on one, or a lead_id) it answers
+    "what's next here" for that lead instead of ranking the desk."""
     from app import Lead
 
+    ctx = params.get('context') or {}
+    if params.get('lead_id') or (ctx.get('type') == 'lead' and ctx.get('id')):
+        return _next_for_lead(scope, params)
+
     limit = min(int(params.get('limit') or 10), ROW_CAP)
-    candidates = (sc_mod.leads(sc=scope)
-                  .filter(~Lead.stage.in_(_TERMINAL))
-                  .with_entities(Lead.id, Lead.company, Lead.stage,
-                                 Lead.estimated_value_inr,
-                                 Lead.followup_date, Lead.created_at)
+    q = sc_mod.leads(sc=scope).filter(~Lead.stage.in_(_TERMINAL))
+    service = _service_param(params)
+    if service:
+        q = _narrow_leads_to_service(q, service)
+    candidates = (q.with_entities(Lead.id, Lead.company, Lead.stage,
+                                  Lead.estimated_value_inr,
+                                  Lead.followup_date, Lead.created_at)
                   .all())
     if not candidates:
         return Result(headline='Nothing open to act on.', empty=True,
+                      filters=_service_filters(service),
                       sources=['leads.stage'])
 
     # Idle means no contact, not no edit — see _last_contact. Read for
@@ -1079,48 +1377,127 @@ def next_best_action(scope, params):
     acted, mailed = _contacted_since(_days_ago(3650))
     ever = acted | mailed
     last_seen = _contact.last_contacts() if ever else {}
+    waiting = _waiting_on_us(scope)
+    today = _now().date()
 
     scored = []
     for l in candidates:
         if l.id in ever:
-            last = last_seen.get(l.id)
-            idle = _age(last) or 0
+            idle = _age(last_seen.get(l.id)) or 0
         else:
             idle = _age(l.created_at) or 0
         value = float(l.estimated_value_inr or 0)
-        if idle < 2:
+        if idle < 2 and l.id not in waiting:
             continue
-        reason = None
-        if l.stage == 'Quoted' and idle >= 3:
-            reason = (f'Quoted {idle} days ago with no movement since — '
-                      f'follow up.')
-        elif l.stage == 'Under Negotiation' and idle >= 5:
-            reason = f'In negotiation and untouched for {idle} days.'
-        elif l.followup_date and l.followup_date < _now().date():
-            reason = (f'Follow-up was due '
-                      f'{(_now().date() - l.followup_date).days} days ago.')
-        elif idle >= 14:
-            reason = (f'No contact for {idle} days.' if l.id in ever
-                      else 'No contact has ever been recorded.')
-        if not reason:
+        reasons = _nba_reasons(l, idle, l.id in ever, waiting.get(l.id),
+                               today)
+        if not reasons:
             continue
-        scored.append((value * max(idle, 1), l, reason, idle, value))
+        key, sentence = reasons[0]
+        scored.append((_nba_score(key, value, idle), l, sentence, idle,
+                       value))
 
     if not scored:
         return Result(headline='Nothing is overdue attention right now.',
-                      empty=True, sources=['leads.updated_at'])
+                      empty=True, filters=_service_filters(service),
+                      notes=[_NBA_NOTE], sources=['leads.updated_at'])
 
-    scored.sort(key=lambda t: -t[0])
+    scored.sort(key=lambda t: (-t[0], -t[4], t[1].id))
     rows = [{'Company': l.company, 'Stage': l.stage, 'Value': _money(v),
-             'Idle days': idle, 'Why': reason, '_chip': _lead_chip(l)}
-            for _s, l, reason, idle, v in scored[:limit]]
+             'Idle days': idle, 'Why': reason, 'Score': round(score),
+             '_chip': _lead_chip(l)}
+            for score, l, reason, idle, v in scored[:limit]]
     return Result(headline=f'{len(rows)} lead(s) worth your attention first.',
                   recommendation=True,
-                  columns=['Company', 'Stage', 'Value', 'Idle days', 'Why'],
+                  columns=['Company', 'Stage', 'Value', 'Idle days', 'Why',
+                           'Score'],
                   rows=rows, figures={'count': len(scored)},
+                  notes=[_NBA_NOTE], filters=_service_filters(service),
                   sources=['lead_emails.sent_or_received_at',
                            'lead_activities.occurred_at',
                            'leads.followup_date', 'leads.stage'])
+
+
+def _next_for_lead(scope, params):
+    """"What's next here?" for one lead: every step that applies, in the
+    order the weights above rank them, then the stage's next step."""
+    from app.models.quote import Quote
+    from app.services import contact as _contact
+
+    lead = _resolve_lead(scope, params)
+    if lead is None:
+        return Result(
+            headline='That lead is outside what you can see, or does not '
+                     'exist.',
+            restricted=True, empty=True, sources=['leads'])
+
+    today = _now().date()
+    last = _contact.last_contact(lead)
+    idle = _age(last) if last else (_age(lead.created_at) or 0)
+    waiting = _waiting_on_us(scope, [lead.id]).get(lead.id)
+    steps = [{'Action': _NBA_ACTION[key], 'Why': why,
+              '_chip': _lead_chip(lead)}
+             for key, why in _nba_reasons(lead, idle, last is not None,
+                                          waiting, today)]
+
+    if (lead.stage or '') in _TERMINAL:
+        steps = []
+    elif not lead.followup_date:
+        steps.append({'Action': 'Set a follow-up date',
+                      'Why': 'No next action is recorded, so nothing will '
+                             'remind anyone.', '_chip': _lead_chip(lead)})
+    if scope.can('module.quotes') and (lead.stage or '') not in _TERMINAL:
+        soon = (sc_mod.quotes(sc=scope)
+                .filter(Quote.lead_id == lead.id,
+                        Quote.status.in_(('Approved', 'Submitted',
+                                          'Under Negotiation')),
+                        Quote.validity_until.isnot(None),
+                        Quote.validity_until <= today + timedelta(days=7))
+                .order_by(Quote.validity_until.asc()).first())
+        if soon:
+            left = (soon.validity_until - today).days
+            steps.append({
+                'Action': f'Confirm or revise {soon.quote_number}',
+                'Why': (f'Its validity ends in {left} day(s).' if left >= 0
+                        else f'Its validity ended {-left} day(s) ago.'),
+                '_chip': {'type': 'quote', 'id': soon.id,
+                          'label': soon.quote_number}})
+    try:
+        from app import STAGE_NEXT
+    except Exception:                                # pragma: no cover
+        STAGE_NEXT = {}
+    nxt = STAGE_NEXT.get(lead.stage or '')
+    if nxt:
+        steps.append({'Action': f'Move towards "{nxt}"',
+                      'Why': f'The next stage after "{lead.stage}".',
+                      '_chip': _lead_chip(lead)})
+
+    if not steps:
+        return Result(
+            headline=f'{lead.company} — {lead.stage}; nothing is waiting on '
+                     f'you here.',
+            empty=True, citations=[_lead_chip(lead)],
+            sources=[f'Lead #{lead.id}'])
+    return Result(
+        headline=(f'{lead.company} — {len(steps)} suggested step(s); first: '
+                  f'{steps[0]["Action"].lower()}.'),
+        recommendation=True, columns=['Action', 'Why'], rows=steps,
+        figures={'lead_id': lead.id, 'idle_days': idle},
+        notes=['Steps are ordered by the same weights as "who should I '
+               'call": ' + _NBA_NOTE.split('Score = ', 1)[1]],
+        citations=[_lead_chip(lead)],
+        sources=[f'Lead #{lead.id}', 'lead_emails', 'leads.followup_date'])
+
+
+_NBA_ACTION = {
+    'customer_waiting': 'Reply to the customer',
+    'followup_overdue': 'Do the overdue follow-up',
+    'negotiation_idle': 'Push the negotiation forward',
+    'quoted_idle': 'Chase the quote',
+    'rfq_not_quoted': 'Send the quote',
+    'no_contact_14': 'Get back in touch',
+    'never_contacted': 'Make first contact',
+}
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1136,7 +1513,12 @@ def _resolve_lead(scope, params):
     """The lead a question is about — by id, by context, or by name."""
     from app import Lead
 
-    lead_id = params.get('lead_id') or (params.get('context') or {}).get('id')
+    ctx = params.get('context') or {}
+    # A context id is a lead id only when the panel is open on a lead —
+    # reading any context id as one resolved "this account" to whichever
+    # lead happened to share its number.
+    lead_id = params.get('lead_id') or (
+        ctx.get('id') if ctx.get('type') == 'lead' else None)
     if lead_id:
         lead = sc_mod.leads(sc=scope).filter(Lead.id == int(lead_id)).first()
         if lead:
@@ -1184,7 +1566,7 @@ def thread_summary(scope, params):
                      f'trail recorded.',
             rows=[{'Direction': 'inbound',
                    'When': str(lead.original_email_received_at or '')[:10],
-                   'Text': original[:600]}],
+                   'Text': original[:600], '_chip': _lead_chip(lead)}],
             columns=['Direction', 'When', 'Text'],
             sources=['leads.original_email_body'])
 
@@ -1194,7 +1576,7 @@ def thread_summary(scope, params):
              'When': str(e.sent_or_received_at or '')[:16],
              'From': e.from_addr or '—',
              'Subject': (e.subject or '')[:80],
-             'Text': (e.body or '')[:400]}
+             'Text': (e.body or '')[:400], '_chip': _lead_chip(lead)}
             for e in trail[:8]]
     return Result(
         headline=(f'{lead.company} — {len(trail)} message(s), the latest '
@@ -1233,7 +1615,8 @@ def attachment_contents(scope, params):
             att, 'original_name', '') or f'attachment {att.id}'
         text = attachment_text.extract(getattr(att, 'storage_path', '') or '')
         if text:
-            readable.append({'File': name, 'Extract': text[:700]})
+            readable.append({'File': name, 'Extract': text[:700],
+                             '_chip': _lead_chip(lead)})
         else:
             unread.append(name)
 
@@ -1324,6 +1707,7 @@ def lead_360(scope, params):
                   f'{lead.assigned_to or "nobody"}.'),
         columns=['Fact', 'Value'], rows=facts, notes=notes,
         figures={'lead_id': lead.id},
+        citations=[_lead_chip(lead)],
         sources=[f'Lead #{lead.id}', 'lead_activities', 'quotes',
                  'lead_emails'])
 
@@ -1339,9 +1723,13 @@ def account_360(scope, params):
     from app.models.quote import Quote
 
     name = (params.get('account') or '').strip()
-    company = _resolve_company(name) if name else None
+    company, ask = _pick_company(scope, params,
+                                 ask=lambda n: f'account 360 for {n}')
+    if ask is not None:
+        return ask
     if company is None:
-        return Result(headline=f'No account matching "{name}".', empty=True,
+        return Result(headline=(f'No account matching "{name}".' if name
+                                else 'Which account?'), empty=True,
                       sources=['companies.name'])
 
     def who(code):
@@ -1393,6 +1781,8 @@ def account_360(scope, params):
                   f'{len(won)} won, owned by {who(company.pic_emp_code)}.'),
         columns=['Fact', 'Value'], rows=facts, notes=notes,
         figures={'open': len(open_opps), 'won': len(won)},
+        citations=[{'type': 'company', 'id': company.id,
+                    'label': company.name}],
         sources=['Account Master', 'opportunities', 'quotes'])
 
 
