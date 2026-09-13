@@ -2897,6 +2897,10 @@ async function openLd(id){
     ${l.linkedin?`<div style="font-size:12.5px;margin-top:8px"><a href="${e(l.linkedin)}" target="_blank">LinkedIn profile</a></div>`:''}
   `;
   g('ldMob').style.display='flex';
+  // The Copilot panel answers "this lead" questions about the lead on
+  // screen; opening it from a list does not change the URL it reads.
+  if(window.ProcamAI&&window.ProcamAI.setContext)
+    window.ProcamAI.setContext({type:'lead', id:l.id, label:l.company||('Lead #'+l.id)});
   loadLeadNotes(l.id);
   loadLeadClassification(l.id);
   loadMailTrail(l.id);
@@ -3191,7 +3195,8 @@ async function saveLd(){
   else toast(r.error||'Error saving','err');
 }
 
-function closeLd(ev){if(ev&&ev.target!==g('ldMob'))return;g('ldMob').style.display='none';activeId=null;}
+function closeLd(ev){if(ev&&ev.target!==g('ldMob'))return;g('ldMob').style.display='none';activeId=null;
+  if(window.ProcamAI&&window.ProcamAI.setContext)window.ProcamAI.setContext(null);}
 
 async function deleteLd(){
   if (!activeId) return;

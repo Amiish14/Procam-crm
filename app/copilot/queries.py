@@ -32,7 +32,10 @@ ROW_CAP = 50
 #: "Stale" and "idle" mean this unless the question says otherwise.
 DEFAULT_IDLE_DAYS = 7
 
-_TERMINAL = ('Won', 'Lost', 'On Hold', 'Not Interested')
+#: Closed stages. Opportunities have used both spellings of won and lost;
+#: an opportunity "Closed Won" is not open pipeline.
+_TERMINAL = ('Won', 'Lost', 'On Hold', 'Not Interested', 'Closed Won',
+             'Closed Lost')
 
 
 def _now():

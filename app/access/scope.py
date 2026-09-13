@@ -182,36 +182,27 @@ def opportunities(q=None, sc=None):
 
 
 def rfqs(q=None, sc=None):
-    from app.models.rfq import RFQ
-    sc = sc or current()
-    return _narrow(q if q is not None else RFQ.query, RFQ.lead_driver, sc)
+    """RFQs the viewer may reach — the rule in app/access/records.py.
+
+    These helpers once applied only the RFQ's own owner column, so the
+    older Copilot answers and data-quality checks hid RFQs that the RFQ
+    screens show (a sourcing owner's, a team member's). One rule now.
+    """
+    from app.access import records
+    return records.rfqs(q, sc=sc)
 
 
 def quotes(q=None, sc=None):
-    from app.models.quote import Quote
-    sc = sc or current()
-    return _narrow(q if q is not None else Quote.query,
-                   Quote.prepared_by_id, sc)
+    """Quotes the viewer may reach — app/access/records.py."""
+    from app.access import records
+    return records.quotes(q, sc=sc)
 
 
 def handovers(q=None, sc=None):
-    """Handovers reachable through the opportunity that produced them.
-
-    won_handovers carries no owner of its own, so the boundary is
-    inherited from the opportunity rather than invented here.
-    """
-    from app import Opportunity
-    from app.models.tms_handover import WonHandover
-
-    sc = sc or current()
-    q = q if q is not None else WonHandover.query
-    if sc.codes is None:
-        return q
-    if not sc.codes:
-        return q.filter(False)
-    return q.filter(WonHandover.opportunity_id.in_(
-        Opportunity.query.with_entities(Opportunity.id)
-        .filter(Opportunity.owner_emp_code.in_(sc.codes))))
+    """Handovers the viewer may reach — app/access/records.py, which
+    includes the operations queue."""
+    from app.access import records
+    return records.handovers(q, sc=sc)
 
 
 def companies(q=None, sc=None):

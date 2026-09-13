@@ -273,3 +273,28 @@ def test_quote_approval_needs_company_scope_or_the_vertical_head_role(world):
     r = _c('DSADM', 'admin').post(f'/api/quotes/{world["quote"]}/approve',
                                   json={})
     assert r.status_code == 200, r.get_data(as_text=True)[:200]
+
+
+def test_every_caller_uses_the_one_rfq_quote_handover_rule(world):
+    """scope.rfqs/quotes/handovers used to apply only the document's own
+    owner column; the Copilot's older answers and the data-quality
+    checks used them and hid what the screens show."""
+    from app.access import records, scope as scope_mod
+    with flask_app.app_context():
+        db.session.add(RateSourcingLine(rfq_id=world['rfq'], line_no=1,
+                                        service='Road', created_by_id='DSTWO',
+                                        sourcing_owner_id='DSONE'))
+        db.session.commit()
+        sc = scope_mod.for_employee('DSONE')
+        assert {r.id for r in scope_mod.rfqs(sc=sc)} == \
+            {r.id for r in records.rfqs(sc=sc)}
+        assert world['rfq'] in {r.id for r in scope_mod.rfqs(sc=sc)}
+        ops = scope_mod.for_employee('DSOPS')
+        assert world['handover'] in {h.id for h in scope_mod.handovers(sc=ops)}
+
+
+def test_the_lead_screen_tells_the_copilot_which_lead_is_open():
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'templates', 'app.html')).read()
+    assert "window.ProcamAI.setContext({type:'lead', id:l.id" in src
+    assert 'window.ProcamAI.setContext(null)' in src
