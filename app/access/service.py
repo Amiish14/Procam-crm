@@ -37,6 +37,8 @@ PERMISSION_GROUPS = [
         ('module.rfq',          'RFQs',          'Raise and work RFQs'),
         ('module.quotes',       'Quotes',        'Prepare, submit and track quotes'),
         ('module.handovers',    'Handovers',     'Won deals handed to operations'),
+        ('module.handovers_all', 'All handovers',
+         'The whole operations queue, not only handovers of your deals'),
         ('module.funnels',      'Funnels',       'Account and project funnels'),
     ]),
     ('Intelligence', [

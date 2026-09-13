@@ -40,6 +40,7 @@ def people():
                 db.session.add(e)
             e.role, e.is_active, e.must_change_pw = role, True, False
             e.vertical, e.is_super_admin = 'All', sup
+            e.session_version, e.failed_logins, e.locked_until = 0, 0, None
             e.set_password(PASSWORD)
         db.session.commit()
         ids = {c: Employee.query.filter_by(emp_code=c).first().id

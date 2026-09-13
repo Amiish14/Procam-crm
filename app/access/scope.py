@@ -229,6 +229,25 @@ def companies(q=None, sc=None):
                    extra_columns=(Company.secondary_pic_emp_code,))
 
 
+def contacts(q=None, sc=None):
+    """Contacts the viewer may see: their own, those of accounts they
+    own, and those at accounts where they are working a lead — you cannot
+    work an enquiry without its people."""
+    from app import Contact, Lead
+    sc = sc or current()
+    q = q if q is not None else Contact.query
+    if sc.codes is None:
+        return q
+    if not sc.codes:
+        return q.filter(False)
+    from sqlalchemy import or_
+    from app import Company
+    return q.filter(or_(
+        Contact.assigned_to.in_(sc.codes),
+        Contact.company_id.in_(companies(sc=sc).with_entities(Company.id)),
+        Contact.company_id.in_(leads(sc=sc).with_entities(Lead.company_id))))
+
+
 def activities(q=None, sc=None):
     from app import Lead, LeadActivity
     sc = sc or current()

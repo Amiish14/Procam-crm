@@ -70,6 +70,21 @@
   </div>
 </div>
 
+{% if data.access != 'full' %}
+<div class="card" style="border-left:3px solid var(--p-warn,#B7791F);margin-bottom:14px">
+  <div style="padding:12px 14px">
+    {% if data.access == 'partial' %}
+      <b>Showing your part of this account.</b> You see your own leads and
+      opportunities here and the account's contacts. The account owner sees
+      the rest.
+    {% else %}
+      <b>This account belongs to another team.</b> Contact the owner shown
+      above to work with it.
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% if k %}
 <div class="grid3">
   <a class="kpi" href="#sec-opps" title="Show the opportunities">
     <div class="label">Opportunities</div>
@@ -103,6 +118,7 @@
     <div class="label">Lost</div>
     <div class="value">{{ k.lost }}</div></a>
 </div>
+{% endif %}
 
 <div class="grid2">
   <div>

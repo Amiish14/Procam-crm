@@ -355,14 +355,59 @@ def competitor_profile(company_id):
     }
 
 
-def full(company):
+def full(company, sc=None):
+    """The account view, cut to what the viewer may see.
+
+    full     everything, as before
+    partial  the viewer's own leads and opportunities on this account,
+             their timeline and the account's contacts; no account-wide
+             figures, which would total other people's deals
+    routing  the header only — who owns the account and how to reach
+             them. Knowing an account exists is open to everyone (§5.1);
+             its contacts, deals and history are not.
+    """
+    from app.access import records
+    level = records.company_access(company, sc)
+    if level == records.FULL:
+        return {
+            'access': level,
+            'header': header(company),
+            'kpis': kpis(company),
+            'people': people(company.id),
+            'opportunities': opportunities(company.id),
+            'leads': leads(company.id),
+            'timeline': timeline(company.id),
+            'competitors': competitors_seen(company.id),
+            'competitor_profile': competitor_profile(company.id),
+        }
+    if level == records.ROUTING:
+        return {'access': level, 'header': header(company), 'kpis': None,
+                'people': [], 'opportunities': [], 'leads': [],
+                'timeline': [], 'competitors': [],
+                'competitor_profile': None}
+
+    from app.access import scope as scope_mod
+    from app import Lead, Opportunity
+    sc = sc or scope_mod.current()
+    my_leads = {r[0] for r in scope_mod.leads(sc=sc)
+                .filter(Lead.company_id == company.id)
+                .with_entities(Lead.id).all()}
+    my_opps = {r[0] for r in scope_mod.opportunities(sc=sc)
+               .filter(Opportunity.company_id == company.id)
+               .with_entities(Opportunity.id).all()}
+    lead_routes = {f'/app?lead={i}' for i in my_leads}
+    opp_routes = {f'/app?opp={i}' for i in my_opps}
     return {
+        'access': level,
         'header': header(company),
-        'kpis': kpis(company),
+        'kpis': None,
         'people': people(company.id),
-        'opportunities': opportunities(company.id),
-        'leads': leads(company.id),
-        'timeline': timeline(company.id),
-        'competitors': competitors_seen(company.id),
-        'competitor_profile': competitor_profile(company.id),
+        'opportunities': [o for o in opportunities(company.id)
+                          if o['id'] in my_opps],
+        'leads': [l for l in leads(company.id) if l['id'] in my_leads],
+        'timeline': [e for e in timeline(company.id)
+                     if e['route'] in lead_routes | opp_routes],
+        'competitors': [c for c in competitors_seen(company.id)
+                        if c['opportunity_id'] in my_opps],
+        'competitor_profile': None,
     }

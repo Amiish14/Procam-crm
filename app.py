@@ -158,7 +158,11 @@ app.config['PERMANENT_SESSION_LIFETIME'] = _td(hours=8)
 app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024   # 20 MB
 # URL_PREFIX lets the app-side templates render CRM-prefixed asset URLs even
 # outside of a request context (e.g. when computing an email link).
-app.config['APPLICATION_ROOT'] = os.environ.get('URL_PREFIX', '/')
+# An empty URL_PREFIX used to become an empty APPLICATION_ROOT, which gives
+# the session cookie "Path=" — browsers then scope it to the folder of the
+# request that set it, so a session refreshed by one /api/... call was not
+# sent to another. Unset and empty both mean the site root.
+app.config['APPLICATION_ROOT'] = os.environ.get('URL_PREFIX') or '/'
 
 # v2026-09-04 — Make `app.py` also act as the parent package for the
 # sibling `app/` directory, so `from app.models.rbac import Role`
@@ -347,6 +351,15 @@ class Employee(db.Model):
     vertical_head_id = db.Column(db.Integer, db.ForeignKey('employees.id'),
                                  nullable=True)
     created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    # Sessions carry the version they were issued under; bumping it ends
+    # every other session (password reset, deactivation, "sign out
+    # everywhere"). Sessions from before the column existed read as 0.
+    session_version = db.Column(db.Integer, default=0)
+    # Consecutive failed sign-ins, and the lock they lead to.
+    failed_logins   = db.Column(db.Integer, default=0)
+    locked_until    = db.Column(db.DateTime)
+    # An administrator-issued temporary password stops working after this.
+    temp_password_expires_at = db.Column(db.DateTime)
 
     def set_password(self, pw):
         self.password_hash = generate_password_hash(pw)
@@ -1289,7 +1302,26 @@ def login():
         emp_code = (data.get('emp_code') or '').strip().upper()
         password = data.get('password') or ''
         emp = Employee.query.filter_by(emp_code=emp_code, is_active=True).first()
+        now = datetime.utcnow()
+        if emp is not None and emp.locked_until and emp.locked_until > now:
+            minutes = max(1, int((emp.locked_until - now).total_seconds()
+                                 // 60) + 1)
+            return jsonify({'ok': False, 'code': 'locked',
+                            'error': f'Too many failed sign-ins. Try again '
+                                     f'in {minutes} minute(s), or ask an '
+                                     f'administrator to reset your '
+                                     f'password.'}), 429
         if emp and emp.check_password(password):
+            if (emp.must_change_pw and emp.temp_password_expires_at
+                    and emp.temp_password_expires_at < now):
+                return jsonify({'ok': False, 'code': 'temp_expired',
+                                'error': 'This temporary password has '
+                                         'expired. Ask an administrator to '
+                                         'issue a new one.'}), 401
+            emp.failed_logins = 0
+            emp.locked_until = None
+            db.session.commit()
+            session['sv'] = emp.session_version or 0
             session['emp_code'] = emp.emp_code
             session['name']     = emp.name
             session['role']     = emp.role
@@ -1303,8 +1335,18 @@ def login():
         # The code typed is kept (it is not a secret); the password never is.
         _audit.record('auth.login_failure', 'employee', emp_code[:20] or None,
                       actor=(emp_code[:20] or 'anonymous'),
-                      new={'known_active_account': emp is not None},
-                      commit=True)
+                      new={'known_active_account': emp is not None})
+        if emp is not None:
+            # Counted per account, in the database, so the limit holds
+            # across gunicorn workers — the per-IP rate limit does not.
+            emp.failed_logins = (emp.failed_logins or 0) + 1
+            if emp.failed_logins >= LOGIN_LOCK_AFTER:
+                emp.locked_until = now + LOGIN_LOCK_FOR
+                emp.failed_logins = 0
+                _audit.record('auth.account_locked', 'employee', emp.emp_code,
+                              actor=emp.emp_code,
+                              new={'locked_until': emp.locked_until})
+        db.session.commit()
         return jsonify({'ok': False, 'error': 'Invalid Employee Code or Password'}), 401
 
     return render_template('login.html')
@@ -1320,20 +1362,39 @@ def change_password():
     if not emp.check_password(data.get('current', '')):
         return jsonify({'ok': False, 'error': 'Current password incorrect'}), 400
     new_pw = data.get('new_password', '')
-    if len(new_pw) < MIN_PASSWORD_LENGTH:
-        return jsonify({'ok': False, 'error': f'Password must be at least '
-                        f'{MIN_PASSWORD_LENGTH} characters'}), 400
-    if new_pw.lower() == emp.emp_code.lower():
-        # The old default — every seeded account started with it, so it
-        # is the first thing anyone would try.
-        return jsonify({'ok': False, 'error': 'Your password cannot be your '
-                        'employee code'}), 400
+    problem = password_problem(new_pw, emp)
+    if problem:
+        return jsonify({'ok': False, 'error': problem}), 400
+    if emp.check_password(new_pw):
+        return jsonify({'ok': False, 'error': 'Choose a password different '
+                        'from the current one'}), 400
     g.audit_reason = 'changed by the account holder'
     emp.set_password(new_pw)
     emp.must_change_pw = False
+    emp.temp_password_expires_at = None
+    # Every other session ends; this one continues under the new version.
+    emp.session_version = (emp.session_version or 0) + 1
     db.session.commit()
     session['must_change_pw'] = False
+    session['sv'] = emp.session_version
     return jsonify({'ok': True})
+
+@app.route('/api/account/sessions/revoke', methods=['POST'])
+def api_revoke_my_sessions():
+    """Sign out every other device. This session continues."""
+    code = session.get('emp_code')
+    if not code:
+        return jsonify(ok=False, error='Not authenticated'), 401
+    emp = Employee.query.filter_by(emp_code=code).first()
+    if emp is None:
+        return jsonify(ok=False, error='Not found'), 404
+    emp.session_version = (emp.session_version or 0) + 1
+    from app.services import audit as _audit
+    _audit.record('auth.sessions_revoked', 'employee', code)
+    db.session.commit()
+    session['sv'] = emp.session_version
+    return jsonify(ok=True)
+
 
 @app.route('/logout', methods=['POST'])
 def logout():
@@ -1380,6 +1441,36 @@ def require_auth(f):
     return decorated
 
 MIN_PASSWORD_LENGTH = 10
+LOGIN_LOCK_AFTER = 8
+LOGIN_LOCK_FOR = timedelta(minutes=15)
+TEMP_PASSWORD_VALID_FOR = timedelta(hours=72)
+
+#: Passwords people choose first. Checked case-insensitively, with any
+#: trailing digits and punctuation removed, so "Procam@2026" is caught too.
+_COMMON_PASSWORDS = {
+    'password', 'passw0rd', 'procam', 'procamgroup', 'procamlogistics',
+    'welcome', 'qwerty', 'qwertyuiop', 'admin', 'administrator', 'letmein',
+    'changeme', 'iloveyou', 'abcdefgh', 'abcdef', 'monkey', 'india',
+    'logistics', 'crm', 'sunshine', 'test', 'default', 'secret', 'login',
+}
+
+
+def password_problem(pw, emp=None):
+    """Why a new password is not acceptable, or None."""
+    pw = pw or ''
+    if len(pw) < MIN_PASSWORD_LENGTH:
+        return f'Password must be at least {MIN_PASSWORD_LENGTH} characters'
+    if emp is not None and emp.emp_code and \
+            emp.emp_code.lower() in pw.lower():
+        # The old default was the code itself; a code with a suffix is the
+        # second thing anyone would try.
+        return 'Your password cannot contain your employee code'
+    if len(set(pw)) < 4:
+        return 'Use more varied characters'
+    stem = re.sub(r'[\d\W_]+$', '', pw.lower())
+    if stem in _COMMON_PASSWORDS or pw.lower() in _COMMON_PASSWORDS:
+        return 'That password is too common — choose another'
+    return None
 
 
 def _temporary_password():
@@ -1402,7 +1493,9 @@ def _session_guard():
     code = session.get('emp_code')
     if not code or request.endpoint == 'static':
         return None
-    row = (Employee.query.with_entities(Employee.is_active)
+    row = (Employee.query.with_entities(
+               Employee.is_active, Employee.role, Employee.vertical,
+               Employee.session_version)
            .filter_by(emp_code=code).first())
     if row is not None and not row.is_active:
         session.clear()
@@ -1410,6 +1503,23 @@ def _session_guard():
             return jsonify(ok=False, code='inactive',
                            error='This account is no longer active.'), 401
         return redirect(url_for('login'))
+    if row is not None and (session.get('sv') or 0) != (row.session_version
+                                                        or 0):
+        # The password was reset, the account signed out everywhere, or
+        # it was deactivated and restored: this session predates that.
+        session.clear()
+        if _api_request():
+            return jsonify(ok=False, code='session_revoked',
+                           error='Please sign in again.'), 401
+        return redirect(url_for('login'))
+    if row is not None:
+        # Role and vertical used to be read once at sign-in, so a demotion
+        # took effect only at the next login. Every legacy role check reads
+        # the session, so keeping it current fixes them all at once.
+        if session.get('role') != row.role:
+            session['role'] = row.role
+        if (session.get('vertical') or '') != (row.vertical or ''):
+            session['vertical'] = row.vertical or ''
     if session.get('must_change_pw') and _api_request():
         return jsonify(ok=False, code='password_change_required',
                        error='Change your password before continuing.'), 403
@@ -1496,6 +1606,7 @@ def api_create_employee():
     )
     temp = _temporary_password()
     emp.set_password(temp)
+    emp.temp_password_expires_at = datetime.utcnow() + TEMP_PASSWORD_VALID_FOR
     db.session.add(emp)
     db.session.commit()
     app.logger.warning('employee_change action=create actor=%s target=%s '
@@ -1525,11 +1636,18 @@ def api_update_employee(eid):
     if 'industries' in d:
         emp.industries = json.dumps(d['industries'])
     body = {'ok': True}
+    if d.get('is_active') is False or d.get('revoke_sessions'):
+        emp.session_version = (emp.session_version or 0) + 1
     if d.get('reset_password'):
         g.audit_reason = 'temporary password issued by an administrator'
         temp = _temporary_password()
         emp.set_password(temp)
         emp.must_change_pw = True
+        emp.temp_password_expires_at = (datetime.utcnow()
+                                        + TEMP_PASSWORD_VALID_FOR)
+        emp.failed_logins, emp.locked_until = 0, None
+        # Whoever held the old password is signed out everywhere.
+        emp.session_version = (emp.session_version or 0) + 1
         body['temp_password'] = temp
         changed.append('password_reset')
     db.session.commit()
@@ -1550,6 +1668,7 @@ def api_deactivate_employee(eid):
     app.logger.warning('employee_change action=deactivate actor=%s target=%s',
                        session.get('emp_code'), emp.emp_code)
     emp.is_active = False
+    emp.session_version = (emp.session_version or 0) + 1
     db.session.commit()
     return jsonify({'ok': True})
 
@@ -2453,9 +2572,8 @@ def api_contacts():
     atype = request.args.get('agent_type','')
     country = request.args.get('country','')
     srch = request.args.get('q','').lower()
-    q = Contact.query
-    if session.get('role') != 'admin':
-        q = q.filter_by(assigned_to=session['emp_code'])
+    from app.access import scope as _scope
+    q = _scope.contacts(Contact.query)
     if ctype:   q = q.filter_by(contact_type=ctype)
     if atype:   q = q.filter_by(agent_type=atype)
     if country: q = q.filter_by(country=country)
@@ -2521,11 +2639,9 @@ def api_contact_by_id(cid):
     deep link needs its own path. Same visibility rule as the list, so
     this cannot reach a contact the list would have hidden.
     """
-    contact = Contact.query.get(cid)
+    from app.access import scope as _scope
+    contact = _scope.contacts(Contact.query).filter(Contact.id == cid).first()
     if contact is None:
-        return jsonify({'error': 'Contact not found', 'id': cid}), 404
-    if (session.get('role') != 'admin'
-            and contact.assigned_to != session.get('emp_code')):
         return jsonify({'error': 'Contact not found', 'id': cid}), 404
 
     body = contact.to_dict()
@@ -2540,14 +2656,22 @@ def api_contact_by_id(cid):
 @app.route('/api/contacts/<int:cid>', methods=['PUT'])
 @require_auth
 def api_update_contact(cid):
+    from app.access import scope as _scope
     ct = Contact.query.get_or_404(cid)
-    if session.get('role') != 'admin' and ct.assigned_to != session['emp_code']:
+    sc = _scope.current()
+    # Editing is for the contact's owner (or someone whose scope reaches
+    # them); seeing a colleague's contact on a shared account is not
+    # permission to change it.
+    if not (sc.codes is None or sc.reaches(ct.assigned_to or '')):
         return jsonify({'error': 'Forbidden'}), 403
     d = request.get_json()
     for f in ('name','company','designation','industry','email','phone','mobile',
               'country','city','website','linkedin','agent_type','notes','contact_type'):
         if f in d: setattr(ct, f, d[f])
-    if 'assigned_to' in d and session.get('role')=='admin':
+    if 'assigned_to' in d and d['assigned_to'] != ct.assigned_to:
+        if sc.codes is not None:
+            return jsonify({'error': 'Only an administrator with company-'
+                                     'wide access can reassign a contact'}), 403
         ct.assigned_to = d['assigned_to']
     db.session.commit()
     return jsonify({'ok': True})
@@ -2555,8 +2679,10 @@ def api_update_contact(cid):
 @app.route('/api/contacts/<int:cid>', methods=['DELETE'])
 @require_auth
 def api_delete_contact(cid):
+    from app.access import scope as _scope
     ct = Contact.query.get_or_404(cid)
-    if session.get('role') != 'admin' and ct.assigned_to != session['emp_code']:
+    sc = _scope.current()
+    if not (sc.codes is None or sc.reaches(ct.assigned_to or '')):
         return jsonify({'error': 'Forbidden'}), 403
     db.session.delete(ct)
     db.session.commit()
@@ -3244,10 +3370,18 @@ def api_create_company():
 @require_auth
 def api_update_company(cid):
     c = Company.query.get_or_404(cid)
-    if session.get('role') != 'admin':
-        creator = getattr(c, 'created_by', None)
-        if creator and creator != session.get('emp_code'):
-            return jsonify({'error': 'Forbidden — only admin or creator can edit'}), 403
+    from app.access import scope as _scope
+    sc = _scope.current()
+    # An account with no recorded creator used to be editable by anyone.
+    # Now: company-wide scope, the account's own owners (or someone whose
+    # scope reaches them), or the person who created it.
+    allowed = (sc.codes is None
+               or _scope.companies(sc=sc).filter(Company.id == c.id).first()
+               or (getattr(c, 'created_by', None)
+                   and c.created_by == session.get('emp_code')))
+    if not allowed:
+        return jsonify({'error': 'Forbidden — only the account owner or an '
+                                 'administrator can edit'}), 403
     d = request.get_json(force=True) or {}
     for f in ('name', 'industry', 'website', 'country', 'state', 'city',
               'address', 'phone', 'email', 'linkedin', 'tier', 'notes'):
@@ -3293,10 +3427,13 @@ def api_create_agent():
 @require_auth
 def api_update_agent(aid):
     a = OverseasAgent.query.get_or_404(aid)
-    if session.get('role') != 'admin':
-        creator = getattr(a, 'created_by', None)
-        if creator and creator != session.get('emp_code'):
-            return jsonify({'error': 'Forbidden — only admin or creator can edit'}), 403
+    from app.access import scope as _scope
+    from app.access.service import can as _can
+    # Agents have no owner column, so the old "creator may edit" rule let
+    # anyone edit any agent. Master data rights, or company-wide scope.
+    if not (_scope.current().codes is None or _can('admin.master')):
+        return jsonify({'error': 'Forbidden — overseas agents are master '
+                                 'data'}), 403
     d = request.get_json(force=True) or {}
     for f in ('name', 'country', 'city', 'website', 'contact_person',
               'phone', 'email', 'address', 'notes'):
@@ -3306,6 +3443,7 @@ def api_update_agent(aid):
 
 
 @app.route('/api/agents/<int:aid>', methods=['DELETE'])
+@require_auth
 @require_admin
 def api_delete_agent(aid):
     a = OverseasAgent.query.get_or_404(aid)
@@ -4014,6 +4152,11 @@ def init_db():
             ('leads',         'stage_entered_at', 'TIMESTAMP'),
             ('employees',     'is_vertical_head', _bool_ddl),
             ('employees',     'vertical_head_id', 'INTEGER'),
+            # 2026-10 production hardening — sessions and sign-in
+            ('employees',     'session_version',  'INTEGER DEFAULT 0'),
+            ('employees',     'failed_logins',    'INTEGER DEFAULT 0'),
+            ('employees',     'locked_until',     'TIMESTAMP'),
+            ('employees',     'temp_password_expires_at', 'TIMESTAMP'),
             # v2026-10 final audit. A model column the database lacks breaks
             # EVERY query on that table, so a restart that lands before the
             # migration script runs would take the lead list and the notes

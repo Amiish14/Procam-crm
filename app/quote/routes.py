@@ -135,7 +135,7 @@ def quote_list_page():
 def quote_detail_page(qid):
     if not session.get('emp_code'):
         return redirect(url_for('login'))
-    quote = Quote.query.get_or_404(qid)
+    quote = _quote_or_404(qid)
     return render_template('quote/detail.html', quote=quote, emp=_current_emp())
 
 
@@ -144,7 +144,7 @@ def quote_detail_page(qid):
 def quote_print_page(qid):
     if not session.get('emp_code'):
         return redirect(url_for('login'))
-    quote = Quote.query.get_or_404(qid)
+    quote = _quote_or_404(qid)
     lines = (QuoteLine.query.filter_by(quote_id=qid)
              .order_by(QuoteLine.line_no.asc(), QuoteLine.id.asc()).all())
     return render_template('quote/print.html', quote=quote, lines=lines)
@@ -155,7 +155,7 @@ def quote_print_page(qid):
 def quote_pdf(qid):
     if not session.get('emp_code'):
         return redirect(url_for('login'))
-    quote = Quote.query.get_or_404(qid)
+    quote = _quote_or_404(qid)
     lines = (QuoteLine.query.filter_by(quote_id=qid)
              .order_by(QuoteLine.line_no.asc(), QuoteLine.id.asc()).all())
     try:
@@ -243,6 +243,17 @@ def quote_pdf(qid):
 
 
 # ─── JSON API ──────────────────────────────────────────────────────────────
+
+def _quote_or_404(qid):
+    """A quote the viewer may reach, else a 404 — the same rule as the
+    list (app.access.records.quotes)."""
+    from flask import abort
+    from app.access import records
+    quote = Quote.query.get_or_404(qid)
+    if not records.may_view_quote(quote):
+        abort(404)
+    return quote
+
 @bp.route('/api/quotes', methods=['GET'])
 @_require_auth
 def api_list_quotes():
@@ -259,10 +270,8 @@ def api_list_quotes():
         q = q.filter(Quote.rfq_id == rfq_id)
     if opp_id:
         q = q.filter(Quote.opportunity_id == opp_id)
-    if _emp_role() != 'admin':
-        me = session.get('emp_code')
-        q = q.filter((Quote.prepared_by_id == me) |
-                     (Quote.created_by_id == me))
+    from app.access import records
+    q = records.quotes(q)
     rows = q.order_by(Quote.quote_date.desc(), Quote.id.desc()).limit(500).all()
     return jsonify(ok=True, quotes=[r.to_dict() for r in rows])
 
@@ -276,7 +285,12 @@ def api_create_quote():
     rfq = None
     rfq_id = d.get('rfq_id')
     if rfq_id:
+        from app.access import records
         rfq = RFQ.query.get(rfq_id)
+        # A quote against an RFQ copies its lead, opportunity and account,
+        # so raising one is a way to reach them — same rule as opening it.
+        if rfq is not None and not records.may_view_rfq(rfq):
+            return jsonify(ok=False, error='RFQ not found'), 404
 
     quote = Quote(
         quote_number=_next_quote_number(),
@@ -351,14 +365,14 @@ def _append_quote_line(quote, d, default_line_no):
 @bp.route('/api/quotes/<int:qid>', methods=['GET'])
 @_require_auth
 def api_get_quote(qid):
-    q = Quote.query.get_or_404(qid)
+    q = _quote_or_404(qid)
     return jsonify(ok=True, quote=q.to_dict(deep=True))
 
 
 @bp.route('/api/quotes/<int:qid>', methods=['PATCH'])
 @_require_auth
 def api_patch_quote(qid):
-    q = Quote.query.get_or_404(qid)
+    q = _quote_or_404(qid)
     if q.status in ('Superseded', 'Won', 'Lost'):
         return jsonify(ok=False, error=f'Quote is {q.status} — immutable'), 400
     d = request.get_json(silent=True) or {}
@@ -386,7 +400,7 @@ def api_patch_quote(qid):
 @bp.route('/api/quotes/<int:qid>/lines', methods=['POST'])
 @_require_auth
 def api_add_line(qid):
-    q = Quote.query.get_or_404(qid)
+    q = _quote_or_404(qid)
     if q.status in ('Superseded', 'Won', 'Lost'):
         return jsonify(ok=False, error=f'Quote is {q.status} — immutable'), 400
     d = request.get_json(silent=True) or {}
@@ -404,7 +418,7 @@ def api_add_line(qid):
 @bp.route('/api/quotes/<int:qid>/lines/<int:line_id>', methods=['PATCH'])
 @_require_auth
 def api_patch_line(qid, line_id):
-    q = Quote.query.get_or_404(qid)
+    q = _quote_or_404(qid)
     if q.status in ('Superseded', 'Won', 'Lost'):
         return jsonify(ok=False, error=f'Quote is {q.status} — immutable'), 400
     ln = QuoteLine.query.get_or_404(line_id)
@@ -433,7 +447,7 @@ def api_patch_line(qid, line_id):
 @bp.route('/api/quotes/<int:qid>/submit-for-approval', methods=['POST'])
 @_require_auth
 def api_submit_for_approval(qid):
-    q = Quote.query.get_or_404(qid)
+    q = _quote_or_404(qid)
     if q.status != 'Draft':
         return jsonify(ok=False,
                        error=f'Only Draft quotes may be submitted. Current: {q.status}'), 400
@@ -456,7 +470,7 @@ def api_submit_for_approval(qid):
 @bp.route('/api/quotes/<int:qid>/approve', methods=['POST'])
 @_require_auth
 def api_approve(qid):
-    q = Quote.query.get_or_404(qid)
+    q = _quote_or_404(qid)
     if q.status != 'Awaiting Approval':
         return jsonify(ok=False,
                        error=f'Only Awaiting-Approval quotes may be approved. Current: {q.status}'), 400
@@ -490,7 +504,7 @@ def api_approve(qid):
 @bp.route('/api/quotes/<int:qid>/reject', methods=['POST'])
 @_require_auth
 def api_reject(qid):
-    q = Quote.query.get_or_404(qid)
+    q = _quote_or_404(qid)
     if q.status != 'Awaiting Approval':
         return jsonify(ok=False,
                        error=f'Only Awaiting-Approval quotes may be rejected. Current: {q.status}'), 400
@@ -524,7 +538,7 @@ def api_reject(qid):
 @bp.route('/api/quotes/<int:qid>/submit-to-client', methods=['POST'])
 @_require_auth
 def api_submit_to_client(qid):
-    q = Quote.query.get_or_404(qid)
+    q = _quote_or_404(qid)
     if q.status != 'Approved':
         return jsonify(ok=False,
                        error=f'Only Approved quotes may be submitted to client. Current: {q.status}'), 400
@@ -548,7 +562,7 @@ def api_submit_to_client(qid):
 @bp.route('/api/quotes/<int:qid>/revise', methods=['POST'])
 @_require_auth
 def api_revise(qid):
-    old_q = Quote.query.get_or_404(qid)
+    old_q = _quote_or_404(qid)
     if old_q.status in ('Superseded', 'Won', 'Lost'):
         return jsonify(ok=False,
                        error=f'Quote is {old_q.status} — cannot revise'), 400
@@ -629,7 +643,7 @@ def api_revise(qid):
 @bp.route('/api/quotes/<int:qid>/won', methods=['POST'])
 @_require_auth
 def api_won(qid):
-    q = Quote.query.get_or_404(qid)
+    q = _quote_or_404(qid)
     if q.status in ('Superseded', 'Won', 'Lost'):
         return jsonify(ok=False, error=f'Quote is {q.status}'), 400
     old = q.status
@@ -653,7 +667,7 @@ def api_won(qid):
 @bp.route('/api/quotes/<int:qid>/lost', methods=['POST'])
 @_require_auth
 def api_lost(qid):
-    q = Quote.query.get_or_404(qid)
+    q = _quote_or_404(qid)
     if q.status in ('Superseded', 'Won', 'Lost'):
         return jsonify(ok=False, error=f'Quote is {q.status}'), 400
     d = request.get_json(silent=True) or {}

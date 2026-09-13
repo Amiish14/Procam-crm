@@ -87,11 +87,23 @@ def queue_page():
     return render_template('handover/queue.html', emp=_current_emp())
 
 
+
+def _handover_or_404(hid):
+    from flask import abort
+    from app.access import records
+    row = WonHandover.query.get_or_404(hid)
+    if not records.may_view_handover(row):
+        abort(404)
+    return row
+
 # ─── JSON API ──────────────────────────────────────────────────────────────
 @bp.route('/api/handovers', methods=['GET'])
 @_require_auth
 def api_list():
-    q = WonHandover.query
+    # Operations works the whole queue; everyone else sees handovers of
+    # deals they can reach (app.access.records.handovers).
+    from app.access import records
+    q = records.handovers(WonHandover.query)
     status = request.args.get('status') or 'Handover Pending'
     if status and status != 'all':
         q = q.filter(WonHandover.status == status)
@@ -104,6 +116,13 @@ def api_list():
 def api_create():
     d = request.get_json(silent=True) or {}
     actor = session.get('emp_code')
+    # A handover copies the deal it hands over; creating one for a deal the
+    # caller cannot reach would be a way to read and redirect it.
+    from app import Opportunity
+    from app.access import scope as _scope
+    if d.get('opportunity_id') and not _scope.may_view(
+            Opportunity.query.get(d.get('opportunity_id'))):
+        return jsonify(ok=False, error='Opportunity not found'), 404
     row = WonHandover(
         opportunity_id=d.get('opportunity_id') or None,
         quote_id=d.get('quote_id') or None,
@@ -157,14 +176,14 @@ def api_create():
 @bp.route('/api/handovers/<int:hid>', methods=['GET'])
 @_require_auth
 def api_get(hid):
-    row = WonHandover.query.get_or_404(hid)
+    row = _handover_or_404(hid)
     return jsonify(ok=True, handover=row.to_dict())
 
 
 @bp.route('/api/handovers/<int:hid>', methods=['PATCH'])
 @_require_auth
 def api_patch(hid):
-    row = WonHandover.query.get_or_404(hid)
+    row = _handover_or_404(hid)
     if row.status == 'Cancelled':
         return jsonify(ok=False, error='Handover is Cancelled — immutable'), 400
     d = request.get_json(silent=True) or {}
@@ -261,7 +280,7 @@ def api_capture_po(hid):
     handover out of `Awaiting PO`, at which point TMS may create exactly
     one Project and one Job against it.
     """
-    row = WonHandover.query.get_or_404(hid)
+    row = _handover_or_404(hid)
     if row.status == HandoverStatus.CANCELLED:
         return jsonify(ok=False, error='Handover is Cancelled'), 400
 
@@ -289,7 +308,7 @@ def api_capture_po(hid):
 @bp.route('/api/handovers/<int:hid>/cancel', methods=['POST'])
 @_require_auth
 def api_cancel(hid):
-    row = WonHandover.query.get_or_404(hid)
+    row = _handover_or_404(hid)
     if row.status in (HandoverStatus.COMPLETE, HandoverStatus.CANCELLED):
         return jsonify(ok=False, error=f'Handover is {row.status}'), 400
     d = request.get_json(silent=True) or {}

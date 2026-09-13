@@ -79,6 +79,18 @@ def _has_role_key(emp, role_key):
     return False
 
 
+def _rfq_or_404(rid):
+    """An RFQ the viewer may reach, else the same 404 as a missing one —
+    so ids cannot be probed. The rule is app.access.records.rfqs, which
+    the list uses too."""
+    from flask import abort
+    from app.access import records
+    rfq = RFQ.query.get_or_404(rid)
+    if not records.may_view_rfq(rfq):
+        abort(404)
+    return rfq
+
+
 # ─── helpers ───────────────────────────────────────────────────────────────
 _ALLOWED_STATUSES = [
     'Received', 'Rate Sourcing', 'Quote Preparation', 'Quoted',
@@ -195,7 +207,7 @@ def rfq_list_page():
 def rfq_detail_page(rid):
     if not session.get('emp_code'):
         return redirect(url_for('login'))
-    rfq = RFQ.query.get_or_404(rid)
+    rfq = _rfq_or_404(rid)
     return render_template('rfq/detail.html', rfq=rfq, emp=_current_emp())
 
 
@@ -220,12 +232,11 @@ def api_list_rfqs():
     if opp_id:
         q = q.filter(RFQ.opportunity_id == opp_id)
 
-    # Role scoping — non-admin sees RFQs they lead, or where they're a
-    # member of the linked account/opportunity.
-    if _emp_role() != 'admin':
-        me = session.get('emp_code')
-        q = q.filter((RFQ.lead_driver == me) |
-                     (RFQ.created_by_id == me))
+    # The same rule as opening one by id: the Access Matrix scope, the
+    # lead / opportunity / account it sits on, team membership, and the
+    # sourcing desk (app.access.records).
+    from app.access import records
+    q = records.rfqs(q)
     rows = q.order_by(RFQ.received_date.desc(), RFQ.id.desc()).limit(500).all()
     return jsonify(ok=True, rfqs=[r.to_dict() for r in rows])
 
@@ -285,14 +296,14 @@ def api_create_rfq():
 @bp.route('/api/rfqs/<int:rid>', methods=['GET'])
 @_require_auth
 def api_get_rfq(rid):
-    rfq = RFQ.query.get_or_404(rid)
+    rfq = _rfq_or_404(rid)
     return jsonify(ok=True, rfq=rfq.to_dict(deep=True))
 
 
 @bp.route('/api/rfqs/<int:rid>', methods=['PATCH'])
 @_require_auth
 def api_patch_rfq(rid):
-    rfq = RFQ.query.get_or_404(rid)
+    rfq = _rfq_or_404(rid)
     d = request.get_json(silent=True) or {}
     for field in ('subject', 'description', 'origin', 'destination',
                   'cargo', 'scope', 'currency', 'lead_driver'):
@@ -315,7 +326,7 @@ def api_patch_rfq(rid):
 @bp.route('/api/rfqs/<int:rid>/attachments', methods=['POST'])
 @_require_auth
 def api_upload_attachment(rid):
-    rfq = RFQ.query.get_or_404(rid)
+    rfq = _rfq_or_404(rid)
     f = request.files.get('file') or request.files.get('upload')
     if not f:
         return jsonify(ok=False, error='no file'), 400
@@ -344,7 +355,7 @@ def api_upload_attachment(rid):
 @bp.route('/api/rfqs/<int:rid>/lines', methods=['POST'])
 @_require_auth
 def api_add_line(rid):
-    rfq = RFQ.query.get_or_404(rid)
+    rfq = _rfq_or_404(rid)
     d = request.get_json(silent=True) or {}
     actor = session.get('emp_code')
     created = _create_lines_from_payload(rfq, [d], actor)
@@ -361,6 +372,7 @@ def api_add_line(rid):
 @bp.route('/api/rfqs/<int:rid>/lines/<int:line_id>', methods=['PATCH'])
 @_require_auth
 def api_patch_line(rid, line_id):
+    _rfq_or_404(rid)
     line = RateSourcingLine.query.get_or_404(line_id)
     if line.rfq_id != rid:
         return jsonify(ok=False, error='line does not belong to rfq'), 400
@@ -404,6 +416,7 @@ def api_patch_line(rid, line_id):
           methods=['POST'])
 @_require_auth
 def api_submit_rate(rid, line_id):
+    _rfq_or_404(rid)
     line = RateSourcingLine.query.get_or_404(line_id)
     if line.rfq_id != rid:
         return jsonify(ok=False, error='line does not belong to rfq'), 400
@@ -471,7 +484,7 @@ def api_submit_rate(rid, line_id):
 @bp.route('/api/rfqs/<int:rid>/advance', methods=['POST'])
 @_require_auth
 def api_advance(rid):
-    rfq = RFQ.query.get_or_404(rid)
+    rfq = _rfq_or_404(rid)
     d = request.get_json(silent=True) or {}
     target = (d.get('status') or '').strip()
     if not target:

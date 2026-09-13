@@ -33,6 +33,10 @@ def _emp(code, *, role='user', super_=False, active=True, pw=None):
         db.session.add(e)
     e.role, e.is_active, e.must_change_pw = role, active, False
     e.vertical, e.is_super_admin = 'All', super_
+    # A test that resets a password or deactivates an account ends that
+    # account's sessions; each test starts from a clean slate.
+    e.session_version, e.failed_logins, e.locked_until = 0, 0, None
+    e.temp_password_expires_at = None
     e.set_password(pw or 'SomethingLong123')
     db.session.commit()
     return e
