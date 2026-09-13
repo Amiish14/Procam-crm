@@ -577,6 +577,40 @@ def test_a_service_filter_matches_every_spelling_of_the_service(world):
             db.session.commit()
 
 
+def test_follow_ups_and_closing_take_the_service_filter_too(world):
+    with flask_app.app_context():
+        lead = db.session.get(Lead, world['lead_mine'])
+        opp = db.session.get(Opportunity, world['opp_mine'])
+        saved = (lead.followup_date, opp.expected_close_date)
+        lead.followup_date = date.today()
+        opp.expected_close_date = date.today()
+        db.session.commit()
+        try:
+            sc = _scope('CIREP', DataScope.OWN)
+            for key in ('followups_due', 'closing_this_month'):
+                hit = catalogue.get(key).handler(
+                    sc, {'vertical': 'Heavy Transport'})
+                miss = catalogue.get(key).handler(
+                    sc, {'vertical': 'Chartering'})
+                marker = 'Insight Mine Co' if key == 'followups_due' \
+                    else 'OPP-CI-MINE'
+                assert marker in _blob(hit), key
+                assert marker not in _blob(miss), key
+                assert miss.filters == {'vertical': 'Chartering'}, key
+        finally:
+            lead.followup_date, opp.expected_close_date = saved
+            db.session.commit()
+
+
+def test_a_window_in_words_becomes_the_days_param(world):
+    key, params = svc._match_patterns('follow ups due this week')
+    assert (key, params.get('days')) == ('followups_due', 7)
+    key, params = svc._match_patterns('new leads this month')
+    assert (key, params.get('days')) == ('leads_new', 30)
+    key, params = svc._match_patterns('stale leads 14 days')
+    assert params.get('days') == 14            # a typed number wins
+
+
 def test_two_matching_accounts_come_back_as_a_clarification(world):
     with flask_app.app_context():
         sc = _scope('CIREP', DataScope.OWN)

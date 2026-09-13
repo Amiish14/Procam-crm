@@ -2260,6 +2260,7 @@ def my_performance(scope, params):
 
 @intent('closing_this_month', 'Likely to close this month',
         permission='module.funnels', personas=('sales', 'head', 'mgmt'),
+        params={'vertical': 'only this service, e.g. Project Freight'},
         phase=2,
         examples=('what is likely to close this month',
                   'likely bookings', 'closing this month'))
@@ -2280,21 +2281,23 @@ def closing_this_month(scope, params):
     # production answered 355 of 377 open opportunities. An overdue date
     # is worth knowing about, but it is a different question and gets
     # its own line rather than being folded into the forecast.
-    overdue = (sc_mod.opportunities(sc=scope)
-               .filter(~Opportunity.stage.in_(_TERMINAL),
-                       Opportunity.expected_close_date.isnot(None),
-                       Opportunity.expected_close_date < start).count())
+    service = _service_param(params)
 
-    found = (sc_mod.opportunities(sc=scope)
-             .filter(~Opportunity.stage.in_(_TERMINAL),
-                     Opportunity.expected_close_date.isnot(None),
-                     Opportunity.expected_close_date >= start,
-                     Opportunity.expected_close_date < end)
+    def mine():
+        q = sc_mod.opportunities(sc=scope).filter(
+            ~Opportunity.stage.in_(_TERMINAL))
+        return _narrow_opps_to_service(q, service) if service else q
+
+    overdue = (mine().filter(Opportunity.expected_close_date.isnot(None),
+                             Opportunity.expected_close_date < start)
+               .count())
+
+    found = (mine().filter(Opportunity.expected_close_date.isnot(None),
+                           Opportunity.expected_close_date >= start,
+                           Opportunity.expected_close_date < end)
              .order_by(Opportunity.value_inr.desc().nullslast()).all())
     if not found:
-        no_date = (sc_mod.opportunities(sc=scope)
-                   .filter(~Opportunity.stage.in_(_TERMINAL),
-                           Opportunity.expected_close_date.is_(None))
+        no_date = (mine().filter(Opportunity.expected_close_date.is_(None))
                    .count())
         notes = []
         if overdue:
@@ -2307,6 +2310,7 @@ def closing_this_month(scope, params):
             headline='Nothing is dated to close in the rest of this month.',
             empty=True, notes=notes, figures={'overdue': overdue,
                                               'no_date': no_date},
+            filters=_service_filters(service),
             sources=['opportunities.expected_close_date'])
 
     rows = [{'Opportunity': o.opp_number, 'Value': _money(o.value_inr),
@@ -2329,6 +2333,7 @@ def closing_this_month(scope, params):
         rows=capped,
         figures={'count': len(found), 'weighted': weighted,
                  'overdue': overdue},
+        filters=_service_filters(service),
         notes=notes, sources=['opportunities.expected_close_date',
                               'opportunities.probability'])
 
@@ -2480,7 +2485,8 @@ def retrieval_source_types():
 # ══════════════════════════════════════════════════════════════════════
 @intent('followups_due', 'Follow-ups due',
         params={'days': 'include follow-ups due within this many days '
-                        '(default 0: overdue and today)'},
+                        '(default 0: overdue and today)',
+                'vertical': 'only this service, e.g. Project Freight'},
         personas=('sales', 'head'), phase=1,
         examples=('which follow-ups are due', 'pending follow-ups',
                   'my overdue follow-ups', 'follow ups due this week'))
@@ -2503,6 +2509,9 @@ def followups_due(scope, params):
             .filter(~Lead.stage.in_(_TERMINAL),
                     Lead.followup_date.isnot(None),
                     Lead.followup_date <= horizon))
+    service = _service_param(params)
+    if service:
+        base = _narrow_leads_to_service(base, service)
     # Counted in SQL and only the displayed slice loaded — the same
     # figures, without reading thousands of rows to show fifty.
     total = base.count()
@@ -2510,7 +2519,8 @@ def followups_due(scope, params):
         return Result(
             headline=('No follow-ups are due.' if not ahead else
                       f'No follow-ups due in the next {ahead} days.'),
-            empty=True, sources=['leads.followup_date'])
+            empty=True, filters=_service_filters(service),
+            sources=['leads.followup_date'])
 
     overdue = base.filter(Lead.followup_date < today).count()
     found = (base.with_entities(Lead.id, Lead.company, Lead.stage,
@@ -2534,4 +2544,5 @@ def followups_due(scope, params):
         headline=(f'{total} follow-up(s) due — {overdue} overdue.'),
         columns=['Company', 'Stage', 'Due', 'Status', 'Owner'],
         rows=rows, figures={'count': total, 'overdue': overdue},
-        notes=notes, sources=['leads.followup_date'])
+        notes=notes, filters=_service_filters(service),
+        sources=['leads.followup_date'])
