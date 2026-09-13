@@ -258,14 +258,14 @@ def api_intelligence():
 
 # ─── Vendor Master ───────────────────────────────────────────────────────
 # Master data rather than review work, so it sits behind the Master Data
-# permission: registering a supplier changes how every future email from
-# that domain is filed, which is a configuration decision, not a triage
-# one.
-_VENDOR_PERM = 'admin.master'
+# permission ('admin.master'): registering a supplier changes how every
+# future email from that domain is filed, which is a configuration
+# decision, not a triage one. Written literally on each route so the
+# reference-docs route audit can see the gate.
 
 
 @bp.route('/intake/vendors')
-@require(_VENDOR_PERM)
+@require('admin.master')
 def vendors_page():
     from app.intake import vendors
     return render_template(
@@ -283,7 +283,7 @@ def _vendor_reason(d):
 
 
 @bp.route('/api/intake/vendors', methods=['GET'])
-@require(_VENDOR_PERM)
+@require('admin.master')
 def api_vendors():
     from app.intake import vendors
     active = {'1': True, '0': False}.get(request.args.get('active') or '')
@@ -296,7 +296,7 @@ def api_vendors():
 
 
 @bp.route('/api/intake/vendors', methods=['POST'])
-@require(_VENDOR_PERM)
+@require('admin.master')
 def api_create_vendor():
     from app.intake import vendors
     d = request.get_json(silent=True) or {}
@@ -316,7 +316,7 @@ def api_create_vendor():
 
 
 @bp.route('/api/intake/vendors/<int:vendor_id>', methods=['PUT'])
-@require(_VENDOR_PERM)
+@require('admin.master')
 def api_update_vendor(vendor_id):
     from app.intake import vendors
     d = request.get_json(silent=True) or {}
@@ -332,13 +332,13 @@ def api_update_vendor(vendor_id):
 
 
 @bp.route('/api/intake/vendors/<int:vendor_id>/deactivate', methods=['POST'])
-@require(_VENDOR_PERM)
+@require('admin.master')
 def api_deactivate_vendor(vendor_id):
     return _set_vendor_active(vendor_id, False)
 
 
 @bp.route('/api/intake/vendors/<int:vendor_id>/activate', methods=['POST'])
-@require(_VENDOR_PERM)
+@require('admin.master')
 def api_activate_vendor(vendor_id):
     return _set_vendor_active(vendor_id, True)
 

@@ -325,10 +325,21 @@ def test_only_master_data_holders_can_reach_the_vendor_master(world):
         assert world['triage'].get(path).status_code in (302, 403)
     assert world['triage'].get('/lead-review').status_code == 200, \
         'the fixture reviewer should still reach the review screen'
-    r = world['rep'].post('/api/intake/vendors', json={'domain': _d('sneaky')})
-    assert r.status_code == 403
+    vid = _add(_d('guarded'))
+    for who in ('rep', 'triage'):
+        c = world[who]
+        assert c.post('/api/intake/vendors',
+                      json={'domain': _d('sneaky')}).status_code == 403, who
+        assert c.put(f'/api/intake/vendors/{vid}',
+                     json={'category': 'airline'}).status_code == 403, who
+        assert c.post(f'/api/intake/vendors/{vid}/deactivate',
+                      json={}).status_code == 403, who
+        assert c.post(f'/api/intake/vendors/{vid}/activate',
+                      json={}).status_code == 403, who
     with flask_app.app_context():
         assert VendorDomain.query.filter_by(domain=_d('sneaky')).first() is None
+        row = db.session.get(VendorDomain, vid)
+        assert row.vendor_type == 'shipping line' and row.is_active
 
 
 def test_the_intelligence_page_links_to_the_vendor_master(world):
