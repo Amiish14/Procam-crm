@@ -537,3 +537,27 @@ def test_the_training_payload_carries_keywords_and_score_parts(world):
         names = [name for name, _n in p['score_parts']]
         assert 'base' in names
         assert 'asks for a price' in names
+
+
+def test_a_lead_exposes_how_sure_the_vertical_was(world):
+    """§17 — computed at ingest and previously discarded, so a weak guess
+    looked exactly like a strong one."""
+    from app import Lead
+    with flask_app.app_context():
+        lead = Lead(company='Vertical Conf Ltd', source='email',
+                    procam_vertical='Project Logistics',
+                    vertical_confidence=88,
+                    vertical_reason='odc, hydraulic axle')
+        db.session.add(lead)
+        db.session.commit()
+        d = lead.to_dict()
+        assert d['vertical_confidence'] == 88
+        assert d['vertical_reason'] == 'odc, hydraulic axle'
+
+
+def test_ingest_stores_the_vertical_confidence():
+    import inspect
+    from email_ingest import single_message
+    src = inspect.getsource(single_message)
+    assert "lead_kwargs['vertical_confidence']" in src
+    assert "lead_kwargs['vertical_reason']" in src

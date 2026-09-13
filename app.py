@@ -462,6 +462,12 @@ class Lead(db.Model):
     # Provenance matters here: a migrated body may actually be somebody's
     # note, if that lead was already overwritten before the fix landed.
     original_email_source      = db.Column(db.String(32))
+    # §17 / Phase 2 — the vertical the engine recommended, and how sure it
+    # was and why. Computed at ingest and previously thrown away, so a
+    # vertical on a lead could not be told apart from one a person chose,
+    # and a weak guess looked exactly like a strong one.
+    vertical_confidence        = db.Column(db.Integer)
+    vertical_reason            = db.Column(db.String(200))
 
     # ── Thread identity ─────────────────────────────────────────────
     # Without these a reply can only be recognised from its subject
@@ -521,6 +527,8 @@ class Lead(db.Model):
                                 if self.email_extracted_json else None),
             'conversation_id': self.conversation_id or '',
             'classification': self.classification or '',
+            'vertical_confidence': self.vertical_confidence,
+            'vertical_reason': self.vertical_reason or '',
             'lead_confidence': self.lead_confidence,
             'duplicate_score': self.duplicate_score,
             'rejection_reason': self.rejection_reason or '',
@@ -3814,6 +3822,14 @@ def init_db():
             ('leads',         'stage_entered_at', 'TIMESTAMP'),
             ('employees',     'is_vertical_head', _bool_ddl),
             ('employees',     'vertical_head_id', 'INTEGER'),
+            # v2026-10 final audit. A model column the database lacks breaks
+            # EVERY query on that table, so a restart that lands before the
+            # migration script runs would take the lead list and the notes
+            # panel down. These make the boot self-sufficient; the scripts
+            # remain for --check and --down.
+            ('leads',         'vertical_confidence', 'INTEGER'),
+            ('leads',         'vertical_reason',     'VARCHAR(200)'),
+            ('lead_notes',    'revisions',           'TEXT'),
         ]
         for tbl, col, dtype in _adds:
             try:

@@ -408,6 +408,11 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
                     account_vertical=(_acct.vertical if _acct else None))
                 if _guess and (not _vertical or _conf >= 80):
                     lead_kwargs['procam_vertical'] = _guess
+                    # Kept, not just logged: a person looking at the lead
+                    # can now see whether the vertical was a strong call or
+                    # a guess, and why.
+                    lead_kwargs['vertical_confidence'] = int(_conf or 0)
+                    lead_kwargs['vertical_reason'] = (_why or '')[:200]
                     log.info('vertical %s (%s%%) for %s — %s',
                              _guess, _conf, imid, _why)
             except Exception:
@@ -472,6 +477,10 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
                                  'from its attachments — %s',
                                  guess, conf, lead.id, why)
                         lead.procam_vertical = guess
+                        lead.vertical_confidence = int(conf or 0)
+                        lead.vertical_reason = (
+                            f'from attachments — {why}' if why
+                            else 'from attachments')[:200]
                     if not (lead.original_email_body or '').strip():
                         # The body really was just "please find attached".
                         lead.original_email_body = inside[:8000]
