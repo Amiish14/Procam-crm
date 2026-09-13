@@ -69,6 +69,14 @@ def save_upload(file_storage, subdir, *,
     if size and size > max_bytes:
         abort(400, f'File exceeds {max_bytes // (1024 * 1024)} MB limit')
 
+    # The extension is only a claim; the bytes have to agree with it, and
+    # an archive has to be safe to open (app/utils/file_validation.py).
+    from app.utils.file_validation import UploadRejected, validate
+    try:
+        validate(file_storage.stream, ext)
+    except UploadRejected as exc:
+        abort(400, str(exc))
+
     root = _upload_root()
     dest_dir = os.path.join(root, re.sub(r'[^\w\-]', '_', subdir))
     os.makedirs(dest_dir, exist_ok=True)

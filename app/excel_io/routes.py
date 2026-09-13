@@ -68,6 +68,11 @@ def preview():
     if upload.stream.tell() > MAX_BYTES:
         return jsonify(ok=False, error='File is larger than 12 MB'), 400
     upload.stream.seek(0)
+    from app.utils.file_validation import UploadRejected, ext_of, validate
+    try:
+        validate(upload.stream, ext_of(upload.filename))
+    except UploadRejected as exc:
+        return jsonify(ok=False, error=str(exc)), 400
 
     batch = xl.stage(upload, kind, session.get('emp_code'))
     upload.stream.seek(0)

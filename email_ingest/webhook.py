@@ -158,6 +158,18 @@ def handle_notification(payload: dict) -> dict:
                            reason='clientState mismatch', payload=n)
                 continue
 
+            # Graph names the tenant a notification came from. One from a
+            # different tenant is not ours, whatever else it carries.
+            expected_tenant = (os.environ.get('MS_TENANT_ID') or '').lower()
+            got_tenant = (n.get('tenantId') or '').lower()
+            if expected_tenant and got_tenant and got_tenant != expected_tenant:
+                log.warning('webhook: notification from another tenant '
+                            '— rejecting one item')
+                stats['failed'] += 1
+                _log_event(db, EmailEvent, None, mailbox, 'rejected',
+                           reason='tenant mismatch', payload=n)
+                continue
+
             resource = n.get('resource') or ''
 
             # v2026-09-02 — Mailbox lockdown. Every notification must be for

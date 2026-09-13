@@ -267,7 +267,9 @@ def build_error_report(results, kind):
         label = (r['data'].get('name') or r['data'].get('company')
                  or r['data'].get('_company') or '(blank)')
         for err in r['errors']:
-            ws.append([r['row'], label, err, _suggest(err)])
+            # The label is the uploader's own cell text, echoed back.
+            from app.utils.spreadsheet_safe import safe_row
+            ws.append(safe_row([r['row'], label, err, _suggest(err)]))
 
     info = wb.create_sheet('WHAT TO DO')
     info.column_dimensions['A'].width = 100

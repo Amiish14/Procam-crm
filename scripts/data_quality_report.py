@@ -390,7 +390,13 @@ def _write(path, columns, rows):
     with os.fdopen(fd, 'w', newline='') as fh:
         w = csv.DictWriter(fh, fieldnames=columns, extrasaction='ignore')
         w.writeheader()
-        w.writerows(rows)
+        # Names and subjects come from outside; a cell starting "=" would
+        # run as a formula. Same rule as app/utils/spreadsheet_safe.py,
+        # inlined because this script must not import the app.
+        w.writerows({k: ("'" + v if isinstance(v, str) and v[:1] in
+                         ('=', '+', '-', '@', '\t', '\r')
+                         and not re.match(r'^[+-]?[\d\s().,]+$', v)
+                         else v) for k, v in row.items()} for row in rows)
 
 
 def run(conn, out_dir, only=None):

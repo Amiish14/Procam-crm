@@ -56,3 +56,27 @@ def test_an_empty_client_state_never_matches(monkeypatch):
         {'value': [{'clientState': '', 'resource': 'x'}]})
     assert stats['processed'] == 0
     assert stats['failed'] == 1
+
+
+def test_a_notification_from_another_tenant_is_rejected(monkeypatch):
+    monkeypatch.setenv('EMAIL_WEBHOOK_SECRET', 'the-real-secret')
+    monkeypatch.setenv('MS_TENANT_ID', '11111111-2222-3333-4444-555555555555')
+
+    class Quiet:
+        def __init__(self, *a, **k):
+            pass
+    monkeypatch.setattr(W, 'GraphClient', Quiet)
+    from app import app as flask_app, db
+    with flask_app.app_context():
+        db.create_all()
+    from app import EmailEvent
+    with flask_app.app_context():
+        before = EmailEvent.query.filter_by(reason='tenant mismatch').count()
+    stats = W.handle_notification({'value': [{
+        'clientState': 'the-real-secret',
+        'tenantId': '99999999-0000-0000-0000-000000000000',
+        'resource': "Users('leads@procamgroup.in')/Messages('x')"}]})
+    assert stats['failed'] == 1 and stats['processed'] == 0
+    with flask_app.app_context():
+        assert EmailEvent.query.filter_by(
+            reason='tenant mismatch').count() == before + 1

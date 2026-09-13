@@ -225,8 +225,9 @@ def _stream_xlsx(rows, columns, slug, filters=None):
         cell.fill = PatternFill('solid', fgColor='C72435')
         cell.alignment = Alignment(vertical='center')
 
+    from app.utils.spreadsheet_safe import safe_row
     for row in rows:
-        ws.append([row.get(c['key'], '') for c in columns])
+        ws.append(safe_row([row.get(c['key'], '') for c in columns]))
 
     for i, c in enumerate(columns, start=1):
         ws.column_dimensions[chr(64 + i) if i <= 26 else 'A'].width = \

@@ -131,10 +131,13 @@ def api_presales_dashboard():
 # ─── Report exports (CSV) ─────────────────────────────────────────────
 def _csv_response(headers, rows, filename):
     sio = io.StringIO()
+    from app.utils.spreadsheet_safe import safe_row
     w = csv.writer(sio)
-    w.writerow(headers)
+    w.writerow(safe_row(headers))
     for r in rows:
-        w.writerow(r)
+        # Account and project names reach this file from outside Procam;
+        # a name beginning "=" must not run as a formula when opened.
+        w.writerow(safe_row(r))
     resp = Response(sio.getvalue(), mimetype='text/csv')
     resp.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
     return resp

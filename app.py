@@ -173,8 +173,12 @@ __path__ = [os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app')]
 
 db = SQLAlchemy(app)
 
+# In-memory limits are per gunicorn worker. RATELIMIT_STORAGE_URI (for
+# example redis://127.0.0.1:6379/1) shares them across workers.
 limiter = Limiter(app=app, key_func=get_remote_address,
-                  default_limits=[], storage_uri='memory://')
+                  default_limits=[],
+                  storage_uri=os.environ.get('RATELIMIT_STORAGE_URI')
+                  or 'memory://')
 
 csrf = CSRFProtect(app)
 app.config['WTF_CSRF_TIME_LIMIT'] = 3600
@@ -275,22 +279,60 @@ Talisman(app,
          session_cookie_secure=True,
          frame_options='DENY',
          referrer_policy='strict-origin-when-cross-origin',
+         # Enforced. The policy lists every origin the pages actually load
+         # from (Chart.js and SheetJS from cdnjs, Google Fonts, the Procam
+         # logo) — it was report-only while its reports went nowhere, so
+         # it had been blocking nothing, and would have broken the charts
+         # if switched on as it stood. 'unsafe-inline' stays for scripts
+         # and styles: the templates carry about a thousand inline
+         # handlers, and moving them is a rewrite, not a hardening. What
+         # enforcement adds: no script from any other origin, no plugin
+         # objects, no <base> hijack, no form posting elsewhere, no
+         # framing. CSP_MODE=report-only switches back without a deploy.
          content_security_policy={
              'default-src': "'self'",
-             'script-src':  ["'self'", "'unsafe-inline'"],
+             'script-src':  ["'self'", "'unsafe-inline'",
+                             'https://cdnjs.cloudflare.com'],
              'style-src':   ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://rsms.me'],
-             'font-src':    ["'self'", 'https://fonts.gstatic.com', 'https://rsms.me'],
-             'img-src':     ["'self'", 'data:', 'blob:'],
+             'font-src':    ["'self'", 'data:', 'https://fonts.gstatic.com', 'https://rsms.me'],
+             'img-src':     ["'self'", 'data:', 'blob:',
+                             'https://www.procamlogistics.com'],
              'connect-src': "'self'",
+             'worker-src':  "'self'",
+             'manifest-src': "'self'",
+             'object-src':  "'none'",
+             'base-uri':    "'self'",
+             'form-action': "'self'",
              'frame-ancestors': "'none'",
          },
-         content_security_policy_report_only=True,
+         content_security_policy_report_only=(
+             (os.environ.get('CSP_MODE') or 'enforce').lower()
+             == 'report-only'),
+         # The CRM uses the clipboard and file inputs; nothing else here
+         # needs the camera (card photos come through a file input),
+         # microphone, location, payment or USB.
+         permissions_policy={
+             'camera': '()', 'microphone': '()', 'geolocation': '()',
+             'payment': '()', 'usb': '()', 'interest-cohort': '()',
+         },
          # Under /CRM the bare path reached nginx's root, not this app,
          # so no violation report ever arrived.
          content_security_policy_report_uri=(
              (os.environ.get('URL_PREFIX') or '').rstrip('/')
              + '/api/csp-report'),
 )
+
+@app.after_request
+def _extra_security_headers(resp):
+    # A page opened from the CRM cannot reach back into it through
+    # window.opener, and CRM responses are not embeddable elsewhere.
+    resp.headers.setdefault('Cross-Origin-Opener-Policy', 'same-origin')
+    resp.headers.setdefault('Cross-Origin-Resource-Policy', 'same-origin')
+    if _api_request():
+        # API answers carry records; no shared or browser cache keeps them.
+        resp.headers.setdefault('Cache-Control', 'no-store')
+    return resp
+
 
 @app.route('/api/csp-report', methods=['POST'])
 @csrf.exempt
@@ -4112,6 +4154,14 @@ def api_leads_import_preview():
     if len(f.read()) > 15 * 1024 * 1024:
         return jsonify({'error': 'File too large (max 15 MB)'}), 400
     f.stream.seek(0)
+    from app.utils.file_validation import UploadRejected, ext_of, validate
+    _ext = ext_of(f.filename)
+    if _ext not in ('.csv', '.txt', '.xlsx', '.xls'):
+        return jsonify({'error': 'Upload a .csv or .xlsx file'}), 400
+    try:
+        validate(f.stream, _ext)
+    except UploadRejected as exc:
+        return jsonify({'error': str(exc)}), 400
     try:
         headers, rows = _parse_upload(f)
     except Exception as e:
@@ -4954,6 +5004,22 @@ for _mod_path, _bp_name in [
         app.logger.info('CRM blueprint: %s registered.', _mod_path)
     except Exception as _e:
         app.logger.warning('%s failed to load: %s', _mod_path, _e)
+
+
+def _per_user_key():
+    """Limit by the signed-in person, not the office's shared IP."""
+    return session.get('emp_code') or get_remote_address()
+
+
+# Each Copilot question scores up to thousands of passages; one script in
+# a loop could keep every worker busy. Blueprint views are wrapped here,
+# where the limiter lives, rather than in the blueprint module.
+for _endpoint, _limit in (('copilot.api_ask', '40/minute;600/hour'),
+                          ('copilot.api_ask_stream', '40/minute;600/hour'),
+                          ('api_notes_search', '60/minute')):
+    if _endpoint in app.view_functions:
+        app.view_functions[_endpoint] = limiter.limit(
+            _limit, key_func=_per_user_key)(app.view_functions[_endpoint])
 
 
 # ═════════════════════════════════════════════════════════════════════
