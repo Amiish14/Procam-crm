@@ -75,6 +75,9 @@ history would be destroyed, and writes a snapshot to the audit first
 
 ## Data quality
 
+The live dashboard, its checks, batch correction and the daily trend
+snapshot are covered in the [Data Quality Guide](DATA_QUALITY_GUIDE.md).
+
 Read-only CSV reports for the review meeting:
 
 ```bash

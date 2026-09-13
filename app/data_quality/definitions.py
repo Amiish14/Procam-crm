@@ -143,36 +143,41 @@ CHECKS = [
     _c('unowned_leads', 'Leads with no owner', 'critical', 'lead',
        'They never appear in anyone\'s My Work, so no task, reminder or '
        'escalation ever reaches them.',
-       'Assign an owner below, or in bulk from Admin → Bulk Leads.',
+       'Assign an owner with a batch correction, or from Admin → Bulk '
+       'Leads.',
        '/admin/leads?unowned=1', ('assign_owner', 'archive'),
        report='leads_without_owner'),
     _c('leads_of_leavers', 'Leads owned by someone who has left',
        'critical', 'lead',
        'Assigned to an inactive employee, so the enquiry sits with nobody.',
-       'Reassign to an active colleague below, or archive what is dead.',
+       'Reassign to an active colleague with a batch correction, or '
+       'archive what is dead.',
        '/admin/leads', ('assign_owner', 'archive'),
        report='leads_without_owner'),
     _c('unowned_opps', 'Opportunities with no owner', 'critical',
        'opportunity',
        'Nobody is accountable for progressing the deal or forecasting it.',
-       'Assign an owner below.', '/app', ('assign_owner',),
+       'Assign an owner with a batch correction.', '/app', ('assign_owner',),
        report='opportunities_without_owner'),
     _c('opps_of_leavers', 'Opportunities owned by someone who has left',
        'high', 'opportunity',
        'The deal and its forecast belong to someone who can no longer act '
        'on them.',
-       'Reassign to an active colleague below.', '/app', ('assign_owner',),
+       'Reassign to an active colleague with a batch correction.', '/app',
+       ('assign_owner',),
        report='opportunities_without_owner'),
     _c('no_pic', 'Accounts with no owner', 'high', 'company',
        'No one is accountable for the relationship, and new leads from the '
        'account cannot be routed.',
-       'Assign an owner below, or in Accounts → Owners.',
+       'Assign an owner with a batch correction, or in Accounts → '
+       'Owners.',
        '/accounts/owners', ('assign_owner',),
        report='accounts_without_owner'),
     _c('accounts_of_leavers', 'Accounts owned by someone who has left',
        'high', 'company',
        'New leads from the account route to an inactive employee.',
-       'Assign an active owner below, or in Accounts → Owners.',
+       'Assign an active owner with a batch correction, or in '
+       'Accounts → Owners.',
        '/accounts/owners', ('assign_owner',),
        report='accounts_without_owner'),
     _c('tasks_no_owner', 'Tasks with no owner', 'critical', 'task',
@@ -197,19 +202,20 @@ CHECKS = [
        'medium', 'lead',
        'Without a follow-up date nothing reminds the owner, so the next '
        'step depends on memory.',
-       'Set a follow-up date below, or open the lead and plan the next '
-       'step.', '/app', ('set_followup',)),
+       'Set a follow-up date with a batch correction, or open the lead '
+       'and plan the next step.', '/app', ('set_followup',)),
     _c('stale_opps', 'Stale opportunities', 'high', 'opportunity',
        f'Open deals past their close date or untouched for '
        f'{STALE_OPPORTUNITY_DAYS} days inflate the forecast.',
-       'Update the stage, or set a realistic expected close date below.',
+       'Update the stage, or set a realistic expected close date with a '
+       'batch correction.',
        '/app', ('set_close_date', 'assign_owner'),
        report='opportunities_overdue_close'),
     _c('opps_no_close_date', 'Open opportunities with no close date',
        'medium', 'opportunity',
        'A deal with no expected close date is left out of every forecast '
        'by month.',
-       'Set the expected close date below.', '/app', ('set_close_date',)),
+       'Set the expected close date with a batch correction.', '/app', ('set_close_date',)),
     _c('rfq_no_quote', 'RFQs past their quote-by date with no quote',
        'high', 'rfq',
        'The customer asked for a price by a date that has passed, and '
@@ -252,8 +258,8 @@ CHECKS = [
     _c('unlinked_leads', 'Leads not linked to an account', 'medium', 'lead',
        'They do not appear on their Company 360, so the account history '
        'is incomplete.',
-       'Link below where the name matches exactly one account; decide the '
-       'rest in Data Mapping.', '/companies', ('link_account',)),
+       'Link with a batch correction where the name matches exactly one '
+       'account; decide the rest in Data Mapping.', '/companies', ('link_account',)),
     _c('pending_mappings', 'Company names awaiting a decision', 'medium',
        'mapping',
        'Each undecided name leaves every record carrying it unlinked.',
@@ -296,12 +302,12 @@ CHECKS = [
        'medium', 'lead',
        'A vertical outside the master list escapes every vertical report '
        'and vertical-scoped view.',
-       'Set a vertical from Master Data below, or add the missing one '
-       'under Master Data first.', '/admin/leads', ('set_vertical',)),
+       'Set a vertical from Master Data with a batch correction, or add '
+       'the missing one under Master Data first.', '/admin/leads', ('set_vertical',)),
     _c('account_unknown_vertical',
        'Accounts with a vertical not in Master Data', 'medium', 'company',
        'Leads from the account route to a desk that does not exist.',
-       'Set a vertical from Master Data below.', '/accounts/owners',
+       'Set a vertical from Master Data with a batch correction.', '/accounts/owners',
        ('set_vertical',)),
 
     # ── email intake ─────────────────────────────────────────────────
@@ -309,8 +315,8 @@ CHECKS = [
        'leads', 'high', 'lead',
        'Supplier mail, replies or internal mail in the pipeline waste a '
        'salesperson\'s day and distort conversion rates.',
-       'Open each lead: archive it below if it is not an enquiry, or '
-       'correct its classification in Lead Review.', '/lead-review',
+       'Open each lead: archive it with a batch correction if it is not an '
+       'enquiry, or correct its classification in Lead Review.', '/lead-review',
        ('archive', 'assign_owner')),
     _c('review_backlog', f'Leads stuck in review over '
        f'{REVIEW_BACKLOG_DAYS} days', 'medium', 'mixed',

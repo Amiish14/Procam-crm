@@ -12,6 +12,7 @@ For the people who deploy, run and support the CRM on the production VM.
 | [Disaster Recovery Guide](DISASTER_RECOVERY_GUIDE.md) | The database or the VM is lost or corrupt |
 | [Troubleshooting Guide](TROUBLESHOOTING_GUIDE.md) | Something specific is broken |
 | [Administrator Guide](ADMINISTRATOR_GUIDE.md) | Accounts, access, data quality, audits |
+| [Data Quality Guide](DATA_QUALITY_GUIDE.md) | The Data Quality checks, batch correction and the daily trend snapshot |
 | [Graph Setup Guide](GRAPH_SETUP_GUIDE.md) | Microsoft 365 permissions for the leads mailbox (for IT) |
 | [AI Configuration Guide](AI_CONFIGURATION_GUIDE.md) | Procam AI Copilot, intake AI, external providers |
 | [Production Readiness Report](PRODUCTION_READINESS_REPORT.md) | Sign-off: what is done, what is open, risks |
