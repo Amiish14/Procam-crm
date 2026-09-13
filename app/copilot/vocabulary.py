@@ -34,16 +34,35 @@ VERTICAL_TERMS = {
             'skidding', 'heavy lift', 'heavy-lift', 'project cargo',
             'module', 'reactor', 'transformer', 'stator', 'turbine',
             'crane barge', 'roro', 'ro-ro', 'lashing'),
-        2: ('charter', 'chartering', 'wind mill', 'windmill', 'nacelle',
-            'blade', 'boiler', 'pressure vessel', 'girder', 'gantry'),
-        1: ('project', 'erection', 'installation site'),
+        2: ('wind mill', 'windmill', 'nacelle', 'blade', 'boiler',
+            'pressure vessel', 'girder', 'gantry'),
+        1: ('project',),
     },
-    'Heavy Transport': {
+    # Named to match app/services/lead_vertical.py, which the intake
+    # engine uses. This was "Heavy Transport" here and "Transportation"
+    # there: two names for one service, and a question and an ingested
+    # lead could come back labelled differently for the same words.
+    'Transportation': {
         3: ('trailer', 'multi axle', 'multi-axle', 'low bed', 'lowbed',
             'semi low bed', 'puller', 'prime mover', 'axle line'),
         2: ('ftl', 'ptl', 'road transport', 'road freight', 'haulage',
             'truck', 'over weight', 'overweight', 'oversize'),
-        1: ('transport', 'transportation', 'vehicle', 'movement'),
+        1: ('transport', 'transportation', 'vehicle', 'movement',
+            'multimodal', 'multi-modal', 'multi modal', 'intermodal'),
+    },
+    'Installation': {
+        3: ('installation', 'erection', 'commissioning', 'mechanical '
+            'completion', 'grouting', 'alignment and levelling',
+            'hook-up', 'hook up'),
+        2: ('foundation bolts', 'anchor bolts', 'site assembly',
+            'placement on foundation'),
+        1: ('installation site',),
+    },
+    'Chartering': {
+        3: ('charter', 'chartering', 'charter party', 'voyage charter',
+            'time charter', 'vessel charter', 'fixture note'),
+        2: ('laytime', 'demurrage rate', 'part cargo'),
+        1: (),
     },
     'Sea Freight': {
         3: ('fcl', 'lcl', 'bill of lading', 'b/l', 'shipping line',
@@ -76,6 +95,28 @@ VERTICAL_TERMS = {
         1: ('godown',),
     },
 }
+
+#: How each service above maps to the CRM's own Master Data service list
+#: (scripts/2026_09_10_master_data.py: Heavy Transport, Project Freight,
+#: Warehousing, Installation, Customs Clearance, Chartering). Derived from
+#: that list, not invented. Sea Freight and Air Freight have no entry in
+#: it, so they map to None and the glossary says so — which service they
+#: sit under is a business decision, not something to guess here.
+CRM_SERVICE = {
+    'Project Logistics': 'Project Freight',
+    'Transportation': 'Heavy Transport',
+    'Warehousing': 'Warehousing',
+    'Installation': 'Installation',
+    'Customs': 'Customs Clearance',
+    'Chartering': 'Chartering',
+    'Sea Freight': None,
+    'Air Freight': None,
+}
+
+
+def crm_service(name):
+    return CRM_SERVICE.get(name)
+
 
 #: §7's abbreviations, expanded so a question using either form matches.
 ABBREVIATIONS = {
@@ -191,6 +232,10 @@ def glossary():
     out = []
     for vert, weighted in VERTICAL_TERMS.items():
         terms = sorted({t for group in weighted.values() for t in group})
-        out.append({'vertical': vert, 'terms': terms})
+        out.append({'vertical': vert, 'terms': terms,
+                    'crm_service': crm_service(vert),
+                    'note': (None if crm_service(vert) else
+                             'Not in the CRM service master — which service '
+                             'this belongs under is a business decision.')})
     return {'verticals': out,
             'abbreviations': dict(sorted(ABBREVIATIONS.items()))}

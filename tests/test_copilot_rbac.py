@@ -571,7 +571,7 @@ def test_logistics_vocabulary_maps_to_the_right_vertical(world):
         ('AWB for an air shipment', 'Air Freight'),
         ('bill of entry and CHA clearance', 'Customs'),
         ('pallet storage in a 3PL warehouse', 'Warehousing'),
-        ('multi axle trailer for a road movement', 'Heavy Transport'),
+        ('multi axle trailer for a road movement', 'Transportation'),
     ]
     for text, expected in cases:
         got, confidence, why = vocabulary.vertical(text)
@@ -1145,3 +1145,56 @@ def test_a_future_followup_only_appears_inside_the_window(world):
         finally:
             lead.followup_date = None
             db.session.commit()
+
+
+# ── C2 — one vocabulary, mapped to the CRM's own services ────────────
+def test_the_copilot_and_the_intake_engine_use_the_same_service_names(world):
+    """"Heavy Transport" here and "Transportation" in lead_vertical meant a
+    question and an ingested lead could be labelled differently for the
+    same words."""
+    from app.copilot import vocabulary
+    from app.services import lead_vertical
+    shared = set(lead_vertical.VERTICAL_SIGNALS)
+    assert shared <= set(vocabulary.VERTICAL_TERMS), \
+        shared - set(vocabulary.VERTICAL_TERMS)
+
+
+def test_every_mapped_service_is_a_real_crm_master_service(world):
+    """Derived from the Master Data service list, not invented."""
+    from app.copilot import vocabulary
+    master = {'Heavy Transport', 'Project Freight', 'Warehousing',
+              'Installation', 'Customs Clearance', 'Chartering'}
+    for name, service in vocabulary.CRM_SERVICE.items():
+        assert service is None or service in master, (name, service)
+
+
+def test_the_glossary_carries_the_brief_s_terms(world):
+    from app.copilot import vocabulary
+    g = vocabulary.glossary()
+    terms = {t for v in g['verticals'] for t in v['terms']}
+    blob = ' '.join(terms) + ' ' + ' '.join(g['abbreviations'])
+    for word in ('rfq', 'rfi', 'rfp', 'boq', 'fcl', 'lcl', 'fob', 'cif',
+                 'exw', 'dap', 'bb', 'fr', 'ot', 'hl', 'odc', 'spmt',
+                 'heavy lift', 'hydraulic axle', 'rigging', 'breakbulk',
+                 'chartering', 'sea freight', 'air freight', 'cha',
+                 'customs', 'warehousing', 'installation', 'multimodal',
+                 'port'):
+        assert word in blob, word
+
+
+def test_an_unmapped_service_says_so_in_the_glossary(world):
+    """Sea and Air Freight are not in the service master. The glossary
+    must flag that rather than quietly pick a service for them."""
+    from app.copilot import vocabulary
+    by = {v['vertical']: v for v in vocabulary.glossary()['verticals']}
+    assert by['Sea Freight']['crm_service'] is None
+    assert 'business decision' in by['Sea Freight']['note']
+    assert by['Installation']['crm_service'] == 'Installation'
+
+
+def test_installation_and_chartering_are_recognised(world):
+    from app.copilot import vocabulary
+    assert vocabulary.vertical(
+        'installation and commissioning at site')[0] == 'Installation'
+    assert vocabulary.vertical('voyage charter for the module')[0] == \
+        'Chartering'

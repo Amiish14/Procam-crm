@@ -105,11 +105,13 @@ fetch('{{ url_prefix }}/api/copilot/analytics?days=30')
     if(!g.ok) return;
     const verts = (g.verticals||[]).map(v =>
       '<tr><td><b>'+esc(v.vertical)+'</b></td><td>'
-      + esc(v.terms.join(' · '))+'</td></tr>').join('');
+      + (v.crm_service ? esc(v.crm_service)
+         : '<span style="color:var(--amber,#b45309)">not in service master</span>')
+      + '</td><td>' + esc(v.terms.join(' · '))+'</td></tr>').join('');
     const abbr = Object.keys(g.abbreviations||{}).map(k =>
       esc(k.toUpperCase())+' = '+esc(g.abbreviations[k])).join(' · ');
     document.getElementById('capability').innerHTML =
-      '<table><thead><tr><th>Vertical</th><th>Words it recognises</th>'
+      '<table><thead><tr><th>Reads as</th><th>CRM service</th><th>Words it recognises</th>'
       + '</tr></thead><tbody>'+verts+'</tbody></table>'
       + '<div style="font-size:12px;color:var(--text-2);margin-top:10px">'
       + '<b>Abbreviations:</b> '+abbr+'</div>';
