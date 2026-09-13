@@ -25,3 +25,7 @@ data/imports/
 .leads_subscription_id
 cookies.txt
 *.log
+
+# Data-quality CSVs hold customer data — never commit them
+reports/
+backups/
