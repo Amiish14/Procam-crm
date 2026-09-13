@@ -57,7 +57,7 @@ def ctx(**kw):
 
 RFQ_BODY = ("Dear Procam, we have a requirement to move a 220 MT transformer "
             "from JNPT to Vadodara. Over-dimensional cargo. Please quote by "
-            "Friday. Contact +91 98200 11223.")
+            "Friday. Contact +91 90000 30002.")
 
 
 # ─── subject parsing, which everything downstream leans on ───────────────
@@ -492,7 +492,7 @@ def test_a_customer_asking_for_our_best_rate_is_an_enquiry():
                  'movement from Antwerp to Nhava Sheva. Awaiting our best '
                  'offer by Friday.',
             frm='sales@procamgroup.in', _forward_resolved=True,
-            _resolved_sender='mg@g-p-solutions.de')
+            _resolved_sender='customer.contact@g-p-solutions.de')
     d = li.classify(m, ctx())
     assert d.klass == K.NEW_LEAD, (
         f'{d.klass} at step {d.step}: '
@@ -516,7 +516,7 @@ def test_a_customer_asking_a_supplier_question_is_not_rate_sourcing():
             body='Kindly share your rate for this movement. '
                  'Awaiting our offer.',
             frm='sales@procamgroup.in', _forward_resolved=True,
-            _resolved_sender='bharat.kumar@uflexltd.com'),
+            _resolved_sender='customer.contact@uflexltd.com'),
         ctx())
     assert d.klass != K.RATE_SOURCING
     assert d.creates_lead or d.needs_review
@@ -561,7 +561,7 @@ def _the_real_one(**over):
     no body. That is what let it past step 5 and into the score.
     """
     m = msg(subject=_OUR_OWN_TAGLINE, body='',
-            frm='sanjay.singh15@motherson.com')
+            frm='customer.contact@motherson.com')
     m['_forward_resolved'] = True
     m.update(over)
     return m

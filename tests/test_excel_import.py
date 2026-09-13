@@ -284,7 +284,7 @@ def test_uploading_agents_maps_to_company_master(agents_ready):
         from app import ImportBatch
         records, problems = _records('overseas_agent', [
             _agent_row('Logfret Inc.', 'Overseas Agent', 'United States',
-                       'PCN, WCA', 'Maria Silva', 'maria@logfret.com'),
+                       'PCN, WCA', 'Agent Contact', 'agent.contact@example.com'),
         ])
         assert not problems, problems
         results = xl.validate(records, 'overseas_agent', xl.MODE_UPSERT)
@@ -309,7 +309,7 @@ def test_uploading_agents_maps_to_company_master(agents_ready):
             'network memberships were dropped — relationship and networks '\
             'must BOTH be applied, not either'
 
-        contact = Contact.query.filter_by(name='Maria Silva').first()
+        contact = Contact.query.filter_by(name='Agent Contact').first()
         assert contact is not None
         assert contact.company_id == company.id
 

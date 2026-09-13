@@ -75,10 +75,10 @@ def test_the_scanner_works_with_no_vision_service(client):
     """
     card = _upload(client, CARDS['name_first'])
     ex = card['extracted']
-    assert ex['name'] == 'Rajesh Kumar Sharma'
+    assert ex['name'] == 'Customer Contact'
     assert ex['company'] == 'AMBUJA CEMENT LIMITED'
-    assert ex['email'] == 'rajesh.sharma@ambujacement.com'
-    assert ex['mobile'] == '+91 98200 11223'
+    assert ex['email'] == 'customer.contact@ambujacement.com'
+    assert ex['mobile'] == '+91 90000 20001'
 
 
 def test_an_upload_with_no_text_and_no_service_still_opens_a_review(client):
@@ -126,9 +126,9 @@ def test_a_confirmed_card_creates_a_contact_and_an_account(client):
                     json={'fields': card['extracted'], 'choice': 'new'})
     assert r.status_code == 200, r.get_data(as_text=True)
     with flask_app.app_context():
-        c = Contact.query.filter_by(name='Priya Menon').first()
+        c = Contact.query.filter_by(name='Buyer Contact').first()
         assert c is not None
-        assert c.email == 'priya.menon@bhel.in'
+        assert c.email == 'buyer.contact@bhel.in'
         assert c.account_id, 'the contact must be linked to its company'
         assert Company.query.get(c.account_id).name == \
             'BHARAT HEAVY ELECTRICALS LTD'
@@ -137,12 +137,12 @@ def test_a_confirmed_card_creates_a_contact_and_an_account(client):
 def test_the_saved_contact_appears_in_people(client):
     """People is the list WP1 made clickable, so this closes the loop."""
     rows = client.get('/api/contacts?type=person').get_json()
-    assert any(r['name'] == 'Priya Menon' for r in rows)
+    assert any(r['name'] == 'Buyer Contact' for r in rows)
 
 
 # ─── duplicates ──────────────────────────────────────────────────────────
 def test_a_duplicate_is_refused_until_it_is_confirmed(client):
-    """Priya Menon was saved above; scanning her card again must stop."""
+    """Buyer Contact was saved above; scanning that card again must stop."""
     card = _upload(client, CARDS['company_first'])
     r = client.post(f'/api/business-cards/{card["id"]}/save',
                     json={'fields': card['extracted'], 'choice': 'new'})
@@ -157,7 +157,7 @@ def test_a_duplicate_edited_in_at_review_time_is_still_caught(client):
     an email that belongs to someone already in the CRM."""
     card = _upload(client, CARDS['minimal'])
     assert not (card['dup_matches'] or {}).get('contacts')
-    fields = dict(card['extracted'], email='priya.menon@bhel.in')
+    fields = dict(card['extracted'], email='buyer.contact@bhel.in')
     r = client.post(f'/api/business-cards/{card["id"]}/save',
                     json={'fields': fields, 'choice': 'new'})
     assert r.status_code == 409, 'the edited email was never re-checked'
@@ -171,7 +171,7 @@ def test_confirming_creates_the_contact_anyway(client):
                           'confirm_duplicate': True})
     assert r.status_code == 200
     with flask_app.app_context():
-        assert Contact.query.filter_by(name='Priya Menon').count() >= 2
+        assert Contact.query.filter_by(name='Buyer Contact').count() >= 2
 
 
 def test_a_number_written_differently_is_still_a_duplicate(client):
@@ -180,9 +180,9 @@ def test_a_number_written_differently_is_still_a_duplicate(client):
     from app import Contact
     with flask_app.app_context():
         db.session.add(Contact(contact_type='person', name='Existing Person',
-                               mobile='+91 98110 22334'))
+                               mobile='+91 90000 20009'))
         db.session.commit()
-    card = _upload(client, 'Neha Kapoor\nneha2@kapoorexports.com\n09811022334')
+    card = _upload(client, 'Trade Contact\ntrade.contact2@kapoorexports.com\n09000020009')
     names = [m['name'] for m in (card['dup_matches'] or {}).get('contacts', [])]
     assert 'Existing Person' in names, \
         f'the same number in another format was not matched: {names}'
@@ -204,5 +204,5 @@ def test_a_malformed_model_response_falls_back_to_the_parser(monkeypatch):
     out = extract_business_card(_PNG, 'image/png',
                                 card_text=CARDS['all_caps'])
     assert out['error'], 'the failure must still be reported'
-    assert out['extracted']['name'] == 'SURESH IYER', \
+    assert out['extracted']['name'] == 'SHIPPER CONTACT', \
         'the deterministic parse must carry the scan'

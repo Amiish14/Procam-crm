@@ -125,20 +125,20 @@ def test_duplicate_company_is_found_by_website(world):
 # ── §51: a card never creates a second company ───────────────────────
 def test_saving_a_card_matches_an_existing_company(world):
     """"Siemens Ltd" on a card must attach to "Siemens Limited"."""
-    card_id = _card({'name': 'R Shah', 'company': 'Siemens Ltd',
-                     'email': 'r.shah@siemens.com'})
+    card_id = _card({'name': 'Siemens Contact', 'company': 'Siemens Ltd',
+                     'email': 'siemens.contact@siemens.com'})
     r = _c().post(f'/api/business-cards/{card_id}/save',
                   data=json.dumps({'choice': 'new',
-                                   'fields': {'name': 'R Shah',
+                                   'fields': {'name': 'Siemens Contact',
                                               'company': 'Siemens Ltd',
-                                              'email': 'r.shah@siemens.com'}}),
+                                              'email': 'siemens.contact@siemens.com'}}),
                   content_type='application/json')
     assert r.status_code == 200, r.get_data(as_text=True)
     with flask_app.app_context():
         assert Company.query.filter(
             Company.name.ilike('%siemens%')).count() == 1, \
             'the card created a duplicate company'
-        contact = Contact.query.filter_by(name='R Shah').first()
+        contact = Contact.query.filter_by(name='Siemens Contact').first()
         assert contact is not None
         assert contact.company_id is not None, \
             'the contact must link to Company Master by id, not by name'
@@ -176,11 +176,11 @@ def test_an_invented_classification_is_refused(world):
 
 # ── §40: the scan becomes work ───────────────────────────────────────
 def test_a_follow_up_creates_a_lead(world):
-    card_id = _card({'name': 'P Kumar', 'company': 'New Prospect Ltd'})
+    card_id = _card({'name': 'Prospect Contact', 'company': 'New Prospect Ltd'})
     r = _c().post(f'/api/business-cards/{card_id}/save',
                   data=json.dumps({
                       'choice': 'new',
-                      'fields': {'name': 'P Kumar',
+                      'fields': {'name': 'Prospect Contact',
                                  'company': 'New Prospect Ltd'},
                       'classifications': ['Customer'],
                       'follow_up_date': '2026-10-01',

@@ -60,7 +60,7 @@ def world():
         for tag in ('Customer', 'Vendor', 'Competitor'):
             db.session.add(AccountRelationshipTag(account_id=acme.id, tag=tag))
 
-        db.session.add(Contact(name='Rita Shah', company='Acme Heavy',
+        db.session.add(Contact(name='Customer Contact', company='Acme Heavy',
                                company_id=acme.id, designation='Head of Ops'))
         for n in range(2):
             db.session.add(Lead(company='Acme Heavy Industries',

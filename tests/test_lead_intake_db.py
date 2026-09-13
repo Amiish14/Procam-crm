@@ -179,7 +179,7 @@ def test_a_genuinely_new_enquiry_still_gets_through(world):
             msg(subject='RFQ - new reactor movement to Dahej',
                 body='We need to move 3 reactors, 180 MT each, from Hazira '
                      'to Dahej. Over-dimensional. Please quote. '
-                     'Contact +91 98200 44556.',
+                     'Contact +91 90000 30003.',
                 frm='projects@larsentoubro.com'),
             lidb.build_context())
     assert d.klass == li.Klass.NEW_LEAD
@@ -203,11 +203,11 @@ def test_a_second_listed_domain_also_resolves(world):
 
 def test_a_known_contact_resolves_even_on_a_personal_domain(world):
     with flask_app.app_context():
-        db.session.add(Contact(contact_type='person', name='Ravi Menon',
-                               email='ravi.personal@gmail.com',
+        db.session.add(Contact(contact_type='person', name='Customer Contact',
+                               email='customer.personal@gmail.com',
                                account_id=world['account_id']))
         db.session.commit()
-        company, how = lidb.resolve_account('ravi.personal@gmail.com')
+        company, how = lidb.resolve_account('customer.personal@gmail.com')
         assert company is not None and company.id == world['account_id']
         assert how == 'contact email'
 

@@ -35,7 +35,7 @@ Vadodara. 220 MT, over-dimensional. Payment terms 45 days from delivery.
 Please quote by Friday.
 
 Regards,
-S. Krishnan
+Customer Contact
 Toshiba T&D India"""
 
 
@@ -65,7 +65,7 @@ def _email_lead(company='Toshiba T&D India'):
                     email_message_id=f'<{company}@example.com>',
                     original_email_body=ENQUIRY,
                     original_email_subject='RFQ — transformer movement',
-                    original_email_from='s.krishnan@toshiba-tnd.co.in',
+                    original_email_from='customer.contact@toshiba-tnd.co.in',
                     original_email_source='ingested')
         db.session.add(lead)
         db.session.commit()
@@ -77,7 +77,7 @@ def test_saving_a_note_leaves_the_enquiry_intact(client):
     """The original defect: this used to wipe the email."""
     lid = _email_lead()
     r = client.post(f'/api/leads/{lid}/notes',
-                    json={'note_text': 'Called Krishnan, quote by Thursday.',
+                    json={'note_text': 'Called Customer Contact, quote by Thursday.',
                           'note_type': 'call'})
     assert r.status_code == 200
 
@@ -217,7 +217,7 @@ def test_a_reply_is_appended_not_substituted(client):
 
     r = client.post(f'/api/leads/{lid}/emails',
                     json={'subject': 'Re: RFQ', 'body': 'Our quote attached.',
-                          'to_addr': 's.krishnan@toshiba-tnd.co.in',
+                          'to_addr': 'customer.contact@toshiba-tnd.co.in',
                           'status': 'sent'})
     assert r.status_code == 200
 
@@ -272,7 +272,7 @@ def test_a_lead_with_no_email_still_saves(client):
         db.session.commit()
         lid = lead.id
     r = client.put(f'/api/leads/{lid}', json={'pic': 'Someone',
-                                              'phone': '9820011223'})
+                                              'phone': '9000030001'})
     assert r.status_code == 200
     d = client.get(f'/api/leads/{lid}').get_json()
     assert d['pic'] == 'Someone'
@@ -345,7 +345,7 @@ def test_cancel_discards_only_the_unsaved_note():
 
 
 # ── A1 / A2 — a draft is on the trail, and "sent" moves it ───────────
-def _draft(client, lid, body='Dear Krishnan, our offer is attached.'):
+def _draft(client, lid, body='Dear Customer Contact, our offer is attached.'):
     return client.post(f'/api/leads/{lid}/emails',
                        json={'subject': 'Our offer', 'body': body,
                              'status': 'draft'}).get_json()['email']
@@ -487,14 +487,14 @@ def test_editing_a_note_keeps_the_earlier_text(client):
     """The edit endpoint overwrote note_text in place, so the append-only
     history Family A requires was lost one save at a time."""
     lid = _email_lead('Revision Ltd')
-    n = _note(client, lid, 'Called Krishnan, asked for 40 MT rate')
+    n = _note(client, lid, 'Called Customer Contact, asked for 40 MT rate')
     client.put(f'/api/leads/{lid}/notes/{n["id"]}',
-               json={'note_text': 'Called Krishnan, asked for 42 MT rate'})
+               json={'note_text': 'Called Customer Contact, asked for 42 MT rate'})
 
     body = client.get(f'/api/leads/{lid}/notes/{n["id"]}/revisions').get_json()
-    assert body['current']['note_text'] == 'Called Krishnan, asked for 42 MT rate'
+    assert body['current']['note_text'] == 'Called Customer Contact, asked for 42 MT rate'
     assert [r['note_text'] for r in body['revisions']] == \
-        ['Called Krishnan, asked for 40 MT rate']
+        ['Called Customer Contact, asked for 40 MT rate']
     assert body['revisions'][0]['replaced_by'] == 'NOTEADM'
 
 

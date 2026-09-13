@@ -37,16 +37,16 @@ def test_the_parser_needs_nothing_but_the_standard_library():
 
 # ─── every card yields the fields it actually carries ────────────────────
 EXPECTED = {
-    'name_first':    ('Rajesh Kumar Sharma', 'ambujacement.com'),
-    'company_first': ('Priya Menon',         'bhel.in'),
-    'all_caps':      ('SURESH IYER',         'oceanicfreight.com'),
-    'many_phones':   ('Anita Desai',         'globalcargo.co.in'),
-    'no_website':    ('Vikram Singh',        'jindalsteel.com'),
-    'generic_email': ('Mohammed Farooq',     ''),
-    'international': ('Dr. Klaus Weber',     'schenker.de'),
-    'multi_email':   ('Sanjay Gupta',        'seaways.in'),
-    'minimal':       ('Neha Kapoor',         'kapoorexports.com'),
-    'awkward':       ('Arun Balakrishnan',   'tataprojects.com'),
+    'name_first':    ('Customer Contact',     'ambujacement.com'),
+    'company_first': ('Buyer Contact',        'bhel.in'),
+    'all_caps':      ('SHIPPER CONTACT',      'oceanicfreight.com'),
+    'many_phones':   ('Site Contact',         'globalcargo.co.in'),
+    'no_website':    ('Project Contact',      'jindalsteel.com'),
+    'generic_email': ('Vendor Contact',       ''),
+    'international': ('Dr. Client Contact',   'schenker.de'),
+    'multi_email':   ('Account Contact',      'seaways.in'),
+    'minimal':       ('Trade Contact',        'kapoorexports.com'),
+    'awkward':       ('Purchase Contact',     'tataprojects.com'),
 }
 
 
@@ -88,7 +88,7 @@ def test_a_card_always_parses_to_the_full_contract(key):
 def test_all_four_numbers_are_kept_and_the_mobile_leads():
     p = cp.parse(CARDS['many_phones'])
     assert len(p['phones']) == 4, p['phones']
-    assert p['phones'][0] == '+91 98765 43210'
+    assert p['phones'][0] == '+91 90000 20004'
     labels = {d['value']: d['label'] for d in p['phone_details']}
     assert labels['+91 22 4004 1299'] == 'fax'
     assert labels['+91 22 4004 1234'] == 'direct'
@@ -97,36 +97,36 @@ def test_all_four_numbers_are_kept_and_the_mobile_leads():
 def test_a_fax_is_never_chosen_as_the_number_to_call():
     fields = cp.to_contact_fields(cp.parse(CARDS['many_phones']))
     assert 'fax' not in fields['mobile'].lower()
-    assert fields['mobile'] == '+91 98765 43210'
+    assert fields['mobile'] == '+91 90000 20004'
     assert '1299' not in fields['telephone'], 'the fax became the telephone'
 
 
 def test_two_numbers_on_one_line_get_their_own_labels():
-    """"Mobile 970… | Board 040…" — one label per line tagged the board
+    """"Mobile 900… | Board 040…" — one label per line tagged the board
     number as a mobile, which put a switchboard in the mobile field."""
     labels = {d['value']: d['label']
               for d in cp.parse(CARDS['awkward'])['phone_details']}
-    assert labels['9701234567'] == 'mobile'
+    assert labels['9000020010'] == 'mobile'
     assert labels['040-6612 3000'] == 'board'
 
 
 def test_an_unlabelled_indian_mobile_is_recognised_by_shape():
     p = cp.parse(CARDS['multi_email'])
     labels = {d['value']: d['label'] for d in p['phone_details']}
-    assert labels['+91 98490 12345'] == 'mobile'
+    assert labels['+91 90000 20008'] == 'mobile'
 
 
 def test_both_addresses_on_a_two_email_card_are_kept():
     p = cp.parse(CARDS['multi_email'])
     assert len(p['emails']) == 2
-    assert p['emails'][0] == 'sanjay@seaways.in'
+    assert p['emails'][0] == 'account.contact@seaways.in'
 
 
 def test_a_personal_domain_is_not_treated_as_the_company_website():
-    """farooq.transport@gmail.com says nothing about the employer."""
+    """coastal.transport@gmail.com says nothing about the employer."""
     p = cp.parse(CARDS['generic_email'])
     assert p['website'] == ''
-    assert p['company'] == 'Farooq Transport Agencies'
+    assert p['company'] == 'Coastal Transport Agencies'
 
 
 def test_the_company_is_derived_from_the_domain_when_the_card_omits_it():
@@ -143,7 +143,7 @@ def test_the_address_is_multi_line_and_keeps_its_pin():
 def test_the_phone_number_does_not_leak_into_the_address():
     for key in CARDS:
         addr = cp.parse(CARDS[key])['address']
-        assert '98200 11223' not in addr
+        assert '90000 20001' not in addr
         assert '+91' not in addr
 
 
@@ -156,7 +156,7 @@ def test_a_longer_title_wins_over_the_one_inside_it():
 
 def test_an_all_caps_card_parses_like_any_other():
     p = cp.parse(CARDS['all_caps'])
-    assert p['name'] == 'SURESH IYER'
+    assert p['name'] == 'SHIPPER CONTACT'
     assert p['designation'] == 'MANAGING DIRECTOR'
     assert p['company'] == 'OCEANIC FREIGHT FORWARDERS PVT LTD'
 
@@ -164,13 +164,13 @@ def test_an_all_caps_card_parses_like_any_other():
 def test_a_non_english_card_still_yields_its_contact_details():
     p = cp.parse(CARDS['international'])
     assert p['company'] == 'SCHENKER DEUTSCHLAND GMBH'
-    assert p['emails'] == ['k.weber@schenker.de']
+    assert p['emails'] == ['client.contact@schenker.de']
     assert len(p['phones']) == 2
 
 
 def test_a_minimal_card_does_not_invent_fields():
     p = cp.parse(CARDS['minimal'])
-    assert p['name'] == 'Neha Kapoor'
+    assert p['name'] == 'Trade Contact'
     assert p['designation'] == ''
     assert p['address'] == ''
 
@@ -183,10 +183,10 @@ def test_empty_input_is_safe():
 
 # ─── phone normalisation, which duplicate detection rests on ─────────────
 @pytest.mark.parametrize('a,b', [
-    ('+91 98200 11223', '09820011223'),
-    ('+91-98200-11223', '98200 11223'),
-    ('(0) 98200 11223', '9820011223'),
-    ('0091 98200 11223', '+91 98200 11223'),
+    ('+91 90000 20001', '09000020001'),
+    ('+91-90000-20001', '90000 20001'),
+    ('(0) 90000 20001', '9000020001'),
+    ('0091 90000 20001', '+91 90000 20001'),
 ])
 def test_the_same_number_written_differently_compares_equal(a, b):
     """This is what stops the same person being created three times."""
@@ -194,7 +194,7 @@ def test_the_same_number_written_differently_compares_equal(a, b):
 
 
 def test_different_numbers_do_not_collide():
-    assert cp.normalise_phone('9820011223') != cp.normalise_phone('9820011224')
+    assert cp.normalise_phone('9000020001') != cp.normalise_phone('9000020002')
 
 
 # ─── validation and cross-check of model output ──────────────────────────
@@ -220,11 +220,11 @@ def test_a_model_answering_with_a_list_does_not_crash_normalise():
 
 
 def test_the_model_wins_where_it_answered_and_the_parser_fills_the_gaps():
-    model = {'name': 'Rajesh Kumar Sharma', 'company': '', 'emails': [],
-             'phones': ['+91 98200 11223'], 'designation': '',
+    model = {'name': 'Customer Contact', 'company': '', 'emails': [],
+             'phones': ['+91 90000 20001'], 'designation': '',
              'website': '', 'address': '', 'raw_text': ''}
     merged = cp.cross_check(model, cp.parse(CARDS['name_first']))
-    assert merged['name'] == 'Rajesh Kumar Sharma'
+    assert merged['name'] == 'Customer Contact'
     assert merged['company'] == 'AMBUJA CEMENT LIMITED'   # parser filled it
     assert len(merged['phones']) == 2                     # parser added one
 

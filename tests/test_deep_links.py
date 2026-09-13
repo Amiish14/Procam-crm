@@ -198,16 +198,16 @@ def test_home_links_are_untouched():
 def test_contact_by_id_returns_the_record(world):
     with flask_app.app_context():
         acme_id = Company.query.filter_by(name='Acme').first().id
-        ct = _main.Contact(name='Rita Shah', company='Acme',
+        ct = _main.Contact(name='Customer Contact', company='Acme',
                            company_id=acme_id, assigned_to='DLADM',
-                           email='rita@acme.com')
+                           email='customer.contact@acme.com')
         db.session.add(ct)
         db.session.commit()
         cid = ct.id
 
     body = _c().get(f'/api/contacts/{cid}').get_json()
     assert body['id'] == cid
-    assert body['name'] == 'Rita Shah'
+    assert body['name'] == 'Customer Contact'
     assert body['company_id'] == acme_id
     assert body['company_name'] == 'Acme', \
         'the detail needs a route through to the organisation'
