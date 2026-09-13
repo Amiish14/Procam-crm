@@ -679,15 +679,33 @@ FEEDBACK_REASONS = (
 )
 
 
+def _feedback_reason(text, note):
+    """The panel asks "what was wrong?" in free text and lists the
+    reasons in lower case. Only exact labels used to be accepted, so
+    every typed answer was refused with a 400 the panel never showed —
+    thumbs-down votes were silently lost. A matching phrase maps to its
+    label; anything else is kept, verbatim, as the note under Other."""
+    t = (text or '').strip()
+    for label in FEEDBACK_REASONS:
+        if t.lower() == label.lower() or label.lower() in t.lower():
+            return label, note
+    return 'Other', (note or t)
+
+
 def record_feedback(log_id, *, helpful, reason=None, note=None, actor=None):
     from app import db
     from app.models.copilot import CopilotLog
 
-    row = db.session.get(CopilotLog, int(log_id))
-    if row is None:
+    try:
+        row = db.session.get(CopilotLog, int(log_id))
+    except (TypeError, ValueError):
+        row = None
+    # Only on your own answer, like pin. Otherwise anyone could mark any
+    # answer unhelpful and skew the analytics page.
+    if row is None or (actor and row.emp_code and row.emp_code != actor):
         return False, 'Not found'
-    if not helpful and reason and reason not in FEEDBACK_REASONS:
-        return False, f'Unknown reason {reason}'
+    if not helpful and reason:
+        reason, note = _feedback_reason(reason, note)
     row.helpful = bool(helpful)
     row.feedback_reason = (reason or '')[:60] or None
     row.feedback_note = (note or '')[:500] or None

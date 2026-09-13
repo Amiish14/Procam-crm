@@ -45,6 +45,24 @@ def _emp():
     return session.get('emp_code') or ''
 
 
+def _sees_all_cards():
+    from app.access import scope
+    return session.get('role') == 'admin' or scope.current().codes is None
+
+
+def _card_or_404(card_id):
+    """A scanned card belongs to whoever photographed it.
+
+    Every route here used to load any card by id, so a signed-in user
+    could read — or save, or discard — a colleague's scanned contacts.
+    404 rather than 403 so ids cannot be probed."""
+    from flask import abort
+    row = BusinessCardImport.query.get_or_404(card_id)
+    if row.uploaded_by_id != _emp() and not _sees_all_cards():
+        abort(404)
+    return row
+
+
 # ─── HTML page ───────────────────────────────────────────────────────────
 @bp.route('/business-cards/scan')
 @_require_auth
@@ -129,7 +147,7 @@ def card_image(card_id):
     from flask import send_file, abort
     from app.utils.uploads import _upload_root
 
-    row = BusinessCardImport.query.get_or_404(card_id)
+    row = _card_or_404(card_id)
     path = row.image_path or ''
     if not path:
         abort(404)
@@ -153,7 +171,7 @@ def card_image(card_id):
 @bp.route('/api/business-cards/<int:card_id>', methods=['GET'])
 @_require_auth
 def api_get(card_id):
-    row = BusinessCardImport.query.get_or_404(card_id)
+    row = _card_or_404(card_id)
     return jsonify(ok=True, card=row.to_dict())
 
 
@@ -163,7 +181,7 @@ def api_get(card_id):
 def api_save(card_id):
     from app import Company, Contact
 
-    row = BusinessCardImport.query.get_or_404(card_id)
+    row = _card_or_404(card_id)
     if row.status == 'Saved':
         return jsonify(ok=False, error='Already saved'), 400
 
@@ -320,7 +338,7 @@ def api_save(card_id):
 @bp.route('/api/business-cards/<int:card_id>/discard', methods=['POST'])
 @_require_auth
 def api_discard(card_id):
-    row = BusinessCardImport.query.get_or_404(card_id)
+    row = _card_or_404(card_id)
     row.status = 'Discarded'
     reason = (request.get_json(silent=True) or {}).get('reason') or ''
     if reason:
@@ -336,6 +354,8 @@ def api_list():
     status  = (request.args.get('status') or '').strip()
     limit   = min(int(request.args.get('limit') or 100), 500)
     q = BusinessCardImport.query
+    if not _sees_all_cards():
+        q = q.filter(BusinessCardImport.uploaded_by_id == _emp())
     if status:
         q = q.filter(BusinessCardImport.status == status)
     rows = q.order_by(BusinessCardImport.uploaded_at.desc()).limit(limit).all()

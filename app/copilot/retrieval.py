@@ -138,8 +138,11 @@ def chunks_for_lead(lead):
     if (lead.original_email_body or '').strip():
         out.append(('enquiry', lead.original_email_subject or '',
                     lead.original_email_body))
-    for note in LeadNote.query.filter_by(lead_id=lead.id).limit(50).all():
-        text = getattr(note, 'body', None) or getattr(note, 'note', '') or ''
+    # The column is note_text. This read `body` / `note`, which LeadNote
+    # does not have, so no note was ever indexed. Deleted notes stay out.
+    for note in (LeadNote.query.filter_by(lead_id=lead.id)
+                 .filter(LeadNote.is_deleted.isnot(True)).limit(50).all()):
+        text = note.note_text or ''
         if text.strip():
             out.append(('note', '', text))
     for mail in (LeadEmail.query.filter_by(lead_id=lead.id)

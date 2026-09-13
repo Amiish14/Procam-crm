@@ -136,9 +136,14 @@ def test_lead_visibility_is_reported_per_user(world):
         db.session.commit()
         opp_id = opp.id
 
-    body = _c('DLREP').get(f'/api/opportunities/{opp_id}').get_json()
-    assert body['lead_visible'] is False, \
-        'the deep link must not offer to open a lead the user cannot see'
+    # Neither the opportunity nor its lead is this user's. It used to
+    # come back in full with lead_visible False — value and notes of a
+    # deal the list would never have shown. Now it is simply not found,
+    # which the page already reports as "not found".
+    r = _c('DLREP').get(f'/api/opportunities/{opp_id}')
+    assert r.status_code == 404, \
+        'another owner\'s opportunity must not be readable by id'
+    assert 'value_inr' not in (r.get_json() or {})
 
 
 def test_unknown_opportunity_is_404(world):

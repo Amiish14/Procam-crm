@@ -149,12 +149,39 @@ def test_an_answer_can_be_rated(world):
         assert row.feedback_reason == 'Wrong record'
 
 
-def test_an_unknown_feedback_reason_is_refused(world):
+def test_a_typed_feedback_reason_is_kept_not_refused(world):
+    """The panel asks "what was wrong?" as free text. A refused reason
+    was a 400 the panel never showed, so the thumbs-down was lost. Text
+    that names a reason maps to it; anything else is filed under Other
+    with the words kept."""
+    from app.models.copilot import CopilotLog
+
+    for typed, label, note in (
+            ('because I said so', 'Other', 'because I said so'),
+            ('wrong record', 'Wrong record', None),
+            ('I think it is the wrong calculation', 'Wrong calculation',
+             None)):
+        body = _c('CAREP').post('/api/copilot/ask',
+                                json={'q': 'my open leads'}).get_json()
+        r = _c('CAREP').post('/api/copilot/feedback',
+                             json={'log_id': body['log_id'], 'helpful': False,
+                                   'reason': typed})
+        assert r.status_code == 200, typed
+        with flask_app.app_context():
+            row = db.session.get(CopilotLog, body['log_id'])
+            assert row.helpful is False
+            assert row.feedback_reason == label
+            assert row.feedback_note == note
+
+
+def test_feedback_only_on_your_own_answer(world):
+    """Like pin. Otherwise anyone could vote down anyone's answers and
+    move the satisfaction figure on the analytics page."""
     body = _c('CAREP').post('/api/copilot/ask',
                             json={'q': 'my open leads'}).get_json()
-    r = _c('CAREP').post('/api/copilot/feedback',
+    r = _c('CAADM').post('/api/copilot/feedback',
                          json={'log_id': body['log_id'], 'helpful': False,
-                               'reason': 'because I said so'})
+                               'reason': 'Other'})
     assert r.status_code == 400
 
 

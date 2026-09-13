@@ -146,12 +146,40 @@ def assign(lead_ids, emp_code, actor):
     if not employee.is_active:
         raise ValueError(f'{employee.name} is not an active employee')
 
+    from app import LeadAssignmentHistory
+
     rows = Lead.query.filter(Lead.id.in_(lead_ids)).all()
+    moved = []
     for lead in rows:
+        if lead.assigned_to != employee.emp_code:
+            db.session.add(LeadAssignmentHistory(
+                lead_id=lead.id, from_primary=lead.assigned_to or '',
+                to_primary=employee.emp_code,
+                from_secondary=lead.secondary_owner or '',
+                to_secondary=lead.secondary_owner or '',
+                changed_at=datetime.utcnow(), changed_by=actor,
+                note='bulk admin reassignment'))
+            moved.append(lead.id)
         lead.assigned_to = employee.emp_code
         lead.assigned_name = employee.name
     db.session.commit()
+    # The Copilot index stamps each chunk with the owner at index time.
+    # Left alone, the previous owner kept finding these leads' emails
+    # and notes in Copilot search after losing the leads themselves.
+    _drop_copilot_chunks(moved)
     return {'assigned': len(rows), 'to': employee.name}
+
+
+def _drop_copilot_chunks(lead_ids):
+    if not lead_ids:
+        return
+    try:
+        from app.models.copilot import CopilotChunk
+    except ImportError:
+        return
+    CopilotChunk.query.filter(CopilotChunk.lead_id.in_(lead_ids)).delete(
+        synchronize_session=False)
+    db.session.commit()
 
 
 def set_field(lead_ids, field, value, actor):
@@ -164,6 +192,10 @@ def set_field(lead_ids, field, value, actor):
         raise ValueError(f'{field} cannot be set in bulk')
 
     lookup = allowed_field[field]
+    if field == 'stage':
+        from app import STAGES_ALL
+        if value not in STAGES_ALL:
+            raise ValueError(f'"{value}" is not a lead stage')
     if lookup:
         allowed = {i.label for i in md.items(lookup)}
         if value not in allowed:
@@ -175,6 +207,10 @@ def set_field(lead_ids, field, value, actor):
     for lead in rows:
         setattr(lead, field, value)
     db.session.commit()
+    if field == 'procam_vertical':
+        # Chunks carry the vertical too; a vertical-scoped viewer must
+        # stop (or start) finding these at the same moment.
+        _drop_copilot_chunks([l.id for l in rows])
     return {'updated': len(rows), 'field': field, 'value': value}
 
 
@@ -207,8 +243,22 @@ def delete(lead_ids, reason, actor):
         _audit(lead, 'delete', reason, actor, counts, batch_ref)
     db.session.commit()          # the audit survives whatever follows
 
-    from app import LeadActivity, LeadAttachment
+    from app import (LeadActivity, LeadAttachment, LeadNote, LeadEmail,
+                     LeadAssignmentHistory)
     ids = [l.id for l in rows]
+    # The same set the single-lead delete removes. SQLite hands a deleted
+    # id to the next insert, so a note, email or assignment left here
+    # attaches itself to an unrelated new lead. The audit rows written
+    # above hold the snapshot.
+    for model in (LeadNote, LeadEmail, LeadAssignmentHistory):
+        model.query.filter(model.lead_id.in_(ids)).delete(
+            synchronize_session=False)
+    try:
+        from app.models.copilot import CopilotChunk
+        CopilotChunk.query.filter(CopilotChunk.lead_id.in_(ids)).delete(
+            synchronize_session=False)
+    except ImportError:
+        pass
     LeadActivity.query.filter(LeadActivity.lead_id.in_(ids)).delete(
         synchronize_session=False)
     LeadAttachment.query.filter(LeadAttachment.lead_id.in_(ids)).delete(

@@ -1752,13 +1752,20 @@ def api_opportunity_by_id(oid):
     if opp is None:
         return jsonify({'error': 'Opportunity not found', 'id': oid}), 404
 
+    lead_visible = bool(opp.lead_id) and (
+        leads_for_user().filter(Lead.id == opp.lead_id).first() is not None)
+    # The list and PUT confine opportunities to their owner (or wider,
+    # through the Access Matrix). This route used to hand any signed-in
+    # user the full record — value, notes — for any id. It now answers
+    # only someone who could reach the opportunity or the lead behind it,
+    # and the same 404 otherwise, so ids cannot be probed.
+    from app.access import scope as _scope
+    if not (_scope.may_view(opp) or lead_visible):
+        return jsonify({'error': 'Opportunity not found', 'id': oid}), 404
+
     body = opp.to_dict() if hasattr(opp, 'to_dict') else {'id': opp.id}
     body['lead_id'] = opp.lead_id
-    if opp.lead_id:
-        visible = leads_for_user().filter(Lead.id == opp.lead_id).first()
-        body['lead_visible'] = visible is not None
-    else:
-        body['lead_visible'] = False
+    body['lead_visible'] = lead_visible
     return jsonify(body)
 
 
@@ -1925,8 +1932,10 @@ def api_delete_lead(lid):
     # left behind here does not just linger — it attaches itself to
     # whichever lead takes the id next. The audit snapshot above is what
     # preserves the history; these rows must go.
+    from app.models.copilot import CopilotChunk
     for model in (LeadAttachment, LeadNote, LeadEmail,
-                  LeadAssignmentHistory, LeadActivity, LeadStageHistory):
+                  LeadAssignmentHistory, LeadActivity, LeadStageHistory,
+                  CopilotChunk):
         try:
             model.query.filter_by(lead_id=lid).delete(
                 synchronize_session=False)
@@ -2301,6 +2310,11 @@ def api_opp_convert_to_project(oid):
     Lead so the CRM knows the deal has crossed over.
     """
     opp = Opportunity.query.get_or_404(oid)
+    # Same rule as PUT /api/opportunities/<id>: stamping a TMS project on
+    # someone else's deal is an edit of it.
+    if session.get('role') != 'admin' and \
+            opp.owner_emp_code != session.get('emp_code'):
+        return jsonify({'ok': False, 'error': 'Forbidden'}), 403
     if opp.stage != 'Won':
         return jsonify({'ok': False,
                         'error': 'Only Won opportunities can convert to a project.'}), 400
@@ -3656,7 +3670,12 @@ def api_outreach_generate():
     tone = d.get('tone', 'professional')
     goal = d.get('goal', 'introduce Procam and request a meeting')
 
-    lead = Lead.query.get(lead_id) if lead_id else None
+    # Through the caller's scope: this context goes to an external model,
+    # and a lead the caller cannot open is not theirs to send.
+    lead = (leads_for_user().filter(Lead.id == lead_id).first()
+            if lead_id else None)
+    if lead_id and lead is None:
+        return jsonify({'error': 'Lead not found'}), 404
     company = None
     if d.get('company_id'):
         company = Company.query.get(d['company_id'])
@@ -3696,7 +3715,7 @@ def api_outreach_generate():
 
     # Frontend may pass a fully composed prompt (rich, Procam-specific) as
     # `extra_prompt`. Prefer it, otherwise fall back to a generic template.
-    extra_prompt = (d.get('extra_prompt') or '').strip()
+    extra_prompt = (d.get('extra_prompt') or '').strip()[:1000]
     if extra_prompt:
         prompt = extra_prompt + "\n\nContext:\n" + context
     else:
@@ -3876,6 +3895,11 @@ def api_leads_import_preview():
 def api_leads_import_commit():
     d = request.get_json(force=True) or {}
     batch = ImportBatch.query.get_or_404(d.get('batch_id'))
+    # Batch ids are sequential. Without this, anyone could commit a sheet
+    # another person uploaded — and the leads land assigned to them.
+    if session.get('role') != 'admin' and \
+            batch.created_by != session.get('emp_code'):
+        return jsonify({'error': 'Import batch not found'}), 404
     if batch.committed:
         return jsonify({'error': 'Batch already committed'}), 400
     skip_dupes = bool(d.get('skip_duplicates', True))
