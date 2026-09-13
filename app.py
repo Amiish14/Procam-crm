@@ -1264,6 +1264,7 @@ def login():
             session['name']     = emp.name
             session['role']     = emp.role
             session['vertical'] = emp.vertical or ''
+            session['must_change_pw'] = bool(emp.must_change_pw)
             return jsonify({'ok': True, 'must_change': emp.must_change_pw, 'role': emp.role})
         return jsonify({'ok': False, 'error': 'Invalid Employee Code or Password'}), 401
 
@@ -1280,11 +1281,18 @@ def change_password():
     if not emp.check_password(data.get('current', '')):
         return jsonify({'ok': False, 'error': 'Current password incorrect'}), 400
     new_pw = data.get('new_password', '')
-    if len(new_pw) < 6:
-        return jsonify({'ok': False, 'error': 'Password must be at least 6 characters'}), 400
+    if len(new_pw) < MIN_PASSWORD_LENGTH:
+        return jsonify({'ok': False, 'error': f'Password must be at least '
+                        f'{MIN_PASSWORD_LENGTH} characters'}), 400
+    if new_pw.lower() == emp.emp_code.lower():
+        # The old default — every seeded account started with it, so it
+        # is the first thing anyone would try.
+        return jsonify({'ok': False, 'error': 'Your password cannot be your '
+                        'employee code'}), 400
     emp.set_password(new_pw)
     emp.must_change_pw = False
     db.session.commit()
+    session['must_change_pw'] = False
     return jsonify({'ok': True})
 
 @app.route('/logout', methods=['POST'])
@@ -1326,6 +1334,55 @@ def require_auth(f):
             return jsonify({'error': 'Not authenticated'}), 401
         return f(*args, **kwargs)
     return decorated
+
+MIN_PASSWORD_LENGTH = 10
+
+
+def _temporary_password():
+    """A one-time password an admin hands over. Replaces "the employee
+    code in lowercase", which anyone who knew a colleague's code could
+    use before they did."""
+    alphabet = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789'
+    return ''.join(secrets.choice(alphabet) for _ in range(12))
+
+
+@app.before_request
+def _session_guard():
+    """Two things a cookie alone cannot know.
+
+    A deactivated employee's session used to keep working until the
+    cookie expired (8 hours): login checked is_active, nothing after it
+    did. And must_change_pw was enforced only by the /app page — every
+    /api route answered someone still on a default password.
+    """
+    code = session.get('emp_code')
+    if not code or request.endpoint == 'static':
+        return None
+    row = (Employee.query.with_entities(Employee.is_active)
+           .filter_by(emp_code=code).first())
+    if row is not None and not row.is_active:
+        session.clear()
+        if _api_request():
+            return jsonify(ok=False, code='inactive',
+                           error='This account is no longer active.'), 401
+        return redirect(url_for('login'))
+    if session.get('must_change_pw') and _api_request():
+        return jsonify(ok=False, code='password_change_required',
+                       error='Change your password before continuing.'), 403
+    return None
+
+
+def _refuse_super_target(emp):
+    """Only the super admin may change the super admin's account.
+
+    Otherwise any admin could reset its password, deactivate it or
+    change its role — taking over the one account that owns access."""
+    from app.access.service import is_super
+    if getattr(emp, 'is_super_admin', False) and not is_super():
+        return jsonify({'error': 'Only the super admin can change the '
+                                 'super admin account'}), 403
+    return None
+
 
 def require_admin(f):
     from functools import wraps
@@ -1393,35 +1450,60 @@ def api_create_employee():
         joined_on   = date.today(),
         must_change_pw = True
     )
-    # Default password = employee code (lowercase)
-    emp.set_password(d['emp_code'].lower())
+    temp = _temporary_password()
+    emp.set_password(temp)
     db.session.add(emp)
     db.session.commit()
-    return jsonify({'ok': True, 'id': emp.id, 'message': f'Employee {emp.name} created. Default password: {d["emp_code"].lower()}'})
+    app.logger.warning('employee_change action=create actor=%s target=%s '
+                       'role=%s', session.get('emp_code'), emp.emp_code,
+                       emp.role)
+    return jsonify({'ok': True, 'id': emp.id, 'temp_password': temp,
+                    'message': f'Employee {emp.name} created. They must '
+                               f'change the temporary password at first '
+                               f'login.'})
 
 @app.route('/api/employees/<int:eid>', methods=['PUT'])
 @require_auth
 @require_admin
 def api_update_employee(eid):
     emp = Employee.query.get_or_404(eid)
+    refused = _refuse_super_target(emp)
+    if refused:
+        return refused
     d = request.get_json()
+    changed = []
     for field in ('name','email','mobile','department','designation','vertical',
                   'role','is_active','is_vertical_head'):
         if field in d:
+            if getattr(emp, field) != d[field]:
+                changed.append(field)
             setattr(emp, field, d[field])
     if 'industries' in d:
         emp.industries = json.dumps(d['industries'])
+    body = {'ok': True}
     if d.get('reset_password'):
-        emp.set_password(emp.emp_code.lower())
+        temp = _temporary_password()
+        emp.set_password(temp)
         emp.must_change_pw = True
+        body['temp_password'] = temp
+        changed.append('password_reset')
     db.session.commit()
-    return jsonify({'ok': True})
+    if changed:
+        app.logger.warning('employee_change action=update actor=%s target=%s '
+                           'fields=%s', session.get('emp_code'),
+                           emp.emp_code, ','.join(changed))
+    return jsonify(body)
 
 @app.route('/api/employees/<int:eid>', methods=['DELETE'])
 @require_auth
 @require_admin
 def api_deactivate_employee(eid):
     emp = Employee.query.get_or_404(eid)
+    refused = _refuse_super_target(emp)
+    if refused:
+        return refused
+    app.logger.warning('employee_change action=deactivate actor=%s target=%s',
+                       session.get('emp_code'), emp.emp_code)
     emp.is_active = False
     db.session.commit()
     return jsonify({'ok': True})

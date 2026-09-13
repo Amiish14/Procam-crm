@@ -1738,7 +1738,7 @@ window.CRMToast = (function(){
   <div class="pg-hd"><div><div class="pg-ttl">Change Password</div><div class="pg-sub">Set a new personal password</div></div></div>
   <div class="card" style="max-width:400px"><div style="padding:16px">
     <div class="fmg"><label class="fml">Current Password</label><input class="fmc" type="password" id="cpwCur"></div>
-    <div class="fmg"><label class="fml">New Password (min 6 chars)</label><input class="fmc" type="password" id="cpwNew"></div>
+    <div class="fmg"><label class="fml">New Password (min 10 chars)</label><input class="fmc" type="password" id="cpwNew"></div>
     <div class="fmg"><label class="fml">Confirm New Password</label><input class="fmc" type="password" id="cpwCfm"></div>
     <button class="btn btn-red" onclick="doChangePw()">Update Password</button>
     <div style="margin-top:10px;font-size:12px;color:var(--text-3)" id="cpwMsg"></div>
@@ -1818,7 +1818,7 @@ window.CRMToast = (function(){
       <div class="fmr"><div class="fmg"><label class="fml">Department</label><select class="fmc" id="eDept"><option>Sales</option><option>Pre-Sales</option><option>Operations</option><option>Finance</option><option>Admin</option><option>Management</option></select></div><div class="fmg"><label class="fml">Designation</label><input class="fmc" id="eDesig"></div></div>
       <div class="fmr"><div class="fmg"><label class="fml">Vertical</label><select class="fmc" id="eVert"><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option><option>All</option></select></div><div class="fmg"><label class="fml">Role</label><select class="fmc" id="eRole"><option value="presales">Pre-Sales</option><option value="user">Sales / Ops</option><option value="admin">Admin</option></select></div></div>
       <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;font-size:12.5px;color:var(--text-2);margin-top:8px;line-height:1.55">
-        Default password = employee code (lowercase). The employee will be prompted to change it on first login.
+        A temporary password is generated and shown once after you create the employee. They must change it on first login.
       </div>
     </div>
     <div class="mft"><button class="btn btn-ghost" onclick="document.getElementById('eMob').style.display='none'">Cancel</button><button class="btn btn-red" onclick="saveEmp()">Create Employee</button></div>
@@ -4190,13 +4190,15 @@ async function saveEmp(){
   const code=g('eCode')?.value.trim().toUpperCase();const name=g('eName')?.value.trim();
   if(!code||!name){toast('Code and name required','err');return;}
   const r=await api('/api/employees',{method:'POST',body:JSON.stringify({emp_code:code,name,email:g('eEmail').value,mobile:g('eMob2').value,department:g('eDept').value,designation:g('eDesig').value,vertical:g('eVert').value,role:g('eRole').value})});
-  if(r.ok){g('eMob').style.display='none';rEmps();toast(r.message||'Employee created ✓','ok');}
+  if(r.ok){g('eMob').style.display='none';rEmps();toast(r.message||'Employee created ✓','ok');
+    if(r.temp_password)prompt('Temporary password for '+name+' — copy it now, it is shown only once:',r.temp_password);}
   else toast(r.error||'Error','err');
 }
 async function resetPw(id){
-  if(!confirm('Reset password to employee code (lowercase)?'))return;
+  if(!confirm('Reset this password? A new temporary password will be generated.'))return;
   const r=await api(`/api/employees/${id}`,{method:'PUT',body:JSON.stringify({reset_password:true})});
-  if(r.ok)toast('Password reset to employee code ✓','ok');
+  if(r.ok&&r.temp_password)prompt('Temporary password — copy it now, it is shown only once:',r.temp_password);
+  else if(r.error)toast(r.error,'err');
 }
 async function toggleEmp(id){
   const emps=await api('/api/employees');
@@ -4703,7 +4705,7 @@ async function saveVC(){
 // ── CHANGE PASSWORD ──
 async function doChangePw(){
   const cur=g('cpwCur').value,nw=g('cpwNew').value,cf=g('cpwCfm').value;
-  if(nw.length<6){g('cpwMsg').textContent='Password must be at least 6 characters';return;}
+  if(nw.length<10){g('cpwMsg').textContent='Password must be at least 10 characters';return;}
   if(nw!==cf){g('cpwMsg').textContent='Passwords do not match';return;}
   const r=await api('/change-password',{method:'POST',body:JSON.stringify({current:cur,new_password:nw})});
   if(r.ok){g('cpwMsg').style.color='#065F46';g('cpwMsg').textContent='Password changed successfully ✓';[g('cpwCur'),g('cpwNew'),g('cpwCfm')].forEach(el=>el.value='');}
