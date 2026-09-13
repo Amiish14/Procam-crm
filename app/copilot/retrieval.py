@@ -223,11 +223,19 @@ def invalidate_lead(lead_id):
 
 
 # ── searching ────────────────────────────────────────────────────────
-def _scoped_chunks(scope, *, limit=4000):
+def _scoped_chunks(scope, *, limit=4000, lead_id=None, terms=None):
     """Candidate chunks, already inside the viewer's boundary.
 
     This is the whole security model of the retrieval layer: the filter
     is on the query, so an out-of-scope chunk is never a candidate.
+
+    The cap used to be applied to the whole scoped table in id order, and
+    the lead and the words were filtered afterwards in Python. With more
+    than 4,000 chunks in scope — any admin or vertical head on production
+    data — search only ever looked at the oldest 4,000, and "search this
+    lead" found nothing for a lead indexed later. The lead and (for the
+    lexical ranker) the words now narrow the query before the cap, and
+    the newest passages win when it still applies.
     """
     from app.models.copilot import CopilotChunk
     from sqlalchemy import or_
@@ -239,7 +247,18 @@ def _scoped_chunks(scope, *, limit=4000):
         q = q.filter(or_(
             CopilotChunk.owner_emp_code.in_(scope.codes),
             CopilotChunk.secondary_emp_code.in_(scope.codes)))
-    return q.limit(limit).all()
+    if lead_id:
+        q = q.filter(CopilotChunk.lead_id == int(lead_id))
+    if terms:
+        # A chunk with none of the words scores zero in the lexical
+        # ranker anyway; leaving it out of the candidates changes no
+        # result, only what fits under the cap. Tokens are lower-case
+        # words, and LIKE is case-insensitive for them.
+        q = q.filter(or_(*[CopilotChunk.text.ilike(f'%{t}%')
+                           for t in list(dict.fromkeys(terms))[:12]]))
+    return (q.order_by(CopilotChunk.occurred_at.desc(),
+                       CopilotChunk.id.desc())
+            .limit(limit).all())
 
 
 def search(scope, query, *, limit=8, lead_id=None):
@@ -254,13 +273,15 @@ def search(scope, query, *, limit=8, lead_id=None):
         if not terms:
             return {'backend': 'none', 'hits': []}
 
-        candidates = _scoped_chunks(scope)
-        if lead_id:
-            candidates = [c for c in candidates if c.lead_id == int(lead_id)]
+        vector = _backend() == 'vector'
+        # The vector ranker finds passages without the literal words, so
+        # it is not narrowed by them.
+        candidates = _scoped_chunks(scope, lead_id=lead_id,
+                                    terms=None if vector else terms)
         if not candidates:
             return {'backend': _backend(), 'hits': []}
 
-        if _backend() == 'vector':
+        if vector:
             scored = _vector_rank(query, candidates)
             if scored is not None:
                 return {'backend': 'vector',
