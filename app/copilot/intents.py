@@ -55,6 +55,17 @@ class Result:
     #: True when the rows are suggestions rather than facts — the panel
     #: styles them apart so "call this lead" is never read as a record.
     recommendation: bool = False
+    #: §3.5 record-level citations: [{type, id, label, source?, date?}].
+    #: When a handler leaves this empty the service derives it from the
+    #: rows' chips, so every row-level fact still links to its record.
+    citations: list = field(default_factory=list)
+    #: The filters the handler actually applied, in words — for the
+    #: "how I answered" line. Values, never the query that used them.
+    filters: dict = field(default_factory=dict)
+    #: Set when the honest answer is a question back: the name matched
+    #: several accounts, or a needed value is missing.
+    #: {'question': str, 'options': [{'label': str, 'question': str}]}
+    clarification: dict | None = None
 
     def to_dict(self):
         return {
@@ -63,6 +74,8 @@ class Result:
             'sources': self.sources, 'empty': self.empty,
             'restricted': self.restricted, 'notes': self.notes,
             'recommendation': self.recommendation,
+            'citations': self.citations, 'filters': self.filters,
+            'clarification': self.clarification,
         }
 
 

@@ -143,7 +143,12 @@ ABBREVIATIONS = {
     'eta': 'estimated time of arrival',
     'etd': 'estimated time of departure',
     'pic': 'person in charge',
-    'nbа': 'next best action',
+    # This key was once typed with a Cyrillic 'а', so 'nba' never
+    # matched it. Plain ASCII now.
+    'nba': 'next best action',
+    'oog': 'out of gauge',
+    'ddp': 'delivered duty paid',
+    'lolo': 'lift on lift off',
 }
 
 #: The same question, the way six different people type it. §6.3 asks
@@ -239,3 +244,169 @@ def glossary():
                              'this belongs under is a business decision.')})
     return {'verticals': out,
             'abbreviations': dict(sorted(ABBREVIATIONS.items()))}
+
+
+# ── §4 retrieval: the same thing, written the ways a desk writes it ──
+#
+# Kept apart from SYNONYMS on purpose. SYNONYMS folds a *question* onto
+# an intent; these widen a *text search*, where "B/L" in a query has to
+# find "bill of lading" in an email. Mixing them would let a word in a
+# customer's email change which intent a question routes to.
+#
+# Each group is a set of equivalent spellings. Order does not matter.
+# Short forms are matched on word boundaries by the ranker, never as
+# substrings — "bl" must not score "table".
+RETRIEVAL_SYNONYMS = (
+    ('odc', 'over dimensional cargo', 'over-dimensional',
+     'over dimensional', 'oversize cargo'),
+    ('oog', 'out of gauge', 'out-of-gauge'),
+    ('cha', 'customs house agent', 'customs broker', 'custom house agent'),
+    ('b/l', 'bl', 'bill of lading', 'hbl', 'mbl'),
+    ('eta', 'estimated time of arrival'),
+    ('etd', 'estimated time of departure'),
+    ('hs code', 'hsn', 'hsn code', 'harmonized system code'),
+    ('fcl', 'full container load'),
+    ('lcl', 'less than container load'),
+    ('roro', 'ro-ro', 'ro ro', 'roll on roll off'),
+    ('breakbulk', 'break bulk', 'break-bulk'),
+    ('project cargo', 'project shipment'),
+    ('heavy lift', 'heavy-lift', 'heavylift'),
+    ('reefer', 'refrigerated container', 'reefer container'),
+    ('demurrage', 'detention', 'port storage charges'),
+    ('ex-works', 'ex works', 'exw'),
+    ('fob', 'free on board'),
+    ('cif', 'cost insurance freight', 'cost insurance and freight'),
+    ('dap', 'delivered at place'),
+    ('ddp', 'delivered duty paid'),
+    ('lolo', 'lo-lo', 'lift on lift off'),
+    ('awb', 'air waybill', 'airway bill'),
+    ('spmt', 'self propelled modular transporter'),
+    ('boq', 'bill of quantities'),
+)
+
+
+def _norm(text):
+    return ' '.join((text or '').lower().replace('_', ' ').split())
+
+
+def _has_phrase(haystack, phrase):
+    """Word-boundary containment: "cha" is in "a cha quote", not "chat"."""
+    return re.search(r'(?<![a-z0-9])' + re.escape(phrase) + r'(?![a-z0-9])',
+                     haystack) is not None
+
+
+def expansion_groups(query):
+    """For each synonym group the query touches, the spellings it did
+    NOT already use — one list per concept.
+
+    Grouped so the ranker can count a concept once however many of its
+    spellings a passage carries, and weight all of them below the words
+    the person actually typed: an expansion is a hint, the typed word is
+    evidence.
+    """
+    q = ' ' + _norm(query) + ' '
+    out = []
+    for group in RETRIEVAL_SYNONYMS:
+        present = [g for g in group if _has_phrase(q, g)]
+        if not present:
+            continue
+        alts = [g for g in group if g not in present]
+        if alts:
+            out.append(alts)
+    return out
+
+
+#: Every one- or two-letter spelling the synonym groups know ("bl").
+_SHORT_FORMS = {g for group in RETRIEVAL_SYNONYMS for g in group
+                if len(g) <= 2}
+
+
+def short_forms(query):
+    """The known short abbreviations the query types, in order.
+
+    The retrieval tokenizer drops words under three letters so that "of"
+    and "to" rank nothing — which also dropped "BL". Only spellings in
+    RETRIEVAL_SYNONYMS come back, so "of" still does not."""
+    out = []
+    for word in re.findall(r"[a-z0-9/]+", _norm(query)):
+        if word in _SHORT_FORMS and word not in out:
+            out.append(word)
+    return out
+
+
+def retrieval_expansions(query):
+    """expansion_groups, flattened."""
+    out = []
+    for group in expansion_groups(query):
+        for g in group:
+            if g not in out:
+                out.append(g)
+    return out
+
+
+# ── the CRM's services, however a record spells them ─────────────────
+#
+# Lead.procam_vertical is written by the intake engine ("Project
+# Logistics", "Transportation"); Company.vertical and Employee.vertical
+# by people and the service master ("Project Freight", "Heavy
+# Transport", sometimes "PFM"). A filter on one spelling silently misses
+# the rows carrying the other, so a filter always matches the whole
+# alias set of the service asked for.
+SERVICE_ALIASES = {
+    'Project Freight': ('Project Freight', 'Project Logistics', 'PFM'),
+    'Heavy Transport': ('Heavy Transport', 'Transportation'),
+    'Warehousing': ('Warehousing',),
+    'Installation': ('Installation',),
+    'Customs Clearance': ('Customs Clearance', 'Customs'),
+    'Chartering': ('Chartering',),
+    'Sea Freight': ('Sea Freight',),
+    'Air Freight': ('Air Freight',),
+}
+
+#: What a person types when they mean one of the services above. Longest
+#: phrases first, so "project freight" wins over anything shorter.
+_SERVICE_WORDS = sorted([
+    ('project freight', 'Project Freight'),
+    ('project logistics', 'Project Freight'),
+    ('project cargo', 'Project Freight'),
+    ('pfm', 'Project Freight'),
+    ('heavy transport', 'Heavy Transport'),
+    ('transportation', 'Heavy Transport'),
+    ('warehousing', 'Warehousing'),
+    ('installation', 'Installation'),
+    ('customs clearance', 'Customs Clearance'),
+    ('customs', 'Customs Clearance'),
+    ('chartering', 'Chartering'),
+    ('sea freight', 'Sea Freight'),
+    ('ocean freight', 'Sea Freight'),
+    ('air freight', 'Air Freight'),
+], key=lambda kv: -len(kv[0]))
+
+
+def service_in_text(text):
+    """The CRM service a phrase names ("only Project Freight"), or None.
+
+    Deliberately literal. `vertical()` reads cargo descriptions and
+    weighs evidence; this reads a filter somebody typed, where a guess
+    would narrow an answer to a service they did not ask for.
+    """
+    s = ' ' + _norm(text) + ' '
+    for phrase, service in _SERVICE_WORDS:
+        if _has_phrase(s, phrase):
+            return service
+    return None
+
+
+def service_aliases(service):
+    """Every spelling of one service, for an IN (...) filter."""
+    if not service:
+        return ()
+    return SERVICE_ALIASES.get(service, (service,))
+
+
+def crm_services():
+    """The services Procam sells, named as the service master names them.
+
+    Sea and Air Freight are left out for the reason CRM_SERVICE gives:
+    which master service they belong under is a business decision."""
+    return [s for s in CRM_SERVICE.values() if s]

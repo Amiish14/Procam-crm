@@ -17,6 +17,7 @@ Rules that hold for every handler in this file, without exception:
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, or_
@@ -1914,13 +1915,12 @@ def search_text(scope, params):
     """
     from app.copilot import retrieval
 
-    term = (params.get('term') or '').strip()
+    term, filters = _text_filters(params)
     if len(term) < 3:
         return Result(headline='Give me a few words to search the text for.',
                       empty=True)
 
-    found = retrieval.search(scope, term,
-                             lead_id=params.get('lead_id'), limit=10)
+    found = retrieval.search(scope, term, limit=10, **filters)
     hits = found['hits']
     if not hits:
         index = retrieval.stats()
@@ -1948,12 +1948,93 @@ def search_text(scope, params):
     if found['backend'] == 'lexical':
         notes.append('Matched on wording. With an internal embedding '
                      'model configured this would match on meaning too.')
+    if found.get('expanded'):
+        notes.append('Also matched: ' + ', '.join(found['expanded'][:6])
+                     + '.')
+    notes.append('Ranked by how closely the words match (phrase and '
+                 'nearness count), then the kind of text — enquiry and '
+                 'notes above emails, signature blocks down — and '
+                 f'recency, halving every {retrieval.RECENCY_HALF_LIFE_DAYS}'
+                 ' days.')
     return Result(
         headline=f'{len(hits)} passage(s) mentioning "{term}".',
         columns=['Account', 'Where', 'When', 'Text'], rows=rows,
         figures={'hits': len(hits), 'backend': found['backend']},
         notes=notes,
+        citations=[h['citation'] for h in hits],
+        filters=found.get('filters') or {},
         sources=['lead_emails', 'lead_notes', 'leads.original_email_body'])
+
+
+#: "in the notes", "in emails", "in the enquiry" — where to look.
+_SOURCE_PHRASE = re.compile(
+    r'\b(?:in|from|within)\s+(?:the\s+)?(notes?|e-?mails?|enquir(?:y|ies)|'
+    r'inquir(?:y|ies))\b', re.IGNORECASE)
+#: "last 30 days", "past 2 weeks", "this month", "since 2026-08-01".
+_WINDOW_PHRASE = re.compile(
+    r'\b(?:in\s+the\s+)?(?:last|past)\s+(\d+)\s*(days?|weeks?|months?)\b|'
+    r'\b(this|last)\s+(week|month|quarter|year)\b', re.IGNORECASE)
+_SINCE_PHRASE = re.compile(r'\bsince\s+(\d{4}-\d{2}-\d{2})\b', re.IGNORECASE)
+
+
+def _text_filters(params):
+    """(term, retrieval filters) from the params and the words.
+
+    Filters the classifier (or a model) supplied are used as given; the
+    same filters written into the question — "in the notes", "last 30
+    days" — are read out and removed from the search words, so "notes"
+    is not itself searched for.
+    """
+    import re as _re
+    from datetime import date, timedelta as _td
+
+    term = (params.get('term') or '').strip()
+    out = {}
+    if params.get('lead_id'):
+        out['lead_id'] = params['lead_id']
+    ctx = params.get('context') or {}
+    if params.get('company_id') or (ctx.get('type') in ('company', 'account')
+                                    and ctx.get('id')):
+        out['company_id'] = params.get('company_id') or ctx.get('id')
+    for key in ('owner', 'date_from', 'date_to'):
+        if params.get(key):
+            out[key] = params[key]
+    source = str(params.get('source') or '').lower()
+    m = _SOURCE_PHRASE.search(term)
+    if m:
+        word = m.group(1).lower()
+        source = source or ('note' if word.startswith('note') else
+                            'email' if 'mail' in word else 'enquiry')
+        term = (term[:m.start()] + term[m.end():]).strip(' ,-')
+    if source in retrieval_source_types():
+        out['source'] = source
+    days = params.get('days')
+    m = _WINDOW_PHRASE.search(term)
+    if m:
+        if m.group(1):
+            unit = m.group(2).lower()
+            days = int(m.group(1)) * (7 if unit.startswith('week') else
+                                      30 if unit.startswith('month') else 1)
+        else:
+            days = {'week': 7, 'month': 30, 'quarter': 90,
+                    'year': 365}[m.group(4).lower()]
+        term = (term[:m.start()] + term[m.end():]).strip(' ,-')
+    m = _SINCE_PHRASE.search(term)
+    if m:
+        out['date_from'] = m.group(1)
+        term = (term[:m.start()] + term[m.end():]).strip(' ,-')
+    if days and not out.get('date_from'):
+        try:
+            out['date_from'] = (date.today() - _td(days=int(days))).isoformat()
+        except (TypeError, ValueError):
+            pass
+    term = _re.sub(r'\s{2,}', ' ', term).strip()
+    return term, out
+
+
+def retrieval_source_types():
+    from app.copilot import retrieval
+    return retrieval.SOURCE_TYPES
 
 
 # ══════════════════════════════════════════════════════════════════════
