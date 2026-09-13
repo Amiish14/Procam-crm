@@ -94,3 +94,17 @@ def test_the_cli_never_imports_the_application(paths):
     report = json.loads(proc.stdout[:proc.stdout.rindex('LOADED')])
     assert {c['key'] for c in report['checks']} == {
         'database', 'backups', 'restore', 'copilot_index', 'config'}
+
+
+def test_a_broken_monitor_exits_three_not_one(paths, monkeypatch, capsys):
+    """1 means "a check failed" and the systemd unit accepts it as a
+    successful run; a monitor that cannot write its report must not hide
+    behind that."""
+    tmp, db = paths
+    _fake([C.OK], monkeypatch)
+
+    def cannot_write(report, path):
+        raise PermissionError('instance/ is not writable')
+    monkeypatch.setattr(C, 'write_status', cannot_write)
+    assert ops_status.cli(['--write-status', str(tmp / 's.json')]) == 3
+    assert 'monitor itself failed' in capsys.readouterr().err

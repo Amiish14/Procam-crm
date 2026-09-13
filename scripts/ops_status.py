@@ -15,6 +15,10 @@ are for the admin page, not for waking someone — so a cron line can be
 
     ops_status.py --no-schema >/dev/null || <send an alert>
 
+Exit status 3 means the monitor itself broke (the status file could not
+be written, say), which an alert should treat as seriously as a FAIL.
+Argument errors exit 2.
+
 --write-status writes the JSON report atomically, for the /admin/ops page:
 the web process reads it instead of running slow or privileged checks.
 
@@ -103,5 +107,21 @@ def main(argv=None):
     return checks.exit_code(results)
 
 
+def cli(argv=None):
+    """main() with a distinct exit status for a crash. An uncaught
+    traceback exits 1, which would read as "a check failed" — and the
+    systemd unit treats 1 as a successful run that found a problem."""
+    try:
+        return main(argv)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        checks = load_checks()
+        print(f'ops_status: the monitor itself failed: '
+              f'{type(exc).__name__}: {checks.scrub(str(exc))[:300]}',
+              file=sys.stderr)
+        return 3
+
+
 if __name__ == '__main__':
-    raise SystemExit(main())
+    raise SystemExit(cli())

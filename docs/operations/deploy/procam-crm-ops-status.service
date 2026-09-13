@@ -1,0 +1,19 @@
+[Unit]
+Description=Procam CRM — operations status report for /CRM/admin/ops
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+# Read-only checks; writes only the report the admin page reads, so the
+# web workers never run quick_check, ps, systemctl, git or Graph calls.
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/ops_status.py --write-status /var/www/procam-crm/instance/ops_status.json
+# Exit 1 means "a check FAILed" — the report was still written, and the
+# page shows it. Only 2 (bad arguments) or 3 (the monitor broke) should
+# mark this unit failed.
+SuccessExitStatus=1
+TimeoutStartSec=300
+Nice=10
+IOSchedulingClass=idle

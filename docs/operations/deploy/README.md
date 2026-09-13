@@ -21,6 +21,7 @@ already exists (a subscription renewal timer is referred to in
 | `procam-crm-graph-subscription.{service,timer}` | Renew (or recreate) the leads mailbox subscription | every 12 h |
 | `procam-crm-copilot-index.{service,timer}` | Rebuild the Copilot search index | daily 02:15 |
 | `procam-crm-sla-sweep.{service,timer}` | Task SLA reminders | every 15 min |
+| `procam-crm-ops-status.{service,timer}` | Read-only operations checks; writes `instance/ops_status.json` for /CRM/admin/ops ([Monitoring Guide](../MONITORING_GUIDE.md)) | every 10 min |
 | `logrotate-procam-crm` | Rotate gunicorn logs in `/var/log/procam-crm/` | daily, 30 kept |
 
 Install a pair:
