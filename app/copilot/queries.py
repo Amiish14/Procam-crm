@@ -191,7 +191,11 @@ def leads_stale(scope, params):
     touched = acted | mailed
 
     open_q = sc_mod.leads(sc=scope).filter(~Lead.stage.in_(_TERMINAL))
-    open_leads = open_q.order_by(Lead.created_at.asc()).all()
+    # Columns, not objects: every open lead is still read, because
+    # "touched" is a Python set from the one contact definition, but as
+    # six-column tuples rather than full rows.
+    open_leads = (open_q.with_entities(*_lead_row_columns())
+                  .order_by(Lead.created_at.asc(), Lead.id.asc()).all())
     found = [l for l in open_leads if l.id not in touched]
 
     if not found:
@@ -203,8 +207,10 @@ def leads_stale(scope, params):
                      'lead_emails.sent_or_received_at'])
 
     rows = []
+    from app.services import contact as _contact
+    last_seen = _contact.last_contacts([l.id for l in found[:ROW_CAP]])
     for l in found[:ROW_CAP]:
-        last = _last_contact(l)
+        last = last_seen.get(l.id)
         rows.append({'Company': l.company, 'Stage': l.stage,
                      'Value': _money(l.estimated_value_inr),
                      'Last contact': (str(last)[:10] if last else 'never'),
@@ -247,6 +253,21 @@ def leads_stale(scope, params):
                  'lead_emails.sent_or_received_at'])
 
 
+def _lead_row_columns():
+    """The Lead columns a list answer renders — and nothing else.
+
+    Loading every open lead as a full ORM object to show fifty of them
+    and count the rest was most of a quarter-second answer on a
+    10,000-lead database: the notes, the email JSON and the history text
+    all came back just to be thrown away. Rows are plain tuples with the
+    same attribute names, so the row builders and _lead_chip read them
+    unchanged.
+    """
+    from app import Lead
+    return (Lead.id, Lead.company, Lead.stage, Lead.estimated_value_inr,
+            Lead.assigned_to, Lead.created_at)
+
+
 @intent('leads_open', 'Open leads',
         personas=('sales', 'head'), phase=1,
         examples=('my open leads', 'what leads are open',
@@ -254,20 +275,26 @@ def leads_stale(scope, params):
 def leads_open(scope, params):
     from app import Lead
 
-    found = (sc_mod.leads(sc=scope).filter(~Lead.stage.in_(_TERMINAL))
-             .order_by(Lead.created_at.desc()).all())
-    if not found:
+    base = sc_mod.leads(sc=scope).filter(~Lead.stage.in_(_TERMINAL))
+    # The headline total is counted in SQL, so it stays exact while only
+    # the rows the panel can show are loaded. Lead.id breaks ties in
+    # created_at the way the stable sort over a rowid scan used to.
+    total = base.count()
+    if not total:
         return Result(headline='No open leads.', empty=True,
                       sources=['leads.stage'])
+    found = (base.with_entities(*_lead_row_columns())
+             .order_by(Lead.created_at.desc(), Lead.id.asc())
+             .limit(ROW_CAP).all())
     rows = [{'Company': l.company, 'Stage': l.stage,
              'Value': _money(l.estimated_value_inr),
              'Owner': l.assigned_to or '—',
              'Age': _age(l.created_at) or 0, '_chip': _lead_chip(l)}
             for l in found]
-    rows, notes = _cap(rows, len(found))
-    return Result(headline=f'{len(found)} open lead(s).',
+    rows, notes = _cap(rows, total)
+    return Result(headline=f'{total} open lead(s).',
                   columns=['Company', 'Stage', 'Value', 'Owner', 'Age'],
-                  rows=rows, figures={'count': len(found)}, notes=notes,
+                  rows=rows, figures={'count': total}, notes=notes,
                   sources=['leads.stage'])
 
 
@@ -278,22 +305,25 @@ def leads_open(scope, params):
 def leads_no_next_action(scope, params):
     from app import Lead
 
-    found = (sc_mod.leads(sc=scope)
-             .filter(~Lead.stage.in_(_TERMINAL))
-             .filter(Lead.followup_date.is_(None))
-             .order_by(Lead.created_at.desc()).all())
-    if not found:
+    base = (sc_mod.leads(sc=scope)
+            .filter(~Lead.stage.in_(_TERMINAL))
+            .filter(Lead.followup_date.is_(None)))
+    total = base.count()
+    if not total:
         return Result(headline='Every open lead has a next action set.',
                       empty=True, sources=['leads.followup_date'])
+    found = (base.with_entities(*_lead_row_columns())
+             .order_by(Lead.created_at.desc(), Lead.id.asc())
+             .limit(ROW_CAP).all())
     rows = [{'Company': l.company, 'Stage': l.stage,
              'Owner': l.assigned_to or '—',
              'Value': _money(l.estimated_value_inr), '_chip': _lead_chip(l)}
             for l in found]
-    rows, notes = _cap(rows, len(found))
+    rows, notes = _cap(rows, total)
     return Result(
-        headline=f'{len(found)} open lead(s) with no next action recorded.',
+        headline=f'{total} open lead(s) with no next action recorded.',
         columns=['Company', 'Stage', 'Owner', 'Value'], rows=rows,
-        figures={'count': len(found)}, notes=notes,
+        figures={'count': total}, notes=notes,
         sources=['leads.followup_date'])
 
 
@@ -794,24 +824,30 @@ def accounts_inactive(scope, params):
 
     days = int(params.get('days') or 90)
     cutoff = _days_ago(days)
-    found = (sc_mod.companies(sc=scope)
-             .filter(Company.is_active.is_(True))
-             .filter(or_(Company.last_activity_at.is_(None),
-                         Company.last_activity_at < cutoff))
-             .order_by(Company.last_activity_at.asc().nullsfirst()).all())
-    if not found:
+    base = (sc_mod.companies(sc=scope)
+            .filter(Company.is_active.is_(True))
+            .filter(or_(Company.last_activity_at.is_(None),
+                        Company.last_activity_at < cutoff)))
+    total = base.count()
+    if not total:
         return Result(headline=f'Every account has been touched in the last '
                                f'{days} days.', empty=True,
                       sources=['companies.last_activity_at'])
+    found = (base.with_entities(Company.id, Company.name, Company.vertical,
+                                Company.pic_emp_code,
+                                Company.last_activity_at)
+             .order_by(Company.last_activity_at.asc().nullsfirst(),
+                       Company.id.asc())
+             .limit(ROW_CAP).all())
     rows = [{'Account': c.name, 'Vertical': c.vertical or '—',
              'Owner': c.pic_emp_code or '—',
              'Last activity': str(c.last_activity_at or '')[:10] or 'never',
              '_chip': {'type': 'company', 'id': c.id, 'label': c.name}}
             for c in found]
-    rows, notes = _cap(rows, len(found))
-    return Result(headline=f'{len(found)} account(s) quiet for {days}+ days.',
+    rows, notes = _cap(rows, total)
+    return Result(headline=f'{total} account(s) quiet for {days}+ days.',
                   columns=['Account', 'Vertical', 'Owner', 'Last activity'],
-                  rows=rows, figures={'count': len(found)}, notes=notes,
+                  rows=rows, figures={'count': total}, notes=notes,
                   sources=['companies.last_activity_at'])
 
 
@@ -930,19 +966,23 @@ def universal_search(scope, params):
 def dq_lost_no_reason(scope, params):
     from app import Lead
 
-    found = (sc_mod.leads(sc=scope).filter(Lead.stage == 'Lost')
-             .filter(or_(Lead.lost_reason.is_(None), Lead.lost_reason == ''))
-             .order_by(Lead.updated_at.desc()).all())
-    if not found:
+    base = (sc_mod.leads(sc=scope).filter(Lead.stage == 'Lost')
+            .filter(or_(Lead.lost_reason.is_(None), Lead.lost_reason == '')))
+    total = base.count()
+    if not total:
         return Result(headline='Every lost lead has a reason recorded.',
                       empty=True, sources=['leads.lost_reason'])
+    found = (base.with_entities(Lead.id, Lead.company, Lead.assigned_to,
+                                Lead.updated_at)
+             .order_by(Lead.updated_at.desc(), Lead.id.asc())
+             .limit(ROW_CAP).all())
     rows = [{'Company': l.company, 'Owner': l.assigned_to or '—',
              'Lost': str(l.updated_at or '')[:10], '_chip': _lead_chip(l)}
             for l in found]
-    rows, notes = _cap(rows, len(found))
-    return Result(headline=f'{len(found)} lost lead(s) with no reason.',
+    rows, notes = _cap(rows, total)
+    return Result(headline=f'{total} lost lead(s) with no reason.',
                   columns=['Company', 'Owner', 'Lost'], rows=rows,
-                  figures={'count': len(found)}, notes=notes,
+                  figures={'count': total}, notes=notes,
                   sources=['leads.stage', 'leads.lost_reason'])
 
 
@@ -968,7 +1008,9 @@ def loss_analysis(scope, params):
     """
     from app import Lead
 
-    lost = sc_mod.leads(sc=scope).filter(Lead.stage == 'Lost').all()
+    # Only the reason column: the analysis never reads anything else.
+    lost = (sc_mod.leads(sc=scope).filter(Lead.stage == 'Lost')
+            .with_entities(Lead.lost_reason).all())
     with_reason = [l for l in lost if (l.lost_reason or '').strip()]
 
     if not lost:
@@ -1021,22 +1063,28 @@ def next_best_action(scope, params):
 
     limit = min(int(params.get('limit') or 10), ROW_CAP)
     candidates = (sc_mod.leads(sc=scope)
-                  .filter(~Lead.stage.in_(_TERMINAL)).all())
+                  .filter(~Lead.stage.in_(_TERMINAL))
+                  .with_entities(Lead.id, Lead.company, Lead.stage,
+                                 Lead.estimated_value_inr,
+                                 Lead.followup_date, Lead.created_at)
+                  .all())
     if not candidates:
         return Result(headline='Nothing open to act on.', empty=True,
                       sources=['leads.stage'])
 
-    # Idle means no contact, not no edit — see _last_contact.
-    contact = {}
+    # Idle means no contact, not no edit — see _last_contact. Read for
+    # every contacted lead in two grouped queries; one pair of queries
+    # per lead was most of this answer's time on a large desk.
+    from app.services import contact as _contact
     acted, mailed = _contacted_since(_days_ago(3650))
     ever = acted | mailed
+    last_seen = _contact.last_contacts() if ever else {}
 
     scored = []
     for l in candidates:
         if l.id in ever:
-            last = _last_contact(l)
+            last = last_seen.get(l.id)
             idle = _age(last) or 0
-            contact[l.id] = last
         else:
             idle = _age(l.created_at) or 0
         value = float(l.estimated_value_inr or 0)
@@ -2061,18 +2109,24 @@ def followups_due(scope, params):
     today = date.today()
     horizon = today + _td(days=ahead)
 
-    found = (sc_mod.leads(sc=scope)
-             .filter(~Lead.stage.in_(_TERMINAL),
-                     Lead.followup_date.isnot(None),
-                     Lead.followup_date <= horizon)
-             .order_by(Lead.followup_date.asc()).all())
-    if not found:
+    base = (sc_mod.leads(sc=scope)
+            .filter(~Lead.stage.in_(_TERMINAL),
+                    Lead.followup_date.isnot(None),
+                    Lead.followup_date <= horizon))
+    # Counted in SQL and only the displayed slice loaded — the same
+    # figures, without reading thousands of rows to show fifty.
+    total = base.count()
+    if not total:
         return Result(
             headline=('No follow-ups are due.' if not ahead else
                       f'No follow-ups due in the next {ahead} days.'),
             empty=True, sources=['leads.followup_date'])
 
-    overdue = sum(1 for l in found if l.followup_date < today)
+    overdue = base.filter(Lead.followup_date < today).count()
+    found = (base.with_entities(Lead.id, Lead.company, Lead.stage,
+                                Lead.followup_date, Lead.assigned_to)
+             .order_by(Lead.followup_date.asc(), Lead.id.asc())
+             .limit(ROW_CAP).all())
     rows = []
     for l in found[:ROW_CAP]:
         late = (today - l.followup_date).days
@@ -2084,10 +2138,10 @@ def followups_due(scope, params):
                        else f'in {-late} day(s)'),
             'Owner': l.assigned_to or '—',
             '_chip': _lead_chip(l)})
-    notes = ([f'Showing the first {ROW_CAP} of {len(found)}.']
-             if len(found) > ROW_CAP else [])
+    notes = ([f'Showing the first {ROW_CAP} of {total}.']
+             if total > ROW_CAP else [])
     return Result(
-        headline=(f'{len(found)} follow-up(s) due — {overdue} overdue.'),
+        headline=(f'{total} follow-up(s) due — {overdue} overdue.'),
         columns=['Company', 'Stage', 'Due', 'Status', 'Owner'],
-        rows=rows, figures={'count': len(found), 'overdue': overdue},
+        rows=rows, figures={'count': total, 'overdue': overdue},
         notes=notes, sources=['leads.followup_date'])

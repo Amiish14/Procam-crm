@@ -87,6 +87,40 @@ def last_contact(lead):
     return max(stamps) if stamps else None
 
 
+def last_contacts(lead_ids=None):
+    """{lead_id: most recent contact} for many leads in two reads.
+
+    The same definition as last_contact() — the later of the newest
+    activity and the newest email — grouped in SQL, so a list of a
+    thousand leads is two queries rather than two thousand. With no ids
+    it answers for every lead that has any contact at all; with ids it
+    reads in slices small enough for SQLite's variable limit.
+    """
+    from app import LeadActivity, LeadEmail
+    from sqlalchemy import func
+
+    ids = None if lead_ids is None else [i for i in set(lead_ids) if i]
+    out = {}
+
+    def merge(rows):
+        for lead_id, stamp in rows:
+            if lead_id and stamp and (lead_id not in out
+                                      or stamp > out[lead_id]):
+                out[lead_id] = stamp
+
+    for model, col in ((LeadActivity, LeadActivity.occurred_at),
+                       (LeadEmail, LeadEmail.sent_or_received_at)):
+        base = (model.query.with_entities(model.lead_id, func.max(col))
+                .filter(col.isnot(None)))
+        if ids is None:
+            merge(base.group_by(model.lead_id).all())
+            continue
+        for i in range(0, len(ids), 500):
+            merge(base.filter(model.lead_id.in_(ids[i:i + 500]))
+                  .group_by(model.lead_id).all())
+    return out
+
+
 def days_since_contact(lead):
     last = last_contact(lead)
     if last is None:
