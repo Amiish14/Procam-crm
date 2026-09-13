@@ -6,9 +6,18 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .dq-row[data-href]{cursor:pointer}
+  .dq-pick{width:34px}
+  .dq-batch textarea{width:100%;min-height:64px;margin-top:6px}
+  .dq-change td{vertical-align:top}
+  .dq-before{color:var(--p-text-3);text-decoration:line-through}
+</style>
 </head>
 <body>
 {% include "_crm_topbar.html" %}
+{% set pill_for = {'critical': 'danger', 'high': 'warn', 'medium': 'info', 'low': 'muted'} %}
+{% set can_batch = actions and not grouped and count %}
 <div class="crm-wrap">
 
 <div class="hero">
@@ -19,6 +28,7 @@
   </div>
   <div class="toolbar">
     <a class="btn" href="{{ url_prefix }}/admin/data-quality">← All checks</a>
+    {% if count %}<a class="btn" href="{{ url_prefix }}/admin/data-quality/{{ key }}/export.csv">Export CSV</a>{% endif %}
   </div>
 </div>
 
@@ -26,23 +36,35 @@
      align-items:baseline;flex-wrap:wrap">
   <div><b style="font-size:26px;color:var(--p-ink);
        font-variant-numeric:tabular-nums">{{ '{:,}'.format(count) }}</b>
-    <span style="color:var(--p-text-2)"> record{{ '' if count == 1 else 's' }}</span></div>
-  {% if truncated %}
-  <span class="meta">Showing the first 500 — fix these and reload for the rest.</span>
+    <span style="color:var(--p-text-2)"> record{{ '' if count == 1 else 's' }}</span>
+    <span class="pill {{ pill_for.get(severity, 'muted') }}">{{ severity }}</span></div>
+  {% if suggestion %}<div style="font-size:13px"><b>How to fix:</b> {{ suggestion }}</div>{% endif %}
+  {% if pages > 1 %}
+  <span class="meta">Page {{ page }} of {{ pages }}</span>
   {% endif %}
 </div></div>
+
+{% macro pager() %}
+  {% if pages > 1 %}
+  <div class="toolbar" style="margin:10px 0">
+    {% if page > 1 %}<a class="btn tiny" href="{{ url_prefix }}/admin/data-quality/{{ key }}?page={{ page - 1 }}">← Previous</a>{% endif %}
+    <span class="meta">Page {{ page }} of {{ pages }}</span>
+    {% if truncated %}<a class="btn tiny" href="{{ url_prefix }}/admin/data-quality/{{ key }}?page={{ page + 1 }}">Next →</a>{% endif %}
+  </div>
+  {% endif %}
+{% endmacro %}
 
 {% if count == 0 %}
   <div class="empty">Nothing to fix here.</div>
 
 {% elif grouped %}
-  {# Duplicate companies: the finding IS the grouping, so show it that way. #}
+  {# Duplicates: the finding IS the grouping, so show it that way. #}
   {% for g in groups %}
   <div class="card">
     <div class="card-hd"><div class="card-ttl">{{ g.name }}</div>
       <span class="b sR">{{ g.records|length }} records</span></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Company</th><th>Details</th></tr></thead>
+      <thead><tr><th>Record</th><th>Details</th></tr></thead>
       <tbody>{% for r in g.records %}
         <tr><td><b><a href="{{ url_prefix }}{{ r.route }}">{{ r.name }}</a></b>
             <span class="meta"> #{{ r.id }}</span></td>
@@ -50,25 +72,73 @@
       {% endfor %}</tbody></table></div>
   </div>
   {% endfor %}
+  {{ pager() }}
+  {% if key == 'dupe_companies' %}
   <div class="note">Merge these with
     <code>scripts/2026_09_11_company_dedup.py</code> — it previews first and
     every merge can be reversed.</div>
+  {% endif %}
 
 {% else %}
+  {% if can_batch %}
+  <div class="card dq-batch" id="dqBatch"><div class="panel">
+    <b style="color:var(--p-ink)">Correct selected records</b>
+    <div class="meta" style="margin:2px 0 8px">Select records below (up to
+      {{ batch_max }} at a time), choose a correction and preview it. Nothing
+      changes until you have seen every change, given a reason and confirmed.
+      Every change is kept in the audit trail.</div>
+    <div class="toolbar">
+      <select id="dqAction" aria-label="Correction">
+        {% for a in actions %}<option value="{{ a.key }}" data-kind="{{ a.value or '' }}">{{ a.label }}</option>{% endfor %}
+      </select>
+      <select id="dqEmployee" aria-label="Employee" hidden>
+        <option value="">Choose an employee…</option>
+        {% for e in employees %}<option value="{{ e.code }}">{{ e.name }} ({{ e.code }})</option>{% endfor %}
+      </select>
+      <input type="date" id="dqDate" aria-label="Date" hidden>
+      <select id="dqVertical" aria-label="Vertical" hidden>
+        <option value="">Choose a vertical…</option>
+        {% for v in verticals %}<option value="{{ v }}">{{ v }}</option>{% endfor %}
+      </select>
+      <button type="button" class="btn primary" id="dqPreview">Preview</button>
+      <span class="meta"><span id="dqCount">0</span> selected</span>
+    </div>
+    <div id="dqMsg" role="status" style="margin-top:8px"></div>
+    <div id="dqPlan" hidden style="margin-top:10px">
+      <div class="table-wrap"><table>
+        <thead><tr><th>Record</th><th>Field</th><th>Now</th><th>Will be</th></tr></thead>
+        <tbody id="dqChanges"></tbody>
+      </table></div>
+      <div id="dqSkipped" class="meta" style="margin-top:6px"></div>
+      <label for="dqReason" style="display:block;margin-top:10px"><b>Reason</b>
+        <span class="meta">— required, kept with every change</span></label>
+      <textarea id="dqReason" maxlength="400"></textarea>
+      <div class="toolbar" style="margin-top:8px">
+        <button type="button" class="btn danger" id="dqApply">Apply these changes</button>
+        <button type="button" class="btn ghost" id="dqCancel">Cancel</button>
+        <span class="meta" id="dqExpiry"></span>
+      </div>
+    </div>
+  </div></div>
+  {% endif %}
+
   <div class="card"><div class="table-wrap"><table>
-    <thead><tr><th>Record</th><th>Details</th></tr></thead>
+    <thead><tr>
+      {% if can_batch %}<th class="dq-pick"><input type="checkbox" id="dqAll" aria-label="Select all on this page"></th>{% endif %}
+      <th>Record</th><th>Details</th></tr></thead>
     <tbody>{% for r in records %}
-      <tr{% if r.route %} onclick="location.href='{{ url_prefix }}{{ r.route }}'"
-          style="cursor:pointer"{% endif %}>
+      <tr class="dq-row"{% if r.route %} data-href="{{ url_prefix }}{{ r.route }}"{% endif %}>
+        {% if can_batch %}<td class="dq-pick"><input type="checkbox" class="dq-sel" value="{{ r.id }}" aria-label="Select {{ r.name }}"></td>{% endif %}
         <td>{% if r.route %}<b><a href="{{ url_prefix }}{{ r.route }}">{{ r.name }}</a></b>
-            {% else %}<b>{{ r.name }}</b>{% endif %}</td>
+            {% else %}<b>{{ r.name }}</b>{% endif %}
+            <span class="meta"> {{ r.kind }} #{{ r.id }}</span></td>
         <td class="meta">{{ r.meta or '—' }}</td></tr>
     {% endfor %}</tbody></table></div></div>
+  {{ pager() }}
 
   {% if key in ('unowned_leads', 'leads_of_leavers') %}
-  <div class="note">Assign these in bulk from
-    <a href="{{ url_prefix }}/admin/leads?unowned=1">Bulk Leads</a> — select,
-    then assign to a person.</div>
+  <div class="note">You can also assign these in bulk from
+    <a href="{{ url_prefix }}/admin/leads?unowned=1">Bulk Leads</a>.</div>
   {% elif key == 'pending_mappings' %}
   <div class="note">Decide these on the
     <a href="{{ url_prefix }}/app">Data Mapping</a> screen — one decision
@@ -77,5 +147,141 @@
 {% endif %}
 
 </div><!-- /crm-wrap -->
+
+<script>
+(function(){
+  // Rows open their record. A data attribute rather than an inline
+  // onclick, so a stored route can never become script.
+  document.querySelectorAll('tr.dq-row[data-href]').forEach(function(tr){
+    tr.addEventListener('click', function(ev){
+      if (ev.target.closest('a, input, label, button')) return;
+      location.href = tr.getAttribute('data-href');
+    });
+  });
+
+  var box = document.getElementById('dqBatch');
+  if (!box) return;
+  var KEY = {{ key|tojson }};
+  var preview = null;   // exactly what was previewed; apply sends this
+
+  function esc(v){
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  function csrfToken(){
+    var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  // Resolves to the JSON body, or {ok:false, error}; never hands JSON.parse
+  // an HTML error page.
+  async function post(path, body){
+    try {
+      var r = await fetch('{{ url_prefix }}' + path, {
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json',
+                 'X-CSRFToken': csrfToken(),
+                 'X-Requested-With':'XMLHttpRequest'},
+        body: JSON.stringify(body)});
+      var type = r.headers.get('content-type') || '';
+      if (type.indexOf('application/json') === -1){
+        return {ok:false, error: r.status === 400 || r.status === 401
+          ? 'Your session expired — refresh the page and try again.'
+          : 'Could not reach the server. Please try again.'};
+      }
+      var d = await r.json();
+      if (!r.ok || d.ok === false){
+        d.ok = false;
+        d.error = d.error || 'The server refused this correction.';
+      }
+      return d;
+    } catch (e) {
+      return {ok:false, error:'Could not reach the server. Please try again.'};
+    }
+  }
+
+  var action = document.getElementById('dqAction');
+  var inputs = {employee: document.getElementById('dqEmployee'),
+                date: document.getElementById('dqDate'),
+                vertical: document.getElementById('dqVertical')};
+  function kind(){ return action.options[action.selectedIndex].getAttribute('data-kind'); }
+  function value(){ var i = inputs[kind()]; return i ? i.value : null; }
+  function picked(){
+    return Array.prototype.map.call(document.querySelectorAll('.dq-sel:checked'),
+                                    function(c){ return +c.value; });
+  }
+  function say(text, bad){
+    var m = document.getElementById('dqMsg');
+    m.textContent = text || '';
+    m.style.color = bad ? 'var(--p-danger)' : 'var(--p-success)';
+  }
+  function discard(){
+    preview = null;
+    document.getElementById('dqPlan').hidden = true;
+  }
+  function syncInputs(){
+    Object.keys(inputs).forEach(function(k){ inputs[k].hidden = (k !== kind()); });
+    discard();
+  }
+  function syncCount(){
+    document.getElementById('dqCount').textContent = picked().length;
+    discard();
+  }
+  action.addEventListener('change', syncInputs);
+  Object.keys(inputs).forEach(function(k){ inputs[k].addEventListener('change', discard); });
+  document.querySelectorAll('.dq-sel').forEach(function(c){ c.addEventListener('change', syncCount); });
+  document.getElementById('dqAll').addEventListener('change', function(){
+    var on = this.checked;
+    document.querySelectorAll('.dq-sel').forEach(function(c){ c.checked = on; });
+    syncCount();
+  });
+  syncInputs();
+
+  document.getElementById('dqPreview').addEventListener('click', async function(){
+    var ids = picked();
+    if (!ids.length){ say('Select at least one record.', true); return; }
+    say('Working out what would change…');
+    var body = {ids: ids, action: action.value, value: value()};
+    var d = await post('/api/data-quality/' + encodeURIComponent(KEY) + '/preview', body);
+    if (!d.ok){ discard(); say(d.error, true); return; }
+    document.getElementById('dqChanges').innerHTML = d.changes.map(function(c){
+      return '<tr class="dq-change"><td><b>' + esc(c.name) + '</b> <span class="meta">#' + esc(c.id)
+        + '</span></td><td class="meta">' + esc(c.field) + '</td><td class="dq-before">'
+        + esc(c.before == null || c.before === '' ? '(empty)' : c.before) + '</td><td><b>'
+        + esc(c.after_label || c.after) + '</b></td></tr>';
+    }).join('') || '<tr><td colspan="4" class="meta">Nothing would change.</td></tr>';
+    document.getElementById('dqSkipped').innerHTML = d.skipped.length
+      ? '<b>Left unchanged:</b> ' + d.skipped.map(function(s){
+          return esc(s.name) + ' #' + esc(s.id) + ' (' + esc(s.reason) + ')'; }).join('; ')
+      : '';
+    document.getElementById('dqApply').disabled = !d.preview_token;
+    document.getElementById('dqExpiry').textContent = d.preview_token
+      ? 'This preview is valid for 10 minutes.' : '';
+    document.getElementById('dqPlan').hidden = false;
+    preview = {ids: body.ids, action: body.action, value: body.value,
+               preview_token: d.preview_token, count: d.count};
+    say(d.count + ' record' + (d.count === 1 ? '' : 's') + ' would change. Check them, give a reason, then apply.');
+  });
+
+  document.getElementById('dqCancel').addEventListener('click', function(){
+    discard(); say('');
+  });
+
+  document.getElementById('dqApply').addEventListener('click', async function(){
+    if (!preview || !preview.preview_token){ say('Preview first.', true); return; }
+    var reason = document.getElementById('dqReason').value.trim();
+    if (reason.length < 5){ say('Give a reason — it is kept with every change.', true); return; }
+    if (!confirm('Apply ' + preview.count + ' change' + (preview.count === 1 ? '' : 's') + '?')) return;
+    this.disabled = true;
+    var d = await post('/api/data-quality/' + encodeURIComponent(KEY) + '/apply',
+                       Object.assign({}, preview, {reason: reason}));
+    this.disabled = false;
+    if (!d.ok){ say(d.error, true); return; }
+    discard();
+    say(d.applied + ' record' + (d.applied === 1 ? '' : 's') + ' corrected (batch ' + d.batch_ref + '). Reloading…');
+    setTimeout(function(){ location.reload(); }, 1200);
+  });
+})();
+</script>
 </body>
 </html>
