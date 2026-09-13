@@ -832,3 +832,138 @@ def test_closing_this_month_means_this_month(world):
             for o in made:
                 db.session.delete(o)
             db.session.commit()
+
+
+# ══════════════════════════════════════════════════════════════════
+# 12 · §4 retrieval — permission before retrieval, not after
+# ══════════════════════════════════════════════════════════════════
+def _index(lead_id):
+    from app import Lead
+    from app.copilot import retrieval
+    return retrieval.index_lead(db.session.get(Lead, lead_id))
+
+
+def test_a_chunk_outside_the_scope_is_never_a_candidate(world):
+    """The whole security model of the retrieval layer.
+
+    Filtering after ranking would work right up until it didn't. The
+    filter is on the query that selects candidates, so an out-of-scope
+    chunk is never scored and never reaches a model.
+    """
+    from app import Lead, LeadEmail
+    from app.copilot import retrieval
+
+    with flask_app.app_context():
+        secret = LeadEmail(lead_id=world['theirs']['lead'],
+                           direction='inbound', subject='Airoli transformer',
+                           body='Confidential pricing for the Airoli '
+                                'transformer movement, 220 MT.')
+        db.session.add(secret)
+        db.session.commit()
+        _index(world['theirs']['lead'])
+        try:
+            sc = _scope_for('CPREP', DataScope.OWN)
+            found = retrieval.search(sc, 'Airoli transformer')
+            assert found['hits'] == [], found['hits']
+
+            owner = _scope_for('CPOUT', DataScope.OWN)
+            mine = retrieval.search(owner, 'Airoli transformer')
+            assert mine['hits'], 'the owner must be able to find it'
+        finally:
+            LeadEmail.query.filter_by(id=secret.id).delete()
+            retrieval.invalidate_lead(world['theirs']['lead'])
+            db.session.commit()
+
+
+def test_reassigning_a_lead_invalidates_its_chunks(world):
+    """A lead that changes hands changes who may retrieve its text. An
+    index that keeps yesterday's permissions is the failure mode most
+    RAG-over-CRM builds ship with."""
+    from app import Lead, LeadEmail
+    from app.copilot import retrieval
+    from app.models.copilot import CopilotChunk
+    from app.services import lead_assignment
+
+    with flask_app.app_context():
+        mail = LeadEmail(lead_id=world['mine']['lead'], direction='inbound',
+                         subject='Kandla job',
+                         body='Please quote the Kandla breakbulk job.')
+        db.session.add(mail)
+        db.session.commit()
+        _index(world['mine']['lead'])
+        assert CopilotChunk.query.filter_by(
+            lead_id=world['mine']['lead']).count() > 0
+
+        lead = db.session.get(Lead, world['mine']['lead'])
+        try:
+            lead_assignment.assign(lead, primary_code='CPOUT',
+                                   actor='CPADM', note='test')
+            db.session.commit()
+            assert CopilotChunk.query.filter_by(
+                lead_id=world['mine']['lead']).count() == 0, \
+                'stale chunks survived a reassignment'
+        finally:
+            lead_assignment.assign(lead, primary_code='CPREP',
+                                   actor='CPADM', note='restore')
+            LeadEmail.query.filter_by(id=mail.id).delete()
+            retrieval.invalidate_lead(world['mine']['lead'])
+            db.session.commit()
+
+
+def test_the_index_carries_the_owner_not_a_lookup(world):
+    from app.copilot import retrieval
+    from app.models.copilot import CopilotChunk
+    from app import LeadEmail
+
+    with flask_app.app_context():
+        mail = LeadEmail(lead_id=world['mine']['lead'], direction='inbound',
+                         subject='x', body='breakbulk movement to Kandla')
+        db.session.add(mail)
+        db.session.commit()
+        _index(world['mine']['lead'])
+        try:
+            chunk = CopilotChunk.query.filter_by(
+                lead_id=world['mine']['lead']).first()
+            assert chunk is not None
+            assert chunk.owner_emp_code == 'CPREP'
+            assert chunk.account_name
+        finally:
+            LeadEmail.query.filter_by(id=mail.id).delete()
+            retrieval.invalidate_lead(world['mine']['lead'])
+            db.session.commit()
+
+
+def test_search_says_when_the_index_is_empty(world):
+    """An unbuilt index must not look like "no matches" — that is a gap
+    reported as a finding."""
+    from app.copilot import retrieval
+    from app.models.copilot import CopilotChunk
+
+    with flask_app.app_context():
+        CopilotChunk.query.delete()
+        db.session.commit()
+        sc = _scope_for('CPREP', DataScope.OWN)
+        r = catalogue.get('search_text').handler(sc, {'term': 'transformer'})
+        assert r.empty is True
+        assert 'not been built' in r.headline
+
+
+def test_chunking_overlaps_so_a_split_does_not_lose_a_phrase(world):
+    """A route and its tonnage often straddle a line break."""
+    from app.copilot import retrieval
+
+    text = ('A' * 880) + '\nORIGIN AIROLI DESTINATION KANDLA 220 MT\n' + \
+           ('B' * 880)
+    pieces = retrieval.split(text)
+    assert len(pieces) > 1
+    assert any('AIROLI' in p and 'KANDLA' in p for p in pieces)
+
+
+def test_a_public_embedder_is_refused(world, monkeypatch):
+    """§3.1 applies to the embedder exactly as it does to the model."""
+    from app.copilot import retrieval
+
+    monkeypatch.setenv('PROCAM_AI_EMBED_URL', 'https://api.openai.com/v1')
+    assert retrieval.embeddings_available() is False
+    monkeypatch.setenv('PROCAM_AI_EMBED_URL', 'http://10.0.0.9:11434/v1')
+    assert retrieval.embeddings_available() is True

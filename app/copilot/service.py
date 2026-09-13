@@ -334,6 +334,12 @@ _PATTERNS = [
     (r'\b(likely to close|closing this month|likely bookings)\b',
      'closing_this_month', {}),
 
+    # ── §4 text retrieval ───────────────────────────────────────────
+    (r'\b(what did (anyone|someone|we|they) say|mentions? of|'
+     r'anything about)\b', 'search_text', {'_capture': 'text'}),
+    (r'\bsearch the (emails?|notes?|text)\b', 'search_text',
+     {'_capture': 'text'}),
+
     # ── search, LAST ────────────────────────────────────────────────
     # A "show me" or "find" prefix is the weakest signal in the list, so
     # it may only claim a question no specific intent recognised.
@@ -382,6 +388,18 @@ def _search_term(question):
     return s.strip(' ,-')
 
 
+_TEXT_PREFIX = re.compile(
+    r'^.*?\b(?:say(?:\s+about)?|mentions?\s+of|anything\s+about|'
+    r'search\s+the\s+(?:emails?|notes?|text)\s*(?:for)?)\s+',
+    re.IGNORECASE)
+
+
+def _text_term(question):
+    """What to look for, with the asking-words removed."""
+    s = _TEXT_PREFIX.sub('', (question or '').strip().rstrip('?.!'), 1)
+    return s.strip(' ,-') or (question or '').strip()
+
+
 def _match_patterns(question):
     # §7 — fold synonyms and expand abbreviations first, so one pattern
     # covers "pending quote", "quotations pending with me" and "RFQ I
@@ -404,6 +422,8 @@ def _match_patterns(question):
                 params['account'] = name
         if spec.get('_capture') == 'term':
             params['term'] = _search_term(question)
+        if spec.get('_capture') == 'text':
+            params['term'] = _text_term(question)
         if spec.get('_capture') == 'by':
             dim = re.search(r'\bby (stage|vertical|owner|city|customer)\b',
                             q)

@@ -111,6 +111,23 @@ def assign(lead, primary_code=None, secondary_code=None, actor=None,
         if new_secondary and new_secondary != old_secondary:
             _notify(lead, secondary_emp, new_secondary, is_primary=False,
                     actor=actor)
+
+    # §4 — the retrieval index stamps the owner on every chunk of this
+    # lead's text, so a reassignment changes who may retrieve it. Drop
+    # the chunks rather than update them: a miss costs one re-index, a
+    # stale row costs a disclosure. Best-effort, like the notifications
+    # above — never roll back an assignment over the search index.
+    try:
+        from app.copilot import retrieval
+        retrieval.invalidate_lead(lead.id)
+    except Exception:
+        try:
+            from app import app as flask_app
+            flask_app.logger.exception(
+                'could not invalidate copilot chunks for lead %s', lead.id)
+        except Exception:
+            pass
+
     return True, None
 
 

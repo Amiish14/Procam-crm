@@ -1923,3 +1923,65 @@ def closing_this_month(scope, params):
                  'overdue': overdue},
         notes=notes, sources=['opportunities.expected_close_date',
                               'opportunities.probability'])
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  §4 — RETRIEVAL OVER THE UNSTRUCTURED HALF
+# ══════════════════════════════════════════════════════════════════════
+
+@intent('search_text', 'Search the notes and emails',
+        params={'term': 'what to look for in the text'},
+        personas=('sales', 'head', 'mgmt', 'ops'), phase=4,
+        examples=('what did anyone say about the Airoli transformer',
+                  'search the emails for hydraulic axle',
+                  'find mentions of demurrage',
+                  'anything about the Kandla job'))
+def search_text(scope, params):
+    """The half of the CRM that is not a column.
+
+    Permission is applied to the candidate set before ranking, so a
+    chunk the viewer may not see is never scored, never returned, and
+    never reaches a model.
+    """
+    from app.copilot import retrieval
+
+    term = (params.get('term') or '').strip()
+    if len(term) < 3:
+        return Result(headline='Give me a few words to search the text for.',
+                      empty=True)
+
+    found = retrieval.search(scope, term,
+                             lead_id=params.get('lead_id'), limit=10)
+    hits = found['hits']
+    if not hits:
+        index = retrieval.stats()
+        if not index.get('chunks'):
+            return Result(
+                headline='The text index has not been built yet.',
+                empty=True,
+                notes=['An administrator builds it with '
+                       'scripts/build_copilot_index.py. Until then this '
+                       'searches nothing — which is why it says so '
+                       'rather than reporting no matches.'],
+                sources=['copilot_chunk'])
+        return Result(headline=f'Nothing in the notes or emails you can '
+                               f'see mentions "{term}".',
+                      empty=True, sources=['copilot_chunk'])
+
+    rows = [{'Account': h['account'] or '—',
+             'Where': h['source'],
+             'When': h['when'] or '—',
+             'Text': h['text'][:300],
+             '_chip': {'type': 'lead', 'id': h['lead_id'],
+                       'label': h['account'] or f'Lead {h["lead_id"]}'}}
+            for h in hits]
+    notes = []
+    if found['backend'] == 'lexical':
+        notes.append('Matched on wording. With an internal embedding '
+                     'model configured this would match on meaning too.')
+    return Result(
+        headline=f'{len(hits)} passage(s) mentioning "{term}".',
+        columns=['Account', 'Where', 'When', 'Text'], rows=rows,
+        figures={'hits': len(hits), 'backend': found['backend']},
+        notes=notes,
+        sources=['lead_emails', 'lead_notes', 'leads.original_email_body'])

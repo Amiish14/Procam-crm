@@ -220,6 +220,15 @@ QUESTIONS = [
     (MGMT, 'likely bookings', 'closing_this_month'),
     (HEAD, 'closing this month', 'closing_this_month'),
 
+    # ── §4 text retrieval ────────────────────────────────────────────
+    (SALES, 'what did anyone say about the Airoli transformer',
+     'search_text'),
+    (SALES, 'search the emails for hydraulic axle', 'search_text'),
+    (OPS, 'find mentions of demurrage', 'search_text'),
+    (HEAD, 'anything about the Kandla job', 'search_text'),
+    (SALES, 'what did someone say about the tender deadline',
+     'search_text'),
+
     # ── Questions the catalogue does NOT answer ──────────────────────
     #
     # As important as the rest. §3.4 forbids inventing an answer, and a

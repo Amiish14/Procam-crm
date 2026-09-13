@@ -49,6 +49,32 @@ def _guard(conn):
     return n
 
 
+CHUNK_DDL = """
+CREATE TABLE IF NOT EXISTS copilot_chunk (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    lead_id             INTEGER NOT NULL,
+    company_id          INTEGER,
+    source              VARCHAR(24),
+    seq                 INTEGER DEFAULT 0,
+    owner_emp_code      VARCHAR(20),
+    secondary_emp_code  VARCHAR(20),
+    vertical            VARCHAR(60),
+    account_name        VARCHAR(240),
+    occurred_at         DATETIME,
+    text                TEXT NOT NULL,
+    embedding           TEXT,
+    indexed_at          DATETIME
+)
+"""
+
+CHUNK_INDEXES = (
+    'CREATE INDEX IF NOT EXISTS ix_chunk_lead ON copilot_chunk (lead_id)',
+    'CREATE INDEX IF NOT EXISTS ix_chunk_owner ON copilot_chunk (owner_emp_code)',
+    'CREATE INDEX IF NOT EXISTS ix_chunk_second ON copilot_chunk (secondary_emp_code)',
+    'CREATE INDEX IF NOT EXISTS ix_chunk_vertical ON copilot_chunk (vertical)',
+    'CREATE INDEX IF NOT EXISTS ix_chunk_company ON copilot_chunk (company_id)',
+)
+
 DDL = """
 CREATE TABLE IF NOT EXISTS copilot_log (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -112,18 +138,24 @@ def main():
             if not args.yes:
                 raise SystemExit('  Refusing without --yes.')
             conn.execute(text('DROP TABLE copilot_log'))
+            conn.execute(text('DROP TABLE IF EXISTS copilot_chunk'))
             print('  - copilot_log')
+            print('  - copilot_chunk')
             return
 
         if args.check:
             print('== DRY-RUN — nothing written ==')
             print(f'  WOULD create: '
-                  f'{"copilot_log" if not exists else "(already there)"}')
+                  f'{"copilot_log" if not exists else "(already there)"}'
+                  f' + copilot_chunk (§4 retrieval index)')
             print('  WOULD backfill: nothing. The log starts when the '
                   'Copilot does.')
             return
 
         conn.execute(text(DDL))
+        conn.execute(text(CHUNK_DDL))
+        for stmt in CHUNK_INDEXES:
+            conn.execute(text(stmt))
         have = {r[1] for r in conn.execute(text(
             'PRAGMA table_info(copilot_log)'))}
         for col, ddl in ADD_COLUMNS:
@@ -134,6 +166,7 @@ def main():
         for stmt in INDEXES:
             conn.execute(text(stmt))
         print('  + copilot_log' if not exists else '  copilot_log present')
+        print('  + copilot_chunk (empty until the index is built)')
         print('  indexes ensured')
     print('  done.')
 

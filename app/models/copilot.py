@@ -59,3 +59,45 @@ class CopilotLog(db.Model):
             'helpful': self.helpful,
             'feedback_reason': self.feedback_reason or '',
         }
+
+
+class CopilotChunk(db.Model):
+    """§4 — one retrievable piece of unstructured CRM text.
+
+    The permission metadata is on the row, not looked up at read time,
+    so the scope filter is part of the query that selects candidates.
+    That is what makes "filtering happens before retrieval" true rather
+    than aspirational.
+
+    It also means the row is only as correct as the last re-index —
+    hence retrieval.invalidate_lead(), called whenever ownership or
+    vertical changes.
+    """
+    __tablename__ = 'copilot_chunk'
+
+    id            = db.Column(db.Integer, primary_key=True)
+    lead_id       = db.Column(db.Integer, index=True, nullable=False)
+    company_id    = db.Column(db.Integer, index=True)
+    #: enquiry | note | email:inbound | email:outbound
+    source        = db.Column(db.String(24))
+    seq           = db.Column(db.Integer, default=0)
+
+    # ── the permission metadata the scope filter matches on ──────────
+    owner_emp_code     = db.Column(db.String(20), index=True)
+    secondary_emp_code = db.Column(db.String(20), index=True)
+    vertical           = db.Column(db.String(60), index=True)
+
+    account_name  = db.Column(db.String(240))
+    occurred_at   = db.Column(db.DateTime, index=True)
+    text          = db.Column(db.Text, nullable=False)
+    #: JSON array when an internal embedder has run; null until then,
+    #: and the lexical backend answers in the meantime.
+    embedding     = db.Column(db.Text)
+    indexed_at    = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {'id': self.id, 'lead_id': self.lead_id,
+                'source': self.source, 'account': self.account_name or '',
+                'vertical': self.vertical or '',
+                'when': str(self.occurred_at or '')[:10],
+                'text': self.text}
