@@ -159,3 +159,40 @@ def test_quotes_received_filed_as_sent(conn):
     rows = dq.quotes_received_filed_as_sent(conn)[1]
     assert [(r['lead_id'], r['stage_possibly_wrong']) for r in rows] == [
         (4, 'yes')]
+
+
+def test_the_report_shares_definitions_without_importing_the_app():
+    """The thresholds and normalisation come from the live module's
+    definitions file, and loading them must not import app.py — its boot
+    autoheal is a write."""
+    code = ('import sys; sys.path.insert(0, "scripts"); '
+            'import data_quality_report as r; '
+            'assert "app" not in sys.modules, sorted(sys.modules); '
+            'assert r.defs.NO_CONTACT_DAYS > 0; '
+            'assert r.CLOSED == r.defs.OPP_CLOSED; print("ok")')
+    out = subprocess.run([sys.executable, '-c', code], cwd=_ROOT,
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == 'ok'
+
+
+def test_accounts_sharing_a_mail_domain_are_duplicates():
+    """email_domains is stored as a JSON list. Split as plain text it read
+    as one domain spelled '["acme.example"]', so accounts sharing a
+    domain alongside another never matched."""
+    from sqlalchemy import create_engine
+    eng = create_engine('sqlite://')
+    with eng.connect() as c:
+        c.exec_driver_sql(
+            'CREATE TABLE companies (id INTEGER, name TEXT, gstin TEXT, '
+            'email_domains TEXT, pic_emp_code TEXT, vertical TEXT, '
+            'is_active INTEGER)')
+        c.exec_driver_sql(
+            "INSERT INTO companies VALUES "
+            "(1, 'North Works', NULL, '[\"acme.example\"]', NULL, NULL, 1),"
+            "(2, 'South Works', NULL, '[\"acme.example\", \"b.example\"]',"
+            " NULL, NULL, 1)")
+        rows = dq.duplicate_accounts(c)[1]
+    assert {(r['match_type'], r['match_key'], r['id']) for r in rows} == {
+        ('email_domain', 'acme.example', 1),
+        ('email_domain', 'acme.example', 2)}

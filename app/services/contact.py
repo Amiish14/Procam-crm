@@ -34,15 +34,30 @@ def contacted_since(cutoff):
     anything happened since", and two grouped reads answer it for the
     whole table at once.
     """
+    from app import db
+    return {r[0] for r in db.session.execute(contacted_since_select(cutoff))
+            if r[0]}
+
+
+def contacted_since_select(cutoff):
+    """The same definition as `contacted_since`, as SQL.
+
+    For callers that filter leads by it — Data Quality asks it of every
+    open lead, and handing eleven thousand ids back to the database as
+    bound parameters is what a subquery avoids.
+    """
+    from sqlalchemy import select, union
     from app import LeadActivity, LeadEmail
 
-    acted = {r[0] for r in LeadActivity.query
-             .with_entities(LeadActivity.lead_id)
-             .filter(LeadActivity.occurred_at >= cutoff).all() if r[0]}
-    mailed = {r[0] for r in LeadEmail.query
-              .with_entities(LeadEmail.lead_id)
-              .filter(LeadEmail.sent_or_received_at >= cutoff).all() if r[0]}
-    return acted | mailed
+    # NULL ids excluded: one NULL in a NOT IN list makes the whole
+    # comparison unknown, and every lead would read as contacted.
+    return union(
+        select(LeadActivity.lead_id).where(
+            LeadActivity.occurred_at >= cutoff,
+            LeadActivity.lead_id.isnot(None)),
+        select(LeadEmail.lead_id).where(
+            LeadEmail.sent_or_received_at >= cutoff,
+            LeadEmail.lead_id.isnot(None)))
 
 
 def ever_contacted():

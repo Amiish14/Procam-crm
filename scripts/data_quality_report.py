@@ -21,7 +21,6 @@ them to tickets or email.
 import argparse
 import csv
 import os
-import re
 import sys
 from collections import defaultdict
 from datetime import date, datetime
@@ -38,10 +37,29 @@ except ImportError:
 
 from sqlalchemy import create_engine, text          # noqa: E402
 
-WON = ('Won', 'Closed Won')
-LOST = ('Lost', 'Closed Lost')
+
+def _load_definitions():
+    """The check definitions the live dashboard uses, loaded by file path.
+
+    `import app.data_quality.definitions` would import app.py first (the
+    package is app.py), and importing the app runs the boot autoheal,
+    which is a write. The definitions file imports nothing, so loading it
+    directly shares thresholds and normalisation without touching the app.
+    """
+    import importlib.util
+    path = os.path.join(_ROOT, 'app', 'data_quality', 'definitions.py')
+    spec = importlib.util.spec_from_file_location('_dq_definitions', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+defs = _load_definitions()
+
+WON = defs.OPP_WON
+LOST = defs.OPP_LOST
 #: Opportunities past these are not "overdue to close" — they closed.
-CLOSED = WON + LOST + ('On Hold', 'Not Interested')
+CLOSED = defs.OPP_CLOSED
 
 
 def _db_url():
@@ -61,26 +79,11 @@ def read_only_engine(url=None):
     return create_engine(url)
 
 
-def _blank(v):
-    return v is None or str(v).strip() == ''
-
-
-def _norm_name(name):
-    """Loose company-name key. Same idea as audit_crm_state._norm, kept
-    here so this script does not import the app."""
-    s = ' ' + (name or '').lower() + ' '
-    s = re.sub(r'[.,&/()\-]', ' ', s)
-    for junk in ('pvt', 'private', 'ltd', 'limited', 'llp', 'inc', 'llc',
-                 'gmbh', 'co', 'corporation', 'corp', 'company', 'the',
-                 'india'):
-        s = re.sub(rf'\s{junk}\s', ' ', s)
-        s = re.sub(rf'\s{junk}\s', ' ', s)
-    return ' '.join(s.split())
-
-
-def _norm_phone(p):
-    digits = re.sub(r'\D', '', p or '')
-    return digits[-10:] if len(digits) >= 10 else ''
+# Shared with the live dashboard, so "duplicate" means the same thing in
+# the CSV and on the screen.
+_blank = defs.blank
+_norm_name = defs.norm_name
+_norm_phone = defs.norm_phone
 
 
 def _rows(conn, sql, **params):
@@ -263,10 +266,10 @@ def duplicate_accounts(conn):
             groups[('name', key)].append(c)
         if not _blank(c['gstin']):
             groups[('gstin', c['gstin'].strip().upper())].append(c)
-        for d in re.split(r'[,;\s]+', c['email_domains'] or ''):
-            d = d.strip().lower().lstrip('@')
-            if d:
-                groups[('email_domain', d)].append(c)
+        # email_domains is a JSON list; split as text it read as one
+        # domain spelled '["acme.com"]', so no two accounts ever matched.
+        for d in defs.email_domains(c['email_domains']):
+            groups[('email_domain', d)].append(c)
     out = []
     for (kind, key), members in sorted(groups.items()):
         if len({m['id'] for m in members}) < 2:
@@ -342,10 +345,7 @@ def quotes_received_filed_as_sent(conn):
     this lists the leads it already touched, for a person to check the
     stage and amount. Nothing is corrected automatically — some of those
     leads have since been quoted for real."""
-    internal = {'procamlogistics.com', 'procamgroup.in'} | {
-        d.strip().lower() for d in
-        (os.environ.get('INTERNAL_EMAIL_DOMAINS') or '').split(',')
-        if d.strip()}
+    internal = defs.internal_domains(os.environ.get('INTERNAL_EMAIL_DOMAINS'))
     cols = {r[1] for r in conn.execute(text('PRAGMA table_info(lead_emails)'))}
     if 'intake_class' not in cols:
         return (['lead_id'], [])
