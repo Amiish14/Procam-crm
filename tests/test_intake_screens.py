@@ -565,3 +565,108 @@ def test_auto_assigned_counts_the_engine_not_people(world):
                                note='assigned automatically on intake')
         db.session.commit()
         assert svc.intelligence(days=30)['auto_assigned'] == before + 1
+
+
+# ── §11 false positives, false negatives, and honest accuracy ────────
+def _labelled(klass, *, corrected_to=None, state='pending', subject=None):
+    from datetime import datetime
+    with flask_app.app_context():
+        row = EmailClassification(
+            message_id=f'<{subject or klass}-{datetime.utcnow().timestamp()}@x>',
+            subject=subject or klass, from_addr='x@y.com', from_domain='y.com',
+            classification=klass, decided_by='step_10', reason='t',
+            confidence=60, review_state=state, payload={})
+        if corrected_to:
+            row.corrected_to = corrected_to
+            row.corrected_at = datetime.utcnow()
+            row.corrected_by = 'SCRADM'
+        db.session.add(row)
+        db.session.commit()
+        return row.id
+
+
+def test_a_rejected_new_lead_is_a_false_positive_not_a_correct_call(world):
+    """A rejection records corrected_to equal to the original class.
+    Read naively that is agreement, which is how a rejected new lead
+    used to count toward accuracy as a correct decision."""
+    K = li.Klass
+    with flask_app.app_context():
+        before = svc.intelligence(days=30)
+    _labelled(K.NEW_LEAD, corrected_to=K.NEW_LEAD, state='rejected',
+              subject='fp-reject')
+    with flask_app.app_context():
+        after = svc.intelligence(days=30)
+    assert after['false_positives'] == before['false_positives'] + 1
+    # and it must drag accuracy, not lift it
+    if after['reviewed'] and before['reviewed']:
+        assert after['accuracy'] <= before['accuracy'] or \
+            before['accuracy'] is None
+
+
+def test_a_rescued_enquiry_is_a_false_negative(world):
+    K = li.Klass
+    with flask_app.app_context():
+        before = svc.intelligence(days=30)['false_negative_corrections']
+    _labelled(K.NON_BUSINESS, corrected_to=K.NEW_LEAD, subject='fn-rescue')
+    with flask_app.app_context():
+        after = svc.intelligence(days=30)['false_negative_corrections']
+    assert after == before + 1
+
+
+def test_resolving_a_review_item_is_not_an_error(world):
+    """The engine asked. Answering it is not proof the engine was wrong."""
+    K = li.Klass
+    with flask_app.app_context():
+        before = svc.intelligence(days=30)
+    _labelled(K.REVIEW, corrected_to=K.NEW_LEAD, subject='review-lead')
+    with flask_app.app_context():
+        after = svc.intelligence(days=30)
+    assert after['false_negative_corrections'] == \
+        before['false_negative_corrections']
+    assert after['review_resolved_as_lead'] == \
+        before['review_resolved_as_lead'] + 1
+
+
+def test_the_verdicts_cover_every_combination():
+    from app.intake.service import _verdict
+    K = li.Klass
+
+    class R:
+        def __init__(self, was, now, state='reclassified'):
+            self.classification, self.corrected_to = was, now
+            self.review_state = state
+
+    assert _verdict(R(K.NEW_LEAD, K.NEW_LEAD, 'rejected')) == 'false_positive'
+    assert _verdict(R(K.NEW_LEAD, K.RATE_SOURCING)) == 'false_positive'
+    assert _verdict(R(K.NEW_LEAD, K.NEW_LEAD, 'accepted')) == 'agreed'
+    assert _verdict(R(K.INTERNAL, K.NEW_LEAD)) == 'false_negative'
+    assert _verdict(R(K.INTERNAL, K.QUOTE)) == 'wrong_class'
+    assert _verdict(R(K.REVIEW, K.NEW_LEAD)) == 'review_to_lead'
+    assert _verdict(R(K.REVIEW, K.INTERNAL)) == 'review_to_other'
+
+
+def test_the_review_screen_has_one_click_corrections(world):
+    import os as _os
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    with open(_os.path.join(root, 'templates', 'intake',
+                            'review.html')) as fh:
+        src = fh.read()
+    for klass in ('G_rate_sourcing', 'H_quote_submission', 'C_internal',
+                  'D_duplicate'):
+        assert f"quick(${{it.id}}, '{klass}')" in src, klass
+    # they must use the recording path, not a side door
+    quick = src[src.index('async function quick'):]
+    assert '/reclassify' in quick[:400]
+
+
+def test_a_quick_correction_is_recorded_as_training_data(world):
+    from app import EmailClassification
+    K = li.Klass
+    cid = _pending(subject='quick-internal')
+    r = world['client'].post(f'/api/intake/review/{cid}/reclassify',
+                             json={'to_class': K.INTERNAL})
+    assert r.status_code == 200
+    with flask_app.app_context():
+        row = db.session.get(EmailClassification, cid)
+        assert row.corrected_to == K.INTERNAL
+        assert row.corrected_at is not None

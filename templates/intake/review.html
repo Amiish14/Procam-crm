@@ -137,6 +137,12 @@ function renderItems(items){
       ${p.body ? `<pre class="body">${esc(p.body.slice(0,1200))}</pre>` : ''}
       <div class="acts">
         <button class="btn btn-sm success" onclick="accept(${it.id})">Accept as lead</button>
+        <span class="sep"></span>
+        <button class="btn btn-sm" onclick="quick(${it.id}, 'G_rate_sourcing')">Rate sourcing</button>
+        <button class="btn btn-sm" onclick="quick(${it.id}, 'H_quote_submission')">Quote submission</button>
+        <button class="btn btn-sm" onclick="quick(${it.id}, 'C_internal')">Internal</button>
+        <button class="btn btn-sm" onclick="quick(${it.id}, 'D_duplicate')">Duplicate</button>
+        <span class="sep"></span>
         <select id="rc${it.id}">
           <option value="">Reclassify as…</option>
           ${CLASSES.map(c => `<option value="${esc(c.key)}">${esc(c.label)}</option>`).join('')}
@@ -196,6 +202,18 @@ async function reject(id){
                      {method:'POST', body: JSON.stringify({reason, note})});
   if(!j || !j.ok) return fail(id, (j && j.error) || 'Could not reject');
   done(id, 'Rejected — ' + reason + '. Nothing was deleted.');
+  renderKpis(j.counts);
+}
+
+// The four corrections made most often, one click each. They go through
+// the same reclassify call as the dropdown, so each is recorded as a
+// labelled correction in the training set exactly as before.
+async function quick(id, to_class){
+  const j = await jf('/api/intake/review/'+id+'/reclassify',
+                     {method:'POST', body: JSON.stringify({to_class})});
+  if(!j || !j.ok) return fail(id, (j && j.error) || 'Could not record that');
+  const label = (CLASSES.find(c => c.key === to_class) || {}).label || to_class;
+  done(id, 'Recorded as ' + label + '.');
   renderKpis(j.counts);
 }
 

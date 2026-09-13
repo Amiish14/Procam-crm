@@ -163,7 +163,13 @@ async function load(){
     + card('Waiting for review', j.pending,
            j.pending ? '<a href="{{ url_prefix }}/lead-review">open the queue</a>'
                      : 'the queue is clear')
-    + acc;
+    + card('Auto-assigned', j.auto_assigned,
+           'reached an owner with no admin')
+    + acc
+    + card('False positives', j.false_positives,
+           'called a lead, a person said it was not')
+    + card('Missed enquiries rescued', j.false_negative_corrections,
+           'filed as noise, a person said it was a lead');
 
   const maxC = Math.max(...j.by_class.map(c => c.count), 1);
   bars('classes', j.by_class.map(c => ({

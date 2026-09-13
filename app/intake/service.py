@@ -410,13 +410,23 @@ def intelligence(days=30):
 
     by_class, by_step, by_reason = {}, {}, {}
     corrected = wrong = 0
+    false_pos = false_neg = review_to_lead = review_to_other = 0
     for r in rows:
         by_class[r.classification] = by_class.get(r.classification, 0) + 1
         if r.decided_by:
             by_step[r.decided_by] = by_step.get(r.decided_by, 0) + 1
         if r.corrected_to:
             corrected += 1
-            if r.was_wrong:
+            verdict = _verdict(r)
+            if verdict == 'false_positive':
+                false_pos += 1
+            elif verdict == 'false_negative':
+                false_neg += 1
+            elif verdict == 'review_to_lead':
+                review_to_lead += 1
+            elif verdict == 'review_to_other':
+                review_to_other += 1
+            if verdict in ('false_positive', 'false_negative', 'wrong_class'):
                 wrong += 1
         if r.correction_reason:
             by_reason[r.correction_reason] = \
@@ -438,6 +448,17 @@ def intelligence(days=30):
         'reviewed': corrected,
         'wrong': wrong,
         'accuracy': _pct(corrected - wrong, corrected) if corrected else None,
+        # §11 — the two errors that matter most, counted separately
+        # because they cost different things. A false positive is a lead
+        # somebody had to reject; a false negative is an enquiry the
+        # engine filed as noise and a person had to rescue, which is the
+        # expensive one.
+        'false_positives': false_pos,
+        'false_negative_corrections': false_neg,
+        # A "needs review" item resolved either way is the classifier
+        # asking, not the classifier being wrong. Reported, not scored.
+        'review_resolved_as_lead': review_to_lead,
+        'review_resolved_as_other': review_to_other,
         'by_class': sorted(
             ({'klass': k, 'label': li.Klass.LABELS.get(k, k), 'count': v,
               'pct': _pct(v, total)} for k, v in by_class.items()),
@@ -495,6 +516,38 @@ def _capabilities():
                    if lead_intake_ai.is_enabled() else
                    'off — needs LEAD_INTAKE_AI=on and a key'},
     ]
+
+
+def _verdict(row):
+    """What a human correction says about the original decision.
+
+      false_positive   called a new lead; a person said it was not one
+      false_negative   called something definite and non-lead; a person
+                       said it was a lead
+      review_to_lead   the engine asked, and it was a lead
+      review_to_other  the engine asked, and it was not
+      wrong_class      a non-lead filed under the wrong non-lead class
+      agreed           the person confirmed the decision
+
+    A rejection records corrected_to equal to the original class, with a
+    reason. Read naively that is agreement — which is how a rejected new
+    lead used to count toward accuracy as a correct decision.
+    """
+    K = li.Klass
+    was, now = row.classification, row.corrected_to
+    rejected = (row.review_state == 'rejected')
+
+    if was == K.REVIEW:
+        return 'review_to_lead' if now == K.NEW_LEAD else 'review_to_other'
+    if was == K.NEW_LEAD:
+        if rejected or (now and now != K.NEW_LEAD):
+            return 'false_positive'
+        return 'agreed'
+    if now == K.NEW_LEAD:
+        return 'false_negative'
+    if now and now != was:
+        return 'wrong_class'
+    return 'agreed'
 
 
 def _pct(n, total):
