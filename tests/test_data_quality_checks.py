@@ -488,3 +488,27 @@ def test_a_threshold_is_read_from_the_definitions(world, monkeypatch):
         monkeypatch.setattr(defs, 'NO_CONTACT_DAYS', 365)
         assert ('Lead', world['l_mine_bad']) not in flagged('stale_leads',
                                                             everyone())
+
+
+def test_only_a_crm_path_becomes_a_link():
+    """A route is joined to the prefix and opened by the page; a stored
+    "javascript:" or another site's address must not survive."""
+    from app.models.task_engine import TaskInstance
+    with flask_app.app_context():
+        db.create_all()
+        rows = [TaskInstance(task_key='dq.test', entity_type='Lead',
+                             entity_id=MISSING, owner_user_id='',
+                             status='Pending', priority=3, action_route=r)
+                for r in ('javascript:alert(1)', '//evil.example/x',
+                          'https://evil.example', '/app?lead=1')]
+        db.session.add_all(rows)
+        db.session.commit()
+        ids = [r.id for r in rows]
+        try:
+            recs = {r['id']: r['route'] for r in dq.records_for(
+                'tasks_no_owner', sc=everyone(), per_page=100000)['records']}
+            assert [recs[i] for i in ids] == ['', '', '', '/app?lead=1']
+        finally:
+            TaskInstance.query.filter(TaskInstance.id.in_(ids)).delete(
+                synchronize_session=False)
+            db.session.commit()

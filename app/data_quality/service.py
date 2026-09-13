@@ -439,8 +439,9 @@ def check_orphan_records(sc=None):
         # Their only link to an owner is the lead that is gone.
         for model, label in ((LeadEmail, 'email'), (LeadNote, 'note'),
                              (LeadActivity, 'activity')):
-            for r in model.query.filter(model.lead_id.isnot(None),
-                                        model.lead_id.not_in(lead_ids)) \
+            for r in _light(model.query.filter(
+                    model.lead_id.isnot(None),
+                    model.lead_id.not_in(lead_ids))) \
                     .order_by(model.id).all():
                 out.append((r, f'{label} on missing lead #{r.lead_id}'))
     for o in scope.opportunities(Opportunity.query.filter(or_(
@@ -450,9 +451,9 @@ def check_orphan_records(sc=None):
                  Opportunity.company_id.not_in(company_ids)))), sc) \
             .order_by(Opportunity.id).all():
         out.append((o, 'points at a lead or account that is gone'))
-    for lead in scope.leads(Lead.query.filter(
+    for lead in _light(scope.leads(Lead.query.filter(
             Lead.company_id.isnot(None),
-            Lead.company_id.not_in(company_ids)), sc) \
+            Lead.company_id.not_in(company_ids)), sc)) \
             .order_by(Lead.id).all():
         out.append((lead, f'account #{lead.company_id} is gone'))
     return len(out), out
@@ -485,8 +486,8 @@ def check_empty_mandatory(sc=None):
     from app.access import scope
     sc = resolve_scope(sc)
     out = []
-    for lead in scope.leads(_live_leads().filter(or_(
-            _blank(Lead.company), _blank(Lead.stage))), sc) \
+    for lead in _light(scope.leads(_live_leads().filter(or_(
+            _blank(Lead.company), _blank(Lead.stage))), sc)) \
             .order_by(Lead.id).all():
         missing = [f for f, v in (('company', lead.company),
                                   ('stage', lead.stage)) if defs.blank(v)]
@@ -505,16 +506,24 @@ def check_lead_account_mismatch(sc=None):
     account they are linked to — the link is probably wrong."""
     from app import Company, Lead
     from app.access import scope
-    rows = scope.leads(
-        _live_leads().join(Company, Company.id == Lead.company_id)
-        .add_columns(Company.name), resolve_scope(sc)) \
-        .order_by(Lead.id).all()
-    out = []
-    for lead, account in rows:
-        a, b = defs.norm_name(lead.company), defs.norm_name(account)
-        if a and b and a != b:
-            out.append((lead, f'linked to account "{account}"'))
-    return len(out), out
+    sc = resolve_scope(sc)
+    # Names only: the comparison has to read every linked lead, and a
+    # whole Lead row carries the original email body.
+    pairs = scope.leads(
+        _live_leads().join(Company, Company.id == Lead.company_id), sc) \
+        .with_entities(Lead.id, Lead.company, Company.name).all()
+    norms = {}
+
+    def norm(text):
+        # Names repeat across thousands of leads; normalise each once.
+        if text not in norms:
+            norms[text] = defs.norm_name(text)
+        return norms[text]
+
+    ids = [lid for lid, name, account in pairs
+           if norm(name) and norm(account) and norm(name) != norm(account)]
+    q = Lead.query.filter(Lead.id.in_(ids)) if ids else _nothing(Lead.query)
+    return len(ids), q
 
 
 def _vertical_values():
@@ -573,14 +582,14 @@ def check_review_backlog(sc=None):
     sc = resolve_scope(sc)
     cutoff = datetime.utcnow() - timedelta(days=defs.REVIEW_BACKLOG_DAYS)
     out = []
-    for lead in scope.leads(_open_leads().filter(
+    for lead in _light(scope.leads(_open_leads().filter(
             Lead.classification == defs.REVIEW_CLASS,
-            Lead.created_at < cutoff), sc).order_by(Lead.id).all():
+            Lead.created_at < cutoff), sc)).order_by(Lead.id).all():
         out.append((lead, 'classified as needing review'))
     if _everything(sc):
-        for r in EmailClassification.query.filter(
+        for r in _light(EmailClassification.query.filter(
                 EmailClassification.review_state == 'pending',
-                EmailClassification.created_at < cutoff) \
+                EmailClassification.created_at < cutoff)) \
                 .order_by(EmailClassification.id).all():
             out.append((r, 'waiting in Lead Review'))
     return len(out), out
@@ -609,13 +618,16 @@ def check_quotes_filed_as_sent(sc=None):
     rows = scope.emails(LeadEmail.query.filter(
         LeadEmail.direction == 'outbound',
         LeadEmail.intake_class.in_(defs.RECEIVED_AS_SENT_CLASSES)),
-        resolve_scope(sc)).order_by(LeadEmail.lead_id, LeadEmail.id).all()
-    out = []
-    for e in rows:
-        domain = (e.from_addr or '').rsplit('@', 1)[-1].lower().strip('> ')
+        resolve_scope(sc)).with_entities(LeadEmail.id,
+                                         LeadEmail.from_addr).all()
+    ids = []
+    for eid, from_addr in rows:
+        domain = (from_addr or '').rsplit('@', 1)[-1].lower().strip('> ')
         if domain and domain not in internal:
-            out.append(e)
-    return len(out), out
+            ids.append(eid)
+    q = (LeadEmail.query.filter(LeadEmail.id.in_(ids)) if ids
+         else _nothing(LeadEmail.query))
+    return len(ids), q
 
 
 # ── customers ────────────────────────────────────────────────────────
@@ -747,6 +759,12 @@ def _describe(key, row):
     if isinstance(row, tuple):
         row, note = row
     d = _describe_record(row)
+    # Routes are joined to the URL prefix and opened by the page. Only a
+    # path inside the CRM is a route: a task's stored action_route could
+    # otherwise be "javascript:" or another site.
+    route = d.get('route') or ''
+    if not route.startswith('/') or route.startswith('//'):
+        d['route'] = ''
     if note:
         d['meta'] = ' · '.join(x for x in (note, d['meta']) if x)
     return d
@@ -853,10 +871,34 @@ def _describe_record(row):
             'route': getattr(row, 'action_route', '') or ''}
 
 
+#: The columns a record's description reads, per model. Checks and exports
+#: can list thousands of leads and emails, and a whole row drags the stored
+#: email body along with it.
+_DESCRIBED = {
+    'Lead': ('id', 'company', 'project', 'stage', 'assigned_to',
+             'followup_date', 'procam_vertical', 'company_id'),
+    'LeadEmail': ('id', 'subject', 'intake_class', 'from_addr', 'lead_id'),
+    'EmailClassification': ('id', 'subject', 'classification', 'from_addr',
+                            'review_state', 'created_lead_id'),
+}
+
+
+def _light(q):
+    from sqlalchemy.orm import load_only
+    try:
+        entity = q.column_descriptions[0]['entity']
+        cols = _DESCRIBED.get(entity.__name__)
+        if cols:
+            return q.options(load_only(*[getattr(entity, c) for c in cols]))
+    except Exception:
+        pass
+    return q
+
+
 def _ordered(q):
     try:
         entity = q.column_descriptions[0]['entity']
-        return q.order_by(entity.id)
+        return _light(q).order_by(entity.id)
     except Exception:
         return q
 
