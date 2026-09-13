@@ -145,52 +145,77 @@ def classify(question, sc, *, history=None):
 _PATTERNS = [
     (r'\b(my day|what.*(attention|work on|pending for me)|morning brief)\b',
      'my_day', {}),
-    (r'\b(stale|idle|no activity|gone quiet|untouched)\b.*\blead',
+
+    # ── leads ───────────────────────────────────────────────────────
+    (r'\bleads?\b.*\bno (follow.?up|next action)\b',
+     'leads_no_next_action', {}),
+    (r'\bno (follow.?up|next action)\b.*\bleads?\b',
+     'leads_no_next_action', {}),
+    (r'\b(stale|idle|no activity|untouched)\b.*\blead',
      'leads_stale', {}),
     (r'\blead.*\b(stale|idle|no activity|untouched)\b',
      'leads_stale', {}),
     (r'\b(open|active)\s+leads?\b', 'leads_open', {}),
-    (r'\bleads?\b.*\bno (follow.?up|next action)\b',
-     'leads_no_next_action', {}),
-    # §6.3 names these three as the same question, so they resolve to
-    # the same intent: "pending quote" is the canonical form the
-    # vocabulary folds the others into.
+    (r'\bleads?\b.*\b(are|that are)?\s*open\b', 'leads_open', {}),
+
+    # ── RFQs and quotes ─────────────────────────────────────────────
+    (r'\b(turn.?around|rfq to quote|how long.*\bquote)\b',
+     'quote_turnaround', {}),
     (r'\bpending quote\b', 'rfqs_unquoted', {}),
-    (r'\brfq.*\b(not (yet )?quoted|unquoted|pending quot)',
+    (r'\brfq.*\b(not (yet )?quoted|unquoted|pending quot|to quote)',
      'rfqs_unquoted', {}),
     (r'\b(unquoted|not quoted)\b.*\brfq', 'rfqs_unquoted', {}),
-    (r'\bquotes?\b.*\b(no (reply|response|follow.?up)|awaiting|waiting)\b',
-     'quotes_awaiting_reply', {}),
+    (r'\bquotes?\b.*\b(no (reply|response|follow.?up)|awaiting|waiting|'
+     r'not answered|no answer)\b', 'quotes_awaiting_reply', {}),
     (r'\bquotes?\b.*\b(above|over|more than|greater than)\b',
      'quotes_above', {}),
+    (r'\b(big|large|major)\s+quotes?\b', 'quotes_above', {}),
     (r'\b(last|latest|most recent)\b.*\b(quote|price|rate we (gave|sent))',
      'last_quote_for_account', {'_capture': 'account'}),
-    (r'\b(turn.?around|how long.*quote|rfq to quote)\b',
-     'quote_turnaround', {}),
-    (r'\b(weighted )?pipeline\b.*\b(worth|value|total)\b',
+
+    # ── pipeline ────────────────────────────────────────────────────
+    (r'\bweighted pipeline\b', 'pipeline_value', {'weighted': 'true'}),
+    (r'\b(pipeline|funnel)\b.*\b(worth|value|total)\b',
+     'pipeline_value', {}),
+    (r'\b(worth|value|total)\b.*\b(pipeline|funnel)\b',
      'pipeline_value', {}),
     (r"\b(what'?s |show )?my pipeline\b", 'pipeline_value', {}),
-    (r'\b(biggest|largest|top)\b.*\b(opportunit|deals?)\b',
-     'top_opportunities', {}),
-    (r'\b(stuck|stalled|not moving|sitting)\b.*\b(deal|opportunit)',
+    (r'^\s*pipeline\s*$', 'pipeline_value', {}),
+    (r'\b(stuck|stalled|not moving|sitting still)\b.*\b(deal|opportunit)',
      'stalled_deals', {}),
-    (r'\bwho (handles|owns|is the pic for|manages)\b', 'account_owner',
-     {'_capture': 'account'}),
+    (r'\b(deal|opportunit)\w*\b.*\b(stuck|stalled|not moving|'
+     r'sitting still)\b', 'stalled_deals', {}),
+    (r'\b(biggest|largest|top)\b.*\b(opportunit|deal)', 
+     'top_opportunities', {}),
+
+    # ── accounts ────────────────────────────────────────────────────
+    (r'\bwho (handles|owns|is the pic for|manages|is looking after)\b',
+     'account_owner', {'_capture': 'account'}),
+    (r'\bwhose account\b', 'account_owner', {'_capture': 'account'}),
     (r'\b(is|are|do we|did we|does|have we)\b.*\b(already (a |an )?'
      r'(handled|customer|account|client)|work(ed)? with)\b',
      'account_status', {'_capture': 'account'}),
-    (r'\b(inactive|gone quiet|not contacted|dormant)\b.*\b(account|customer)',
-     'accounts_inactive', {}),
-    (r'\b(account|customer)s?\b.*\b(inactive|gone quiet|dormant)\b',
-     'accounts_inactive', {}),
-    (r'\bhand(ed )?over', 'handovers_recent', {}),
-    (r'\b(where|why).*\b(lose|losing|lost)\b', 'loss_analysis', {}),
+    (r'\b(new|existing) customer\b', 'account_status',
+     {'_capture': 'account'}),
+    (r'\b(inactive|dormant|not contacted|gone quiet)\b.*'
+     r'\b(account|customer)', 'accounts_inactive', {}),
+    (r'\b(account|customer)s?\b.*\b(inactive|dormant|not contacted|'
+     r'gone quiet|have not contacted)\b', 'accounts_inactive', {}),
+
+    # ── handovers ───────────────────────────────────────────────────
+    (r'\bhand(ed |ing )?over', 'handovers_recent', {}),
+
+    # ── loss and data quality ───────────────────────────────────────
+    (r'\b(loss|lost)\s+reasons?\b', 'loss_analysis', {}),
+    (r'\b(where|why)\b.*\b(lose|losing|lost)\b', 'loss_analysis', {}),
+    (r'\bloss(es)?\b.*\bno reason\b', 'dq_lost_no_reason', {}),
     (r'\blost leads?\b.*\bno reason\b', 'dq_lost_no_reason', {}),
+
+    # ── next best action ────────────────────────────────────────────
     (r'\bwho should i (call|contact|chase)\b', 'next_best_action', {}),
     (r'\b(next best action|what should i do next)\b',
      'next_best_action', {}),
-    (r'^\s*(search|find|look ?up|show me)\b', 'universal_search',
-     {'_capture': 'term'}),
+
     # ── Phase 4 · §8 ────────────────────────────────────────────────
     (r'\b(latest|last|recent)\b.*\bemail\b', 'thread_summary', {}),
     (r'\bemail (thread|trail|chain)\b', 'thread_summary', {}),
@@ -198,11 +223,23 @@ _PATTERNS = [
      'thread_summary', {}),
     (r'\battachment|\bboq\b|\bcargo list\b|\benquiry sheet\b',
      'attachment_contents', {}),
-    (r'\b(summar\w+|brief me on|360)\b.*\b(this )?lead\b', 'lead_360', {}),
+    (r'\b(summar\w+|brief me on|360)\b.*\b(this )?lead\b',
+     'lead_360', {}),
     (r'\blead 360\b', 'lead_360', {}),
-    (r'\b(summar\w+|brief me on)\b.*\b(this )?account\b',
+    (r"\bstory with (this )?lead\b", 'lead_360', {}),
+    (r'\b(summar\w+|brief me on)\b.*\baccount\b',
      'account_360', {'_capture': 'account'}),
     (r'\baccount 360\b', 'account_360', {'_capture': 'account'}),
+    # "summarise Tata Steel" with no other noun is an account. Placed
+    # after the lead rules above, so "summarise this lead" still wins.
+    (r'^\s*(summari[sz]e|brief me on|tell me about)\b', 'account_360',
+     {'_capture': 'account'}),
+
+    # ── search, LAST ────────────────────────────────────────────────
+    # A "show me" or "find" prefix is the weakest signal in the list, so
+    # it may only claim a question no specific intent recognised.
+    (r'^\s*(search|find|look ?up|show me)\b', 'universal_search',
+     {'_capture': 'term'}),
 ]
 
 #: "50 lakh", "1 crore", "5000000" — the way an Indian logistics quote
@@ -272,14 +309,19 @@ def _match_patterns(question):
             params['weighted'] = 'true'
         return key, params
 
-    # §6.3 and the matrix's "Tata (bare search term)" row: a couple of
-    # words that are plainly not a question are a search. Guarded to
-    # short input so a long unrecognised sentence still gets the honest
-    # "I could not tell what you are asking" rather than a search for
-    # the whole sentence, which would look like an answer.
+    # §6.3 and the matrix's "Tata (bare search term)" row.
+    #
+    # The guard that matters is the capital letter. A bare search term
+    # in a CRM is a name — Tata, JSW Steel, Godrej — and requiring one
+    # is what stops "outstanding receivables" and "live vehicle
+    # tracking" being answered as searches when the honest reply is
+    # that the catalogue does not cover them. Getting that wrong would
+    # dress a gap up as an answer, which §3.4 forbids.
     bare = (question or '').strip().rstrip('?.!')
-    if (2 <= len(bare) <= 40 and len(bare.split()) <= 4
-            and not _QUESTION_WORD.match(bare)):
+    words = bare.split()
+    if (2 <= len(bare) <= 40 and len(words) <= 4
+            and not _QUESTION_WORD.match(bare)
+            and any(w[:1].isupper() for w in words)):
         return 'universal_search', {'term': bare}
 
     return None, {}

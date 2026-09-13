@@ -113,8 +113,10 @@ SYNONYMS = {
                       'quotes pending', 'awaiting quotation',
                       'yet to quote', 'not quoted yet',
                       'rfq i have not quoted', 'rfqs to quote'),
+    # Deliberately NOT 'no follow up': §5 lists "no next action" as its
+    # own question, and folding it here answered the wrong one.
     'stale': ('gone cold', 'no movement', 'not touched', 'sitting idle',
-              'no follow up', 'nothing happening'),
+              'gone quiet', 'nothing happening'),
     'pipeline': ('funnel', 'open deals', 'live opportunities',
                  'what is in play'),
     'who handles': ('who is handling', 'whose account', 'account owner',
@@ -131,17 +133,20 @@ _WORD = re.compile(r"[a-z0-9/&'-]+")
 def expand(text):
     """Normalise a question so one pattern matches many phrasings.
 
-    Synonyms are folded to their canonical phrase and abbreviations get
-    their long form appended — appended rather than replaced, because
-    "RFQ" is what people actually write and the pattern list should keep
-    matching it directly.
+    Both synonyms and abbreviations are APPENDED, never substituted.
+    Replacing looked tidier and was wrong: "largest open deals" became
+    "largest pipeline" because "open deals" is a synonym for pipeline,
+    and the question stopped matching the intent it plainly meant.
+    Appending is lossless — the original words still match their own
+    patterns, and the canonical form matches too.
     """
     s = ' ' + (text or '').lower().strip() + ' '
+    extra = []
     for canonical, variants in SYNONYMS.items():
         for v in variants:
             if v in s:
-                s = s.replace(v, canonical)
-    extra = []
+                extra.append(canonical)
+                break
     for token in _WORD.findall(s):
         long_form = ABBREVIATIONS.get(token)
         if long_form:
