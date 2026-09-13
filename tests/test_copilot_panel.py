@@ -82,6 +82,21 @@ def test_options_and_chips_ask_through_the_normal_path():
 
 
 @pytest.mark.skipif(shutil.which('node') is None, reason='node not installed')
+def test_the_panel_runs_end_to_end_against_a_stub_page():
+    """Open on /companies/12, ask, render, continue the conversation,
+    start a new one, and let a page set the record — no runtime error,
+    the record and the conversation id go out, the answer comes back
+    escaped."""
+    harness = os.path.join(_ROOT, 'tests', 'fixtures',
+                           'copilot_panel_smoke.js')
+    template = os.path.join(_ROOT, 'templates', '_copilot_panel.html')
+    out = subprocess.run(['node', harness, template], capture_output=True,
+                         text=True, timeout=60)
+    assert out.returncode == 0, out.stderr or out.stdout
+    assert 'PANEL_SMOKE_OK' in out.stdout
+
+
+@pytest.mark.skipif(shutil.which('node') is None, reason='node not installed')
 def test_hostile_strings_come_out_inert(tmp_path):
     src = _src()
     js = '\n'.join([
