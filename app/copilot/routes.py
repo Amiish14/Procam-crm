@@ -199,6 +199,21 @@ def analytics_page():
     return render_template('copilot/analytics.html')
 
 
+@bp.route('/api/copilot/glossary', methods=['GET'])
+def api_glossary():
+    """§7 — the words the Copilot knows.
+
+    Readable by anyone signed in, not just an admin: a salesperson
+    wondering why "ODC" was read as Project Logistics is entitled to see
+    the list that decided it. There is nothing confidential in a
+    vocabulary.
+    """
+    if not _authed():
+        return jsonify(ok=False, error='Not authenticated'), 401
+    from app.copilot import vocabulary
+    return jsonify(ok=True, **vocabulary.glossary())
+
+
 @bp.route('/api/copilot/analytics', methods=['GET'])
 @require('admin.access')
 def api_analytics():
@@ -235,4 +250,11 @@ def api_analytics():
         # the catalogue could not answer is the backlog.
         unmatched=[r.to_dict() for r in unmatched[-40:]],
         slow=[r.to_dict() for r in slow],
-        model=model_mod.health())
+        model=model_mod.health(),
+        index=_index_health())
+
+
+def _index_health():
+    """§4 — whether text search can answer anything."""
+    from app.copilot import retrieval
+    return retrieval.stats()

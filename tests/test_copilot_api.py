@@ -407,3 +407,41 @@ def test_the_streamed_answer_carries_a_log_id_for_feedback(world):
     r = _c('CAREP').post('/api/copilot/feedback',
                          json={'log_id': done['log_id'], 'helpful': True})
     assert r.status_code == 200
+
+
+# ── reachable, not just built ────────────────────────────────────────
+def test_the_analytics_screen_is_linked_in_the_nav(world):
+    """A screen with no link is a screen nobody opens. It was built and
+    unreachable until this."""
+    import os as _os
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    with open(_os.path.join(root, 'templates', 'app.html')) as fh:
+        html = fh.read()
+    assert '/copilot-analytics' in html
+    assert 'admin-only' in html.split('/copilot-analytics')[0][-200:]
+
+
+def test_the_glossary_is_readable_by_anyone_signed_in(world):
+    """§7 — a salesperson wondering why "ODC" read as Project Logistics
+    is entitled to see the list that decided it."""
+    body = _c('CAREP').get('/api/copilot/glossary').get_json()
+    assert body['ok']
+    verticals = {v['vertical'] for v in body['verticals']}
+    assert 'Project Logistics' in verticals
+    assert 'odc' in body['abbreviations']
+    terms = {t for v in body['verticals'] for t in v['terms']}
+    assert 'hydraulic axle' in terms
+
+
+def test_the_glossary_still_needs_a_session(world):
+    assert flask_app.test_client().get(
+        '/api/copilot/glossary').status_code == 401
+
+
+def test_analytics_reports_whether_the_text_index_exists(world):
+    """An empty index makes text search answer nothing. An admin should
+    learn that here rather than from a user saying search is broken."""
+    body = _c('CAADM').get('/api/copilot/analytics').get_json()
+    assert 'index' in body
+    assert 'chunks' in body['index']
+    assert 'backend' in body['index']

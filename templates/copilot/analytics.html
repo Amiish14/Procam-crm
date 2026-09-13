@@ -43,6 +43,9 @@
 
 <div id="model"></div>
 <div class="kpis" id="kpis"></div>
+<h2>What this host can do</h2>
+<div id="capability"></div>
+
 <h2>What was asked</h2>
 <div id="intents"></div>
 <h2>Could not answer</h2>
@@ -68,12 +71,20 @@ fetch('{{ url_prefix }}/api/copilot/analytics?days=30')
   .then(r=>r.json()).then(j=>{
   if(!j.ok) return;
 
-  const m = j.model || {};
+  const m = j.model || {}, ix = j.index || {};
   document.getElementById('model').innerHTML =
     '<div class="mdl '+(m.available?'on':'off')+'">'
     + (m.available
         ? 'Model host: <b>'+esc(m.base_url)+'</b> · '+esc(m.model)
         : 'No model — answering from rules alone. '+esc(m.reason||''))
+    + '</div>'
+    + '<div class="mdl '+(ix.chunks?'on':'off')+'">'
+    + (ix.chunks
+        ? 'Text index: <b>'+esc(ix.chunks)+'</b> passage(s), '
+          + esc(ix.backend) + ' matching'
+          + (ix.embedded ? ' · '+esc(ix.embedded)+' embedded' : '')
+        : 'Text index is empty — run scripts/build_copilot_index.py, '
+          + 'or searching the notes and emails finds nothing.')
     + '</div>';
 
   const k=(cls,n,l)=>`<div class="k ${cls}"><div class="n">${n}</div>
@@ -88,6 +99,21 @@ fetch('{{ url_prefix }}/api/copilot/analytics?days=30')
 
   table('intents', [['Intent', r=>r.intent], ['Asked', r=>r.count]],
         j.by_intent, 'Nothing asked yet.');
+
+  // §7 — the words it understands, so a reading can be argued with
+  fetch('{{ url_prefix }}/api/copilot/glossary').then(r=>r.json()).then(g=>{
+    if(!g.ok) return;
+    const verts = (g.verticals||[]).map(v =>
+      '<tr><td><b>'+esc(v.vertical)+'</b></td><td>'
+      + esc(v.terms.join(' · '))+'</td></tr>').join('');
+    const abbr = Object.keys(g.abbreviations||{}).map(k =>
+      esc(k.toUpperCase())+' = '+esc(g.abbreviations[k])).join(' · ');
+    document.getElementById('capability').innerHTML =
+      '<table><thead><tr><th>Vertical</th><th>Words it recognises</th>'
+      + '</tr></thead><tbody>'+verts+'</tbody></table>'
+      + '<div style="font-size:12px;color:var(--text-2);margin-top:10px">'
+      + '<b>Abbreviations:</b> '+abbr+'</div>';
+  });
   table('unmatched', [['Question', r=>r.question],
                       ['Who', r=>r.emp_code],
                       ['When', r=>r.created_at]],
