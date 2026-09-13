@@ -33,6 +33,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import app, EmailClassification                       # noqa: E402
+from app.services import lead_intake as li                     # noqa: E402
 from app.services import lead_intake_db as lidb                # noqa: E402
 
 
@@ -79,6 +80,62 @@ def _from_leads(since):
         if '@' not in addr:
             continue
         out.append((addr.rsplit('@', 1)[1], addr, True))
+    return out
+
+
+def _samples(since, domains):
+    """One real message per domain, to judge it with."""
+    from app import Lead, db
+
+    want = set(domains)
+    found = {}
+    try:
+        rows = (db.session.query(Lead.original_email_from, Lead.email,
+                                 Lead.original_email_subject,
+                                 Lead.original_email_body)
+                .filter(Lead.source == 'email', Lead.created_at >= since)
+                .all())
+    except Exception:
+        db.session.rollback()
+        return found
+    for original, contact, subject, body in rows:
+        addr = (original or contact or '').strip().lower()
+        if '@' not in addr:
+            continue
+        domain = addr.rsplit('@', 1)[1]
+        if domain in want and domain not in found and (subject or body):
+            found[domain] = {
+                'subject': subject or '',
+                'body': {'content': body or '', 'contentType': 'text'},
+                'from': {'emailAddress': {'address': addr}},
+                'toRecipients': [{'emailAddress': {
+                    'address': 'leads@procamgroup.in'}}],
+                'ccRecipients': [],
+            }
+    return found
+
+
+def _verdicts(samples):
+    """What the engine running today would call each of them.
+
+    The lead history was captured under the old policy, where every
+    message became a lead. Reading that as "this domain sends us work"
+    is how a worklist ends up telling you to create an account for an
+    auction-notification robot.
+    """
+    from app.services import lead_intake as li
+    from app.services import lead_intake_db as lidb
+
+    out = {}
+    try:
+        ctx = lidb.build_context()
+    except Exception:
+        return out
+    for domain, msg in samples.items():
+        try:
+            out[domain] = li.classify(msg, ctx)
+        except Exception:
+            pass
     return out
 
 
@@ -161,18 +218,48 @@ def main():
             return 0
 
         gaps.sort(reverse=True)
-        print(f'\n  The worklist — highest volume first. Configure these at '
-              f'/accounts/owners:\n')
-        print(f'    {"mail":>5} {"leads":>6}  {"domain":<34} account')
+        head = gaps[:max(args.top * 3, 60)]
+        verdicts = ({} if source == 'classified' else
+                    _verdicts(_samples(since, [g[2] for g in head])))
+
+        worth, noise = [], []
+        for n, lead_n, domain, account in head:
+            d = verdicts.get(domain)
+            if d is None:
+                worth.append((n, domain, account, 'not judged'))
+            elif d.klass == li.Klass.NEW_LEAD:
+                worth.append((n, domain, account,
+                              f'{d.confidence or 0}% new enquiry'))
+            elif d.klass == li.Klass.REVIEW:
+                worth.append((n, domain, account, 'needs review'))
+            else:
+                noise.append((n, domain, account,
+                              li.Klass.LABELS.get(d.klass, d.klass)))
+
+        print(f'\n  Worth an owner — the engine running today still calls '
+              f'these enquiries:\n')
+        print(f'    {"leads":>6}  {"domain":<34} {"account":<34} verdict')
         running = 0
-        for n, lead_n, domain, account in gaps[:args.top]:
+        for n, domain, account, why in worth[:args.top]:
             running += n
-            print(f'    {n:>5} {lead_n:>6}  {domain:<34} {account}')
+            print(f'    {n:>6}  {domain:<34} {account:<34} {why}')
+        if not worth:
+            print('    (none)')
         share = round(100 * running / total) if total else 0
-        print(f'\n  Those {min(args.top, len(gaps))} would cover {share}% of '
-              f'all intake.')
-        print('  "leads" is how many of that domain\'s messages the engine '
-              'judged\n  a genuine enquiry — the column to prioritise by.')
+        print(f'\n  Those {min(args.top, len(worth))} cover {share}% of the '
+              f'history.')
+
+        if noise:
+            noise_total = sum(n for n, *_ in noise)
+            print(f'\n  NOT worth an owner — {noise_total} historical '
+                  f'lead(s) the engine\n  would now file rather than '
+                  f'create. Creating accounts for these\n  would be '
+                  f'building a customer list out of robots:\n')
+            for n, domain, account, klass in noise[:args.top]:
+                print(f'    {n:>6}  {domain:<34} {account:<34} {klass}')
+            print(f'\n  These already exist as leads, captured before the '
+                  f'engine. Cleaning\n  them up is a separate, destructive '
+                  f'decision — nothing here touches them.')
     return 0
 
 

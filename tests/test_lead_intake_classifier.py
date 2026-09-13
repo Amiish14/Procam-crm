@@ -740,3 +740,52 @@ def test_a_status_word_mid_subject_is_left_alone():
                     'Q3 - Update on the Nhava Sheva consignment',
                     'Breakbulk - Pending customs at JNPT, please advise'):
         assert li.match_subject(subject) == subject
+
+
+# ─── the real senders behind 1,147 historical leads ──────────────────────
+#
+# Every one of these became a lead under the capture-everything policy.
+# The worklist that ranks accounts by volume is only useful if the engine
+# can still tell a customer from a robot, because otherwise it advises
+# building a customer list out of notification senders.
+def test_an_auction_notification_is_not_a_customer():
+    d = li.classify(msg(
+        subject='Isgec Heavy Engineering Ltd. : Auction Start Notification',
+        body='An auction has started for load ID 88213. Login to bid.',
+        frm='no-reply@alerts.superprocure.com'), li.Context())
+    assert d.klass != K.NEW_LEAD
+
+
+def test_a_conference_invitation_is_not_an_enquiry():
+    d = li.classify(msg(subject='CII Logistics Summit 2026 - Register Now',
+                        body='Join us for the annual summit. Early bird '
+                             'pricing ends soon. Unsubscribe.',
+                        frm='events@conference.cii.in'), li.Context())
+    assert d.klass == K.NON_BUSINESS
+
+
+def test_a_bulk_mailer_is_not_an_enquiry():
+    d = li.classify(msg(subject='New product launch newsletter',
+                        body='Read our latest newsletter. Unsubscribe here.',
+                        frm='campaign@5221978.brevosend.com'), li.Context())
+    assert d.klass == K.NON_BUSINESS
+
+
+def test_a_real_rfq_from_a_manufacturer_still_is_one():
+    """The other half of the same judgement. A filter that rejected
+    these too would score well on noise and lose the business."""
+    d = li.classify(msg(
+        subject='RFQ for transformer movement JNPT to Vadodara',
+        body='Dear Procam, please quote for movement of a 220 MT '
+             'transformer, ODC cargo.',
+        frm='procurement@siemens.com'), li.Context())
+    assert d.klass == K.NEW_LEAD
+    assert d.confidence >= 50
+
+
+def test_a_rate_request_from_a_customer_is_an_enquiry_not_sourcing():
+    d = li.classify(msg(
+        subject='Enquiry - breakbulk shipment ex Nhava Sheva',
+        body='Kindly share your best rate for 3 packages, 40 MT, to Kandla.',
+        frm='logistics@godrej.com'), li.Context())
+    assert d.klass == K.NEW_LEAD
