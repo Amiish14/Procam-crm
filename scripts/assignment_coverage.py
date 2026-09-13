@@ -146,21 +146,25 @@ _FREE_MAIL = {
     'yandex.com', 'qq.com', '163.com', '126.com',
 }
 
-#: Words that suggest the sender is in the trade. Not a verdict — an
-#: overseas agent asking us to move their client's cargo is a genuine
-#: enquiry, and a shipping line quoting us is not. Only a person knows
-#: which, so this asks rather than decides.
-_TRADE_WORDS = ('logistic', 'cargo', 'shipping', 'freight', 'forward',
-                'transport', 'shipp', 'marine', 'lines', 'express',
-                'hlag', 'maersk', 'dhl', 'kuehne', 'dsv', 'panalpina')
-
-
 def _caution(domain):
-    """A warning to print beside a domain, or ''. """
+    """A warning to print beside a domain, or ''.
+
+    The trade check comes from the classifier's own hint list and the
+    VendorDomain table rather than a second list kept here, which would
+    always be a step behind the one the engine actually uses — coscon
+    and pandacs slipped past exactly that way.
+    """
     if domain in _FREE_MAIL:
         return ('free mail — map the CONTACT, never this domain as an '
                 'account')
-    if any(w in domain for w in _TRADE_WORDS):
+    try:
+        if lidb.is_vendor_domain(domain):
+            return 'ALREADY a known supplier — not a customer account'
+    except Exception:
+        pass
+    if li.vendor_domain_hint(domain) or any(
+            w in domain for w in ('logistic', 'cargo', 'shipp', 'freight',
+                                  'forward', 'marine', 'express')):
         return 'in the trade — customer, overseas agent, or vendor?'
     return ''
 

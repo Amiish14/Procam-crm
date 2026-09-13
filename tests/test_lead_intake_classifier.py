@@ -789,3 +789,34 @@ def test_a_rate_request_from_a_customer_is_an_enquiry_not_sourcing():
         body='Kindly share your best rate for 3 packages, 40 MT, to Kandla.',
         frm='logistics@godrej.com'), li.Context())
     assert d.klass == K.NEW_LEAD
+
+
+# ─── carriers the hint list did not know ─────────────────────────────────
+def test_the_carriers_a_year_of_real_mail_turned_up():
+    """A coverage run found DHL, Hapag-Lloyd and Nippon Express scoring
+    as fresh customer enquiries. 'hapag' was in the list; hlag.com — the
+    domain they actually send from — was not."""
+    for domain in ('sales.hlag.com', 'dhl.com', 'nipponexpress.com',
+                   'coscon.com', 'kuehne-nagel.com', 'dsv.com',
+                   'schenker.com', 'ceva.com', 'zim.com'):
+        assert li.vendor_domain_hint(domain), domain
+
+
+def test_real_customers_are_not_flagged_as_suppliers():
+    """The other half. This hint costs 15 points, so a false positive
+    here pushes a genuine RFQ toward review — every one of these is a
+    manufacturer that sends Procam real work."""
+    for domain in ('siemens.com', 'godrej.com', 'bemlltd.in',
+                   'alstomgroup.com', 'tbeaindia.com', 'jakson.com',
+                   'upf-group.dk', 'tatasteel.com', 'motherson.com'):
+        assert not li.vendor_domain_hint(domain), domain
+
+
+def test_the_hint_never_decides_on_its_own():
+    """Plenty of real customers are logistics firms. A supplier domain
+    is 15 points against, not a classification."""
+    d = li.classify(msg(subject='RFQ - breakbulk movement Airoli to Kandla',
+                        body='Please quote for 3 packages, 40 MT, ODC '
+                             'cargo, urgent requirement.',
+                        frm='enquiry@somelogistics.com'), li.Context())
+    assert d.klass == K.NEW_LEAD

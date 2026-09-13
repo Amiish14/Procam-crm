@@ -93,6 +93,15 @@ _VENDOR_DOMAIN_HINTS = (
     'oocl', 'evergreen', 'cosco', 'transport', 'transporter', 'roadways',
     'carriers', 'logistics', 'freight', 'forwarder', 'cha', 'customs',
     'airlines', 'cargo', 'container', 'trailer', 'crane',
+    # Carriers and global forwarders the list did not name. A coverage
+    # run over a year of real mail found DHL, Hapag-Lloyd and Nippon
+    # Express scoring as fresh customer enquiries, because 'hapag'
+    # matched but 'hlag' — the domain they actually send from — did not.
+    'hlag', 'dhl', 'kuehne', 'kuehne-nagel', 'dsv', 'panalpina',
+    'expeditors', 'db-schenker', 'schenker', 'nipponexpress',
+    'yusen', 'kintetsu', 'ceva', 'agility', 'geodis', 'bollore',
+    'wanhai', 'yangming', 'zim', 'pilship', 'one-line', 'apl',
+    'hyundai-mm', 'sealand', 'safmarine',
 )
 
 
