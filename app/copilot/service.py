@@ -26,6 +26,7 @@ from app.access import scope as scope_mod
 from app.copilot import intents as catalogue
 from app.copilot import model as model_mod
 from app.copilot import queries as _queries          # noqa: F401 — registers
+from app.copilot import vocabulary
 from app.models import copilot as _copilot_model    # noqa: F401 — table
 
 
@@ -59,7 +60,7 @@ class Answer:
         return d
 
 
-def ask(question, *, sc=None, history=None, actor=None):
+def ask(question, *, sc=None, history=None, actor=None, context=None):
     """The whole pipeline. Never raises: a failure is an answer too."""
     started = time.time()
     sc = sc or scope_mod.current()
@@ -88,8 +89,17 @@ def ask(question, *, sc=None, history=None, actor=None):
         answer.log_id = _audit(question, answer, sc, actor=actor)
         return answer
 
+    params = dict(params or {})
+    if context:
+        # §6.3 — the record the panel was opened on. It only ever
+        # narrows: the handler still resolves it through a scoped query,
+        # so a context chip cannot reach a record the viewer may not see.
+        params.setdefault('context', context)
+        if context.get('type') == 'lead' and context.get('id'):
+            params.setdefault('lead_id', context['id'])
+
     try:
-        result = intent.handler(sc, params or {})
+        result = intent.handler(sc, params)
     except Exception:
         _log_exception(intent.key)
         result = catalogue.Result(
@@ -142,6 +152,10 @@ _PATTERNS = [
     (r'\b(open|active)\s+leads?\b', 'leads_open', {}),
     (r'\bleads?\b.*\bno (follow.?up|next action)\b',
      'leads_no_next_action', {}),
+    # §6.3 names these three as the same question, so they resolve to
+    # the same intent: "pending quote" is the canonical form the
+    # vocabulary folds the others into.
+    (r'\bpending quote\b', 'rfqs_unquoted', {}),
     (r'\brfq.*\b(not (yet )?quoted|unquoted|pending quot)',
      'rfqs_unquoted', {}),
     (r'\b(unquoted|not quoted)\b.*\brfq', 'rfqs_unquoted', {}),
@@ -177,6 +191,18 @@ _PATTERNS = [
      'next_best_action', {}),
     (r'^\s*(search|find|look ?up|show me)\b', 'universal_search',
      {'_capture': 'term'}),
+    # ── Phase 4 · §8 ────────────────────────────────────────────────
+    (r'\b(latest|last|recent)\b.*\bemail\b', 'thread_summary', {}),
+    (r'\bemail (thread|trail|chain)\b', 'thread_summary', {}),
+    (r'\bwhat did the (customer|client) (ask|say|want)\b',
+     'thread_summary', {}),
+    (r'\battachment|\bboq\b|\bcargo list\b|\benquiry sheet\b',
+     'attachment_contents', {}),
+    (r'\b(summar\w+|brief me on|360)\b.*\b(this )?lead\b', 'lead_360', {}),
+    (r'\blead 360\b', 'lead_360', {}),
+    (r'\b(summar\w+|brief me on)\b.*\b(this )?account\b',
+     'account_360', {'_capture': 'account'}),
+    (r'\baccount 360\b', 'account_360', {'_capture': 'account'}),
 ]
 
 #: "50 lakh", "1 crore", "5000000" — the way an Indian logistics quote
@@ -221,7 +247,10 @@ def _search_term(question):
 
 
 def _match_patterns(question):
-    q = ' ' + (question or '').lower().strip() + ' '
+    # §7 — fold synonyms and expand abbreviations first, so one pattern
+    # covers "pending quote", "quotations pending with me" and "RFQ I
+    # have not quoted" without three entries in the list.
+    q = ' ' + vocabulary.expand(question) + ' '
     for rx, key, spec in _PATTERNS:
         if not re.search(rx, q):
             continue
@@ -268,6 +297,9 @@ _LEADING = re.compile(
     r'(?:quote|price|rate|offer)(?:\s+(?:to|for))?'
     r'|last\s+(?:quote|price|rate)\s+(?:we\s+)?(?:gave|sent|quoted)?'
     r'(?:\s+(?:to|for))?'
+    r'|(?:summari[sz]e|brief\s+me\s+on|tell\s+me\s+about)'
+    r'(?:\s+the)?(?:\s+account)?'
+    r'|account\s*360\s*(?:for)?'
     r'|who\s+(?:handles|owns|manages|is\s+the\s+pic\s+for)'
     r'|(?:do|did|have)\s+we\s+(?:ever\s+)?work(?:ed)?\s+with'
     r'|(?:is|are|do\s+we|does|have\s+we)'
@@ -277,7 +309,7 @@ _LEADING = re.compile(
 #: is deliberately not here — stripping it as a suffix ate the name.
 _TRAILING = re.compile(
     r'\s*\b(?:already|handled|a\s+customer|an?\s+account|a\s+client|'
-    r'in\s+the\s+crm)\b.*$', re.IGNORECASE)
+    r'in\s+the\s+crm|account|\'s\s+account)\b.*$', re.IGNORECASE)
 
 #: What is left when the strip has eaten everything but filler.
 _NOT_A_NAME = {'', 'the', 'a', 'an', 'them', 'it', 'this', 'that',

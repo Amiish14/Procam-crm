@@ -956,3 +956,276 @@ def next_best_action(scope, params):
                   rows=rows, figures={'count': len(scored)},
                   sources=['leads.updated_at', 'leads.followup_date',
                            'leads.stage'])
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  PHASE 4  ·  DOCUMENT AND EMAIL INTELLIGENCE  ·  §8
+# ══════════════════════════════════════════════════════════════════════
+#
+# The one place record text reaches the model. It is wrapped and
+# labelled untrusted, but the defence that matters is structural: the
+# rows were selected by a scoped query before any text was read, so an
+# instruction inside an email cannot widen what was retrieved.
+
+def _resolve_lead(scope, params):
+    """The lead a question is about — by id, by context, or by name."""
+    from app import Lead
+
+    lead_id = params.get('lead_id') or (params.get('context') or {}).get('id')
+    if lead_id:
+        lead = sc_mod.leads(sc=scope).filter(Lead.id == int(lead_id)).first()
+        if lead:
+            return lead
+        return None
+    name = (params.get('account') or params.get('lead') or '').strip()
+    if not name:
+        return None
+    return (sc_mod.leads(sc=scope)
+            .filter(Lead.company.ilike(f'%{name}%'))
+            .order_by(Lead.updated_at.desc().nullslast()).first())
+
+
+@intent('thread_summary', 'What the customer last asked',
+        params={'lead_id': 'the lead in context',
+                'account': 'or the customer name'},
+        personas=('sales', 'head'), phase=4,
+        examples=('what did the customer ask in the latest email',
+                  'summarise the email thread', 'what was the last email'))
+def thread_summary(scope, params):
+    """§8 — so nobody reads twenty mails to find the question."""
+    from app import LeadEmail
+
+    lead = _resolve_lead(scope, params)
+    if lead is None:
+        return Result(headline='Which lead? Open one, or name the customer.',
+                      empty=True)
+
+    # The lead was already resolved through a scoped query, so its
+    # emails are in scope by construction and this filter changes
+    # nothing today. Kept as defence in depth: it is what stops a future
+    # caller that resolves the lead some other way from leaking a trail.
+    trail = (sc_mod.emails(sc=scope)
+             .filter(LeadEmail.lead_id == lead.id)
+             .order_by(LeadEmail.sent_or_received_at.desc().nullslast())
+             .limit(20).all())
+    if not trail:
+        original = (lead.original_email_body or '').strip()
+        if not original:
+            return Result(
+                headline=f'No email recorded against {lead.company}.',
+                empty=True, sources=['lead_emails'])
+        return Result(
+            headline=f'{lead.company} — the original enquiry, no reply '
+                     f'trail recorded.',
+            rows=[{'Direction': 'inbound',
+                   'When': str(lead.original_email_received_at or '')[:10],
+                   'Text': original[:600]}],
+            columns=['Direction', 'When', 'Text'],
+            sources=['leads.original_email_body'])
+
+    inbound = [e for e in trail if (e.direction or '') == 'inbound']
+    latest = inbound[0] if inbound else trail[0]
+    rows = [{'Direction': e.direction or '—',
+             'When': str(e.sent_or_received_at or '')[:16],
+             'From': e.from_addr or '—',
+             'Subject': (e.subject or '')[:80],
+             'Text': (e.body or '')[:400]}
+            for e in trail[:8]]
+    return Result(
+        headline=(f'{lead.company} — {len(trail)} message(s), the latest '
+                  f'inbound on {str(latest.sent_or_received_at or "")[:10]}.'),
+        columns=['Direction', 'When', 'From', 'Subject', 'Text'], rows=rows,
+        figures={'messages': len(trail), 'inbound': len(inbound)},
+        notes=(['Showing the most recent 8 of '
+                f'{len(trail)}.'] if len(trail) > 8 else []),
+        sources=[f'Email trail on lead #{lead.id}'])
+
+
+@intent('attachment_contents', 'What is in the attachments',
+        params={'lead_id': 'the lead in context',
+                'account': 'or the customer name'},
+        personas=('sales', 'head', 'ops'), phase=4,
+        examples=('what is in the attachment', 'read the RFQ attachment',
+                  'what does the BOQ say', 'what weight is in the cargo list'))
+def attachment_contents(scope, params):
+    """§8 — the requirement is usually in the spreadsheet, not the body."""
+    from app import LeadAttachment
+    from app.services import attachment_text
+
+    lead = _resolve_lead(scope, params)
+    if lead is None:
+        return Result(headline='Which lead? Open one, or name the customer.',
+                      empty=True)
+
+    rows = (LeadAttachment.query.filter_by(lead_id=lead.id).limit(12).all())
+    if not rows:
+        return Result(headline=f'No attachments on {lead.company}.',
+                      empty=True, sources=['lead_attachments'])
+
+    readable, unread = [], []
+    for att in rows:
+        name = getattr(att, 'filename', None) or getattr(
+            att, 'original_name', '') or f'attachment {att.id}'
+        text = attachment_text.extract(getattr(att, 'storage_path', '') or '')
+        if text:
+            readable.append({'File': name, 'Extract': text[:700]})
+        else:
+            unread.append(name)
+
+    notes = []
+    if unread:
+        notes.append('Could not read: ' + ', '.join(unread[:6]) + '.')
+    if not attachment_text.pdf_supported():
+        notes.append('PDF reading is unavailable on this host — install '
+                     'pypdf to include them.')
+    if not readable:
+        return Result(
+            headline=(f'{len(rows)} attachment(s) on {lead.company}, none '
+                      f'readable as text.'),
+            empty=True, notes=notes, sources=['lead_attachments'])
+
+    return Result(
+        headline=f'Read {len(readable)} of {len(rows)} attachment(s) on '
+                 f'{lead.company}.',
+        columns=['File', 'Extract'], rows=readable,
+        figures={'readable': len(readable), 'total': len(rows)},
+        notes=notes,
+        sources=[f'Attachments on lead #{lead.id}'])
+
+
+@intent('lead_360', 'Summarise this lead',
+        params={'lead_id': 'the lead in context',
+                'account': 'or the customer name'},
+        personas=('sales', 'head'), phase=3,
+        examples=('summarise this lead', 'brief me on this lead',
+                  'lead 360', "what's the story with this lead"))
+def lead_360(scope, params):
+    """§5's meeting-prep answer: everything about one lead, assembled.
+
+    The model narrates the assembly. Every fact in it is a column read
+    here, so there is nothing for it to invent.
+    """
+    from app import LeadActivity, LeadEmail
+    from app.models.quote import Quote
+
+    lead = _resolve_lead(scope, params)
+    if lead is None:
+        return Result(headline='Which lead? Open one, or name the customer.',
+                      empty=True)
+
+    facts = [
+        {'Fact': 'Stage', 'Value': lead.stage or '—'},
+        {'Fact': 'Value', 'Value': _money(lead.estimated_value_inr)},
+        {'Fact': 'Owner', 'Value': lead.assigned_to or 'unassigned'},
+    ]
+    if lead.secondary_owner:
+        facts.append({'Fact': 'Secondary PIC', 'Value': lead.secondary_owner})
+    if lead.procam_vertical:
+        facts.append({'Fact': 'Vertical', 'Value': lead.procam_vertical})
+
+    last_act = (sc_mod.activities(sc=scope)
+                .filter(LeadActivity.lead_id == lead.id)
+                .order_by(LeadActivity.occurred_at.desc().nullslast())
+                .first())
+    facts.append({'Fact': 'Last activity',
+                  'Value': (f'{last_act.kind} · '
+                            f'{str(last_act.occurred_at or "")[:10]}')
+                  if last_act else 'none recorded'})
+
+    quotes_n = (sc_mod.quotes(sc=scope)
+                .filter(Quote.lead_id == lead.id).count()
+                if scope.can('module.quotes') else None)
+    if quotes_n is not None:
+        facts.append({'Fact': 'Quotes', 'Value': str(quotes_n)})
+
+    mails = (sc_mod.emails(sc=scope)
+             .filter(LeadEmail.lead_id == lead.id).count())
+    facts.append({'Fact': 'Emails on file', 'Value': str(mails)})
+
+    facts.append({'Fact': 'Next action',
+                  'Value': (str(lead.followup_date)
+                            if lead.followup_date else
+                            'none recorded — worth setting one')})
+
+    notes = []
+    if not lead.followup_date and (lead.stage or '') not in _TERMINAL:
+        notes.append('Open lead with no follow-up date recorded.')
+    if not last_act:
+        notes.append('No activity has ever been logged against this lead.')
+
+    return Result(
+        headline=(f'{lead.company} — {lead.stage}, '
+                  f'{_money(lead.estimated_value_inr)}, owned by '
+                  f'{lead.assigned_to or "nobody"}.'),
+        columns=['Fact', 'Value'], rows=facts, notes=notes,
+        figures={'lead_id': lead.id},
+        sources=[f'Lead #{lead.id}', 'lead_activities', 'quotes',
+                 'lead_emails'])
+
+
+@intent('account_360', 'Summarise this account',
+        permission='reports.accounts',
+        params={'account': 'the customer name'},
+        personas=('head', 'mgmt', 'ops'), phase=3,
+        examples=('summarise Tata Steel', 'brief me on JSW',
+                  'account 360 for Godrej'))
+def account_360(scope, params):
+    from app import Contact, Employee, Lead, Opportunity
+    from app.models.quote import Quote
+
+    name = (params.get('account') or '').strip()
+    company = _resolve_company(name) if name else None
+    if company is None:
+        return Result(headline=f'No account matching "{name}".', empty=True,
+                      sources=['companies.name'])
+
+    def who(code):
+        if not code:
+            return '—'
+        e = Employee.query.filter_by(emp_code=code).first()
+        return e.name if e else code
+
+    opps = (sc_mod.opportunities(sc=scope)
+            .filter(Opportunity.company_id == company.id).all())
+    open_opps = [o for o in opps if (o.stage or '') not in _TERMINAL]
+    won = [o for o in opps if (o.stage or '') == 'Won']
+    leads_n = (sc_mod.leads(sc=scope)
+               .filter(Lead.company_id == company.id).count())
+    contacts_n = Contact.query.filter_by(company_id=company.id).count()
+
+    facts = [
+        {'Fact': 'Owner', 'Value': who(company.pic_emp_code)},
+        {'Fact': 'Secondary PIC',
+         'Value': who(company.secondary_pic_emp_code)},
+        {'Fact': 'Vertical', 'Value': company.vertical or '—'},
+        {'Fact': 'Contacts', 'Value': str(contacts_n)},
+        {'Fact': 'Leads', 'Value': str(leads_n)},
+        {'Fact': 'Open opportunities',
+         'Value': f'{len(open_opps)} · '
+                  f'{_money(sum(float(o.value_inr or 0) for o in open_opps))}'},
+        {'Fact': 'Won',
+         'Value': f'{len(won)} · '
+                  f'{_money(sum(float(o.value_inr or 0) for o in won))}'},
+        {'Fact': 'Last activity',
+         'Value': str(company.last_activity_at or '')[:10] or 'never'},
+    ]
+    if scope.can('module.quotes'):
+        last_q = (sc_mod.quotes(sc=scope)
+                  .filter(Quote.account_id == company.id)
+                  .order_by(Quote.quote_date.desc()).first())
+        facts.append({'Fact': 'Last quote',
+                      'Value': (f'{last_q.quote_number} · '
+                                f'{_money(last_q.total_amount)} · '
+                                f'{str(last_q.quote_date or "")[:10]}')
+                      if last_q else 'none'})
+
+    notes = []
+    if not company.pic_emp_code:
+        notes.append('No owner configured — leads from this account cannot '
+                     'auto-assign.')
+    return Result(
+        headline=(f'{company.name} — {len(open_opps)} open opportunity(s), '
+                  f'{len(won)} won, owned by {who(company.pic_emp_code)}.'),
+        columns=['Fact', 'Value'], rows=facts, notes=notes,
+        figures={'open': len(open_opps), 'won': len(won)},
+        sources=['Account Master', 'opportunities', 'quotes'])

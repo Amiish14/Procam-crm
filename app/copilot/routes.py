@@ -34,8 +34,10 @@ def api_ask():
     if not _authed():
         return jsonify(ok=False, error='Not authenticated'), 401
     d = request.get_json(silent=True) or {}
+    ctx = d.get('context')
     answer = svc.ask((d.get('q') or '')[:1000],
                      history=d.get('history') or [],
+                     context=ctx if isinstance(ctx, dict) else None,
                      actor=_actor())
     return jsonify(ok=True, **answer.to_dict())
 
