@@ -243,6 +243,25 @@ def test_not_a_duplicate_is_refused_for_mail_never_held_as_one(world):
     assert _get(cid).created_lead_id is None
 
 
+def test_the_same_email_seen_twice_cannot_become_a_second_lead(world):
+    cid = _held_duplicate(world)
+    message_id = _get(cid).message_id
+    with flask_app.app_context():
+        lead = db.session.get(Lead, world['target'])
+        lead.email_message_id = message_id
+        db.session.commit()
+    try:
+        r = world['admin'].post(f'/api/intake/review/{cid}/accept',
+                                json={'reason': 'Not a duplicate'})
+        assert r.status_code == 400
+        assert f'#{world["target"]}' in r.get_json()['error']
+        assert _get(cid).created_lead_id is None
+    finally:
+        with flask_app.app_context():
+            db.session.get(Lead, world['target']).email_message_id = None
+            db.session.commit()
+
+
 def test_an_unknown_acceptance_reason_is_refused(world):
     cid = _row()
     r = world['admin'].post(f'/api/intake/review/{cid}/accept',

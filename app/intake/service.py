@@ -371,6 +371,15 @@ def accept(classification_id, *, actor=None, reason=None):
     if reason == NOT_A_DUPLICATE and not _duplicate_suspected(row):
         return None, ('This email was not held as a duplicate — accept it '
                       'as a lead instead.')
+    if row.message_id:
+        # The same email seen twice is the one duplicate that cannot be
+        # overruled: a lead's message id is unique, and a second lead
+        # from one email is exactly what the check exists to prevent.
+        existing = (Lead.query.with_entities(Lead.id)
+                    .filter(Lead.email_message_id == row.message_id).first())
+        if existing:
+            return None, (f'This exact email already created lead '
+                          f'#{existing[0]} — open that lead instead.')
 
     payload = dict(row.payload or {})
     sender_addr = payload.get('resolved_sender') or row.from_addr or ''
