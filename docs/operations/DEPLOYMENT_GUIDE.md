@@ -90,6 +90,58 @@ does not break pages):
 
 The production-readiness release adds **no** migrations.
 
+### Release notes — production hardening (2026-10)
+
+**Before `git pull` — private data files.** This release removes three
+files holding personal data from the repository. `git pull` deletes them
+from the server's working tree. Copy them first:
+
+```bash
+cd /var/www/procam-crm
+mkdir -p data/private && chmod 700 data/private
+cp -p data/employee_directory.csv data/employee_emails_2026_09_02.txt data/private/ 2>/dev/null
+cp -p data/imports/*backlog*.xlsx data/private/presales_backlog.xlsx 2>/dev/null
+ls -l data/private/
+```
+
+**Migration** (after the backup and pull):
+
+```bash
+.venv/bin/python scripts/2026_10_04_production_hardening.py --check
+.venv/bin/python scripts/2026_10_04_production_hardening.py
+```
+
+It adds `audit_events`, `data_quality_snapshots`, sign-in and session
+columns on `employees`, Vendor Master columns on `vendor_domains`, and
+lead/contact/opportunity indexes. The boot creates the same, so the
+order is not critical.
+
+**Behaviour users will notice**
+
+- The Content Security Policy is enforced. If a page stops loading a
+  script or image, set `CSP_MODE=report-only` in `.env`, restart, and
+  report the page.
+- Sessions: role changes apply at once; password resets and
+  deactivation end sessions; eight wrong passwords lock an account for
+  15 minutes.
+- Access follows the Access Matrix everywhere, including pre-sales, RFQ,
+  quote, handover and Company 360 views. Check the matrix for anyone who
+  relied on the role name alone.
+- Operations and Finance departments see all handovers; others see
+  handovers of their deals. Grant **All handovers** in the matrix if
+  someone else needs the whole queue.
+
+**After the restart**
+
+```bash
+.venv/bin/python scripts/build_copilot_index.py
+.venv/bin/python scripts/production_preflight.py
+.venv/bin/python scripts/ops_status.py --no-network
+```
+
+Install the new timers (`procam-crm-ops-status`, `procam-crm-dq-snapshot`)
+from `docs/operations/deploy/`.
+
 ## 5. Server — restart and verify
 
 ```bash
