@@ -6,6 +6,10 @@ checks is read-only.
 
 ## Daily (5 minutes, morning)
 
+Start at **/CRM/admin/ops** (or `.venv/bin/python scripts/ops_status.py`):
+most of the checks below in one report, refreshed every 10 minutes. What each
+line means and what to do about it: [Monitoring Guide](MONITORING_GUIDE.md).
+
 ```bash
 cd /var/www/procam-crm
 systemctl is-active procam-crm                                   # active
@@ -71,6 +75,7 @@ df -h /var/www
 | procam-crm-copilot-index | 02:15 daily | `journalctl -u procam-crm-copilot-index -n 5` |
 | procam-crm-graph-subscription | every 12 h | subscription expiry > 1 day (`subscribe_leads_mailbox.py` lists it) |
 | procam-crm-sla-sweep | every 15 min | `journalctl -u procam-crm-sla-sweep -n 5` |
+| procam-crm-ops-status | every 10 min | /CRM/admin/ops report age under 30 min |
 
 Templates and install steps: [deploy/](deploy/).
 

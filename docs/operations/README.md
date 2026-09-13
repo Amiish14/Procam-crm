@@ -5,6 +5,7 @@ For the people who deploy, run and support the CRM on the production VM.
 | Guide | Use it when |
 |---|---|
 | [Production Runbook](PRODUCTION_RUNBOOK.md) | Daily and weekly checks; the first page to open |
+| [Monitoring Guide](MONITORING_GUIDE.md) | What /CRM/admin/ops and `ops_status.py` check, thresholds, what to do on WARN/FAIL, wiring alerts |
 | [Deployment Guide](DEPLOYMENT_GUIDE.md) | Shipping a new version to the server |
 | [Backup Guide](BACKUP_GUIDE.md) | Taking, checking and keeping backups |
 | [Rollback Guide](ROLLBACK_GUIDE.md) | A deploy went wrong |
