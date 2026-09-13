@@ -1580,11 +1580,49 @@ def _refuse_super_target(emp):
     return None
 
 
+def _matrix_can(perm):
+    """The Access Matrix, asked from app.py. Legacy checks here used the
+    role name; the matrix is the one authority on who may do what."""
+    from app.access.service import can
+    return can(perm)
+
+
+def _scope_reaches(emp_code):
+    """Whether the signed-in user's data scope covers this owner."""
+    from app.access import scope as _scope
+    sc = _scope.current()
+    return sc.codes is None or sc.reaches(emp_code or '')
+
+
+def _scope_is_own():
+    from app.access import scope as _scope
+    codes = _scope.current().codes
+    return codes is not None and len(codes) <= 1
+
+
+def require_permission(perm):
+    """Route decorator: the signed-in user must hold ``perm``."""
+    from functools import wraps
+
+    def deco(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            if not _matrix_can(perm):
+                return jsonify({'error': 'You do not have access to this. '
+                                         'Ask an administrator.',
+                                'need': perm}), 403
+            return f(*args, **kwargs)
+        return decorated
+    return deco
+
+
 def require_admin(f):
+    """Kept for compatibility; routes now name the permission they need
+    (require_permission). This asks the matrix for access administration."""
     from functools import wraps
     @wraps(f)
     def decorated(*args, **kwargs):
-        if session.get('role') not in ('admin',):
+        if not _matrix_can('admin.access'):
             return jsonify({'error': 'Admin access required'}), 403
         return f(*args, **kwargs)
     return decorated
@@ -1616,7 +1654,7 @@ def api_me():
 @app.route('/api/employees', methods=['GET'])
 @require_auth
 def api_employees():
-    if session.get('role') != 'admin':
+    if not _matrix_can('admin.employees'):
         # Non-admins: only get list of names for assignment dropdowns
         emps = Employee.query.filter_by(is_active=True).with_entities(
             Employee.emp_code, Employee.name, Employee.vertical, Employee.role).all()
@@ -1627,7 +1665,7 @@ def api_employees():
 
 @app.route('/api/employees', methods=['POST'])
 @require_auth
-@require_admin
+@require_permission('admin.employees')
 def api_create_employee():
     d = request.get_json()
     # Validate emp_code unique
@@ -1636,7 +1674,9 @@ def api_create_employee():
     emp = Employee(
         emp_code    = d['emp_code'].upper().strip(),
         name        = d['name'].strip(),
-        email       = d.get('email','').strip(),
+        # Empty is stored as no email: email is unique, and a second
+        # employee created without one used to fail with a server error.
+        email       = (d.get('email') or '').strip() or None,
         mobile      = d.get('mobile','').strip(),
         department  = d.get('department',''),
         designation = d.get('designation',''),
@@ -1661,7 +1701,7 @@ def api_create_employee():
 
 @app.route('/api/employees/<int:eid>', methods=['PUT'])
 @require_auth
-@require_admin
+@require_permission('admin.employees')
 def api_update_employee(eid):
     emp = Employee.query.get_or_404(eid)
     refused = _refuse_super_target(emp)
@@ -1701,7 +1741,7 @@ def api_update_employee(eid):
 
 @app.route('/api/employees/<int:eid>', methods=['DELETE'])
 @require_auth
-@require_admin
+@require_permission('admin.employees')
 def api_deactivate_employee(eid):
     emp = Employee.query.get_or_404(eid)
     refused = _refuse_super_target(emp)
@@ -1883,7 +1923,7 @@ def api_create_lead():
     d = request.get_json()
     emp = Employee.query.filter_by(emp_code=session['emp_code']).first()
     requested = d.get('assigned_to') or session['emp_code']
-    if requested != session['emp_code'] and session.get('role') != 'admin':
+    if requested != session['emp_code'] and not _matrix_can('admin.triage'):
         return jsonify({'error': 'Only admin can assign leads to another rep'}), 403
     assigned_to = requested
     lead = Lead(
@@ -2028,7 +2068,7 @@ def api_update_lead(lid):
     # the validation, the history row and the notifications cannot be
     # skipped by taking a different endpoint.
     if ('assigned_to' in d or 'secondary_owner' in d) \
-            and session.get('role') == 'admin':
+            and _matrix_can('admin.triage'):
         from app.services import lead_assignment
         # §16 — the reason rides along with the change, into the same
         # history row, so the two can never drift apart.
@@ -2188,7 +2228,7 @@ def api_lead_attachment_download(lid, aid):
 
 @app.route('/api/leads/bulk-assign', methods=['POST'])
 @require_auth
-@require_admin
+@require_permission('admin.triage')
 def api_bulk_assign():
     from app.services import lead_assignment
     d = request.get_json()
@@ -2243,7 +2283,7 @@ def api_bulk_assign():
 @require_auth
 def api_import_leads():
     """Bulk import from Excel parse results."""
-    if session.get('role') != 'admin':
+    if not _matrix_can('admin.master'):
         return jsonify({'error': 'Admin only'}), 403
     rows = request.get_json()
     emp = Employee.query.filter_by(emp_code=session['emp_code']).first()
@@ -2520,8 +2560,7 @@ def api_opp_convert_to_project(oid):
     opp = Opportunity.query.get_or_404(oid)
     # Same rule as PUT /api/opportunities/<id>: stamping a TMS project on
     # someone else's deal is an edit of it.
-    if session.get('role') != 'admin' and \
-            opp.owner_emp_code != session.get('emp_code'):
+    if not _scope_reaches(opp.owner_emp_code):
         return jsonify({'ok': False, 'error': 'Forbidden'}), 403
     if opp.stage != 'Won':
         return jsonify({'ok': False,
@@ -2734,7 +2773,7 @@ def api_delete_contact(cid):
 
 @app.route('/api/news', methods=['GET'])
 @require_auth
-@require_admin
+@require_permission('admin.master')
 def api_news():
     status = request.args.get('status','')
     q = NewsItem.query
@@ -2744,7 +2783,7 @@ def api_news():
 
 @app.route('/api/news/fetch', methods=['POST'])
 @require_auth
-@require_admin
+@require_permission('admin.master')
 def api_news_fetch():
     """Fetch and parse industry-relevant emails from Outlook via MS Graph.
     Called daily at 7am (or manually by admin). Uses the MS365 token from session/env."""
@@ -2802,7 +2841,7 @@ def _fetch_news_from_outlook():
 
 @app.route('/api/news/<int:nid>/action', methods=['POST'])
 @require_auth
-@require_admin
+@require_permission('admin.master')
 def api_news_action(nid):
     item = NewsItem.query.get_or_404(nid)
     d = request.get_json()
@@ -2833,7 +2872,7 @@ def api_news_action(nid):
 
 @app.route('/api/news/seed', methods=['POST'])
 @require_auth
-@require_admin
+@require_permission('admin.master')
 def api_news_seed():
     """Seed with real ETManufacturing data already fetched from Outlook."""
     ET_NEWS = [
@@ -2899,7 +2938,7 @@ def api_stats():
             verticals[l.procam_vertical] = verticals.get(l.procam_vertical, 0) + 1
     # Team stats (admin only)
     team_stats = []
-    if session.get('role') == 'admin':
+    if _matrix_can('reports.action'):
         emps = Employee.query.filter_by(is_active=True).all()
         for emp in emps:
             el = Lead.query.filter_by(assigned_to=emp.emp_code).all()
@@ -3216,7 +3255,7 @@ def api_my_work():
 
     return jsonify({
         'ok': True,
-        'scope': ('team' if session.get('role') == 'admin' else 'mine'),
+        'scope': ('mine' if _scope_is_own() else 'team'),
         'as_of': str(today),
         'pending': {
             'open_leads':      _count(mine),
@@ -3277,8 +3316,10 @@ def api_dashboard_options():
                          .filter(Employee.emp_code.in_(allowed))
                          .filter_by(is_active=True)
                          .order_by(Employee.name).all()]
-    if session.get('role') != 'admin':
-        # Non-admin only sees themselves (still exposes their own emp_code, which they know).
+    from app.access import scope as _scope
+    if _scope.current().codes is not None and \
+            len(_scope.current().codes) <= 1:
+        # Own scope sees only themselves (their own emp_code, which they know).
         my_code = session.get('emp_code')
         pic_list = [p for p in pic_list if p['emp_code'] == my_code]
     return jsonify({
@@ -3450,7 +3491,8 @@ def api_update_company(cid):
 
 
 @app.route('/api/companies/<int:cid>', methods=['DELETE'])
-@require_admin
+@require_auth
+@require_permission('admin.master')
 def api_delete_company(cid):
     c = Company.query.get_or_404(cid)
     c.is_active = False
@@ -3503,7 +3545,7 @@ def api_update_agent(aid):
 
 @app.route('/api/agents/<int:aid>', methods=['DELETE'])
 @require_auth
-@require_admin
+@require_permission('admin.master')
 def api_delete_agent(aid):
     a = OverseasAgent.query.get_or_404(aid)
     a.is_active = False
@@ -3551,7 +3593,8 @@ def api_create_opportunity():
             try: return datetime.strptime(v, '%Y-%m-%d').date()
             except (ValueError, TypeError): return None
         requested_owner = d.get('owner_emp_code') or session.get('emp_code')
-        if requested_owner != session.get('emp_code') and session.get('role') != 'admin':
+        if requested_owner != session.get('emp_code') and \
+                not _matrix_can('admin.triage'):
             return jsonify({'error': 'Only admin can assign opportunity ownership to another rep'}), 403
         opp = Opportunity(
             opp_number=opp_no, lead_id=d.get('lead_id'),
@@ -3583,13 +3626,13 @@ def api_create_opportunity():
 @require_auth
 def api_update_opportunity(oid):
     o = Opportunity.query.get_or_404(oid)
-    if session.get('role') != 'admin' and o.owner_emp_code != session.get('emp_code'):
+    if not _scope_reaches(o.owner_emp_code):
         return jsonify({'error': 'Forbidden'}), 403
     _old_stage_opp = o.stage
     d = request.get_json(force=True) or {}
     # owner_emp_code is a privileged transfer — admin only.
     if 'owner_emp_code' in d and d['owner_emp_code'] != o.owner_emp_code:
-        if session.get('role') != 'admin':
+        if not _matrix_can('admin.triage'):
             return jsonify({'error': 'Only admin can transfer opportunity ownership'}), 403
     for f in ('title', 'stage', 'value_inr', 'currency', 'probability',
               'owner_emp_code', 'notes', 'lost_reason'):
@@ -4237,8 +4280,8 @@ def api_leads_import_commit():
     batch = ImportBatch.query.get_or_404(d.get('batch_id'))
     # Batch ids are sequential. Without this, anyone could commit a sheet
     # another person uploaded — and the leads land assigned to them.
-    if session.get('role') != 'admin' and \
-            batch.created_by != session.get('emp_code'):
+    if batch.created_by != session.get('emp_code') and \
+            not _matrix_can('admin.master'):
         return jsonify({'error': 'Import batch not found'}), 404
     if batch.committed:
         return jsonify({'error': 'Batch already committed'}), 400
@@ -4637,7 +4680,7 @@ def api_kpi_settings():
 @require_auth
 def api_kpi_targets():
     """List (GET) or create/upsert (POST) KPI targets. Admin only."""
-    if session.get('role') != 'admin' and request.method == 'POST':
+    if request.method == 'POST' and not _matrix_can('admin.master'):
         return jsonify({'ok': False, 'error': 'admin only'}), 403
     from sqlalchemy import text as _sql
     if request.method == 'GET':
@@ -4810,7 +4853,7 @@ def api_email_subscribe():
     """Admin-only: create the Graph subscription that ties the mailbox
     to the webhook URL. Called once after CRM_INBOX_EMAIL is configured,
     then whenever a subscription expires (every ~3 days)."""
-    if session.get('role') != 'admin':
+    if not _matrix_can('admin.email'):
         return jsonify(ok=False, error='admin only'), 403
     try:
         from email_ingest import subscription as _sub
@@ -4827,7 +4870,7 @@ def api_email_subscribe():
 
 @app.route('/api/email/subscribe/renew/<sub_id>', methods=['POST'])
 def api_email_subscribe_renew(sub_id):
-    if session.get('role') != 'admin':
+    if not _matrix_can('admin.email'):
         return jsonify(ok=False, error='admin only'), 403
     try:
         from email_ingest import subscription as _sub
@@ -4844,7 +4887,7 @@ def api_email_subscribe_renew(sub_id):
 
 @app.route('/api/email/subscriptions')
 def api_email_subscriptions_list():
-    if session.get('role') != 'admin':
+    if not _matrix_can('admin.email'):
         return jsonify(ok=False, error='admin only'), 403
     try:
         from email_ingest import subscription as _sub
@@ -4867,7 +4910,7 @@ def api_email_subscriptions_list():
 def api_email_inbox():
     """Admin visibility of every notification received on the mailbox.
     Filter by ?status=lead_created (or skipped / failed / ...)."""
-    if session.get('role') != 'admin':
+    if not _matrix_can('admin.email'):
         return jsonify(ok=False, error='admin only'), 403
     q = EmailEvent.query
     st = (request.args.get('status') or '').strip().lower()
@@ -4884,7 +4927,7 @@ def api_email_inbox():
 
 @app.route('/api/email/inbox/<int:evt_id>')
 def api_email_inbox_detail(evt_id):
-    if session.get('role') != 'admin':
+    if not _matrix_can('admin.email'):
         return jsonify(ok=False, error='admin only'), 403
     evt = EmailEvent.query.get_or_404(evt_id)
     out = evt.to_dict()
@@ -4905,7 +4948,7 @@ def api_email_inbox_retry(evt_id):
                      pic, etc.). Safe backfill for leads created before the
                      enricher deploy.
     """
-    if session.get('role') != 'admin':
+    if not _matrix_can('admin.email'):
         return jsonify(ok=False, error='admin only'), 403
     evt = EmailEvent.query.get_or_404(evt_id)
     if not evt.internet_message_id or not evt.mailbox:

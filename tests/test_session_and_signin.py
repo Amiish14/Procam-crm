@@ -197,7 +197,7 @@ def test_a_demotion_takes_effect_on_the_next_request():
     assert c.get('/api/news').status_code == 200          # admin-only
     with flask_app.app_context():
         e = db.session.get(Employee, eid)
-        e.role = 'user'
+        e.role, e.is_super_admin = 'user', False
         db.session.commit()
     assert c.get('/api/news').status_code == 403
 
