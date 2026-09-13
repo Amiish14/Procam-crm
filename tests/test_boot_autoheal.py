@@ -47,3 +47,25 @@ def test_boot_adds_the_columns_a_stale_database_is_missing():
     db.close()
     assert {'vertical_confidence', 'vertical_reason'} <= leads
     assert 'revisions' in notes
+
+
+def test_a_table_not_created_yet_is_not_reported_as_a_failure():
+    """copilot_log is created by its migration, not by create_all, so a
+    database that has not run that migration has no table to heal. The
+    boot used to log "autoheal FAILED copilot_log.answer" there — a false
+    alarm on a healthy database, and the kind that teaches people to
+    ignore the real ones."""
+    path = os.path.join(tempfile.mkdtemp(), 'fresh.db')
+    env = dict(os.environ, DATABASE_URL='sqlite:///' + path,
+               SECRET_KEY='test', ADMIN_INITIAL_PASSWORD='BootTestOnly12345',
+               SESSION_COOKIE_SECURE='false')
+    boot = [sys.executable, '-c', 'import app']
+    subprocess.run(boot, cwd=_ROOT, env=env, check=True,
+                   capture_output=True, timeout=120)
+    db = sqlite3.connect(path)
+    db.execute('DROP TABLE IF EXISTS copilot_log')
+    db.commit()
+    db.close()
+    out = subprocess.run(boot, cwd=_ROOT, env=env, check=True,
+                         capture_output=True, text=True, timeout=120)
+    assert 'autoheal FAILED' not in out.stdout + out.stderr, out.stderr[-500:]

@@ -3875,6 +3875,11 @@ def init_db():
                 except Exception as exc2:
                     db.session.rollback()
                     msg = str(exc2).lower()
+                    # A table that does not exist yet is not a failure:
+                    # the script that creates it creates the column too
+                    # (copilot_log before its migration has run).
+                    if 'no such table' in msg or 'does not exist' in msg:
+                        continue
                     if 'duplicate' not in msg and 'already exists' not in msg:
                         app.logger.warning('autoheal FAILED %s.%s: %s',
                                             tbl, col, exc2)
