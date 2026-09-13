@@ -92,3 +92,46 @@ def test_the_previous_values_are_saved_before_writing(monkeypatch):
     assert path.startswith(os.path.join(folder, 'backups'))
     assert oct(os.stat(path).st_mode & 0o777) == '0o600'
     assert json.load(open(path))[0]['original_email_body'] == 'x'
+
+
+def test_rollback_puts_back_what_a_run_replaced(leads, tmp_path):
+    with flask_app.app_context():
+        lid = leads['damaged']
+        lead = db.session.get(Lead, lid)
+        pre = [{'lead_id': lid, 'message_id': lead.email_message_id,
+                'original_email_body': lead.original_email_body,
+                'original_email_subject': lead.original_email_subject,
+                'original_email_from': lead.original_email_from,
+                'original_email_source': lead.original_email_source,
+                'lead_email': None}]
+        # what a run does
+        lead.original_email_body = 'the recovered enquiry'
+        lead.original_email_source = 'recovered_from_mailbox'
+        db.session.add(LeadEmail(lead_id=lid, direction='inbound',
+                                 message_id=lead.email_message_id,
+                                 source='recovered_from_mailbox', body='x'))
+        db.session.commit()
+        path = tmp_path / 'pre.json'
+        path.write_text(json.dumps(pre))
+
+        n, skipped = R.rollback(str(path), Lead, LeadEmail, db)
+        assert (n, skipped) == (1, [])
+        lead = db.session.get(Lead, lid)
+        assert lead.original_email_body == 'called, no answer'
+        assert lead.original_email_source == 'migrated_from_notes'
+        assert LeadEmail.query.filter_by(
+            lead_id=lid, source='recovered_from_mailbox').count() == 0
+
+
+def test_rollback_leaves_a_lead_changed_since_alone(leads, tmp_path):
+    with flask_app.app_context():
+        lid = leads['healthy']            # never recovered
+        path = tmp_path / 'pre.json'
+        path.write_text(json.dumps([{
+            'lead_id': lid, 'message_id': 'x', 'original_email_body': 'OLD',
+            'original_email_subject': '', 'original_email_from': '',
+            'original_email_source': 'migrated_from_notes',
+            'lead_email': None}]))
+        n, skipped = R.rollback(str(path), Lead, LeadEmail, db)
+        assert (n, skipped) == (0, [lid])
+        assert db.session.get(Lead, lid).original_email_body.startswith('Dear')

@@ -33,6 +33,9 @@ def engine():
                                 'migrated_from_notes','<d>');
       INSERT INTO leads VALUES (5,'E','email','',NULL,'<e>');
       INSERT INTO leads VALUES (6,'F','manual',NULL,NULL,NULL);
+      INSERT INTO leads VALUES (7,'G','email',
+        'From: buyer@x.com Dear team, please quote for 2 cranes. Regards',
+        'migrated_from_notes','<g>');
       INSERT INTO lead_notes VALUES (1,4,1);
       INSERT INTO lead_notes VALUES (2,1,0);
     """)
@@ -44,10 +47,12 @@ def engine():
 def test_each_state_is_counted_once(engine):
     with engine.connect() as conn:
         c = report.counts(conn)
-    assert c['email_leads'] == 5
+    assert c['email_leads'] == 6
     assert c['intact'] == 2            # ingested, and an unlabelled one
     assert c['restored'] == 1
-    assert c['unrecoverable'] == 1
+    assert c['unrecoverable'] == 2     # everything the split flagged
+    assert c['still_damaged'] == 1     # 'call summary'
+    assert c['flagged_but_readable'] == 1
     assert c['email_lead_with_no_body'] == 1
     assert c['preserved_as_note'] == 1
 
@@ -91,6 +96,8 @@ def test_the_blocker_reads_the_names_the_graph_client_reads(monkeypatch):
 def test_recovery_percentage(engine):
     with engine.connect() as conn:
         c = report.counts(conn)
-    assert c['damaged'] == 2                  # one restored, one not
+    # one restored, one still damaged; the flagged lead whose text reads
+    # as an email is not damage, exactly as the recovery script sees it
+    assert c['damaged'] == 2
     assert c['recovery_pct'] == 50.0
     assert c['unrecoverable_no_message_id'] == 0

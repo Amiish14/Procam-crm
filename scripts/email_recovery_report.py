@@ -34,6 +34,20 @@ except ImportError:
 from sqlalchemy import create_engine, text          # noqa: E402
 
 
+def _looks_like_an_email():
+    """The recovery script's own test for "this text is an email", so the
+    report and the script agree on what counts as damaged. Loaded by
+    path (the file name starts with a digit); it imports no app code at
+    module level."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        'recover_lost_emails',
+        os.path.join(_HERE, '2026_09_22_recover_lost_emails.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.looks_like_an_email
+
+
 def _db_url():
     return os.environ.get('DATABASE_URL') or (
         'sqlite:///' + os.path.join(_ROOT, 'procam_crm.db'))
@@ -71,15 +85,22 @@ def counts(conn):
                      "WHERE migrated_from_legacy = 1")
                  if 'migrated_from_legacy' in notes_cols else 0)
 
-    # Unrecoverable split by whether a mailbox lookup is even possible:
-    # without an internetMessageId there is nothing to search for.
-    no_mid = one(
-        "SELECT COUNT(*) FROM leads "
-        "WHERE original_email_source = 'migrated_from_notes' "
-        "AND COALESCE(email_message_id, '') = ''")
-    damaged = restored + unrecoverable
+    # The split migration flagged every lead whose enquiry field might
+    # have been overwritten. Some of those still hold a real email; the
+    # recovery script leaves them alone, so the percentage must too —
+    # counting them as damaged would understate the recovery.
+    looks = _looks_like_an_email()
+    flagged = conn.execute(text(
+        "SELECT original_email_body, COALESCE(email_message_id, '') "
+        "FROM leads WHERE original_email_source = 'migrated_from_notes'"
+    )).fetchall()
+    still_damaged = [mid for body, mid in flagged if not looks(body)]
+    no_mid = sum(1 for mid in still_damaged if not mid)
+    damaged = restored + len(still_damaged)
     return {'email_leads': email_leads, 'intact': intact,
             'restored': restored, 'unrecoverable': unrecoverable,
+            'still_damaged': len(still_damaged),
+            'flagged_but_readable': unrecoverable - len(still_damaged),
             'unrecoverable_no_message_id': no_mid,
             'preserved_as_note': preserved,
             'email_lead_with_no_body': no_email,
@@ -119,7 +140,10 @@ def main():
         print(f'\n  Email-sourced leads            {c["email_leads"]}')
         print(f'    original enquiry intact       {c["intact"]}')
         print(f'    restored from the mailbox     {c["restored"]}')
-        print(f'    still unrecoverable           {c["unrecoverable"]}')
+        print(f'    flagged, not yet restored     {c["unrecoverable"]}')
+        print(f'      of which still damaged      {c["still_damaged"]}')
+        print(f'      of which text reads as email '
+              f'{c["flagged_but_readable"]}')
         print(f'    no body at all                {c["email_lead_with_no_body"]}')
         print(f'\n  Damaged text kept as a flagged note   '
               f'{c["preserved_as_note"]}')

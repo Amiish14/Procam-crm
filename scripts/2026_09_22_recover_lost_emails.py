@@ -29,6 +29,8 @@ Usage
     python scripts/2026_09_22_recover_lost_emails.py --check
     python scripts/2026_09_22_recover_lost_emails.py --ids 10440,11102
     python scripts/2026_09_22_recover_lost_emails.py --all
+    python scripts/2026_09_22_recover_lost_emails.py --rollback \
+        backups/recovery_preimage_<timestamp>.json
 
 Needs the same Graph credentials the ingest uses.  --check contacts the
 mailbox but writes nothing, so it is the safe way to find out how many
@@ -127,6 +129,42 @@ def _save_preimage(records):
     return path
 
 
+def rollback(path, Lead, LeadEmail, db):
+    """Put back exactly what a recovery run replaced, from its preimage.
+
+    Only touches leads still marked recovered_from_mailbox — a lead edited
+    by someone since is reported and left alone. A trail row the run
+    created (no preimage row) is removed; one it changed is restored."""
+    import json
+    with open(path) as fh:
+        records = json.load(fh)
+    restored, skipped = 0, []
+    for rec in records:
+        lead = db.session.get(Lead, rec['lead_id'])
+        if lead is None or lead.original_email_source != \
+                'recovered_from_mailbox':
+            skipped.append(rec['lead_id'])
+            continue
+        for field in ('original_email_body', 'original_email_subject',
+                      'original_email_from', 'original_email_source'):
+            setattr(lead, field, rec[field])
+        before = rec.get('lead_email')
+        if before is None:
+            LeadEmail.query.filter_by(
+                lead_id=lead.id, message_id=rec['message_id'],
+                source='recovered_from_mailbox').delete(
+                synchronize_session=False)
+        else:
+            row = db.session.get(LeadEmail, before['id'])
+            if row is not None:
+                for field in ('body', 'subject', 'from_addr', 'source',
+                              'status', 'message_id'):
+                    setattr(row, field, before[field])
+        restored += 1
+    db.session.commit()
+    return restored, skipped
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--check', action='store_true',
@@ -136,10 +174,22 @@ def main():
                     help='every lead the split migration flagged')
     ap.add_argument('--lookback-days', type=int, default=400,
                     help='how far back to search the mailbox')
+    ap.add_argument('--rollback', metavar='PREIMAGE',
+                    help='undo a run, from the preimage file it saved')
     args = ap.parse_args()
 
+    if args.rollback:
+        from app import app as flask_app, db, Lead, LeadEmail  # noqa: E402
+        with flask_app.app_context():
+            n, skipped = rollback(args.rollback, Lead, LeadEmail, db)
+        print(f'  restored {n} lead(s) to their pre-recovery state')
+        if skipped:
+            print(f'  left alone (changed since, or gone): '
+                  f'{", ".join(map(str, skipped))}')
+        return
+
     if not (args.check or args.ids or args.all):
-        raise SystemExit('Pass --check, --ids or --all.')
+        raise SystemExit('Pass --check, --ids, --all or --rollback.')
 
     ids = None
     if args.ids:
