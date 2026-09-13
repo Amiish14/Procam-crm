@@ -179,13 +179,17 @@
       else { img.style.display = 'none'; }
     }
 
+    // Names come from other people's records — and contacts are created
+    // from inbound email senders — so they are text, never markup.
+    const escHtml = v => String(v == null ? '' : v).replace(/[&<>"']/g,
+      ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     const dup = card.dup_matches || {accounts:[], contacts:[]};
     const accBox = $('dup-accounts'); accBox.innerHTML='';
     (dup.accounts||[]).forEach(a=>{
       const el = document.createElement('div');
       el.className='dup';
-      el.innerHTML = `<span><strong>${a.name}</strong> <span class="muted">— ${a.reason} (${a.score})</span></span>
-        <button class="btn" data-id="${a.id}">Pick</button>`;
+      el.innerHTML = `<span><strong>${escHtml(a.name)}</strong> <span class="muted">— ${escHtml(a.reason)} (${escHtml(a.score)})</span></span>
+        <button class="btn" data-id="${escHtml(a.id)}">Pick</button>`;
       el.querySelector('button').onclick = ()=>{
         linkAccountId = a.id;
         [...accBox.querySelectorAll('.dup')].forEach(x=>x.style.background='#FDEEF0');
@@ -201,8 +205,8 @@
     (dup.contacts||[]).forEach(a=>{
       const el = document.createElement('div');
       el.className='dup';
-      el.innerHTML = `<span><strong>${a.name}</strong> <span class="muted">— ${a.reason} (${a.score})</span></span>
-        <button class="btn" data-id="${a.id}">Pick</button>`;
+      el.innerHTML = `<span><strong>${escHtml(a.name)}</strong> <span class="muted">— ${escHtml(a.reason)} (${escHtml(a.score)})</span></span>
+        <button class="btn" data-id="${escHtml(a.id)}">Pick</button>`;
       el.querySelector('button').onclick = ()=>{
         linkContactId = a.id;
         [...cntBox.querySelectorAll('.dup')].forEach(x=>x.style.background='#FDEEF0');

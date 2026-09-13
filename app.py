@@ -251,6 +251,12 @@ def _unhandled_error(e):
     if isinstance(e, HTTPException):
         return _http_error(e)
     app.logger.exception('unhandled error on %s', getattr(request, "path", "?"))
+    # The message below says nothing was changed; make it true for
+    # anything flushed but not committed before the failure.
+    try:
+        db.session.rollback()
+    except Exception:
+        pass
     if _api_request():
         return jsonify(ok=False, code=500,
                        error='Something went wrong. Nothing was changed.'), 500
@@ -275,7 +281,11 @@ Talisman(app,
              'frame-ancestors': "'none'",
          },
          content_security_policy_report_only=True,
-         content_security_policy_report_uri='/api/csp-report',
+         # Under /CRM the bare path reached nginx's root, not this app,
+         # so no violation report ever arrived.
+         content_security_policy_report_uri=(
+             (os.environ.get('URL_PREFIX') or '').rstrip('/')
+             + '/api/csp-report'),
 )
 
 @app.route('/api/csp-report', methods=['POST'])
@@ -1967,7 +1977,9 @@ def api_lead_attachment_download(lid, aid):
     lead = _require_lead_access(lid)
     att = LeadAttachment.query.filter_by(id=aid, lead_id=lid).first_or_404()
     if not os.path.exists(att.storage_path):
-        abort(404, description=f"File missing on disk: {att.storage_path}")
+        app.logger.warning('attachment %s missing on disk: %s', att.id,
+                           att.storage_path)
+        abort(404, description='That attachment file is no longer available.')
     resp = send_file(
         att.storage_path,
         as_attachment=True,

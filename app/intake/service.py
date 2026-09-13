@@ -199,7 +199,12 @@ def review_queue(limit=200):
             pass
         primary, secondary = lidb.owners_for(company)
         d = r.to_dict()
+        from app.services.lead_intake import Klass
         d.update({
+            # The screen reads it.label; nothing sent one, so every item
+            # said "Classified (blank) by …".
+            'label': Klass.LABELS.get(r.classification, r.classification
+                                      or ''),
             'account': company.name if company else '',
             'account_id': company.id if company else None,
             'account_found_by': how,

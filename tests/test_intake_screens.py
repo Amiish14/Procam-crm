@@ -786,3 +786,17 @@ def test_nothing_changes_until_a_person_applies_it(world):
         db.session.commit()
         assert ok, msg
         assert db.session.get(Company, world['acct']).pic_emp_code == 'OPS9'
+
+
+def test_the_queue_names_the_class_it_shows(world):
+    """review.html renders it.label, and nothing sent one — every item read
+    "Classified (blank) by …"."""
+    from app.services.lead_intake import Klass
+    cid = _pending()
+    with flask_app.app_context():
+        got = [i for i in svc.review_queue() if i['id'] == cid][0]
+    assert got['label'] == Klass.LABELS[got['classification']]
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'templates', 'intake',
+        'review.html')).read()
+    assert 'esc(it.label)' in src

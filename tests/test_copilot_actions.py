@@ -263,3 +263,19 @@ def test_a_token_forged_with_a_guessable_key_is_refused(world, on,
             assert r is None and 'does not match' in err
     finally:
         flask_app.secret_key = real
+
+
+def test_a_confirmation_still_works_a_few_seconds_later(world, on,
+                                                        monkeypatch):
+    """The commit rebuilt the proposal with a fresh expiry and compared
+    signatures against that, so a token matched only when the person
+    confirmed within the same second. In the panel that is never."""
+    with flask_app.app_context():
+        params = {'lead_id': world['theirs'], 'note': 'confirmed later'}
+        p, err = actions.propose('create_activity', _sc('ACADM'), params)
+        assert err is None
+        real = actions.time.time
+        monkeypatch.setattr(actions.time, 'time', lambda: real() + 30)
+        r, err = actions.commit('create_activity', _sc('ACADM'), params,
+                                p.token, actor='ACADM')
+        assert err is None, err

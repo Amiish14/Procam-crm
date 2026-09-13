@@ -221,8 +221,8 @@ async function loadProposals(){
       <div class="pacts">
         <span class="ev">${p.evidence} correction${p.evidence===1?'':'s'}</span>
         ${p.kind === 'observation' ? ''
-          : `<button class="btn btn-sm success" onclick="applyProp('${esc(p.key)}')">Apply</button>`}
-        <button class="btn btn-sm" onclick="dismissProp('${esc(p.key)}')">Dismiss</button>
+          : `<button class="btn btn-sm success" data-key="${esc(p.key)}" onclick="applyProp(this.dataset.key)">Apply</button>`}
+        <button class="btn btn-sm" data-key="${esc(p.key)}" onclick="dismissProp(this.dataset.key)">Dismiss</button>
         <span class="pmsg"></span>
       </div>
     </div>`).join('');

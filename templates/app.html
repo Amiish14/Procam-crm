@@ -3214,7 +3214,7 @@ async function advanceOpp(id,cur){
 async function rOR(){
   let leads=await api('/api/leads?limit=300');
   if(!Array.isArray(leads))leads=[];
-  g('orId').innerHTML='<option value="">-- Select --</option>'+leads.map(l=>`<option value="${l.id}">${e(l.company)}${l.state?' · '+l.state:''} · ${e(l.industry||'')}</option>`).join('');
+  g('orId').innerHTML='<option value="">-- Select --</option>'+leads.map(l=>`<option value="${l.id}">${e(l.company)}${l.state?' · '+e(l.state):''} · ${e(l.industry||'')}</option>`).join('');
 }
 async function loadOR(){
   const id=g('orId').value;if(!id){g('orDet').style.display='none';return;}
@@ -3614,6 +3614,17 @@ async function openDraw(lid){
     let hist = [];
     try { hist = await api('/api/leads/' + lid + '/history'); } catch(err){}
     const histHtml = (Array.isArray(hist) && hist.length) ? hist.map(h => {
+      if (h.kind === 'assignment') {
+        const who = (from, to) => from === to ? '' : `${e(from||'unassigned')} → ${e(to||'unassigned')}`;
+        const moves = [who(h.from_primary, h.to_primary) && 'Owner ' + who(h.from_primary, h.to_primary),
+                       who(h.from_secondary, h.to_secondary) && 'Secondary ' + who(h.from_secondary, h.to_secondary)]
+                      .filter(Boolean).join(' · ');
+        return `<div style="padding:.5rem .7rem;border-left:2px solid #2563EB;background:#EFF6FF;border-radius:0 4px 4px 0;margin-bottom:.4rem;">
+          <div style="font-size:.72rem;color:#1D4ED8;font-weight:600;">REASSIGNED · ${moves || 'owners unchanged'}</div>
+          <div style="font-size:.72rem;color:#6B7280;">${e(h.when)} · ${e(h.by||'—')}</div>
+          ${h.note ? `<div style="font-size:.78rem;color:#374151;margin-top:.15rem;">${e(h.note)}</div>` : ''}
+        </div>`;
+      }
       if (h.kind === 'stage') {
         return `<div style="padding:.5rem .7rem;border-left:2px solid #C72435;background:#FEF2F2;border-radius:0 4px 4px 0;margin-bottom:.4rem;">
           <div style="font-size:.72rem;color:#B91C1C;font-weight:600;">STAGE · ${e(h.from_stage||'—')} → ${e(h.to_stage)}</div>
@@ -4059,8 +4070,8 @@ async function rTeam(){
     return `<div class="emp-card">
       <div class="e-av">${ini}</div>
       <div style="flex:1">
-        <div class="e-name">${u.name} <span class="e-code">${u.emp_code}</span></div>
-        <div class="e-meta">${u.vertical||'—'}</div>
+        <div class="e-name">${e(u.name)} <span class="e-code">${e(u.emp_code)}</span></div>
+        <div class="e-meta">${e(u.vertical||'—')}</div>
       </div>
       <div class="e-stats">
         <div><div class="ev">${u.total}</div><div class="el">Total</div></div>

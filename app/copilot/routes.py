@@ -89,9 +89,15 @@ def api_suggestions():
     if not _authed():
         return jsonify(ok=False, error='Not authenticated'), 401
     sc = scope_mod.current()
+    health = model_mod.health()
+    if not sc.can('admin.access'):
+        # Every user saw the internal model host here. They need to know
+        # whether it is available, not where it lives.
+        health = {'available': health.get('available'),
+                  'reason': health.get('reason')}
     return jsonify(ok=True, suggestions=svc.suggestions(sc),
                    scope_note=svc._scope_note(sc),
-                   model=model_mod.health())
+                   model=health)
 
 
 @bp.route('/api/copilot/feedback', methods=['POST'])

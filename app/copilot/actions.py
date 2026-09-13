@@ -139,7 +139,15 @@ def commit(key, scope, params, token, *, actor=None):
     proposal, err = spec['fn'](scope, params, commit=False)
     if err:
         return None, err
-    ok, why = _verify(_payload(key, proposal), token)
+    # Rebuild the payload with the expiry the token was issued with. The
+    # rebuilt proposal carries a fresh expiry (now + TTL), so comparing
+    # against it matched only a commit in the same second as the propose.
+    payload = _payload(key, proposal)
+    try:
+        payload['exp'] = int((token or '').rsplit('.', 1)[1])
+    except (IndexError, ValueError):
+        return None, 'Malformed confirmation'
+    ok, why = _verify(payload, token)
     if not ok:
         return None, why
     return spec['fn'](scope, params, commit=True, actor=actor)

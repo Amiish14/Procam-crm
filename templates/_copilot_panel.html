@@ -530,10 +530,16 @@
       btn.onclick = function(){
         var chip = (j.rows[+btn.dataset.row] || {})._chip;
         if (!chip) return;
-        var path = {lead:'/leads/', opportunity:'/opportunities/',
-                    company:'/accounts/', quote:'/quotes/',
-                    rfq:'/rfqs/', handover:'/handovers/'}[chip.type];
-        if (path) location.href = PREFIX + path + chip.id;
+        // Pages that exist. There is no /opportunities/<id>, /accounts/<id>
+        // or /handovers/<id> page — those chips used to 404. An opportunity
+        // opens through the app's own deep link; a handover opens the queue.
+        var go = {lead:'/leads/' + chip.id,
+                  opportunity:'/app?opp=' + chip.id,
+                  company:'/companies/' + chip.id,
+                  quote:'/quotes/' + chip.id,
+                  rfq:'/rfqs/' + chip.id,
+                  handover:'/handovers'}[chip.type];
+        if (go) location.href = PREFIX + go;
       };
     });
     turn.querySelectorAll('[data-pin]').forEach(function(btn){
