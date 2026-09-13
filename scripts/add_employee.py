@@ -8,8 +8,8 @@ the employee code (CRM forces a password change on first sign-in).
 Usage:
     python scripts/add_employee.py \\
         --emp-code CON302026 \\
-        --name "TAMAL DAS" \\
-        --email tamal.das@procamgroup.in \\
+        --name "Employee Name" \\
+        --email employee.name@example.com \\
         --role user \\
         --department "Consulting" \\
         --designation "Consultant" \\

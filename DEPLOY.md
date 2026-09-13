@@ -41,7 +41,7 @@ URL_PREFIX               # Set to /CRM when behind procamlogictech.com/CRM/
 ## Option A — Render
 
 1. Push the repo (see below).
-2. In Render: **New +** → **Blueprint** → point at `github.com/Amiish14/Procam-crm`.
+2. In Render: **New +** → **Blueprint** → point at `<repository-url>`.
 3. Render reads `render.yaml`, creates the `procam-crm-db` Postgres and `procam-crm` web service.
 4. Under the service's **Environment** tab, add:
    - `ADMIN_INITIAL_PASSWORD` = a 12+ character password you generate (never one written in any document)
@@ -61,7 +61,7 @@ ssh procam-app
 sudo mkdir -p /var/www/procam-crm
 sudo chown procamapp:procamapp /var/www/procam-crm
 cd /var/www/procam-crm
-git clone https://github.com/Amiish14/Procam-crm.git .
+git clone <repository-url> .
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
@@ -147,7 +147,7 @@ Open `https://procamlogictech.com/` → the **CRM** tile should be visible next 
 
 ```bash
 cd ~/Desktop/Procam-crm-main
-git remote -v                         # confirm origin points at github.com/Amiish14/Procam-crm
+git remote -v                         # confirm origin points at <repository-url>
 git add app.py requirements.txt .env.example DEPLOY.md
 git commit -m "v3.1: PCM001 admin + Opportunity + Company/Agent + AI outreach + fuzzy import + activity log"
 git push origin main

@@ -255,7 +255,7 @@ QUESTIONS = [
     (MGMT, 'compare us against the competition on price', None),
     (ADMIN, 'delete all test leads', None),
     (SALES, 'change the stage of this lead to won', None),
-    (SALES, 'assign this lead to Amit', None),
+    (SALES, 'assign this lead to a colleague', None),
     (MGMT, 'how many people work in operations', None),
     (SALES, 'what is my sales target', None),
     (MGMT, 'profit margin on this job', None),

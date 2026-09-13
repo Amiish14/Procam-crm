@@ -64,7 +64,7 @@ Then recover what happened after the backup:
    ```bash
    sudo mkdir -p /var/www/procam-crm && sudo chown procamapp:procamapp /var/www/procam-crm
    cd /var/www/procam-crm
-   git clone https://github.com/Amiish14/Procam-crm.git .
+   git clone <repository-url> .
    python3 -m venv .venv
    .venv/bin/pip install -r requirements.txt
    ```

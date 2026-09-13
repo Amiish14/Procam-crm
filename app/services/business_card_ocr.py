@@ -199,7 +199,7 @@ def find_duplicates(extracted: dict, db) -> dict:
                     {'id': c.id, 'name': c.name, 'score': 100,
                      'reason': f'email {email}'})
         if phones:
-            # Compared on digits: "+91 98200-11223" and "09820011223" are
+            # Compared on digits: "+91 90000-20001" and "09000020001" are
             # one number, and an exact string match would miss it.
             wanted = {normalise_phone(p) for p in phones}
             wanted.discard('')

@@ -89,7 +89,7 @@ CONCRETE EXAMPLES — study these carefully. Real inbox samples with the correct
 
 Example 1  ✅  is_business_lead: TRUE
   Subject: "RFQ - Movement of Reactor Vessel from Vadodara to Kandla"
-  From: pankaj.mehta@larsentoubro.com
+  From: projects.contact@larsentoubro.com
   Body: "Dear team, please quote for movement of one reactor vessel (45 MT, 8.5m×3.2m×3.5m) from our Vadodara plant to Kandla port by 25 August. Route survey may be needed."
   Correct: lead_type=inbound_rfq, one_line_summary="RFQ from L&T for 45 MT reactor Vadodara→Kandla by 25 Aug"
 

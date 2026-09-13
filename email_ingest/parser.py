@@ -336,8 +336,8 @@ def _domain_root(email_or_domain: str) -> str:
         email.mckinsey.com   → mckinsey
         mail.exed.hbs.edu    → hbs
         e.shrm.org           → shrm
-        raibin@savas.co.in   → savas
-        gaurav@jakson.com    → jakson
+        contact@savas.co.in  → savas
+        contact@jakson.com   → jakson
 
     Returns "" for personal-mail domains and anything unparseable.
     """

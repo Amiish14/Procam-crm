@@ -177,7 +177,7 @@ def domain_of(value: str) -> str:
 def normalise_phone(value: str) -> str:
     """Digits (and a leading +) only — for comparing, never for display.
 
-    "+91 98200-11223", "098200 11223" and "(0)9820011223" are one number
+    "+91 90000-20001", "090000 20001" and "(0)9000020001" are one number
     to a human and three to a database, which is how duplicate contacts
     get created.
     """

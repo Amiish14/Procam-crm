@@ -13,14 +13,14 @@ Two things happen:
 1.  access_profiles is created and seeded from each employee's current
     role, so nobody's access changes on deploy.
 
-2.  Admin is narrowed to the two people who should hold it:
+2.  Admin is narrowed to the two accounts that should hold it:
 
-        DIR12010  Nilesh Kumar Sinha    stays admin
-        DIR42010  T G Ramalingam        stays admin
+        DIR12010  System Administrator  stays admin
+        DIR42010  Corporate Director    stays admin
 
-        DIR22010  James Francis Xavier  → head of their vertical
-        DIR52011  Sethupathy Sundaram   → head of their vertical
-        DIR72012  Srinivas Marella      → head of their vertical
+        DIR22010  Vertical Director     → head of their vertical
+        DIR52011  Vertical Director     → head of their vertical
+        DIR72012  Vertical Director     → head of their vertical
 
     The three keep every report, but see only their own vertical's rows.
 """

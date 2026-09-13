@@ -6,8 +6,8 @@ the whole company.
     python scripts/2026_09_09_super_admin.py --check   # dry run
     python scripts/2026_09_09_super_admin.py           # apply
 
-Adds employees.is_super_admin and sets it for DIR12010 (Nilesh Kumar
-Sinha).  Idempotent.
+Adds employees.is_super_admin and sets it for DIR12010 (the System
+Administrator).  Idempotent.
 
 Why a column and not a checkbox: the super admin owns the screen that
 grants permissions.  If it were grantable there, someone could promote
@@ -97,7 +97,7 @@ def add_column_if_missing(dry):
     return not dry
 
 
-SUPER_ADMIN = 'DIR12010'          # Nilesh Kumar Sinha
+SUPER_ADMIN = 'DIR12010'          # the System Administrator
 
 
 def main():

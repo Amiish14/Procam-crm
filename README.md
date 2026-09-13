@@ -6,7 +6,7 @@
 - Lead pipeline: New → Call Done → Profile Sent → Appointment → Visit Done → RFQ Generated → Won/Lost
 - Activity date tracking (phone call, intro mail, meeting, RFQ) with onboarded date stamp
 - Opportunity number assignment when RFQ is received
-- Market Intelligence: ETManufacturing / Projects Today newsletter parsing from Nilesh's Outlook
+- Market Intelligence: ETManufacturing / Projects Today newsletter parsing from the configured mailbox
 - Global CRM: People, Companies, Overseas Agents with country/city/website
 - AI Outreach: Claude-powered email generation with project context
 - Excel upload with fuzzy column detection (any format)
@@ -14,7 +14,7 @@
 - Procam brand colors: Red #C72435, Charcoal #474447
 
 ## Default Login
-- **Admin**: emp_code `PCM001` / password `admin@Procam25`
+- **Admin**: emp_code `PCM001` / the bootstrap password comes from the `ADMIN_INITIAL_PASSWORD` environment variable (at least 12 characters), set before first boot
 - All other employees: emp_code (e.g. `PCM101`) / password = emp_code in lowercase (`pcm101`)
 - First login forces password change
 
