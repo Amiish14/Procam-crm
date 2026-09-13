@@ -121,6 +121,11 @@ def _samples(since, domains):
             continue
         found[domain] = {
             'subject': line,
+            # Graph always sends this and the parser's emptiness check
+            # reads it. Omitting it made every subject-less lead look
+            # like an empty message, which is why sixty real customers
+            # came back "no cargo, RFQ, route or contact signal".
+            'bodyPreview': text[:255],
             'body': {'content': text, 'contentType': 'text'},
             'from': {'emailAddress': {'address': addr}},
             'toRecipients': [{'emailAddress': {

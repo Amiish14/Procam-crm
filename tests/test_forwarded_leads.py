@@ -313,3 +313,58 @@ if __name__ == "__main__":
                 print(f"  ERROR {name}: {type(e).__name__}: {e}")
     print(f"\n{'FAILURES: %d' % fails if fails else 'all tests passed'}")
     sys.exit(1 if fails else 0)
+
+
+# ─── a full body is not an empty message ─────────────────────────────────
+def test_a_subjectless_email_with_a_real_body_is_not_empty():
+    """The emptiness check read bodyPreview and never the body itself.
+
+    Graph always sends bodyPreview, so production was safe — but any
+    caller that builds a message without it, including every test and
+    the coverage tooling, had a real enquiry rejected as "empty
+    message". The check now considers the body, which can only ever
+    cause fewer skips.
+    """
+    from email_ingest import parser
+
+    msg = {
+        'subject': '',
+        'body': {'content': 'Please check and inform freight for the below '
+                            'consignment, 40 MT to Kandla.',
+                 'contentType': 'text'},
+        'from': {'emailAddress': {'address': 'buyer@godrej.com'}},
+        'toRecipients': [{'emailAddress': {'address': 'leads@procamgroup.in'}}],
+        'ccRecipients': [],
+    }
+    assert parser._should_skip(msg) != 'empty message'
+    out = parser.extract_lead(msg)
+    assert out is not None
+    assert 'freight' in (out['signals']['cargo_keywords'] or [])
+
+
+def test_a_genuinely_empty_message_is_still_empty():
+    """The guard must still catch what it was written for."""
+    from email_ingest import parser
+
+    msg = {
+        'subject': '',
+        'body': {'content': '   \n  ', 'contentType': 'text'},
+        'from': {'emailAddress': {'address': 'buyer@godrej.com'}},
+        'toRecipients': [{'emailAddress': {'address': 'leads@procamgroup.in'}}],
+        'ccRecipients': [],
+    }
+    assert parser._should_skip(msg) == 'empty message'
+
+
+def test_bodypreview_alone_still_counts():
+    from email_ingest import parser
+
+    msg = {
+        'subject': '',
+        'bodyPreview': 'Kindly quote for 40 MT to Kandla',
+        'body': {},
+        'from': {'emailAddress': {'address': 'buyer@godrej.com'}},
+        'toRecipients': [{'emailAddress': {'address': 'leads@procamgroup.in'}}],
+        'ccRecipients': [],
+    }
+    assert parser._should_skip(msg) != 'empty message'

@@ -803,7 +803,7 @@ def _should_skip(msg: dict) -> Optional[str]:
     body_preview = (msg.get("bodyPreview") or "").strip()
     from_email, _ = _sender_info(msg)
 
-    if not subject and not body_preview:
+    if not subject and not body_preview and not _get_body_text(msg):
         return "empty message"
 
     # Auto-responders / delivery status
