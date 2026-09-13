@@ -5,6 +5,14 @@
   state, no dependency on the host page beyond `url_prefix`. Nothing
   here decides what the user may see — it renders what the server
   returns, and the server has already applied the scope.
+
+  Record context: a page tells the panel which record it shows with
+  data-copilot-type / data-copilot-id on any element (the first one
+  found wins), or by calling window.ProcamAI.setContext({type, id,
+  label}). Without either, the URL is read: /leads/<id>,
+  /companies/<id>, /quotes/<id>, /rfqs/<id>, or ?lead= / ?opp= /
+  ?account= on the main app. The server decides whether the viewer may
+  see that record; the panel only reports what it is looking at.
 #}
 <style>
   .pai-fab{
@@ -139,6 +147,38 @@
   .pai-chips button:hover{border-color:var(--ink,#16202b);
     color:var(--ink,#16202b)}
 
+  /* How sure, and how the answer was reached — quiet, under the badge. */
+  .pai-conf{
+    display:inline-block; font:600 10px/1 'Inter'; letter-spacing:.04em;
+    padding:3px 6px; border-radius:3px; margin:0 0 6px 4px;
+    border:1px solid var(--border-2,#c9d3db); color:var(--text-2,#61717f);
+  }
+  .pai-conf.high{border-color:#9cc7a4; color:#2f6b3a}
+  .pai-conf.medium{border-color:#d9c27a; color:#7a5d00}
+  .pai-conf.low{border-color:#e0a4a4; color:#8a2f2f}
+  .pai-how{font-size:11px; color:var(--text-3,#8a97a3); margin:-2px 0 8px}
+  .pai-clarify{
+    margin:4px 0 8px; padding:8px 10px; border-radius:6px;
+    background:var(--surface,#f1f4f7);
+  }
+  .pai-clarify b{display:block; font-size:12.5px; margin-bottom:6px;
+    color:var(--ink,#16202b)}
+  .pai-cites{font-size:11px; color:var(--text-3,#8a97a3); margin-top:6px}
+  .pai-cites button{
+    background:none; border:0; padding:0 6px 0 0; cursor:pointer;
+    font:inherit; color:var(--accent,#2f5d7c); text-decoration:underline;
+    text-underline-offset:2px;
+  }
+  .pai-next{margin-top:8px}
+  .pai-next .lbl{width:100%; font-size:11px; color:var(--text-3,#8a97a3);
+    text-transform:uppercase; letter-spacing:.05em}
+  .pai-new{
+    border:1px solid var(--border-2,#c9d3db); background:var(--card,#fff);
+    color:var(--text-2,#61717f); border-radius:4px; cursor:pointer;
+    font:600 11px 'Inter'; padding:4px 8px; margin-left:auto;
+  }
+  .pai-new + .pai-x{margin-left:4px}
+
   .pai-hello{color:var(--text-2,#61717f); font-size:13.5px}
   .pai-hello b{color:var(--ink,#16202b)}
 
@@ -186,6 +226,8 @@
       <b>Procam AI</b>
       <div class="sub" id="paiModel">answers from the CRM you can see</div>
     </div>
+    <button class="pai-new" id="paiNew" type="button"
+            title="Start a new conversation">New</button>
     <button class="pai-x" id="paiClose" aria-label="Close">&times;</button>
   </div>
   <div id="paiCtxWrap"></div>
@@ -210,6 +252,14 @@
   var loaded = false;
   var history = [];
   var context = null;
+  // The server's conversation id: follow-ups like "what about last
+  // month" continue the previous answer. Signed for this user on the
+  // server; the panel only hands it back.
+  var conversationId = null;
+  // Dismissed with the x on the context chip: stay dismissed on this
+  // page, rather than coming back the next time the panel opens.
+  var contextDismissed = false;
+  var pageContext = null;
 
   function esc(s){
     return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
@@ -232,12 +282,46 @@
   }
 
   // ── §6.3 context: what record is the user looking at? ──────────
+  var KINDS = {lead:'lead', leads:'lead', opp:'opportunity',
+               opportunity:'opportunity', opportunities:'opportunity',
+               account:'company', accounts:'company', company:'company',
+               companies:'company', quote:'quote', quotes:'quote',
+               rfq:'rfq', rfqs:'rfq'};
+
+  function ctxOf(type, id, label){
+    var kind = KINDS[String(type || '').toLowerCase()];
+    var n = parseInt(id, 10);
+    if (!kind || !(n > 0)) return null;
+    return {type: kind, id: n, label: label || (kind + ' #' + n)};
+  }
+
   function detectContext(){
+    if (pageContext) return pageContext;
+    // 1. the page says so
+    var el = document.querySelector('[data-copilot-type][data-copilot-id]');
+    if (el){
+      var fromPage = ctxOf(el.getAttribute('data-copilot-type'),
+                           el.getAttribute('data-copilot-id'),
+                           el.getAttribute('data-copilot-label'));
+      if (fromPage) return fromPage;
+    }
+    // 2. the path of a record page. /companies/<id> is plural in the URL,
+    //    which the old single pattern never matched.
     var m = location.pathname.match(
-      /\/(lead|opportunity|account|company|quote|rfq)s?\/(\d+)/i);
-    if (m) return {type:m[1].toLowerCase(), id:m[2], label:m[1]+' #'+m[2]};
+      /\/(leads|opportunities|companies|accounts|quotes|rfqs)\/(\d+)(?:\/|$)/i);
+    if (m) return ctxOf(m[1], m[2]);
+    // 3. the main app's deep links (?lead=, ?opp=, ?account=). ?company=
+    //    there is a project, not an account, so it is not read.
+    var q = new URLSearchParams(location.search || '');
+    var names = ['lead', 'opp', 'account'];
+    for (var i = 0; i < names.length; i++){
+      if (q.get(names[i])) {
+        var c = ctxOf(names[i], q.get(names[i]));
+        if (c) return c;
+      }
+    }
     var h = (location.hash || '').match(/(lead|opp|account|quote|rfq)[=\/](\d+)/i);
-    if (h) return {type:h[1].toLowerCase(), id:h[2], label:h[1]+' #'+h[2]};
+    if (h) return ctxOf(h[1], h[2]);
     return null;
   }
 
@@ -245,11 +329,32 @@
     if (!context){ ctxWrap.innerHTML = ''; return; }
     ctxWrap.innerHTML =
       '<div class="pai-ctx">Asking about <b>&nbsp;' + esc(context.label) +
-      '</b><button type="button" id="paiCtxX" title="Ask about everything ' +
+      '</b>' + (context.visible === false
+        ? '<span>&nbsp;(outside your access)</span>' : '') +
+      '<button type="button" id="paiCtxX" title="Ask about everything ' +
       'instead">&times;</button></div>';
     var x = document.getElementById('paiCtxX');
-    if (x) x.onclick = function(){ context = null; renderContext(); };
+    if (x) x.onclick = function(){
+      context = null; contextDismissed = true; renderContext();
+    };
   }
+
+  function refreshContext(){
+    if (contextDismissed) return;
+    var found = detectContext();
+    var same = context && found && context.type === found.type &&
+               String(context.id) === String(found.id);
+    if (!same){ context = found; renderContext(); }
+  }
+
+  // For pages that open a record without changing the URL — a detail
+  // drawer in the main app, say — so they can tell the panel which one.
+  window.ProcamAI = window.ProcamAI || {};
+  window.ProcamAI.setContext = function(c){
+    pageContext = c ? ctxOf(c.type, c.id, c.label) : null;
+    contextDismissed = false;
+    refreshContext();
+  };
 
   // ── open / close ────────────────────────────────────────────────
   function open(){
@@ -259,6 +364,7 @@
     });
     input.focus();
     if (!loaded){ loaded = true; firstRun(); }
+    else refreshContext();
   }
   function close(){
     panel.classList.remove('on'); scrim.classList.remove('on');
@@ -266,6 +372,12 @@
   }
 
   document.getElementById('paiFab').onclick = open;
+  document.getElementById('paiNew').onclick = function(){
+    history = [];
+    conversationId = null;
+    body.innerHTML = '<div class="pai-hello">New conversation. Ask me ' +
+      'anything about the CRM you can see.</div>';
+  };
   document.getElementById('paiClose').onclick = close;
   scrim.onclick = close;
 
@@ -279,8 +391,7 @@
 
   // ── first run: greeting + role-aware chips, §6.2 ─────────────────
   function firstRun(){
-    context = detectContext();
-    renderContext();
+    refreshContext();
     body.innerHTML = '<div class="pai-hello">Ask me about your leads, ' +
       'quotes, RFQs and accounts. I answer from the CRM, and only from ' +
       'what <b>you</b> can already see.</div>';
@@ -346,7 +457,8 @@
     send.disabled = true;
 
     var payload = {q: q, history: history.slice(-6)};
-    if (context) payload.context = context;
+    if (context) payload.context = {type: context.type, id: context.id};
+    if (conversationId) payload.conversation_id = conversationId;
 
     // §6.3 — stream when the browser can, so the table appears while
     // the sentence is still being written. Anything older falls back to
@@ -363,6 +475,7 @@
             return;
           }
           history.push(q);
+          remember(j);
           turn.querySelector('.pai-a').innerHTML = renderAnswer(j);
           wireChips(turn, j);
           body.scrollTop = body.scrollHeight;
@@ -435,6 +548,7 @@
             return;
           }
           history.push(q);
+          remember(last);
           slot.innerHTML = renderAnswer(last);
           wireChips(turn, last);
           body.scrollTop = body.scrollHeight;
@@ -453,6 +567,7 @@
               return;
             }
             history.push(q);
+            remember(j);
             slot.innerHTML = renderAnswer(j);
             wireChips(turn, j);
           })
@@ -464,6 +579,21 @@
       });
   }
 
+  function remember(j){
+    if (j && j.conversation_id) conversationId = j.conversation_id;
+    // The server says whether the record in context was visible; the
+    // chip says so too, rather than implying an answer about it.
+    if (j && j.context && context && j.context.type === context.type &&
+        String(j.context.id) === String(context.id)){
+      context.visible = j.context.visible;
+      if (j.context.visible && j.context.label) context.label = j.context.label;
+      renderContext();
+    }
+  }
+
+  var CONF_LABEL = {high: 'High confidence', medium: 'Medium confidence',
+                    low: 'Low confidence'};
+
   function renderAnswer(j){
     // What kind of statement this is, said before the statement.
     var kind = j.recommendation
@@ -471,7 +601,25 @@
       : j.model_used
         ? '<span class="pai-kind ai">AI summary of CRM data</span>'
         : '<span class="pai-kind fact">From the CRM</span>';
+    if (CONF_LABEL[j.confidence]){
+      kind += '<span class="pai-conf ' + esc(j.confidence) + '">' +
+              esc(CONF_LABEL[j.confidence]) + '</span>';
+    }
     var html = kind + '<div class="pai-prose">' + esc(j.prose || '') + '</div>';
+    if (j.how_answered){
+      html += '<div class="pai-how">' + esc(j.how_answered) + '</div>';
+    }
+    // §6.3 — a question back, with options that are whole questions.
+    var clar = j.clarification;
+    if (clar && (clar.options || []).length){
+      html += '<div class="pai-clarify"><b>' + esc(clar.question || '') +
+              '</b><div class="pai-chips" style="margin-top:0">';
+      clar.options.forEach(function(o, i){
+        html += '<button type="button" data-clar="' + i + '">' +
+                esc(o.label || o.question) + '</button>';
+      });
+      html += '</div></div>';
+    }
 
     (j.notes || []).forEach(function(n){
       html += '<div class="pai-note">' + esc(n) + '</div>';
@@ -509,9 +657,33 @@
       html += '</tbody></table></div>';
     }
 
+    // §3.5 — passages found in notes and emails cite where each came
+    // from; a record link for every one, with its kind and date.
+    var cites = (j.citations || []).filter(function(c){ return c.source; });
+    if (cites.length){
+      html += '<div class="pai-cites"><b>Cited</b> ';
+      cites.forEach(function(c, i){
+        html += '<button type="button" data-cite="' + i + '">' +
+                esc(c.label || (c.type + ' ' + c.id)) + '</button>' +
+                '<span>' + esc([c.source, c.date].filter(Boolean)
+                                 .join(' · ')) + '</span> ';
+      });
+      html += '</div>';
+    }
+
     if ((j.sources || []).length){
       html += '<div class="pai-src"><b>From</b> ' +
               esc((j.sources || []).join(' · ')) + '</div>';
+    }
+
+    if ((j.follow_ups || []).length){
+      html += '<div class="pai-chips pai-next"><div class="lbl">Ask next' +
+              '</div>';
+      j.follow_ups.forEach(function(f, i){
+        html += '<button type="button" data-next="' + i + '">' + esc(f) +
+                '</button>';
+      });
+      html += '</div>';
     }
 
     // §6.4 — feedback on every answer
@@ -526,20 +698,40 @@
   }
 
   function wireChips(turn, j){
+    function openRecord(chip){
+      if (!chip) return;
+      // Pages that exist. There is no /opportunities/<id>, /accounts/<id>
+      // or /handovers/<id> page — those chips used to 404. An opportunity
+      // opens through the app's own deep link; a handover opens the queue.
+      var go = {lead:'/leads/' + chip.id,
+                opportunity:'/app?opp=' + chip.id,
+                company:'/companies/' + chip.id,
+                quote:'/quotes/' + chip.id,
+                rfq:'/rfqs/' + chip.id,
+                handover:'/handovers'}[chip.type];
+      if (go) location.href = PREFIX + go;
+    }
     turn.querySelectorAll('.pai-chip').forEach(function(btn){
       btn.onclick = function(){
-        var chip = (j.rows[+btn.dataset.row] || {})._chip;
-        if (!chip) return;
-        // Pages that exist. There is no /opportunities/<id>, /accounts/<id>
-        // or /handovers/<id> page — those chips used to 404. An opportunity
-        // opens through the app's own deep link; a handover opens the queue.
-        var go = {lead:'/leads/' + chip.id,
-                  opportunity:'/app?opp=' + chip.id,
-                  company:'/companies/' + chip.id,
-                  quote:'/quotes/' + chip.id,
-                  rfq:'/rfqs/' + chip.id,
-                  handover:'/handovers'}[chip.type];
-        if (go) location.href = PREFIX + go;
+        openRecord((j.rows[+btn.dataset.row] || {})._chip);
+      };
+    });
+    var cites = (j.citations || []).filter(function(c){ return c.source; });
+    turn.querySelectorAll('[data-cite]').forEach(function(btn){
+      btn.onclick = function(){ openRecord(cites[+btn.dataset.cite]); };
+    });
+    // Clarification options and follow-ups are ordinary questions: a
+    // click asks them, through the same scoped endpoint as typing would.
+    turn.querySelectorAll('[data-clar]').forEach(function(btn){
+      btn.onclick = function(){
+        var o = ((j.clarification || {}).options || [])[+btn.dataset.clar];
+        if (o) askIt(o.question);
+      };
+    });
+    turn.querySelectorAll('[data-next]').forEach(function(btn){
+      btn.onclick = function(){
+        var f = (j.follow_ups || [])[+btn.dataset.next];
+        if (f) askIt(f);
       };
     });
     turn.querySelectorAll('[data-pin]').forEach(function(btn){
