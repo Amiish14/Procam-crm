@@ -106,3 +106,32 @@ def test_boot_index_names_match_the_models():
         env=dict(os.environ, DATABASE_URL='sqlite://', SECRET_KEY='t',
                  ADMIN_INITIAL_PASSWORD='BootTestOnly12345'))
     assert 'MISSING []' in src.stdout, src.stdout[-300:] + src.stderr[-300:]
+
+
+def test_seeded_employees_have_no_guessable_password_and_pcm001_opens_the_install():
+    folder = tempfile.mkdtemp()
+    seed = os.path.join(folder, 'seed.csv')
+    with open(seed, 'w') as fh:
+        fh.write('emp_code,name,email,department,designation,vertical,role\n'
+                 'SEEDADM1,Seed Administrator,,Corporate,Director,All,admin\n'
+                 'SEEDUSR1,Seed User,,Sales,Executive,All,user\n')
+    path = os.path.join(folder, 'seeded.db')
+    env = dict(os.environ, DATABASE_URL='sqlite:///' + path,
+               SECRET_KEY='test', ADMIN_INITIAL_PASSWORD='BootSeedTest-12345',
+               SESSION_COOKIE_SECURE='false', SEED_EMPLOYEES_CSV=seed)
+    check = (
+        "import app as A\n"
+        "with A.app.app_context():\n"
+        "    E = A.Employee\n"
+        "    adm = E.query.filter_by(emp_code='SEEDADM1').first()\n"
+        "    usr = E.query.filter_by(emp_code='SEEDUSR1').first()\n"
+        "    pcm = E.query.filter_by(emp_code='PCM001').first()\n"
+        "    print('RESULT', adm is not None, usr is not None,\n"
+        "          adm.check_password('seedadm1'), adm.check_password('SEEDADM1'),\n"
+        "          adm.must_change_pw, pcm is not None,\n"
+        "          pcm is not None and pcm.check_password('BootSeedTest-12345'))\n")
+    out = subprocess.run([sys.executable, '-c', check], cwd=_ROOT, env=env,
+                         capture_output=True, text=True, timeout=180)
+    line = [l for l in out.stdout.splitlines() if l.startswith('RESULT')]
+    assert line, out.stderr[-600:]
+    assert line[0] == 'RESULT True True False False True True True', line[0]

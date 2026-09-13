@@ -4329,7 +4329,7 @@ def api_leads_import_commit():
 
 # ─────────────────── INIT DB ───────────────────
 
-SEED_EMPLOYEES_CSV = os.path.join(
+SEED_EMPLOYEES_CSV = os.environ.get('SEED_EMPLOYEES_CSV') or os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     'data', 'private', 'seed_employees.csv')
 
@@ -4532,8 +4532,10 @@ def init_db():
         except Exception:
             db.session.rollback()
         # Create employees from PRERNA Employee Master if none exist
+        _seeded_now = False
         if Employee.query.count() == 0:
-            EMPLOYEES = _load_seed_employees()
+            EMPLOYEES = _load_seed_employees(SEED_EMPLOYEES_CSV)
+            _seeded_now = bool(EMPLOYEES)
             for ec, nm, em, dept, desig, vert, role in EMPLOYEES:
                 e = Employee(
                     emp_code=ec, name=nm,
@@ -4543,14 +4545,13 @@ def init_db():
                     is_active=True, industries='[]',
                     must_change_pw=True
                 )
-                # Default password = employee code in lowercase (PRERNA rule)
-                e.set_password(ec.lower())
+                # No usable password. The employee code used to be the
+                # password, and one director account was exempt from
+                # changing it — a guessable credential on every fresh
+                # install. An administrator issues each person a temporary
+                # password from Employees; PCM001 (below) is the way in.
+                e.set_password(secrets.token_urlsafe(32))
                 db.session.add(e)
-            # The configured director account is not forced to change its
-            # password on first login.
-            director_account = Employee.query.filter_by(emp_code='DIR12010').first()
-            if director_account:
-                director_account.must_change_pw = False
             db.session.commit()
             if EMPLOYEES:
                 print(f"✓ {len(EMPLOYEES)} employees seeded from Employee Master")
@@ -4575,7 +4576,9 @@ def init_db():
                                Employee.is_active.is_(True),
                                Employee.role.in_(('admin', 'procam_admin')))
                        .first())
-        if not pcm and _real_admin is not None:
+        # Employees seeded in this boot cannot sign in yet (see above), so
+        # their administrators do not count as a way in.
+        if not pcm and _real_admin is not None and not _seeded_now:
             app.logger.info(
                 'PCM001 absent and %s is an active admin — not re-seeding '
                 'the bootstrap account.', _real_admin.emp_code)
