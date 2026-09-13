@@ -135,6 +135,36 @@ def _samples(since, domains):
     return found
 
 
+#: Mapping one of these as an account domain would attach every person
+#: who uses that provider to a single customer. The enquiries are real;
+#: the domain is not an account.
+_FREE_MAIL = {
+    'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.in',
+    'yahoo.co.uk', 'hotmail.com', 'outlook.com', 'live.com', 'msn.com',
+    'rediffmail.com', 'rediff.com', 'aol.com', 'icloud.com', 'me.com',
+    'protonmail.com', 'proton.me', 'zoho.com', 'mail.com', 'gmx.com',
+    'yandex.com', 'qq.com', '163.com', '126.com',
+}
+
+#: Words that suggest the sender is in the trade. Not a verdict — an
+#: overseas agent asking us to move their client's cargo is a genuine
+#: enquiry, and a shipping line quoting us is not. Only a person knows
+#: which, so this asks rather than decides.
+_TRADE_WORDS = ('logistic', 'cargo', 'shipping', 'freight', 'forward',
+                'transport', 'shipp', 'marine', 'lines', 'express',
+                'hlag', 'maersk', 'dhl', 'kuehne', 'dsv', 'panalpina')
+
+
+def _caution(domain):
+    """A warning to print beside a domain, or ''. """
+    if domain in _FREE_MAIL:
+        return ('free mail — map the CONTACT, never this domain as an '
+                'account')
+    if any(w in domain for w in _TRADE_WORDS):
+        return 'in the trade — customer, overseas agent, or vendor?'
+    return ''
+
+
 def _preserved(since):
     """How much of the history kept its enquiry text.
 
@@ -307,7 +337,10 @@ def main():
         running = 0
         for n, domain, account, why in worth[:args.top]:
             running += n
-            print(f'    {n:>6}  {domain:<34} {account:<34} {why}')
+            print(f'    {n:>6}  {domain:<32} {account[:30]:<32} {why}')
+            care = _caution(domain)
+            if care:
+                print(f'            ^ {care}')
         if not worth:
             print('    (none)')
         share = round(100 * running / total) if total else 0
