@@ -85,31 +85,17 @@ class _Scope:
 def _scope():
     """``None`` when the viewer may see the whole company, else a _Scope.
 
-    Driven entirely by the viewer's data_scope in the Access Control
-    matrix: 'all' sees everything, 'vertical' sees their own vertical,
-    'own' sees only what they personally own.
+    v2026-09-13 — Phase 0: this resolved the matrix itself, in a copy of
+    the code pic360 also carried. Both now defer to app.access.scope, so
+    "the vertical" has one definition rather than three that happen to
+    agree.
     """
-    scope = _data_scope()
-    if scope == DataScope.ALL:
+    from app.access import scope as _canonical
+
+    sc = _canonical.current()
+    if sc.unrestricted:
         return None
-
-    from app import Employee
-    emp = Employee.query.filter_by(emp_code=session.get('emp_code')).first()
-    if emp is None:
-        return _Scope('', set())          # unknown user sees nothing
-
-    vertical = (emp.vertical or '').strip()
-    if scope == DataScope.OWN:
-        return _Scope(vertical, {emp.emp_code})
-
-    codes = {emp.emp_code}
-    clauses = [Employee.vertical_head_id == emp.id]
-    if vertical:
-        clauses.append(Employee.vertical == vertical)
-    for e in Employee.query.filter(or_(*clauses)).all():
-        if e.emp_code:
-            codes.add(e.emp_code)
-    return _Scope(vertical, codes)
+    return _Scope(sc.vertical, set(sc.codes))
 
 
 def _scope_tasks(q):

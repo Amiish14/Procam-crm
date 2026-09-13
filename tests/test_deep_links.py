@@ -32,6 +32,10 @@ flask_app, db = _main.app, _main.db
 Company, Lead, Opportunity, Employee = (_main.Company, _main.Lead,
                                         _main.Opportunity, _main.Employee)
 
+# CSRF stays on in production; the test client has no token, and what
+# is under test here is the access check, not the CSRF check.
+flask_app.config['WTF_CSRF_ENABLED'] = False
+
 _TEMPLATE = os.path.join(_ROOT, 'templates', 'app.html')
 
 
@@ -315,3 +319,52 @@ def test_contact_cards_are_keyboard_reachable():
     html = open(_TEMPLATE).read()
     card = html.split('class="contact-card"')[1][:400]
     assert 'tabindex="0"' in card and 'role="button"' in card
+
+
+# ── the per-record guard, which nothing tested ───────────────────────
+#
+# _require_lead_access() is what stops one salesperson opening another's
+# lead by URL. Removing it entirely used to leave the suite green: the
+# list was tested, the guard was not. §16 of the Procam AI brief makes
+# exactly this leak acceptance criterion #1, so it is pinned here.
+def test_writing_to_someone_elses_lead_is_refused(world):
+    r = _c('DLREP').put(f'/api/leads/{world["theirs"]}',
+                        json={'stage': 'Won'})
+    assert r.status_code == 403, \
+        'a rep could edit a lead outside their scope'
+
+
+def test_reading_someone_elses_attachments_is_refused(world):
+    r = _c('DLREP').get(f'/api/leads/{world["theirs"]}/attachments')
+    assert r.status_code == 403
+
+
+def test_setting_relevance_on_someone_elses_lead_is_refused(world):
+    r = _c('DLREP').post(f'/api/leads/{world["theirs"]}/relevance',
+                         json={'relevance': 'Not Relevant'})
+    assert r.status_code == 403
+
+
+def test_the_owner_is_still_allowed_through(world):
+    """The other half. A guard that refuses everyone passes every
+    leakage test and makes the CRM unusable."""
+    r = _c('DLREP').put(f'/api/leads/{world["mine"]}',
+                        json={'stage': 'Call Done'})
+    assert r.status_code == 200, r.get_data(as_text=True)[:200]
+
+
+def test_a_secondary_pic_may_open_the_lead_they_monitor(world):
+    """Phase 0 widened this deliberately: WP5 made the secondary PIC a
+    monitor, and the old role check refused them the record."""
+    with flask_app.app_context():
+        lead = db.session.get(Lead, world['theirs'])
+        lead.secondary_owner = 'DLREP'
+        db.session.commit()
+    try:
+        r = _c('DLREP').get(f'/api/leads/{world["theirs"]}/attachments')
+        assert r.status_code == 200
+    finally:
+        with flask_app.app_context():
+            lead = db.session.get(Lead, world['theirs'])
+            lead.secondary_owner = None
+            db.session.commit()

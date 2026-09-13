@@ -1243,14 +1243,20 @@ def require_admin(f):
 
 def _require_lead_access(lid):
     """Return the Lead if the current user can access it, else 403.
-    Admin sees all. Non-admin can only touch leads assigned to them.
-    v2026-09-01 — closes the `and lead.assigned_to and` short-circuit
-    that granted access to any unassigned lead."""
+
+    v2026-09-01 — closed the `and lead.assigned_to and` short-circuit
+    that granted access to any unassigned lead.
+    v2026-09-13 — Phase 0: reads the Access Matrix through
+    app.access.scope instead of session['role'], so this per-record
+    check and the list query can no longer disagree about the same
+    lead. A secondary PIC now reaches the lead they monitor, which the
+    role check refused.
+    """
+    from app.access import scope as _scope
+
     lead = Lead.query.get_or_404(lid)
-    if session.get('role') != 'admin':
-        my_code = session.get('emp_code')
-        if lead.assigned_to != my_code:
-            abort(403, 'Not your lead')
+    if not _scope.may_view(lead):
+        abort(403, 'Not your lead')
     return lead
 
 @app.route('/api/me')
@@ -1341,41 +1347,30 @@ def leads_for_user():
 def _scope_for_current_session():
     """Return (leads_query, allowed_emp_codes_set).
 
-    Three tiers:
-      * admin              → everything
-      * vertical head      → own leads + every report's leads (walk tree)
-      * individual         → own leads only
+    v2026-09-13 — Phase 0. This used to be a third, independent answer
+    to "what may this user see?", driven by session['role'] and a walk
+    of the reporting tree, while Reports and PIC 360 read the Access
+    Matrix. They disagreed: somebody set to *whole company* in the
+    matrix but without role='admin' saw everything in Reports and only
+    their own leads here, and both were "correct".
 
-    `emp_codes` is used by the PIC / team scoreboard widgets so they
-    only show people the current user is entitled to see.
+    It now delegates to app.access.scope, so the Access screen shows
+    what is actually enforced. The contract is unchanged — callers still
+    get a query and a concrete set of employee codes.
+
+    Two behaviour changes, both deliberate:
+      * a vertical-scoped viewer sees their whole vertical, not only
+        their direct reports — the definition Reports and PIC 360
+        already used;
+      * an admin narrowed in the matrix is now actually narrowed.
     """
-    role = session.get('role')
-    my_code = session.get('emp_code')
+    from app.access import scope as _scope
 
-    if role == 'admin':
-        return Lead.query, {e.emp_code for e in Employee.query.all()}
-
-    # Walk direct-report tree (bounded to 6 levels — plenty for TMS).
-    me = Employee.query.filter_by(emp_code=my_code).first()
-    if not me:
-        return Lead.query.filter_by(assigned_to=my_code), {my_code}
-
-    if getattr(me, 'is_vertical_head', False):
-        codes = {my_code}
-        frontier = [me.id]
-        for _ in range(6):
-            if not frontier: break
-            reports = (Employee.query
-                       .filter(Employee.vertical_head_id.in_(frontier))
-                       .all())
-            new_ids = []
-            for r in reports:
-                if r.emp_code not in codes:
-                    codes.add(r.emp_code); new_ids.append(r.id)
-            frontier = new_ids
-        return Lead.query.filter(Lead.assigned_to.in_(codes)), codes
-
-    return Lead.query.filter_by(assigned_to=my_code), {my_code}
+    sc = _scope.current()
+    q = _scope.leads(sc=sc)
+    if sc.codes is None:
+        return q, {e.emp_code for e in Employee.query.all() if e.emp_code}
+    return q, set(sc.codes)
 
 
 def _apply_dashboard_filters(q, args):

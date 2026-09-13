@@ -19,31 +19,11 @@ def visible_codes():
     None means unrestricted.  Mirrors the reports' data scope so the two
     cannot disagree about who is visible.
     """
-    from app.access.service import data_scope
-    from app.models.access import DataScope
-    from flask import session
-    from app import Employee
-    from sqlalchemy import or_
+    # v2026-09-13 — Phase 0: was a second copy of the matrix resolver.
+    from app.access import scope as _canonical
 
-    scope = data_scope()
-    if scope == DataScope.ALL:
-        return None
-
-    me = Employee.query.filter_by(emp_code=session.get('emp_code')).first()
-    if me is None:
-        return set()
-    if scope == DataScope.OWN:
-        return {me.emp_code}
-
-    vertical = (me.vertical or '').strip()
-    codes = {me.emp_code}
-    clauses = [Employee.vertical_head_id == me.id]
-    if vertical:
-        clauses.append(Employee.vertical == vertical)
-    for e in Employee.query.filter(or_(*clauses)).all():
-        if e.emp_code:
-            codes.add(e.emp_code)
-    return codes
+    sc = _canonical.current()
+    return None if sc.unrestricted else set(sc.codes)
 
 
 def may_view(emp_code):
