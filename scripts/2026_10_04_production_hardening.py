@@ -8,6 +8,7 @@ Adds
     employees.failed_logins              sign-in lockout counter
     employees.locked_until               sign-in lock expiry
     employees.temp_password_expires_at   temporary password expiry
+    vendor_domains.name/notes/updated_at/updated_by   Vendor Master
     indexes on leads (owner, stage, dates), contacts (owner),
     opportunities (stage)
     plus the tables and columns listed in RELEASE_TABLES / RELEASE_COLUMNS
@@ -57,6 +58,10 @@ RELEASE_COLUMNS = [
     ('employees', 'failed_logins', 'INTEGER DEFAULT 0'),
     ('employees', 'locked_until', 'DATETIME'),
     ('employees', 'temp_password_expires_at', 'DATETIME'),
+    ('vendor_domains', 'name', 'VARCHAR(200)'),
+    ('vendor_domains', 'notes', 'TEXT'),
+    ('vendor_domains', 'updated_at', 'DATETIME'),
+    ('vendor_domains', 'updated_by', 'VARCHAR(20)'),
 ]
 
 _DDL = r'''

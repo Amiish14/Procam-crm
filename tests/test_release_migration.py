@@ -35,6 +35,8 @@ def _old_database():
                 'temp_password_expires_at'):
         db.execute(f'ALTER TABLE employees DROP COLUMN {col}')
     db.execute('DROP INDEX IF EXISTS ix_leads_assigned_to')
+    for col in ('name', 'notes', 'updated_at', 'updated_by'):
+        db.execute(f'ALTER TABLE vendor_domains DROP COLUMN {col}')
     if not db.execute('SELECT COUNT(*) FROM employees').fetchone()[0]:
         db.execute("INSERT INTO employees (emp_code, name, is_active) "
                    "VALUES ('MIG1', 'Migration', 1)")
@@ -51,6 +53,7 @@ def test_check_writes_nothing_then_apply_then_nothing_left():
     assert 'WOULD add table  audit_events' in out.stdout
     assert 'WOULD add table  data_quality_snapshots' in out.stdout
     assert 'employees.session_version' in out.stdout
+    assert 'vendor_domains.updated_by' in out.stdout
     assert 'ix_leads_assigned_to' in out.stdout
     assert open(path, 'rb').read() == before
 

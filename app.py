@@ -4411,6 +4411,11 @@ def init_db():
             ('employees',     'failed_logins',    'INTEGER DEFAULT 0'),
             ('employees',     'locked_until',     'TIMESTAMP'),
             ('employees',     'temp_password_expires_at', 'TIMESTAMP'),
+            # Vendor Master
+            ('vendor_domains', 'name',       'VARCHAR(200)'),
+            ('vendor_domains', 'notes',      'TEXT'),
+            ('vendor_domains', 'updated_at', 'TIMESTAMP'),
+            ('vendor_domains', 'updated_by', 'VARCHAR(20)'),
             # v2026-10 final audit. A model column the database lacks breaks
             # EVERY query on that table, so a restart that lands before the
             # migration script runs would take the lead list and the notes

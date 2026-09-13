@@ -108,6 +108,8 @@ WATCH = {
         'domain': 'config.vendor_change',
         'vendor_type': 'config.vendor_change',
         'is_active': 'config.vendor_change',
+        'name': 'config.vendor_change',
+        'notes': 'config.vendor_change',
     }),
     'LeadNote': ('lead_note', {
         'note_text': 'note.update',
@@ -115,6 +117,7 @@ WATCH = {
     }),
     'EmailClassification': ('email_classification', {
         'corrected_to': 'classifier.correction',
+        'correction_reason': 'classifier.correction',
         'review_state': 'classifier.review',
         'created_lead_id': 'classifier.review',
     }),

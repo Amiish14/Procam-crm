@@ -416,7 +416,7 @@ Composite indexes: `ix_audit_events_entity` (entity_type, entity_id)
 | note | TEXT | yes |  |  |
 | created_at | DATETIME | yes | indexed |  |
 
-Composite indexes: `ix_dmq_entity` (entity_type, entity_id, field); `ix_dmq_status_reason` (status, reason)
+Composite indexes: `ix_dmq_status_reason` (status, reason); `ix_dmq_entity` (entity_type, entity_id, field)
 
 ## data_quality_snapshots
 
@@ -1191,7 +1191,7 @@ Composite indexes: `ix_master_item_list_active` (list_key, is_active)
 | waiting_from_task_id | INTEGER | yes | FK → task_instances.id |  |
 | blocked_at | DATETIME | yes |  |  |
 
-Composite indexes: `ix_task_inst_open` (task_key, entity_type, entity_id, owner_user_id, status); `ix_task_inst_role_status` (owner_role, status); `ix_task_inst_entity` (entity_type, entity_id); `ix_task_inst_owner_status` (owner_user_id, status)
+Composite indexes: `ix_task_inst_owner_status` (owner_user_id, status); `ix_task_inst_open` (task_key, entity_type, entity_id, owner_user_id, status); `ix_task_inst_role_status` (owner_role, status); `ix_task_inst_entity` (entity_type, entity_id)
 
 ## training_certificates
 
@@ -1236,6 +1236,10 @@ Composite indexes: `ix_task_inst_open` (task_key, entity_type, entity_id, owner_
 | is_active | BOOLEAN | yes | indexed | True |
 | added_by | VARCHAR(20) | yes |  |  |
 | created_at | DATETIME | yes |  |  |
+| name | VARCHAR(200) | yes |  |  |
+| notes | TEXT | yes |  |  |
+| updated_at | DATETIME | yes |  |  |
+| updated_by | VARCHAR(20) | yes |  |  |
 
 ## won_handovers
 
