@@ -1,68 +1,68 @@
-# Procam CRM v3.0
-**Full-stack pre-sales CRM for Procam Group — Sales, Pre-Sales, Admin access tiers**
+# Procam CRM
 
-## Features
-- Employee Master with emp code as default password + forced change on first login
-- Lead pipeline: New → Call Done → Profile Sent → Appointment → Visit Done → RFQ Generated → Won/Lost
-- Activity date tracking (phone call, intro mail, meeting, RFQ) with onboarded date stamp
-- Opportunity number assignment when RFQ is received
-- Market Intelligence: ETManufacturing / Projects Today newsletter parsing from the configured mailbox
-- Global CRM: People, Companies, Overseas Agents with country/city/website
-- AI Outreach: Claude-powered email generation with project context
-- Excel upload with fuzzy column detection (any format)
-- Role-based access: Admin sees all, Pre-Sales sees only their own leads
-- Procam brand colors: Red #C72435, Charcoal #474447
+The customer relationship management system for Procam's logistics
+business: leads from the enquiry mailbox, accounts and contacts, RFQs,
+quotations and won-deal handovers, pipeline and reporting, and the
+Procam AI Copilot — with access governed by one Access Matrix and every
+important change audited.
 
-## Default Login
-- **Admin**: emp_code `PCM001` / the bootstrap password comes from the `ADMIN_INITIAL_PASSWORD` environment variable (at least 12 characters), set before first boot
-- All other employees: emp_code (e.g. `PCM101`) / password = emp_code in lowercase (`pcm101`)
-- First login forces password change
+## Capabilities
 
-## Local Development
+| Area | What it does |
+|---|---|
+| Lead management | Pipeline by stage, owners and secondary owners with reasons, follow-ups, notes with version history, the customer email trail, notes search |
+| Email intake | Leads mailbox via Microsoft Graph; rules-first classifier (new lead, reply, quote, rate sourcing, internal, duplicate, non-business), duplicate scoring with reasons, review queue, learning from corrections, Vendor Master |
+| Accounts and contacts | Company 360, contacts, account ownership and teams, overseas agents, business-card scanning |
+| Deals | RFQs and rate sourcing, quotations with approval, won-deal handover with PO capture |
+| Intelligence and reporting | Dashboards, action/competitor/account reports, funnels, market intelligence, classification intelligence |
+| Procam AI Copilot | Plain-language questions answered from the CRM within each person's access; permission-filtered search; private model only |
+| Data quality | Scoped checks with suggestions, previewed and audited batch correction, daily trends |
+| Administration | Access Matrix, employees, master data, bulk tools, audit trail, operations status, Academy |
+
+## Documentation
+
+| For | Start here |
+|---|---|
+| Staff using the CRM | [User Guide](docs/USER_GUIDE.md) |
+| CRM Administrators | [Administrator Guide](docs/operations/ADMINISTRATOR_GUIDE.md) · [Classification](docs/operations/CLASSIFICATION_GUIDE.md) · [Data Quality](docs/operations/DATA_QUALITY_GUIDE.md) · [AI Configuration](docs/operations/AI_CONFIGURATION_GUIDE.md) |
+| Operations / Deployment Team | [Operations index](docs/operations/README.md) — runbook, deployment, backup, rollback, disaster recovery, monitoring, troubleshooting |
+| IT (Microsoft 365) | [Graph Setup Guide](docs/operations/GRAPH_SETUP_GUIDE.md) |
+| Security Team | [Security](docs/SECURITY.md) · [RBAC](docs/RBAC.md) |
+| Development Team | [Developer Guide](docs/DEVELOPER_GUIDE.md) · [Architecture](docs/ARCHITECTURE.md) · [Database](docs/DATABASE.md) · [API reference](docs/reference/API.md) · [Schema reference](docs/reference/SCHEMA.md) |
+| Sign-off | [Production Readiness Report](docs/operations/PRODUCTION_READINESS_REPORT.md) |
+
+## Quick start (development)
+
 ```bash
-cd procam_crm
-pip install -r requirements.txt
-python app.py
-# Open http://localhost:5000
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env        # set SECRET_KEY and ADMIN_INITIAL_PASSWORD; SESSION_COOKIE_SECURE=false locally
+.venv/bin/python app.py     # http://localhost:5000
+.venv/bin/python -m pytest -q -p no:warnings
 ```
 
-## Deploy on Render (like PRERNA)
-1. Push this folder to a GitHub repository
-2. Go to render.com → New Web Service → Connect GitHub repo
-3. Build command: `pip install -r requirements.txt`
-4. Start command: `gunicorn app:app --workers 2 --bind 0.0.0.0:$PORT --timeout 120`
-5. Add environment variable: `SECRET_KEY` (any random string)
-6. Add PostgreSQL database → copy connection string → set `DATABASE_URL`
-7. Deploy — app initializes DB automatically on first run
+On an empty database the `PCM001` administrator is created from
+`ADMIN_INITIAL_PASSWORD` and must change it at first sign-in. New and
+reset accounts receive temporary passwords from an administrator; no
+account uses a predictable default.
 
-## Database
-- Local: SQLite (`procam_crm.db` created automatically)
-- Production: PostgreSQL (Render provides free tier, same stack as PRERNA)
+## Production
 
-## News Intelligence (Outlook Integration)
-The news fetch uses Microsoft Graph API. The MS365 Claude integration is already active.
-For the daily 7am auto-fetch, either:
-- Schedule a Render Cron Job to hit `/api/news/fetch` (POST) with admin session
-- Or use the "Seed from Outlook" button manually in the Intelligence tab
+Azure VM, gunicorn under systemd behind nginx at `/CRM`, SQLite, with
+scheduled backups and health checks. Follow the
+[Deployment Guide](docs/operations/DEPLOYMENT_GUIDE.md); the server is
+pull-only and every deploy starts with a verified backup.
 
-## Employee Roles
-| Role | Access |
-|------|--------|
-| admin | Everything — all leads, team, assign, employees, news |
-| presales | Own leads only, outreach, contacts |
-| user | Own leads only, outreach, contacts |
+## Repository layout
 
-## File Structure
 ```
-procam_crm/
-├── app.py              # Flask app + all API routes + models
-├── requirements.txt    # Python dependencies
-├── Procfile           # Gunicorn start command
-├── render.yaml        # Render.com deployment config
-├── .env.example       # Environment variable template
-├── templates/
-│   ├── login.html     # Login page (Procam branding)
-│   ├── app.html       # Main SPA application
-│   └── change_password.html  # First-login password change
-└── static/            # Static assets (CSS/JS embedded in templates)
+app.py              application, core models, authentication, core APIs, boot
+app/                feature packages (access, intake, copilot, rfq, quote, handover,
+                    company360, data_quality, ops, reports, …) and shared services
+presales/           account development and projects
+email_ingest/       Microsoft Graph client, webhook and ingest pipeline
+templates/, static/ pages; templates/app.html is the main application
+scripts/            migrations (YYYY_MM_DD_*.py) and operational tools
+docs/               user, administrator, operations, security and developer docs
+tests/              pytest suite
 ```
