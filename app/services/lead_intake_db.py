@@ -9,6 +9,7 @@ Split this way because the tree is the part worth testing exhaustively
 and the part that must stay arguable; keeping SQL out of it is what makes
 that possible.
 """
+import re
 from datetime import datetime, timedelta
 
 from app.services import lead_intake as li
@@ -140,44 +141,337 @@ def is_vendor_domain(domain):
 
 
 # ─── duplicates — step 9 ─────────────────────────────────────────────────
+#: How many recent leads a message is compared with. Duplicates are
+#: recent by nature, and the scoring reads each candidate's text, so the
+#: set stays bounded however large the lead table grows.
+DUPLICATE_CANDIDATES = 500
+
+
 def duplicate_score(msg=None, subject=None, from_addr=None, window_days=30):
-    """(score, lead_id). Weights live in lead_intake.DUPLICATE_WEIGHTS."""
-    from app import Lead
+    """(score, lead_id). Weights live in lead_intake.DUPLICATE_WEIGHTS.
 
-    from_addr = (from_addr or '').lower()
-    domain = li.domain_of(from_addr)
-    if not domain:
-        return 0, None
+    The breakdown behind the number is duplicate_breakdown(); this keeps
+    the shape every existing caller reads.
+    """
+    d = duplicate_breakdown(msg=msg, subject=subject, from_addr=from_addr,
+                            window_days=window_days)
+    return d['score'], d['lead_id']
 
+
+def duplicate_breakdown(msg=None, subject=None, from_addr=None,
+                        window_days=30, limit=DUPLICATE_CANDIDATES):
+    """{score, lead_id, reasons} for the lead this message most resembles.
+
+    Every signal is compared against each recent lead and the lead with
+    the highest total wins; `reasons` lists what fired for that lead as
+    {signal, weight, detail}. What "the same" means for each signal is
+    defined in _signals_for() and documented for administrators in
+    docs/operations/CLASSIFICATION_GUIDE.md.
+
+    Never raises: a scoring failure answers "no duplicate", which lets
+    the rest of the tree decide rather than losing the message.
+    """
+    try:
+        return _duplicate_breakdown(msg or {}, subject, from_addr,
+                                    window_days, limit)
+    except Exception:
+        try:
+            from app import app as flask_app
+            flask_app.logger.exception('duplicate scoring failed')
+        except Exception:
+            pass
+        return li.duplicate_details()
+
+
+def _duplicate_breakdown(msg, subject, from_addr, window_days, limit):
+    from app import Lead, db
+
+    probe = _Probe(msg, subject, from_addr)
     since = datetime.utcnow() - timedelta(days=window_days)
     rows = (Lead.query
             .filter(Lead.email.isnot(None), Lead.created_at >= since)
-            .order_by(Lead.created_at.desc()).limit(500).all())
+            .order_by(Lead.created_at.desc()).limit(limit).all())
+
+    # A thread match is decisive whatever the lead's age, so its lead is
+    # considered even when it falls outside the window.
+    thread_id, thread_detail = _thread_match(msg)
+    if thread_id and thread_id not in {r.id for r in rows}:
+        extra = db.session.get(Lead, thread_id)
+        if extra is not None:
+            rows.append(extra)
     if not rows:
-        return 0, None
+        return li.duplicate_details()
 
-    want_subject = _fold(subject or '')
-    want_files = {(a or {}).get('name', '').lower()
-                  for a in (msg or {}).get('attachments') or []}
-    want_files.discard('')
+    trail = _TrailIndex([r.id for r in rows], probe)
 
-    best, best_id = 0, None
+    best = li.duplicate_details()
     for lead in rows:
-        lead_addr = (lead.email or '').lower()
-        lead_domain = li.domain_of(lead_addr)
-        signals = {}
+        reasons = _signals_for(lead, probe, trail,
+                               thread_detail if lead.id == thread_id
+                               else None)
+        score = li.score_duplicate({r['signal']: True for r in reasons})
+        if score > best['score']:
+            reasons.sort(key=lambda r: -r['weight'])
+            best = li.duplicate_details(score, lead.id, reasons)
+    return best
 
-        if lead_addr and lead_addr == from_addr and want_subject and \
-                _fold(li.strip_prefixes(lead.original_email_subject or '')) \
-                == want_subject:
-            signals['same_sender_and_subject'] = True
-        if lead_domain and lead_domain == domain:
-            signals['same_account_in_window'] = True
 
-        score = li.score_duplicate(signals)
-        if score > best:
-            best, best_id = score, lead.id
-    return best, best_id
+class _Probe:
+    """Everything about the incoming message the signals compare,
+    worked out once rather than once per candidate lead."""
+
+    def __init__(self, msg, subject, from_addr):
+        from email_ingest import parser as email_parser
+
+        self.msg = msg
+        self.addr = (from_addr or '').strip().lower()
+        self.domain = li.domain_of(self.addr)
+        self.subject = _fold(subject or '')
+        # find_by_subject refuses to match on fewer characters than this,
+        # for the same reason: "RFQ" is every enquiry a customer sends.
+        if len(self.subject) < 6:
+            self.subject = ''
+
+        self.text = li.searchable_text(msg)
+        self.references = li.enquiry_references(self.text)
+        self.files = {}
+        for name in li.attachment_names(msg):
+            key = li.meaningful_attachment(name)
+            if key:
+                self.files.setdefault(key, name)
+        self.weights = li.cargo_weights(self.text)
+
+        body = ''
+        try:
+            body = email_parser._get_body_text(msg)
+        except Exception:
+            body = li.body_text(msg)
+        origin, destination = email_parser._extract_origin_destination(
+            f"{msg.get('subject') or ''}\n{body}")
+        self.route = _route_key(origin, destination)
+
+        self.company = None
+        if self.addr:
+            try:
+                self.company, _how = resolve_account(self.addr)
+            except Exception:
+                self.company = None
+        self.personal = self.domain in _personal_domains()
+
+
+class _TrailIndex:
+    """What the candidate leads' trails hold, fetched in one query per
+    kind and only when the message has something to compare it with."""
+
+    def __init__(self, lead_ids, probe):
+        from app import LeadAttachment, LeadEmail
+
+        self.files = {}         # lead id → {normalised name: as stored}
+        self.names = {}         # lead id → every filename, for references
+        self.subjects = {}
+        if not lead_ids:
+            return
+        if probe.files or probe.references:
+            for lead_id, filename in (
+                    LeadAttachment.query
+                    .with_entities(LeadAttachment.lead_id,
+                                   LeadAttachment.filename)
+                    .filter(LeadAttachment.lead_id.in_(lead_ids)).all()):
+                # Separators become spaces, exactly as searchable_text()
+                # treats the message's own filenames, so a reference in
+                # a filename reads the same on both sides.
+                self.names.setdefault(lead_id, []).append(
+                    re.sub(r'[_\-.]+', ' ', filename or ''))
+                key = li.meaningful_attachment(filename)
+                if key:
+                    self.files.setdefault(lead_id, {}).setdefault(
+                        key, filename)
+        if probe.references:
+            for lead_id, subject in (
+                    LeadEmail.query
+                    .with_entities(LeadEmail.lead_id, LeadEmail.subject)
+                    .filter(LeadEmail.lead_id.in_(lead_ids),
+                            LeadEmail.subject.isnot(None)).all()):
+                self.subjects.setdefault(lead_id, []).append(subject)
+
+
+def _signals_for(lead, probe, trail, thread_detail):
+    """[{signal, weight, detail}] — which duplicate signals fire for one
+    candidate lead.
+
+    same_thread              the conversation id, In-Reply-To/References
+                             or the message id itself names this lead or
+                             an email on its trail
+    same_reference           an enquiry reference (RFQ / tender / enquiry
+                             number) appears in both; a short or all-digit
+                             one only counts within the same account
+    same_sender_and_subject  the sender is one of the lead's contact
+                             addresses and the subject, with reply
+                             prefixes and status notes removed, is the same
+    same_account_and_route   same account, and the same origin AND
+                             destination
+    same_attachment_name     an attachment of the same name, ignoring
+                             inline images, signature logos and names
+                             made only of generic words ("RFQ.xlsx")
+    same_account_in_window   same account, inside the time window
+    same_cargo               every distinctive word of the lead's cargo
+                             description appears in the message AND the
+                             two state the same weight
+    """
+    W = li.DUPLICATE_WEIGHTS
+    out = []
+
+    def fire(signal, detail):
+        out.append({'signal': signal, 'weight': W[signal], 'detail': detail})
+
+    if thread_detail:
+        fire('same_thread', thread_detail)
+
+    lead_addrs = {a.strip().lower() for a in
+                  (lead.email, lead.email2, lead.original_email_from) if a}
+    lead_addrs.discard('')
+    account = _same_account(lead, lead_addrs, probe)
+
+    lead_text = '\n'.join(filter(None, [lead.original_email_subject,
+                                        lead.original_email_body]))
+
+    if probe.references:
+        theirs = {key: raw for raw, key in li.enquiry_references(
+            '\n'.join([lead_text] + trail.subjects.get(lead.id, [])
+                      + trail.names.get(lead.id, [])))}
+        for raw, key in probe.references:
+            if key in theirs and (account or not li.weak_reference(key)):
+                fire('same_reference', f'reference {raw} appears in both')
+                break
+
+    if probe.subject and probe.addr and probe.addr in lead_addrs:
+        lead_subject = lead.original_email_subject or ''
+        if probe.subject in (_fold(li.strip_prefixes(lead_subject)),
+                             _fold(li.match_subject(lead_subject))):
+            fire('same_sender_and_subject',
+                 f'{probe.addr} sent the same subject before')
+
+    extracted = _extracted(lead)
+    if account and probe.route:
+        theirs = _route_key(extracted.get('origin'),
+                            extracted.get('destination'))
+        if not theirs and lead_text:
+            from email_ingest import parser as email_parser
+            theirs = _route_key(*email_parser._extract_origin_destination(
+                lead_text))
+        if theirs and theirs == probe.route:
+            fire('same_account_and_route',
+                 f'same account and the same route '
+                 f'({probe.route[0]} to {probe.route[1]})')
+
+    if probe.files:
+        shared = sorted(set(probe.files) & set(trail.files.get(lead.id, {})))
+        if shared:
+            fire('same_attachment_name',
+                 f'attachment {probe.files[shared[0]]} is on the lead too')
+
+    if account:
+        fire('same_account_in_window', account)
+
+    words = li.distinctive_cargo_words(extracted.get('cargo_type'))
+    if words and probe.weights and li.mentions_all(probe.text, words):
+        theirs = set()
+        try:
+            if extracted.get('cargo_weight_mt'):
+                theirs.add(round(float(extracted['cargo_weight_mt']), 3))
+        except (TypeError, ValueError):
+            pass
+        theirs |= li.cargo_weights(lead_text)
+        same = sorted(theirs & probe.weights)
+        if same:
+            fire('same_cargo', f'same cargo ({" ".join(words)}) and the '
+                               f'same weight ({same[0]:g} t)')
+    return out
+
+
+def _same_account(lead, lead_addrs, probe):
+    """Words saying why the two share an account, or '' when they do not.
+
+    The same address is the same customer; so is the same resolved
+    account; so is the same company domain. A free-mail domain is not an
+    account — two gmail.com senders are two strangers.
+    """
+    if probe.addr and probe.addr in lead_addrs:
+        return f'same sender {probe.addr}'
+    if probe.company is not None and lead.company_id \
+            and lead.company_id == probe.company.id:
+        return f'same account ({probe.company.name})'
+    lead_domain = li.domain_of(lead.email or '')
+    if probe.domain and not probe.personal and lead_domain == probe.domain:
+        return f'same sender domain {probe.domain}'
+    return ''
+
+
+def _thread_match(msg):
+    """(lead_id, detail) when the message's thread identity names a lead.
+
+    The same lookups as find_by_thread(), plus the message id itself —
+    the same email ingested twice — and each saying which one matched.
+    """
+    from app import Lead, LeadEmail
+
+    keys = li.thread_keys(msg or {})
+    conv = keys['conversation_id']
+    if conv:
+        row = Lead.query.with_entities(Lead.id).filter_by(
+            conversation_id=conv).order_by(Lead.id.asc()).first()
+        if row:
+            return row[0], 'same conversation as the lead'
+        mail = LeadEmail.query.with_entities(LeadEmail.lead_id).filter_by(
+            conversation_id=conv).first()
+        if mail:
+            return mail[0], "same conversation as an email on the lead's trail"
+
+    parents = [m for m in [keys['in_reply_to']] + list(keys['reference_ids'])
+               if m]
+    if parents:
+        row = Lead.query.with_entities(Lead.id).filter(
+            Lead.email_message_id.in_(parents)).first()
+        if row:
+            return row[0], "replies to the lead's original email"
+        mail = LeadEmail.query.with_entities(LeadEmail.lead_id).filter(
+            LeadEmail.message_id.in_(parents)).first()
+        if mail:
+            return mail[0], "replies to an email on the lead's trail"
+
+    mid = keys['message_id']
+    if mid:
+        row = Lead.query.with_entities(Lead.id).filter(
+            Lead.email_message_id == mid).first()
+        if row:
+            return row[0], 'this exact email already created the lead'
+        mail = LeadEmail.query.with_entities(LeadEmail.lead_id).filter(
+            LeadEmail.message_id == mid).first()
+        if mail:
+            return mail[0], "this exact email is already on the lead's trail"
+    return None, None
+
+
+def _route_key(origin, destination):
+    o, d = li.place_key(origin), li.place_key(destination)
+    return (o, d) if o and d else None
+
+
+def _extracted(lead):
+    import json
+    try:
+        data = json.loads(lead.email_extracted_json or '{}')
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _personal_domains():
+    try:
+        from email_ingest.parser import PERSONAL_DOMAINS
+        return PERSONAL_DOMAINS
+    except Exception:
+        return set()
 
 
 # ─── logistics content — step 8, reusing the parser's own judgement ──────
@@ -239,6 +533,7 @@ def build_context():
         find_by_thread=find_by_thread,
         find_by_subject=find_by_subject,
         duplicate_score=duplicate_score,
+        duplicate_details=duplicate_breakdown,
         is_vendor_domain=is_vendor_domain,
         has_logistics_content=has_logistics_content,
         ai_opinion=_ai_second_opinion if ai.is_enabled() else None,
@@ -385,6 +680,12 @@ def _reviewable(msg, decision=None):
         for key, value in ((decision.extra if decision else None) or {}).items():
             if key.startswith('ai_') or key == 'rule_class':
                 out[key] = value
+        # The duplicate breakdown — which signals fired against which
+        # lead — so a reviewer overruling a duplicate can see what the
+        # engine saw, and a correction records what misled it.
+        dup = ((decision.extra if decision else None) or {}).get('duplicate')
+        if dup:
+            out['duplicate'] = dup
         return out
     except Exception:
         return {}

@@ -115,12 +115,19 @@ class Context:
     def __init__(self, *, internal_domains=(), find_by_thread=None,
                  find_by_subject=None, duplicate_score=None,
                  is_vendor_domain=None, has_logistics_content=None,
-                 quote_reference=None, ai_opinion=None):
+                 quote_reference=None, ai_opinion=None,
+                 duplicate_details=None):
         self.internal_domains = {d.lower().lstrip('@')
                                  for d in (internal_domains or ())}
         self.find_by_thread = find_by_thread or (lambda **kw: None)
         self.find_by_subject = find_by_subject or (lambda **kw: None)
         self.duplicate_score = duplicate_score or (lambda **kw: (0, None))
+        # The same lookup with its reasons. A caller that supplies only
+        # duplicate_score still works: its (score, lead_id) is read as a
+        # breakdown with no reasons.
+        self.duplicate_details = duplicate_details or (
+            lambda **kw: duplicate_details_from_score(
+                self.duplicate_score(**kw)))
         self.is_vendor_domain = is_vendor_domain or (lambda d: False)
         self.has_logistics_content = has_logistics_content or (lambda m: True)
         self.quote_reference = quote_reference or (lambda text: None)
@@ -524,15 +531,22 @@ def classify(msg, ctx=None):
                         reason='no cargo, RFQ, route or contact signal')
 
     # ── 9. duplicate ──
-    score, dup_of = ctx.duplicate_score(msg=msg, subject=stripped,
-                                        from_addr=from_addr)
+    dup = ctx.duplicate_details(msg=msg, subject=stripped,
+                                from_addr=from_addr) or {}
+    score, dup_of = int(dup.get('score') or 0), dup.get('lead_id')
+    # Why the score is what it is, kept with the decision so the review
+    # screen can show it. Only when something fired: an empty breakdown
+    # on every new lead would be noise in the training set.
+    dup_extra = ({'duplicate': duplicate_details(
+        score, dup_of, dup.get('reasons'))} if score else {})
     if score >= 70:
         return Decision(Klass.DUPLICATE, step=9, lead_id=dup_of,
-                        duplicate_score=score,
+                        duplicate_score=score, extra=dict(dup_extra),
                         reason=f'duplicate of an existing enquiry ({score}%)')
     if score >= 31:
         return Decision(Klass.REVIEW, step=9, lead_id=dup_of,
                         duplicate_score=score, needs_review=True,
+                        extra=dict(dup_extra),
                         reason=f'may duplicate an existing enquiry ({score}%)')
 
     # ── 10. confidence ──
@@ -544,11 +558,12 @@ def classify(msg, ctx=None):
         # need a person to look at it — and it is parked, not deleted,
         # so a mistake here is recoverable.
         return Decision(Klass.NON_BUSINESS, step=10, confidence=confidence,
-                        duplicate_score=score,
+                        duplicate_score=score, extra=dict(dup_extra),
                         reason=f'no sign of an enquiry ({confidence}%)')
     if confidence < 50:
         decided = Decision(Klass.REVIEW, step=10, confidence=confidence,
                            duplicate_score=score, needs_review=True,
+                           extra=dict(dup_extra),
                            reason=f'low confidence ({confidence}%)')
     elif not has_substance(msg):
         # An email with nothing in it has told us nothing. The subject
@@ -559,12 +574,13 @@ def classify(msg, ctx=None):
         # confident about, so a person looks.
         decided = Decision(Klass.REVIEW, step=10, confidence=confidence,
                            duplicate_score=score, needs_review=True,
+                           extra=dict(dup_extra),
                            reason=f'nothing in the message to judge — '
                                   f'{confidence}% came from the subject '
                                   f'line alone')
     else:
         decided = Decision(Klass.NEW_LEAD, step=10, confidence=confidence,
-                           duplicate_score=score,
+                           duplicate_score=score, extra=dict(dup_extra),
                            needs_review=confidence < 80,
                            reason=f'new enquiry ({confidence}% confidence)')
 
@@ -720,8 +736,189 @@ DUPLICATE_WEIGHTS = {
 }
 
 
+def duplicate_details_from_score(pair):
+    """A plain (score, lead_id) lookup read as a breakdown."""
+    score, lead_id = (tuple(pair or ()) + (0, None))[:2]
+    return duplicate_details(score, lead_id)
+
+
 def score_duplicate(signals):
     """Sum the weights of the signals that fired, capped at 100."""
     total = sum(DUPLICATE_WEIGHTS.get(k, 0)
                 for k, fired in (signals or {}).items() if fired)
     return min(100, total)
+
+
+def duplicate_details(score=0, lead_id=None, reasons=None):
+    """The shape every duplicate lookup answers in.
+
+    `reasons` is [{signal, weight, detail}], strongest first — what fired
+    against the best-matching lead, in words, so the review screen can
+    say why a message was held as a duplicate instead of just how much.
+    """
+    return {'score': int(score or 0), 'lead_id': lead_id,
+            'reasons': list(reasons or [])}
+
+
+# ─── duplicate evidence, read out of text ────────────────────────────────
+# Pure helpers for the duplicate signals in lead_intake_db. Kept here,
+# beside the weights, so each definition of "the same" can be tested
+# against a string and argued with in one place.
+
+#: An enquiry reference is a number a customer or a tender portal gave the
+#: requirement: "RFQ No. NTPC/2026/1234", "Tender ref: MEC-TN-0098",
+#: "RFQ-DLI-26-0061". The word before it is required, and so is a digit
+#: in it — "RFQ from Mumbai" and "enquiry regarding" name no reference,
+#: which is why confidence_parts' looser pattern, fine for scoring the
+#: presence of one, cannot be reused to say which one.
+_REFERENCE_RE = re.compile(
+    r'\b(?:rfq|rfp|rfi|tender|enquiry|inquiry|nit|ref(?:erence)?)\b'
+    r'(?:[\s.:#\-_/]*(?:no|nos|number|num|ref|id)\b)?'
+    r'(?:[\s.:#\-_/]*(?:no|number)\b)?'
+    r'[\s.:#\-_/]*'
+    r'([a-z0-9](?:[a-z0-9]|[\-/_.](?=[a-z0-9])){3,40})',
+    re.IGNORECASE)
+_DATE_LIKE = re.compile(r'^\d{1,4}[\-/._]\d{1,2}[\-/._]\d{1,4}$')
+
+
+def enquiry_references(text):
+    """[(as written, comparison key)] for every enquiry reference.
+
+    The key is upper case with separators removed, so "NTPC/2026/1234"
+    and "ntpc-2026-1234" are one reference. Refused: anything without a
+    digit, a bare year ("RFQ 2026"), and a date ("RFQ 12.09.2026") —
+    each would make unrelated enquiries look identical.
+    """
+    out, seen = [], set()
+    for m in _REFERENCE_RE.finditer(text or ''):
+        raw = m.group(1).strip('.-/_')
+        key = re.sub(r'[^A-Z0-9]', '', raw.upper())
+        if len(key) < 4 or not re.search(r'\d', key):
+            continue
+        if re.fullmatch(r'(19|20)\d\d', key) or _DATE_LIKE.match(raw):
+            continue
+        if key not in seen:
+            seen.add(key)
+            out.append((raw.upper(), key))
+    return out
+
+
+def weak_reference(key):
+    """A short or all-digit reference ("0061", "RFQ 4471") is only
+    evidence within one account: two customers can both be on RFQ 4471,
+    but they cannot both be on NTPC/2026/1234."""
+    return len(key or '') < 6 or (key or '').isdigit()
+
+
+#: Words that make a filename say nothing about which enquiry it belongs
+#: to. Inline images and signature logos arrive on every email a company
+#: sends, and "RFQ.xlsx" arrives on every enquiry a customer sends, so
+#: matching on them would call a customer's second enquiry a duplicate
+#: of their first.
+_GENERIC_FILE_WORDS = frozenset((
+    'image', 'img', 'outlook', 'logo', 'banner', 'signature', 'sig', 'icon',
+    'facebook', 'linkedin', 'twitter', 'instagram', 'youtube', 'whatsapp',
+    'attachment', 'attachments', 'untitled', 'document', 'doc', 'docx',
+    'file', 'scan', 'scanned', 'photo', 'picture', 'pic', 'screenshot',
+    'rfq', 'rfp', 'rfi', 'enquiry', 'inquiry', 'quote', 'quotation',
+    'request', 'requirement', 'details', 'detail', 'new', 'copy', 'final',
+    'revised', 'mail', 'email', 'print', 'page', 'noname', 'part', 'pdf',
+    'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'gif', 'the', 'and', 'for', 'our',
+))
+#: Signed-mail and calendar parts carry no enquiry at all.
+_IGNORED_FILE_EXTENSIONS = frozenset(('p7s', 'p7m', 'dat', 'ics', 'vcf'))
+
+
+def meaningful_attachment(name):
+    """The filename, normalised, when it could identify an enquiry;
+    otherwise None.
+
+    A name counts when, after removing its extension, digits and the
+    generic words above, a word of three or more letters is left:
+    "Transformer_Hazira_Dahej.xlsx" counts; "image001.png",
+    "Outlook-2kx0w3dg.png", "Scan_20260901.pdf" and "RFQ.xlsx" do not.
+    """
+    n = re.sub(r'\s+', ' ', str(name or '').strip().lower())
+    if not n:
+        return None
+    stem, dot, ext = n.rpartition('.')
+    if not dot:
+        stem, ext = n, ''
+    if ext in _IGNORED_FILE_EXTENSIONS:
+        return None
+    words = [w for w in re.findall(r'[a-z]+', stem)
+             if len(w) >= 3 and w not in _GENERIC_FILE_WORDS]
+    return n if words else None
+
+
+_WEIGHT_RE = re.compile(
+    r'(\d+(?:[.,]\d+)?)\s*(metric\s+tons?|mts?|tonnes?|tons?|kgs?|'
+    r'kilograms?)\b', re.IGNORECASE)
+
+
+def cargo_weights(text):
+    """Every stated weight, in tonnes, rounded to the kilogram."""
+    out = set()
+    for num, unit in _WEIGHT_RE.findall(text or ''):
+        try:
+            value = float(num.replace(',', '.') if num.count(',') == 1
+                          and len(num.split(',')[1]) != 3
+                          else num.replace(',', ''))
+        except ValueError:
+            continue
+        if unit.lower().startswith(('kg', 'kilogram')):
+            value /= 1000.0
+        if value > 0:
+            out.add(round(value, 3))
+    return out
+
+
+#: Words in a cargo description that say how it moves or how much of it
+#: there is rather than what it is. "Heavy project cargo" describes half
+#: the mailbox; "reactor" or "transformer" describes one enquiry.
+_GENERIC_CARGO_WORDS = frozenset((
+    'cargo', 'cargoes', 'goods', 'general', 'material', 'materials',
+    'equipment', 'equipments', 'item', 'items', 'heavy', 'light', 'project',
+    'consignment', 'consignments', 'shipment', 'shipments', 'load', 'loads',
+    'package', 'packages', 'packing', 'unit', 'units', 'piece', 'pieces',
+    'various', 'misc', 'miscellaneous', 'other', 'others', 'over',
+    'dimensional', 'overdimensional', 'container', 'containers', 'transport',
+    'movement', 'lift', 'with', 'from', 'each', 'total', 'approx', 'nos',
+    'numbers', 'size', 'weight', 'tons', 'tonnes', 'metric', 'break', 'bulk',
+    'breakbulk', 'dry', 'loose', 'standard', 'normal',
+))
+
+
+def distinctive_cargo_words(description):
+    """The words in a cargo description that name the cargo itself."""
+    return sorted({w for w in re.findall(r'[a-z]+', (description or '').lower())
+                   if len(w) >= 4 and w not in _GENERIC_CARGO_WORDS})
+
+
+def mentions_all(text, words):
+    """Every word present as a whole word, a plural 's' allowed."""
+    low = (text or '').lower()
+    return bool(words) and all(
+        re.search(r'\b' + re.escape(w) + r'(?:s|es)?\b', low) for w in words)
+
+
+_PLACE_ALIASES = {
+    'bengaluru': 'bangalore', 'bombay': 'mumbai', 'new delhi': 'delhi',
+    'vizag': 'visakhapatnam', 'madras': 'chennai', 'calcutta': 'kolkata',
+    'baroda': 'vadodara', 'nhava sheva': 'jnpt', 'navi mumbai': 'mumbai',
+}
+_PLACE_NOISE = frozenset(('port', 'icd', 'cfs', 'city', 'dist', 'district',
+                          'plant', 'site', 'works', 'india'))
+
+
+def place_key(value):
+    """"Vadodara, Gujarat", "vadodara" and "Vadodara plant" → "vadodara".
+
+    The city before the first comma, lower case, without the words that
+    name a facility rather than a place. Good enough to say two routes
+    are the same; not a gazetteer.
+    """
+    v = str(value or '').split(',')[0].lower()
+    words = [w for w in re.findall(r'[a-z]+', v) if w not in _PLACE_NOISE]
+    v = ' '.join(words)
+    return _PLACE_ALIASES.get(v, v)
