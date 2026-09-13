@@ -76,6 +76,7 @@
     </select>
     <a class="btn" href="{{ url_prefix }}/lead-review">Lead Review</a>
     <a class="btn" href="{{ url_prefix }}/accounts/owners">Account Owners</a>
+    <a class="btn" href="{{ url_prefix }}/intake/vendors">Vendor Master</a>
   </div>
 </div>
 
@@ -114,6 +115,7 @@ repeatedly as rate sourcing should become a known supplier.</div>
 
 <script>
 const CSRF = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+const VENDOR_CATEGORIES = {{ vendor_categories|tojson }};
 
 async function jf(u){
   if (u.charAt(0) === '/' && u.indexOf('{{ url_prefix }}') !== 0) u = '{{ url_prefix }}' + u;
@@ -220,6 +222,7 @@ async function loadProposals(){
         ? `<div class="pex">e.g. ${p.examples.map(esc).join(' · ')}</div>` : ''}
       <div class="pacts">
         <span class="ev">${p.evidence} correction${p.evidence===1?'':'s'}</span>
+        ${p.kind === 'vendor_domain' ? vendorCategorySelect(p) : ''}
         ${p.kind === 'observation' ? ''
           : `<button class="btn btn-sm success" data-key="${esc(p.key)}" onclick="applyProp(this.dataset.key)">Apply</button>`}
         <button class="btn btn-sm" data-key="${esc(p.key)}" onclick="dismissProp(this.dataset.key)">Dismiss</button>
@@ -228,16 +231,33 @@ async function loadProposals(){
     </div>`).join('');
 }
 
+// A vendor proposal is filed under the Vendor Master category chosen
+// here. The evidence's best guess is preselected; nothing is applied
+// until Apply is pressed.
+function vendorCategorySelect(p){
+  const want = (p.payload && p.payload.category) || 'other';
+  return `<select class="pcat" title="Vendor Master category" style="padding:4px 7px;font-size:12px">${
+    VENDOR_CATEGORIES.map(c => `<option value="${esc(c.key)}"${c.key === want ? ' selected' : ''}>${esc(c.label)}</option>`).join('')
+  }</select>`;
+}
+
 function propNode(key){
   return document.getElementById('p' + btoa(key).replace(/=/g,''));
 }
 async function applyProp(key){
   const node = propNode(key), msg = node.querySelector('.pmsg');
+  const pick = node.querySelector('.pcat');
+  const body = {key};
+  if(pick) body.category = pick.value;
   const r = await fetch('{{ url_prefix }}/api/intake/proposals/apply',
     {method:'POST', headers:{'Content-Type':'application/json',
                              'X-CSRFToken': CSRF},
-     body: JSON.stringify({key})});
-  const j = await r.json();
+     body: JSON.stringify(body)});
+  // An expired session answers with the login page; say so rather than
+  // failing to parse it.
+  const j = (r.headers.get('content-type') || '').indexOf('application/json') === -1
+    ? {ok:false, error:'Your session expired — refresh the page and try again.'}
+    : await r.json();
   msg.textContent = (j && (j.message || j.error)) || '';
   msg.style.color = j && j.ok ? 'var(--green,#1f6b3f)' : 'var(--red)';
   if(j && j.ok) node.style.opacity = .45;

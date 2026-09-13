@@ -968,6 +968,14 @@ class VendorDomain(db.Model):
     is_active   = db.Column(db.Boolean, default=True, index=True)
     added_by    = db.Column(db.String(20))
     created_at  = db.Column(db.DateTime, default=datetime.utcnow)
+    # Vendor Master. A domain alone does not tell an admin whose it is
+    # or why it was added, and a supplier someone cannot recognise is one
+    # nobody dares deactivate. All nullable: rows learned before the
+    # screen existed have none of these.
+    name        = db.Column(db.String(200))
+    notes       = db.Column(db.Text)
+    updated_at  = db.Column(db.DateTime)
+    updated_by  = db.Column(db.String(20))
 
     def to_dict(self):
         return {

@@ -114,12 +114,27 @@ def _fold(text):
 
 # ─── vendors — step 6 ────────────────────────────────────────────────────
 def is_vendor_domain(domain):
-    from app import VendorDomain
-    if not domain:
+    """Whether this sender's domain, or a domain it sits under, is an
+    active entry in the Vendor Master.
+
+    A shipping line writes from mail.maersk.com as often as maersk.com,
+    so the registered domain covers its subdomains — by whole labels, so
+    notmaersk.com is never caught by maersk.com. A deactivated row never
+    matches: deactivating is how an admin undoes a wrong entry.
+    """
+    from app import VendorDomain, db
+    candidates = li.domain_and_parents(domain)
+    if not candidates:
         return False
     try:
-        return bool(VendorDomain.query.filter_by(
-            domain=domain.lower(), is_active=True).first())
+        # Only the domain column is selected, so matching keeps working
+        # on a database that has not yet gained the Vendor Master's
+        # newer columns — the classifier must not go quiet because a
+        # screen's migration is pending.
+        return bool(db.session.query(VendorDomain.domain)
+                    .filter(VendorDomain.domain.in_(candidates),
+                            VendorDomain.is_active.is_(True))
+                    .first())
     except Exception:
         return False        # table not migrated yet: never block on it
 

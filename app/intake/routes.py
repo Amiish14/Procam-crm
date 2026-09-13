@@ -4,6 +4,7 @@ The three intake screens.
     GET  /accounts/owners          Account Master — two owners per account
     GET  /lead-review              what the classifier could not decide
     GET  /intake-intelligence      whether any of this is working
+    GET  /intake/vendors           Vendor Master — domains that supply us
 
 Admin-only, enforced on the server through the access matrix. Each screen
 has a small JSON API behind it so the page can act without reloading.
@@ -183,8 +184,12 @@ def api_proposals():
 @require(_PERM)
 def api_apply_proposal():
     from app.intake import learning
-    key = (request.get_json(silent=True) or {}).get('key') or ''
-    ok, msg = learning.apply_proposal(key, actor=_actor())
+    d = request.get_json(silent=True) or {}
+    key = d.get('key') or ''
+    # Optional: which Vendor Master category a vendor proposal is filed
+    # under. Other when the page does not send one.
+    ok, msg = learning.apply_proposal(key, actor=_actor(),
+                                      category=d.get('category') or None)
     if not ok:
         db.session.rollback()
         return jsonify(ok=False, error=msg), 400
@@ -213,7 +218,11 @@ def api_dismiss_proposal():
 @bp.route('/intake-intelligence')
 @require(_PERM)
 def intelligence_page():
-    return render_template('intake/intelligence.html')
+    from app.intake import vendors
+    return render_template(
+        'intake/intelligence.html',
+        vendor_categories=[{'key': k, 'label': v}
+                           for k, v in vendors.CATEGORIES])
 
 
 @bp.route('/api/intake/intelligence', methods=['GET'])
@@ -224,3 +233,102 @@ def api_intelligence():
     except (TypeError, ValueError):
         days = 30
     return jsonify(ok=True, **svc.intelligence(days=days))
+
+
+# ─── Vendor Master ───────────────────────────────────────────────────────
+# Master data rather than review work, so it sits behind the Master Data
+# permission: registering a supplier changes how every future email from
+# that domain is filed, which is a configuration decision, not a triage
+# one.
+_VENDOR_PERM = 'admin.master'
+
+
+@bp.route('/intake/vendors')
+@require(_VENDOR_PERM)
+def vendors_page():
+    from app.intake import vendors
+    return render_template(
+        'intake/vendors.html',
+        categories=[{'key': k, 'label': v} for k, v in vendors.CATEGORIES])
+
+
+def _vendor_reason(d):
+    """A reason typed for a change rides into the audit event the
+    session listener writes for it."""
+    from flask import g
+    reason = str((d or {}).get('reason') or '').strip()[:400]
+    if reason:
+        g.audit_reason = reason
+
+
+@bp.route('/api/intake/vendors', methods=['GET'])
+@require(_VENDOR_PERM)
+def api_vendors():
+    from app.intake import vendors
+    active = {'1': True, '0': False}.get(request.args.get('active') or '')
+    return jsonify(ok=True, summary=vendors.vendor_summary(),
+                   categories=[{'key': k, 'label': v}
+                               for k, v in vendors.CATEGORIES],
+                   vendors=vendors.vendor_rows(
+                       category=request.args.get('category') or None,
+                       active=active, q=request.args.get('q')))
+
+
+@bp.route('/api/intake/vendors', methods=['POST'])
+@require(_VENDOR_PERM)
+def api_create_vendor():
+    from app.intake import vendors
+    d = request.get_json(silent=True) or {}
+    _vendor_reason(d)
+    row, err, status = vendors.create_vendor(
+        domain=d.get('domain'), category=d.get('category'),
+        name=d.get('name'), notes=d.get('notes'), actor=_actor())
+    if err:
+        existing_id = row.id if (status == 409 and row is not None) else None
+        db.session.rollback()
+        out = {'ok': False, 'error': err}
+        if existing_id:
+            out['existing_id'] = existing_id
+        return jsonify(out), status
+    db.session.commit()
+    return jsonify(ok=True, vendor=vendors.to_row(row)), 201
+
+
+@bp.route('/api/intake/vendors/<int:vendor_id>', methods=['PUT'])
+@require(_VENDOR_PERM)
+def api_update_vendor(vendor_id):
+    from app.intake import vendors
+    d = request.get_json(silent=True) or {}
+    _vendor_reason(d)
+    row, err, status = vendors.update_vendor(
+        vendor_id, category=d.get('category'), name=d.get('name'),
+        notes=d.get('notes'), actor=_actor())
+    if err:
+        db.session.rollback()
+        return jsonify(ok=False, error=err), status
+    db.session.commit()
+    return jsonify(ok=True, vendor=vendors.to_row(row))
+
+
+@bp.route('/api/intake/vendors/<int:vendor_id>/deactivate', methods=['POST'])
+@require(_VENDOR_PERM)
+def api_deactivate_vendor(vendor_id):
+    return _set_vendor_active(vendor_id, False)
+
+
+@bp.route('/api/intake/vendors/<int:vendor_id>/activate', methods=['POST'])
+@require(_VENDOR_PERM)
+def api_activate_vendor(vendor_id):
+    return _set_vendor_active(vendor_id, True)
+
+
+def _set_vendor_active(vendor_id, active):
+    from app.intake import vendors
+    _vendor_reason(request.get_json(silent=True) or {})
+    row, err, status = vendors.set_active(vendor_id, active, actor=_actor())
+    if err:
+        db.session.rollback()
+        return jsonify(ok=False, error=err), status
+    db.session.commit()
+    return jsonify(ok=True, vendor=vendors.to_row(row),
+                   summary=vendors.vendor_summary())

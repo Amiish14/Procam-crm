@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vendor Master — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .vk{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));
+      gap:1px;background:var(--border);border:1px solid var(--border);
+      margin-bottom:20px}
+  .vk .k{background:var(--card);padding:12px 14px}
+  .vk .n{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;
+         line-height:1.1}
+  .vk .l{font-size:11.5px;color:var(--text-2);margin-top:3px}
+  .addrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+          border:1px solid var(--border);background:var(--card);
+          border-radius:var(--r-lg);padding:12px 14px;margin-bottom:16px}
+  .addrow input,.addrow select,.vfilter input,.vfilter select,
+  td select,td input{padding:5px 8px;font-size:12.5px;
+    background:var(--surface);color:var(--ink);
+    border:1px solid var(--border-2);border-radius:3px}
+  .addrow .al{font-size:11.5px;color:var(--text-3);text-transform:uppercase;
+              letter-spacing:.04em;margin-right:4px}
+  td input,td select{width:100%}
+  td.dom{white-space:nowrap}
+  td.dom b{font-family:'IBM Plex Mono',monospace;font-size:12.5px}
+  td.how{font-size:11.5px;color:var(--text-2);line-height:1.4}
+  tr.off td{opacity:.55}
+  tr.dirty{background:var(--amber-tint,#fff8e1)}
+  tr.saved{background:var(--green-tint,#e4f0e8)}
+  .rowmsg{font-size:11.5px;padding-top:2px}
+  .rowmsg.err{color:var(--red)} .rowmsg.ok{color:var(--green,#1f6b3f)}
+  .vfilter{margin-bottom:12px;display:flex;gap:10px;align-items:center;
+           flex-wrap:wrap}
+  .legacy{font-size:11px;color:var(--amber,#b45309)}
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <h1>Vendor Master</h1>
+    <div style="color:var(--text-2);font-size:13px;margin-top:4px;max-width:78ch">
+      Domains that supply us rather than buy from us. Mail from a domain
+      listed here — or from any subdomain of it — is filed as rate
+      sourcing and does not create a lead. A customer added here by
+      mistake stops their enquiries becoming leads, so rows are
+      deactivated, never deleted.
+    </div>
+  </div>
+  <div>
+    <a class="btn" href="{{ url_prefix }}/lead-review">Lead Review</a>
+    <a class="btn" href="{{ url_prefix }}/intake-intelligence">Intelligence</a>
+  </div>
+</div>
+
+<div class="vk" id="kpis"></div>
+
+<div class="addrow">
+  <span class="al">Add a vendor</span>
+  <input id="n_domain" placeholder="maersk.com" style="width:180px"
+         onkeyup="if(event.key==='Enter')addVendor()">
+  <select id="n_category"></select>
+  <input id="n_name" placeholder="Company name (optional)" style="width:200px">
+  <input id="n_notes" placeholder="Notes (optional)" style="flex:1;min-width:160px">
+  <button class="btn btn-sm success" id="n_btn" onclick="addVendor()">Add</button>
+  <span class="rowmsg" id="n_msg"></span>
+</div>
+
+<div class="vfilter">
+  <input id="q" placeholder="Search domain, name or notes…" style="width:240px"
+         onkeyup="if(event.key==='Enter')load()">
+  <select id="f_category" onchange="load()"></select>
+  <select id="f_active" onchange="load()">
+    <option value="1" selected>Active</option>
+    <option value="0">Deactivated</option>
+    <option value="">Active and deactivated</option>
+  </select>
+  <button class="btn btn-sm" onclick="load()">Refresh</button>
+  <span style="font-size:12px;color:var(--text-3)" id="shown"></span>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr>
+    <th>Domain</th><th>Category</th><th>Company name</th><th>Notes</th>
+    <th>How it got here</th><th>Rejections</th><th></th>
+  </tr></thead>
+  <tbody id="rows"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+</table>
+</div>
+
+<script>
+const CSRF = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+const CATEGORIES = {{ categories|tojson }};
+
+// Every call goes through here: prefixed for the /CRM deployment, the
+// CSRF header on writes, and the content type checked before parsing —
+// an expired session answers with the login page, not JSON.
+async function jf(u, o){
+  o = o || {};
+  o.headers = Object.assign({'Content-Type':'application/json',
+                             'X-CSRFToken': CSRF}, o.headers || {});
+  o.credentials = 'same-origin';
+  if (u.charAt(0) === '/' && u.indexOf('{{ url_prefix }}') !== 0) u = '{{ url_prefix }}' + u;
+  try {
+    const r = await fetch(u, o);
+    const type = r.headers.get('content-type') || '';
+    if (type.indexOf('application/json') === -1){
+      return {ok:false, error: r.status === 400 || r.status === 401
+        ? 'Your session expired — refresh the page and try again.'
+        : 'Could not reach the server. Please try again.'};
+    }
+    return await r.json();
+  } catch (e) {
+    return {ok:false, error:'Could not reach the server. Please try again.'};
+  }
+}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+function categoryOptions(sel, blank){
+  return (blank ? `<option value="">${esc(blank)}</option>` : '')
+    + CATEGORIES.map(c =>
+      `<option value="${esc(c.key)}"${c.key === sel ? ' selected' : ''}>${esc(c.label)}</option>`
+    ).join('');
+}
+document.getElementById('n_category').innerHTML = categoryOptions('other');
+document.getElementById('f_category').innerHTML = categoryOptions('', 'All categories');
+
+function renderKpis(s){
+  const k = (n, l) => `<div class="k"><div class="n">${esc(n)}</div>
+    <div class="l">${esc(l)}</div></div>`;
+  document.getElementById('kpis').innerHTML =
+      k(s.active, 'active vendors')
+    + s.by_category.filter(c => c.count).map(c => k(c.count, c.label)).join('')
+    + k(s.inactive, 'deactivated');
+}
+
+function renderRows(rows){
+  const tb = document.getElementById('rows');
+  document.getElementById('shown').textContent = rows.length + ' shown';
+  if(!rows.length){
+    tb.innerHTML = '<tr><td colspan="7" class="empty">No vendors match.</td></tr>';
+    return;
+  }
+  tb.innerHTML = rows.map(v => {
+    const legacy = v.vendor_type && v.vendor_type.toLowerCase() !== v.category
+      ? `<div class="legacy">stored as “${esc(v.vendor_type)}”</div>` : '';
+    const who = v.added_by_name || v.added_by;
+    return `
+    <tr id="r${v.id}" class="${v.is_active ? '' : 'off'}">
+      <td class="dom"><b>${esc(v.domain)}</b>
+        <div style="font-size:11px;color:var(--text-3)">and its subdomains</div>
+        <div class="rowmsg" id="m${v.id}"></div></td>
+      <td style="width:170px"><select id="c${v.id}" onchange="dirty(${v.id})">${categoryOptions(v.category)}</select>${legacy}</td>
+      <td><input id="nm${v.id}" value="${esc(v.name)}" oninput="dirty(${v.id})"></td>
+      <td><input id="nt${v.id}" value="${esc(v.notes)}" oninput="dirty(${v.id})"></td>
+      <td class="how">${esc(v.learned_label)}
+        ${who ? `<br>by ${esc(who)}` : ''}
+        ${v.created_at ? `<br>${esc(v.created_at)}` : ''}
+        ${v.updated_at ? `<br>edited ${esc(v.updated_at)}${v.updated_by ? ' by ' + esc(v.updated_by_name || v.updated_by) : ''}` : ''}</td>
+      <td class="num">${esc(v.rejection_count)}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-sm" onclick="saveVendor(${v.id}, this)">Save</button>
+        ${v.is_active
+          ? `<button class="btn btn-sm danger" onclick="setActive(${v.id}, false, this)">Deactivate</button>`
+          : `<button class="btn btn-sm success" onclick="setActive(${v.id}, true, this)">Reactivate</button>`}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function dirty(id){
+  const row = document.getElementById('r'+id);
+  row.classList.add('dirty'); row.classList.remove('saved');
+}
+function rowMsg(id, text, ok){
+  const m = document.getElementById('m'+id);
+  m.className = 'rowmsg ' + (ok ? 'ok' : 'err'); m.textContent = text;
+}
+
+async function addVendor(){
+  const g = id => document.getElementById(id).value;
+  const msg = document.getElementById('n_msg');
+  const btn = document.getElementById('n_btn');
+  msg.className = 'rowmsg'; msg.textContent = '';
+  btn.disabled = true;
+  const j = await jf('/api/intake/vendors', {method:'POST', body: JSON.stringify({
+    domain: g('n_domain'), category: g('n_category'),
+    name: g('n_name'), notes: g('n_notes')})});
+  btn.disabled = false;
+  if(!j || !j.ok){
+    msg.className = 'rowmsg err';
+    msg.textContent = (j && j.error) || 'Could not add';
+    return;
+  }
+  msg.className = 'rowmsg ok';
+  msg.textContent = j.vendor.domain + ' added — its mail is now filed as rate sourcing.';
+  ['n_domain', 'n_name', 'n_notes'].forEach(id => document.getElementById(id).value = '');
+  load();
+}
+
+async function saveVendor(id, btn){
+  const g = p => document.getElementById(p+id).value;
+  btn.disabled = true;
+  const j = await jf('/api/intake/vendors/'+id, {method:'PUT', body: JSON.stringify({
+    category: g('c'), name: g('nm'), notes: g('nt')})});
+  btn.disabled = false;
+  if(!j || !j.ok) return rowMsg(id, (j && j.error) || 'Could not save', false);
+  const row = document.getElementById('r'+id);
+  row.classList.remove('dirty'); row.classList.add('saved');
+  rowMsg(id, 'Saved.', true);
+}
+
+async function setActive(id, active, btn){
+  let reason = '';
+  if(!active){
+    reason = prompt('Why is this domain no longer a vendor? Its mail will '
+                    + 'be classified like any other sender again.');
+    if(reason === null) return;
+  }
+  btn.disabled = true;
+  const j = await jf('/api/intake/vendors/'+id+(active ? '/activate' : '/deactivate'),
+                     {method:'POST', body: JSON.stringify({reason})});
+  btn.disabled = false;
+  if(!j || !j.ok) return rowMsg(id, (j && j.error) || 'Could not change that', false);
+  load();
+}
+
+async function load(){
+  const params = new URLSearchParams();
+  const q = document.getElementById('q').value.trim();
+  if(q) params.set('q', q);
+  const cat = document.getElementById('f_category').value;
+  if(cat) params.set('category', cat);
+  const act = document.getElementById('f_active').value;
+  if(act) params.set('active', act);
+  const j = await jf('/api/intake/vendors?' + params.toString());
+  if(!j || !j.ok){
+    document.getElementById('rows').innerHTML =
+      `<tr><td colspan="7" class="empty">${esc((j && j.error) || 'Could not load')}</td></tr>`;
+    return;
+  }
+  renderKpis(j.summary);
+  renderRows(j.vendors);
+}
+load();
+</script>
+</div><!-- /crm-wrap -->
+</body>
+</html>

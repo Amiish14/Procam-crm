@@ -68,7 +68,10 @@ def _vendor_proposals(rows, min_evidence):
         if (r.correction_reason or '') in _VENDOR_REASONS and r.from_domain:
             by_domain[r.from_domain].append(r)
 
-    known = {v.domain for v in VendorDomain.query.all()}
+    # Domains only: this runs on every Intelligence page load, and must
+    # not fail on a database still missing the Vendor Master's newer
+    # columns.
+    known = {d for (d,) in db.session.query(VendorDomain.domain).all()}
     out = []
     for domain, hits in by_domain.items():
         if domain in known or len(hits) < min_evidence:
@@ -84,7 +87,11 @@ def _vendor_proposals(rows, min_evidence):
                        f'domain would stop creating leads and be filed as '
                        f'rate sourcing instead.'),
             'evidence': len(hits),
-            'payload': {'domain': domain, 'vendor_type': kind},
+            'payload': {'domain': domain, 'vendor_type': kind,
+                        # The Vendor Master category the evidence points
+                        # to — offered as the screen's default choice,
+                        # never applied without a person choosing.
+                        'category': _vendor_category(kind)},
             'examples': [h.subject or '' for h in hits[:3]],
         })
     return out
@@ -97,6 +104,11 @@ def _vendor_type(reason):
     if 'transporter' in r:
         return 'transporter'
     return 'other'
+
+
+def _vendor_category(kind):
+    from app.intake import vendors
+    return vendors.category_of(kind)
 
 
 def _block_proposals(rows, min_evidence):
@@ -312,19 +324,36 @@ def dismiss_proposal(key, *, actor=None):
         return False, str(exc)
 
 
-def apply_proposal(key, *, actor=None):
-    """(ok, message). Only ever called because a person clicked yes."""
+def apply_proposal(key, *, actor=None, category=None):
+    """(ok, message). Only ever called because a person clicked yes.
+
+    `category` matters for vendor proposals only: the Vendor Master
+    category the admin chose. Absent, the row is filed as Other, which is
+    what every applied proposal was before categories existed.
+    """
     from app import VendorDomain
+    from app.intake import vendors
 
     if key.startswith('vendor:'):
         domain = key.split(':', 1)[1]
-        if VendorDomain.query.filter_by(domain=domain).first():
+        chosen = (vendors.known_category(category) if category
+                  else vendors.DEFAULT_CATEGORY)
+        if chosen is None:
+            return False, f'Unknown vendor category {category!r}'
+        if db.session.query(VendorDomain.id).filter(
+                VendorDomain.domain == domain).first():
             return True, f'{domain} was already a known supplier'
+        # The count the proposal was made on, kept on the row: without
+        # it the Vendor Master cannot say why a learned supplier is there.
+        evidence = sum(1 for r in _corrections()
+                       if r.from_domain == domain
+                       and (r.correction_reason or '') in _VENDOR_REASONS)
         db.session.add(VendorDomain(
-            domain=domain, vendor_type='other',
+            domain=domain, vendor_type=chosen,
             learned_from='learned_from_rejections',
-            rejection_count=0, is_active=True, added_by=actor))
-        return True, f'{domain} will now be treated as a supplier'
+            rejection_count=evidence, is_active=True, added_by=actor))
+        return True, (f'{domain} will now be treated as a supplier '
+                      f'({vendors.CATEGORY_LABELS[chosen]})')
 
     if key.startswith('block:'):
         domain = key.split(':', 1)[1]

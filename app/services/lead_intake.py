@@ -202,6 +202,20 @@ def domain_of(address):
         if '@' in (address or '') else ''
 
 
+def domain_and_parents(domain):
+    """"mail.eu.maersk.com" → ["mail.eu.maersk.com", "eu.maersk.com",
+    "maersk.com"].
+
+    Whole labels only, which is the point: a registered maersk.com must
+    cover the subdomains a company actually sends from, and must never
+    cover notmaersk.com, which merely ends in the same letters. The bare
+    top-level label is left off — nothing registers "com".
+    """
+    labels = [l for l in (domain or '').strip().lower().strip('.').split('.')
+              if l]
+    return ['.'.join(labels[i:]) for i in range(len(labels) - 1)]
+
+
 def headers(msg):
     """RFC-822 headers as a lowercase dict.
 
