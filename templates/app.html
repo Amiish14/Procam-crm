@@ -1677,7 +1677,7 @@ window.CRMToast = (function(){
 
 <!-- EMPLOYEES -->
 <div class="page" id="pg-employees">
-  <div class="pg-hd"><div><div class="pg-ttl">Employee Master</div><div class="pg-sub">Pre-sales and sales team accounts · Employee code = default password on first login</div></div><button class="btn btn-red" onclick="openEmpModal()">+ Add Employee</button></div>
+  <div class="pg-hd"><div><div class="pg-ttl">Employee Master</div><div class="pg-sub">Pre-sales and sales team accounts · new and reset passwords are temporary and must be changed at first login</div></div><button class="btn btn-red" onclick="openEmpModal()">+ Add Employee</button></div>
   <div id="empCnt"></div>
 </div>
 
@@ -1811,7 +1811,7 @@ window.CRMToast = (function(){
 <!-- EMPLOYEE MODAL -->
 <div class="mob" id="eMob" style="display:none" onclick="if(event.target===this)this.style.display='none'">
   <div class="mod mod-sm" onclick="event.stopPropagation()">
-    <div class="mhd"><div class="m-ic">👤</div><div><div class="m-ttl" id="eMTtl">Add Employee</div><div class="m-sub">Employee code will be the default password</div></div><button class="mx" onclick="document.getElementById('eMob').style.display='none'">✕</button></div>
+    <div class="mhd"><div class="m-ic">👤</div><div><div class="m-ttl" id="eMTtl">Add Employee</div><div class="m-sub">A temporary password is shown once after saving</div></div><button class="mx" onclick="document.getElementById('eMob').style.display='none'">✕</button></div>
     <div class="mbdy">
       <div class="fmr"><div class="fmg"><label class="fml">Employee Code *</label><input class="fmc" id="eCode" placeholder="e.g. PCM115" style="text-transform:uppercase"></div><div class="fmg"><label class="fml">Full Name *</label><input class="fmc" id="eName"></div></div>
       <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="eEmail" type="email"></div><div class="fmg"><label class="fml">Mobile</label><input class="fmc" id="eMob2"></div></div>

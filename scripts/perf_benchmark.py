@@ -174,6 +174,33 @@ def seed(db_path, leads=10_000, companies=2_000, big_account=2_000,
             'index_build_s': round(time.time() - t0, 1)}
 
 
+def largest_cases(db_path):
+    """On real data: the account with most leads, the lead with most
+    emails, the largest attachment still on disk."""
+    db = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+    try:
+        acct = db.execute('SELECT company_id FROM leads WHERE company_id IS '
+                          'NOT NULL GROUP BY company_id ORDER BY COUNT(*) '
+                          'DESC LIMIT 1').fetchone()
+        thread = db.execute('SELECT lead_id FROM lead_emails GROUP BY '
+                            'lead_id ORDER BY COUNT(*) DESC LIMIT 1').fetchone()
+        att = None
+        for aid, lid, path in db.execute(
+                'SELECT id, lead_id, storage_path FROM lead_attachments '
+                'ORDER BY id DESC LIMIT 500'):
+            if path and os.path.exists(path):
+                size = os.path.getsize(path)
+                if att is None or size > att[2]:
+                    att = (aid, lid, size)
+    finally:
+        db.close()
+    return {'big_account_id': acct[0] if acct else 1,
+            'thread_lead_id': (att[1] if att else
+                               thread[0] if thread else 1),
+            'email_thread_lead_id': thread[0] if thread else 1,
+            'attachment_id': att[0] if att else 1}
+
+
 # ── the server ───────────────────────────────────────────────────────
 def _env(db_path):
     env = dict(os.environ)
@@ -288,7 +315,8 @@ def endpoints(ids):
         ('company 360 (2,000 leads)', 'get',
          f'/api/companies/{ids["big_account_id"]}/360', None),
         ('email thread (500)', 'get',
-         f'/api/leads/{ids["thread_lead_id"]}/emails', None),
+         f'/api/leads/{ids.get("email_thread_lead_id", ids["thread_lead_id"])}'
+         '/emails', None),
     ]
 
 
@@ -400,9 +428,14 @@ def main():
             raise SystemExit('refusing to benchmark the live database — '
                              'copy a backup first')
         db_path = args.db
-        ids = json.loads(os.environ.get('PERF_IDS', 'null')) or {
-            'big_account_id': 1, 'thread_lead_id': 1, 'attachment_id': 1}
-        result['data'] = {'source': 'copy of ' + db_path}
+        # It is a copy, so the benchmark's two users can be added to it.
+        env = _env(db_path)
+        env['PERF_PASSWORD'] = PASSWORD
+        subprocess.run([sys.executable, '-c', _SCHEMA], cwd=_ROOT, env=env,
+                       check=True, capture_output=True, timeout=300)
+        ids = json.loads(os.environ.get('PERF_IDS', 'null')) or \
+            largest_cases(db_path)
+        result['data'] = {'source': 'copy of ' + db_path, **ids}
     else:
         folder = tempfile.mkdtemp(prefix='procam-perf-')
         db_path = os.path.join(folder, 'perf.db')
