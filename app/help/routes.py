@@ -48,7 +48,10 @@ def _current_role():
 
 
 def _is_admin():
-    return _current_role() in ('admin', 'administrator')
+    """Maintaining help content is master-data work in the Access Matrix
+    (it used to be the role name, which the matrix could not narrow)."""
+    from app.access.service import can
+    return can('admin.master')
 
 
 def _require_admin(f):
