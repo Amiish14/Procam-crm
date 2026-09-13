@@ -31,6 +31,7 @@ Metadata travels with the chunk
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import re
@@ -136,8 +137,19 @@ def index_lead(lead, *, commit=True):
     account = (Company.query.get(lead.company_id)
                if lead.company_id else None)
     written = 0
+    # The original enquiry and the first inbound email are usually the
+    # same text — the trail seeds row 1 from the message that created
+    # the lead. Indexed twice, every hit came back twice and duplicates
+    # crowded other accounts out of the top ten. Deduplicated on the
+    # normalised text, keeping whichever source is seen first.
+    seen = set()
     for source, subject, text in chunks_for_lead(lead):
         for n, piece in enumerate(split(f'{subject}\n{text}'.strip())):
+            fingerprint = hashlib.sha1(
+                ' '.join(piece.lower().split()).encode()).hexdigest()
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
             db.session.add(CopilotChunk(
                 lead_id=lead.id,
                 company_id=lead.company_id,

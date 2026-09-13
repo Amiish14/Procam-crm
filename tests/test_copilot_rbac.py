@@ -967,3 +967,62 @@ def test_a_public_embedder_is_refused(world, monkeypatch):
     assert retrieval.embeddings_available() is False
     monkeypatch.setenv('PROCAM_AI_EMBED_URL', 'http://10.0.0.9:11434/v1')
     assert retrieval.embeddings_available() is True
+
+
+def test_the_enquiry_and_its_first_email_are_indexed_once(world):
+    """The trail seeds row 1 from the message that created the lead, so
+    original_email_body and the first inbound email are usually the same
+    text. Indexed twice, every hit came back twice and duplicates
+    crowded other accounts out of the results."""
+    from app import Lead, LeadEmail
+    from app.copilot import retrieval
+    from app.models.copilot import CopilotChunk
+
+    same = ('Please quote for movement of a 220 MT transformer from '
+            'Mandideep to Jalandhar, over-dimensional cargo.')
+    with flask_app.app_context():
+        lead = db.session.get(Lead, world['mine']['lead'])
+        original = lead.original_email_body
+        lead.original_email_body = same
+        lead.original_email_subject = 'Transformer movement'
+        mail = LeadEmail(lead_id=lead.id, direction='inbound',
+                         subject='Transformer movement', body=same)
+        db.session.add(mail)
+        db.session.commit()
+        try:
+            retrieval.index_lead(lead)
+            texts = [c.text for c in CopilotChunk.query.filter_by(
+                lead_id=lead.id).all()]
+            assert len(texts) == len(set(texts)), texts
+            assert len(texts) == 1
+        finally:
+            LeadEmail.query.filter_by(id=mail.id).delete()
+            lead.original_email_body = original
+            retrieval.invalidate_lead(lead.id)
+            db.session.commit()
+
+
+def test_genuinely_different_passages_are_both_kept(world):
+    """The other half — dedupe must not swallow a real second message."""
+    from app import Lead, LeadEmail
+    from app.copilot import retrieval
+    from app.models.copilot import CopilotChunk
+
+    with flask_app.app_context():
+        lead = db.session.get(Lead, world['mine']['lead'])
+        original = lead.original_email_body
+        lead.original_email_body = 'Quote for 220 MT transformer to Jalandhar.'
+        a = LeadEmail(lead_id=lead.id, direction='outbound',
+                      subject='Our offer', body='Our rate is 18 lakh.')
+        db.session.add(a)
+        db.session.commit()
+        try:
+            retrieval.index_lead(lead)
+            texts = [c.text for c in CopilotChunk.query.filter_by(
+                lead_id=lead.id).all()]
+            assert len(texts) == 2, texts
+        finally:
+            LeadEmail.query.filter_by(id=a.id).delete()
+            lead.original_email_body = original
+            retrieval.invalidate_lead(lead.id)
+            db.session.commit()
