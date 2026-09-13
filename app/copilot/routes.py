@@ -179,6 +179,10 @@ def api_commit():
         db.session.rollback()
         return jsonify(ok=False, error=err), 400
     _audit_action(d.get('action'), d.get('params') or {}, result)
+    from app.services import audit
+    audit.record('copilot.action_commit', 'copilot_action',
+                 d.get('action'), new={'params': d.get('params') or {}},
+                 commit=True)
     return jsonify(ok=True, **(result or {}))
 
 

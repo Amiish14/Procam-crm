@@ -15,11 +15,79 @@
   <div>
     <div class="cat">Administration</div>
     <h1>Audit Trail</h1>
-    <div class="crm-sub">Every archive, restore and permanent deletion —
-      who did it, when, and why. Written before the action, so it survives
-      the record it describes.</div>
+    <div class="crm-sub">Who changed what, when, from where and why — written in the
+      same transaction as the change, so a change and its record stand or fall
+      together.</div>
   </div>
 </div>
+
+{% if can_see_events %}
+<h2 style="margin:18px 0 8px">All business events</h2>
+<div class="crm-sub" style="margin-bottom:10px">Access and permission changes, sign-ins,
+  password resets, ownership and stage changes, bulk actions, configuration and
+  classifier decisions — with the old and new values.</div>
+<form id="auditFilters" class="card" style="display:flex;flex-wrap:wrap;gap:8px;padding:12px;align-items:end">
+  <label>Action<br><input name="action" id="afAction" placeholder="e.g. lead.stage_change or employee."></label>
+  <label>Record type<br><input name="entity_type" id="afEntity" placeholder="lead, employee, company…"></label>
+  <label>Record id<br><input name="entity_id" id="afEntityId" size="10"></label>
+  <label>By (employee code)<br><input name="actor" id="afActor" size="12"></label>
+  <label>From<br><input type="date" name="from" id="afFrom"></label>
+  <label>To<br><input type="date" name="to" id="afTo"></label>
+  <button class="btn" type="submit">Filter</button>
+  <a class="btn btn-ghost" id="auditCsv" href="#">Download CSV</a>
+</form>
+<div class="card"><div class="table-wrap"><table>
+  <thead><tr><th>When</th><th>By</th><th>Action</th><th>Record</th><th>Changed</th><th>Reason</th><th>IP</th></tr></thead>
+  <tbody id="auditRows"><tr><td colspan="7" class="meta">Loading…</td></tr></tbody>
+</table></div>
+<div style="padding:10px"><button class="btn btn-ghost" id="auditMore" hidden>Older events</button></div></div>
+<script>
+(function(){
+  const PREFIX = {{ (url_prefix or '')|tojson }};
+  const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const fmt = v => v == null ? '—' : (typeof v === 'object' ? JSON.stringify(v) : v);
+  let before = null;
+  function params(){
+    const p = new URLSearchParams(new FormData(document.getElementById('auditFilters')));
+    for (const [k, v] of [...p.entries()]) if (!v) p.delete(k);
+    return p;
+  }
+  function changed(ev){
+    const keys = new Set([...Object.keys(ev.old_value || {}), ...Object.keys(ev.new_value || {})]);
+    if (!keys.size) return '<span class="meta">—</span>';
+    return [...keys].map(k => `<div><b>${esc(k)}</b>: <span class="meta">${esc(fmt((ev.old_value||{})[k]))}</span> → ${esc(fmt((ev.new_value||{})[k]))}</div>`).join('');
+  }
+  async function load(append){
+    const p = params();
+    if (append && before) p.set('before', before);
+    document.getElementById('auditCsv').href = PREFIX + '/api/audit/events.csv?' + params().toString();
+    const r = await fetch(PREFIX + '/api/audit/events?' + p.toString(), {credentials:'same-origin'});
+    const body = document.getElementById('auditRows');
+    if (!r.ok || !(r.headers.get('content-type')||'').includes('application/json')) {
+      body.innerHTML = '<tr><td colspan="7">Could not load the audit trail.</td></tr>'; return;
+    }
+    const d = await r.json();
+    const html = d.events.map(ev => `<tr>
+      <td class="meta">${esc(ev.occurred_at.replace('T',' '))}</td>
+      <td>${esc(ev.actor)}<div class="meta">${esc(ev.actor_role)}</div></td>
+      <td><span class="pill">${esc(ev.action)}</span></td>
+      <td>${esc(ev.entity_type)} ${ev.entity_id ? '#' + esc(ev.entity_id) : ''}</td>
+      <td style="max-width:28rem;overflow-wrap:anywhere">${changed(ev)}</td>
+      <td>${esc(ev.reason) || '—'}</td>
+      <td class="meta">${esc(ev.ip)}</td></tr>`).join('');
+    if (append) body.insertAdjacentHTML('beforeend', html);
+    else body.innerHTML = html || '<tr><td colspan="7" class="meta">No events match.</td></tr>';
+    before = d.next_before;
+    document.getElementById('auditMore').hidden = !before;
+  }
+  document.getElementById('auditFilters').addEventListener('submit', e => { e.preventDefault(); before = null; load(false); });
+  document.getElementById('auditMore').addEventListener('click', () => load(true));
+  load(false);
+})();
+</script>
+<h2 style="margin:22px 0 8px">Archives and deletions</h2>
+{% endif %}
 
 {% if rows %}
 <div class="card"><div class="table-wrap"><table>

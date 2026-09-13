@@ -113,6 +113,7 @@ def archive(lead_ids, reason, actor):
                              Lead.is_archived.isnot(True)).all()
     counts = linked_counts([l.id for l in rows])
     now = datetime.utcnow()
+    _bulk_event('bulk.archive', rows, actor, reason, batch_ref)
     for lead in rows:
         _audit(lead, 'archive', reason, actor, {}, batch_ref)
         lead.is_archived = True
@@ -127,6 +128,7 @@ def unarchive(lead_ids, actor):
     from app import Lead
     rows = Lead.query.filter(Lead.id.in_(lead_ids),
                              Lead.is_archived.is_(True)).all()
+    _bulk_event('bulk.restore', rows, actor, None)
     for lead in rows:
         _audit(lead, 'restore', 'restored to the active pipeline', actor,
                {}, '')
@@ -136,6 +138,17 @@ def unarchive(lead_ids, actor):
         lead.archive_reason = None
     db.session.commit()
     return {'restored': len(rows)}
+
+
+def _bulk_event(action, rows, actor, reason, batch_ref=None, extra=None):
+    """One summary event per bulk operation, naming every lead touched.
+    The per-lead field changes are written by the session listener."""
+    from app.services import audit as audit_trail
+    ids = [l.id for l in rows]
+    audit_trail.record(action, 'lead_batch', batch_ref or None, actor=actor,
+                       new={'count': len(ids), 'lead_ids': ids[:2000],
+                            **(extra or {})},
+                       reason=reason)
 
 
 def assign(lead_ids, emp_code, actor):
@@ -149,6 +162,8 @@ def assign(lead_ids, emp_code, actor):
     from app import LeadAssignmentHistory
 
     rows = Lead.query.filter(Lead.id.in_(lead_ids)).all()
+    _bulk_event('bulk.assign', rows, actor, None,
+                extra={'to': employee.emp_code})
     moved = []
     for lead in rows:
         if lead.assigned_to != employee.emp_code:
@@ -204,6 +219,8 @@ def set_field(lead_ids, field, value, actor):
                 f'Data first')
 
     rows = Lead.query.filter(Lead.id.in_(lead_ids)).all()
+    _bulk_event('bulk.set_field', rows, actor, None,
+                extra={'field': field, 'value': value})
     for lead in rows:
         setattr(lead, field, value)
     db.session.commit()
@@ -241,6 +258,16 @@ def delete(lead_ids, reason, actor):
     batch_ref = uuid.uuid4().hex[:12]
     for lead in rows:
         _audit(lead, 'delete', reason, actor, counts, batch_ref)
+    # Query.delete below bypasses the ORM, so the per-lead events the
+    # session listener would write are written here.
+    from app.services import audit as audit_trail
+    _bulk_event('bulk.delete', rows, actor, reason, batch_ref)
+    for lead in rows:
+        audit_trail.record('lead.delete', 'lead', lead.id, actor=actor,
+                           old={'company': lead.company,
+                                'stage': lead.stage,
+                                'assigned_to': lead.assigned_to},
+                           reason=reason, strict=True)
     db.session.commit()          # the audit survives whatever follows
 
     from app import (LeadActivity, LeadAttachment, LeadNote, LeadEmail,

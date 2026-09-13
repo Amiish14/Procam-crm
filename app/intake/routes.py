@@ -188,6 +188,9 @@ def api_apply_proposal():
     if not ok:
         db.session.rollback()
         return jsonify(ok=False, error=msg), 400
+    from app.services import audit
+    audit.record('classifier.proposal_apply', 'intake_proposal', key[:60],
+                 new={'result': msg})
     db.session.commit()
     return jsonify(ok=True, message=msg)
 
@@ -200,6 +203,9 @@ def api_dismiss_proposal():
     ok, err = learning.dismiss_proposal(key, actor=_actor())
     if not ok:
         return jsonify(ok=False, error=err), 400
+    from app.services import audit
+    audit.record('classifier.proposal_dismiss', 'intake_proposal', key[:60],
+                 commit=True)
     return jsonify(ok=True)
 
 

@@ -41,3 +41,49 @@ class DeletionAudit(db.Model):
                             if self.performed_at else '',
             'batch_ref': self.batch_ref or '',
         }
+
+
+class AuditEvent(db.Model):
+    """One business action: who did what to which record, and what changed.
+
+    The general trail. DeletionAudit keeps its fuller snapshot for
+    destructive actions; every other change that matters to access,
+    ownership, pipeline or configuration lands here. Written in the same
+    transaction as the change wherever the caller allows, so a change and
+    its record commit or roll back together.
+    """
+    __tablename__ = 'audit_events'
+
+    id          = db.Column(db.Integer, primary_key=True)
+    occurred_at = db.Column(db.DateTime, default=datetime.utcnow,
+                            nullable=False, index=True)
+    #: emp_code of the signed-in user; 'system' for jobs and scripts.
+    actor       = db.Column(db.String(20), nullable=False, index=True)
+    actor_role  = db.Column(db.String(30))
+    #: dotted verb, e.g. 'employee.update', 'lead.stage_change'
+    action      = db.Column(db.String(60), nullable=False, index=True)
+    entity_type = db.Column(db.String(40), nullable=False, index=True)
+    entity_id   = db.Column(db.String(60), index=True)
+    #: only the fields that changed, before and after. Secrets are never
+    #: stored — audit.record() replaces them with a marker.
+    old_value   = db.Column(db.JSON)
+    new_value   = db.Column(db.JSON)
+    reason      = db.Column(db.String(400))
+    ip          = db.Column(db.String(64))
+    user_agent  = db.Column(db.String(200))
+
+    __table_args__ = (
+        db.Index('ix_audit_events_entity', 'entity_type', 'entity_id'),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'occurred_at': (self.occurred_at.isoformat(timespec='seconds')
+                            if self.occurred_at else ''),
+            'actor': self.actor, 'actor_role': self.actor_role or '',
+            'action': self.action, 'entity_type': self.entity_type,
+            'entity_id': self.entity_id or '',
+            'old_value': self.old_value, 'new_value': self.new_value,
+            'reason': self.reason or '', 'ip': self.ip or '',
+        }

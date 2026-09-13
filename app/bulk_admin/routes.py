@@ -133,7 +133,88 @@ def api_delete():
 @bp.route('/admin/audit')
 @require(PERM)
 def audit_page():
+    from app.access.service import can
     from app.models.audit import DeletionAudit
     rows = (DeletionAudit.query.order_by(DeletionAudit.id.desc())
             .limit(300).all())
-    return render_template('bulk_admin/audit.html', rows=rows)
+    return render_template('bulk_admin/audit.html', rows=rows,
+                           can_see_events=can(AUDIT_PERM))
+
+
+# ── the general audit trail ──────────────────────────────────────────
+#: Reading who changed access, passwords and ownership is itself
+#: sensitive, so it needs the permission every administrator of access
+#: holds rather than the master-data one.
+AUDIT_PERM = 'admin.access'
+AUDIT_PAGE = 200
+
+
+def _audit_query():
+    from datetime import datetime, timedelta
+    from app.models.audit import AuditEvent
+    q = AuditEvent.query
+    a = request.args
+    if a.get('action'):
+        q = q.filter(AuditEvent.action.like(a['action'].strip() + '%'))
+    if a.get('entity_type'):
+        q = q.filter(AuditEvent.entity_type == a['entity_type'].strip())
+    if a.get('entity_id'):
+        q = q.filter(AuditEvent.entity_id == a['entity_id'].strip())
+    if a.get('actor'):
+        q = q.filter(AuditEvent.actor == a['actor'].strip().upper())
+    for key, op in (('from', '__ge__'), ('to', '__lt__')):
+        if a.get(key):
+            try:
+                day = datetime.strptime(a[key], '%Y-%m-%d')
+            except ValueError:
+                continue
+            if key == 'to':
+                day += timedelta(days=1)
+            q = q.filter(getattr(AuditEvent.occurred_at, op)(day))
+    return q.order_by(AuditEvent.id.desc())
+
+
+@bp.route('/api/audit/events')
+@require(AUDIT_PERM)
+def api_audit_events():
+    try:
+        before = int(request.args.get('before') or 0)
+    except ValueError:
+        before = 0
+    q = _audit_query()
+    if before:
+        from app.models.audit import AuditEvent
+        q = q.filter(AuditEvent.id < before)
+    rows = q.limit(AUDIT_PAGE + 1).all()
+    more = len(rows) > AUDIT_PAGE
+    rows = rows[:AUDIT_PAGE]
+    return jsonify(ok=True, events=[r.to_dict() for r in rows],
+                   next_before=rows[-1].id if more and rows else None)
+
+
+@bp.route('/api/audit/events.csv')
+@require(AUDIT_PERM)
+def api_audit_events_csv():
+    import csv
+    import io
+    import json as _json
+    from flask import Response
+    from app.utils.spreadsheet_safe import safe_row
+
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(['when', 'actor', 'role', 'action', 'entity', 'id', 'old',
+                'new', 'reason', 'ip'])
+    for r in _audit_query().limit(20000):
+        w.writerow(safe_row([
+            r.occurred_at.isoformat(timespec='seconds') if r.occurred_at
+            else '', r.actor, r.actor_role or '', r.action, r.entity_type,
+            r.entity_id or '',
+            _json.dumps(r.old_value, default=str) if r.old_value else '',
+            _json.dumps(r.new_value, default=str) if r.new_value else '',
+            r.reason or '', r.ip or '']))
+    from app.services import audit
+    audit.record('audit.export', 'audit_events', None,
+                 new={'filters': dict(request.args)}, commit=True)
+    return Response(out.getvalue(), mimetype='text/csv', headers={
+        'Content-Disposition': 'attachment; filename=audit_events.csv'})

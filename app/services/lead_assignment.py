@@ -73,6 +73,13 @@ def assign(lead, primary_code=None, secondary_code=None, actor=None,
     owns the transaction — but the history row is added to the session.
     """
     from app import db, LeadAssignmentHistory
+    if (note or '').strip():
+        try:
+            from flask import g, has_app_context
+            if has_app_context():
+                g.audit_reason = note.strip()[:400]
+        except Exception:                           # pragma: no cover
+            pass
 
     old_primary = lead.assigned_to or ''
     old_secondary = lead.secondary_owner or ''

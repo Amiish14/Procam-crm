@@ -4,7 +4,7 @@
 # ============================================================
 
 from flask import (Flask, render_template, render_template_string, request,
-                   jsonify, session, redirect, url_for, abort)
+                   jsonify, session, redirect, url_for, abort, g)
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFError, CSRFProtect, generate_csrf
@@ -1295,7 +1295,16 @@ def login():
             session['role']     = emp.role
             session['vertical'] = emp.vertical or ''
             session['must_change_pw'] = bool(emp.must_change_pw)
+            from app.services import audit as _audit
+            _audit.record('auth.login_success', 'employee', emp.emp_code,
+                          actor=emp.emp_code, commit=True)
             return jsonify({'ok': True, 'must_change': emp.must_change_pw, 'role': emp.role})
+        from app.services import audit as _audit
+        # The code typed is kept (it is not a secret); the password never is.
+        _audit.record('auth.login_failure', 'employee', emp_code[:20] or None,
+                      actor=(emp_code[:20] or 'anonymous'),
+                      new={'known_active_account': emp is not None},
+                      commit=True)
         return jsonify({'ok': False, 'error': 'Invalid Employee Code or Password'}), 401
 
     return render_template('login.html')
@@ -1319,6 +1328,7 @@ def change_password():
         # is the first thing anyone would try.
         return jsonify({'ok': False, 'error': 'Your password cannot be your '
                         'employee code'}), 400
+    g.audit_reason = 'changed by the account holder'
     emp.set_password(new_pw)
     emp.must_change_pw = False
     db.session.commit()
@@ -1327,6 +1337,10 @@ def change_password():
 
 @app.route('/logout', methods=['POST'])
 def logout():
+    if session.get('emp_code'):
+        from app.services import audit as _audit
+        _audit.record('auth.logout', 'employee', session.get('emp_code'),
+                      commit=True)
     session.clear()
     return redirect(url_for('login'))
 
@@ -1512,6 +1526,7 @@ def api_update_employee(eid):
         emp.industries = json.dumps(d['industries'])
     body = {'ok': True}
     if d.get('reset_password'):
+        g.audit_reason = 'temporary password issued by an administrator'
         temp = _temporary_password()
         emp.set_password(temp)
         emp.must_change_pw = True
@@ -3959,6 +3974,10 @@ def api_leads_import_commit():
         db.session.add(lead); added += 1
     batch.committed = True
     batch.committed_at = datetime.utcnow()
+    from app.services import audit as _audit
+    _audit.record('import.commit', 'import_batch', batch.id,
+                  new={'filename': batch.filename, 'imported': added,
+                       'skipped': skipped})
     db.session.commit()
     return jsonify({'imported': added, 'skipped': skipped,
                     'batch_id': batch.id})
@@ -3968,6 +3987,13 @@ def api_leads_import_commit():
 
 def init_db():
     with app.app_context():
+        # Models that live in app/models are otherwise imported lazily, so
+        # create_all would not know about them on a fresh database.
+        for _m in ('app.models.audit',):
+            try:
+                __import__(_m)
+            except Exception as _exc:              # pragma: no cover
+                app.logger.warning('model import %s failed: %s', _m, _exc)
         db.create_all()
         # Additive column autoheal — safe to run every boot (Postgres
         # ADD COLUMN IF NOT EXISTS + SQLite's ALTER TABLE won't error if
@@ -4392,6 +4418,12 @@ def api_kpi_targets():
         'ps': d['period_start'], 'pe': d['period_end'],
         'tv': d['target_value'], 'w': d.get('weightage') or 10,
         'n': d.get('notes') or '', 'cb': session.get('emp_code') or ''})
+    from app.services import audit as _audit
+    _audit.record('config.kpi_target_add', 'kpi_target', d['kpi_key'],
+                  new={k: d.get(k) for k in (
+                      'kpi_key', 'scope_type', 'scope_key', 'period_type',
+                      'period_start', 'period_end', 'target_value',
+                      'weightage')})
     db.session.commit()
     return jsonify({'ok': True})
 
@@ -4465,6 +4497,9 @@ def api_kpi_performance():
     return jsonify({'rows': out, 'composite_score': composite})
 
 
+# Every change to a watched record writes an audit event, on every path.
+from app.services import audit_listener as _audit_listener  # noqa: E402,F401
+
 with app.app_context():
     init_db()
 
@@ -4527,6 +4562,10 @@ def api_email_subscribe():
     try:
         from email_ingest import subscription as _sub
         res = _sub.create()
+        from app.services import audit as _audit
+        _audit.record('config.email_subscription_create', 'graph_subscription',
+                      (res or {}).get('id'), new={'expires': (res or {}).get(
+                          'expirationDateTime')}, commit=True)
         return jsonify(ok=True, subscription=res)
     except Exception as e:
         app.logger.exception('Unhandled error in api_email_subscribe')
@@ -4540,6 +4579,10 @@ def api_email_subscribe_renew(sub_id):
     try:
         from email_ingest import subscription as _sub
         res = _sub.renew(sub_id)
+        from app.services import audit as _audit
+        _audit.record('config.email_subscription_renew', 'graph_subscription',
+                      sub_id, new={'expires': (res or {}).get(
+                          'expirationDateTime')}, commit=True)
         return jsonify(ok=True, subscription=res)
     except Exception as e:
         app.logger.exception('Unhandled error in api_email_subscribe_renew')
