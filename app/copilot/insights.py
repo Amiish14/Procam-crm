@@ -546,9 +546,7 @@ def account_health(scope, params):
     viewer's accounts, weakest first."""
     from app import Company
 
-    if params.get('account') or params.get('account_id') or \
-            (params.get('context') or {}).get('type') in ('company',
-                                                          'account'):
+    if params.get('account') or params.get('account_id'):
         company, early = _account_subject(
             scope, params, lambda n: f'account health for {n}')
         if early is not None:
@@ -785,9 +783,10 @@ def opportunity_risk(scope, params):
     from app import Opportunity
 
     today = _now().date()
-    ctx = params.get('context') or {}
-    one_id = params.get('opportunity_id') or (
-        ctx.get('id') if ctx.get('type') in ('opportunity', 'opp') else None)
+    # One opportunity only when the question named one or the service
+    # resolved "this" to one — never merely because the panel is open on
+    # an opportunity while the question is about the whole pipeline.
+    one_id = params.get('opportunity_id')
     number = str(params.get('opportunity') or '').strip()
     if one_id or number:
         q = sc_mod.opportunities(sc=scope)

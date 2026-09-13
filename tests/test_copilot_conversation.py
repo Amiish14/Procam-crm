@@ -488,6 +488,32 @@ def test_a_general_question_ignores_an_unseen_context(world):
         assert 'Convo Theirs Co' not in _text(a)
 
 
+def test_a_desk_wide_question_on_a_record_page_stays_desk_wide(world):
+    """The page narrows questions about "this". "Who should I call this
+    week" on a lead's page, "which deals are at risk" on an
+    opportunity's, and "which accounts are at risk" on an account's are
+    still about everything the viewer holds."""
+    with flask_app.app_context():
+        sc = _sc('CVREP')
+        nba = svc.ask('who should I call this week', sc=sc,
+                      context={'type': 'lead', 'id': world['lead_mine']})
+        assert nba.intent_key == 'next_best_action'
+        assert 'Action' not in nba.result.columns     # not one lead's steps
+        risk = svc.ask('which deals are at risk', sc=sc,
+                       context={'type': 'opportunity',
+                                'id': world['opp_mine']})
+        assert risk.intent_key == 'opportunity_risk'
+        assert 'Opportunity' in risk.result.columns or risk.result.empty
+        assert 'band' not in (risk.result.figures or {})   # not one opp
+        health = svc.ask('which accounts are at risk', sc=sc,
+                         context={'type': 'company', 'id': world['mine']})
+        assert health.intent_key == 'account_health'
+        assert 'Account' in health.result.columns
+        search = svc.ask('anything about the crawler crane', sc=sc,
+                         context={'type': 'company', 'id': world['mine']})
+        assert 'company_id' not in (search.result.filters or {})
+
+
 def test_a_named_account_beats_the_page_it_was_asked_on(world):
     with flask_app.app_context():
         a = svc.ask('who handles Convo Mine Co', sc=_sc('CVREP'),

@@ -1339,6 +1339,7 @@ def _nba_score(reason_key, value, idle):
 @intent('next_best_action', 'Who should I call',
         params={'limit': 'how many suggestions (default 10)',
                 'lead_id': 'one lead, for "what is next here"',
+                'focus': "'lead' to answer for that one lead",
                 'vertical': 'only this service, e.g. Project Freight'},
         personas=('sales', 'head'), phase=3,
         examples=('who should I call this week', 'what should I do next',
@@ -1352,8 +1353,12 @@ def next_best_action(scope, params):
     "what's next here" for that lead instead of ranking the desk."""
     from app import Lead
 
-    ctx = params.get('context') or {}
-    if params.get('lead_id') or (ctx.get('type') == 'lead' and ctx.get('id')):
+    # One lead only when the question was about one: "what's next here"
+    # (the service marks it with focus), or a lead_id given outright.
+    # The panel's page context alone does not count — "who should I call
+    # this week" asked on a lead's page is still about the whole desk.
+    if params.get('focus') == 'lead' or (params.get('lead_id')
+                                         and not params.get('context')):
         return _next_for_lead(scope, params)
 
     limit = min(int(params.get('limit') or 10), ROW_CAP)
@@ -2435,10 +2440,10 @@ def _text_filters(params):
     out = {}
     if params.get('lead_id'):
         out['lead_id'] = params['lead_id']
-    ctx = params.get('context') or {}
-    if params.get('company_id') or (ctx.get('type') in ('company', 'account')
-                                    and ctx.get('id')):
-        out['company_id'] = params.get('company_id') or ctx.get('id')
+    # Not the panel's account: a search asked on an account's page is
+    # still a search of everything the viewer may see, unless it says so.
+    if params.get('company_id'):
+        out['company_id'] = params['company_id']
     for key in ('owner', 'date_from', 'date_to'):
         if params.get(key):
             out[key] = params[key]

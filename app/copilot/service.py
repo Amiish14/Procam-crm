@@ -330,10 +330,17 @@ _FOLLOW_UPS = [
 ]
 
 
+#: Intents that take an account but answer without one — account health
+#: ranks all of the viewer's accounts. Missing a name is not missing a
+#: subject for these, so the page's account does not quietly replace
+#: the list that was asked for.
+_ACCOUNT_OPTIONAL = {'account_health'}
+
+
 def _missing_subject(key, params):
     """True when an intent needs a name and the question gave none."""
     intent = catalogue.get(key)
-    if intent is None:
+    if intent is None or key in _ACCOUNT_OPTIONAL:
         return False
     if 'account' in intent.params and not (params.get('account')
                                            or params.get('account_id')):
@@ -1196,6 +1203,8 @@ def _context_plan(question, sc, ctx):
             params = {'opportunity_id': ctx['id']}
         else:
             params = {'lead_id': ctx['id']}
+            if key == 'next_best_action':
+                params['focus'] = 'lead'
         return Plan(key, params, resolution='context', context=ctx)
     return None
 
