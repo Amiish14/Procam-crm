@@ -2,8 +2,10 @@
 
 Every endpoint resolves the caller's scope server-side and passes it
 down. None of them accepts a scope, an emp_code or a filter that could
-widen what is returned: the only thing a caller supplies is the
-question.
+widen what is returned: a caller supplies the question, and optionally
+the record the panel is open on and a conversation id — the first is
+checked against the caller's own scope, the second against the caller's
+own identity, and neither can widen anything.
 """
 from flask import Blueprint, jsonify, render_template, request, session
 
@@ -38,8 +40,19 @@ def api_ask():
     answer = svc.ask((d.get('q') or '')[:1000],
                      history=d.get('history') or [],
                      context=ctx if isinstance(ctx, dict) else None,
+                     conversation_id=_conversation(d),
                      actor=_actor())
     return jsonify(ok=True, **answer.to_dict())
+
+
+def _conversation(d):
+    """The conversation id the panel sent back, as a short string.
+
+    It is not trusted: the service verifies its signature against the
+    signed-in user and reads only that user's own log rows, so a pasted
+    or guessed id can never reach anyone else's conversation."""
+    value = d.get('conversation_id')
+    return str(value)[:64] if isinstance(value, str) and value else None
 
 
 @bp.route('/api/copilot/ask/stream', methods=['POST'])
@@ -63,6 +76,7 @@ def api_ask_stream():
     ctx = d.get('context')
     sc = scope_mod.current()
     actor = _actor()
+    conversation = _conversation(d)
 
     def events():
         try:
@@ -70,7 +84,7 @@ def api_ask_stream():
                     (d.get('q') or '')[:1000], sc=sc,
                     history=d.get('history') or [],
                     context=ctx if isinstance(ctx, dict) else None,
-                    actor=actor):
+                    conversation_id=conversation, actor=actor):
                 yield f'data: {json.dumps(chunk, default=str)}\n\n'
         except Exception:
             yield ('data: ' + json.dumps(
