@@ -179,13 +179,32 @@ def domain_conflicts(company_id, domains):
 
 
 # ─── Review queue — §21 ──────────────────────────────────────────────────
-def review_queue(limit=200):
+#: How far back the "held as duplicates" view looks. A duplicate filed
+#: wrongly is an enquiry nobody is working on; after a month the customer
+#: has chased or gone elsewhere, and the correction is history, not rescue.
+DUPLICATE_REVIEW_DAYS = 30
+
+
+def review_queue(limit=200, view='pending'):
+    """The items a reviewer acts on.
+
+    view='pending'     what the classifier would not decide (the default)
+    view='duplicates'  mail filed as a duplicate of an existing lead in the
+                       last DUPLICATE_REVIEW_DAYS that nobody has looked at.
+                       These never reach the pending queue — a confident
+                       duplicate is filed straight against its lead — so
+                       without this view a wrong one could not be undone.
+    """
     from app import EmailClassification, Company
 
-    rows = (EmailClassification.query
-            .filter(EmailClassification.review_state == 'pending')
-            .order_by(EmailClassification.created_at.desc())
-            .limit(limit).all())
+    if view == 'duplicates':
+        rows = _held_duplicates().order_by(
+            EmailClassification.created_at.desc()).limit(limit).all()
+    else:
+        rows = (EmailClassification.query
+                .filter(EmailClassification.review_state == 'pending')
+                .order_by(EmailClassification.created_at.desc())
+                .limit(limit).all())
 
     out = []
     for r in rows:
@@ -211,39 +230,147 @@ def review_queue(limit=200):
             'vertical': (company.vertical if company else '') or '',
             'primary': primary or '',
             'secondary': secondary or '',
+            # Whether "Not a duplicate" applies: the engine held it, or
+            # nearly held it, as a copy of another lead.
+            'duplicate_suspected': _duplicate_suspected(r),
         })
         out.append(d)
     return out
 
 
+def _held_duplicates():
+    from app import EmailClassification
+    since = datetime.utcnow() - timedelta(days=DUPLICATE_REVIEW_DAYS)
+    return EmailClassification.query.filter(
+        EmailClassification.classification == li.Klass.DUPLICATE,
+        EmailClassification.corrected_to.is_(None),
+        EmailClassification.created_lead_id.is_(None),
+        EmailClassification.created_at >= since)
+
+
+def _duplicate_suspected(row):
+    return bool(row.classification == li.Klass.DUPLICATE
+                or (row.duplicate_score or 0) > 0
+                or (row.payload or {}).get('duplicate'))
+
+
 def review_counts():
     from app import EmailClassification
     q = EmailClassification.query
-    return {
+    counts = {
         'pending': q.filter_by(review_state='pending').count(),
         'accepted': q.filter_by(review_state='accepted').count(),
         'rejected': q.filter_by(review_state='rejected').count(),
         'reclassified': q.filter_by(review_state='reclassified').count(),
     }
+    try:
+        counts['duplicates'] = _held_duplicates().count()
+    except Exception:
+        counts['duplicates'] = 0
+    return counts
 
 
-def accept(classification_id, *, actor=None):
+#: The words an acceptance can be recorded with. A fixed list, because the
+#: learning engine groups corrections by reason: free text would split one
+#: lesson into as many spellings as there are reviewers.
+ACCEPT_REASONS = ('Accepted at review', 'Not a duplicate')
+NOT_A_DUPLICATE = 'Not a duplicate'
+
+
+def classification_history(classification_id, *, limit=20):
+    """Earlier decisions about the same sender or the same conversation.
+
+    Most recent first and capped: the question a reviewer is asking is
+    "what did we decide last time", and the last twenty answers it. The
+    sender is matched on both the address the mail came from and the
+    customer a forward was unwrapped to, since a relayed enquiry is
+    recorded under the colleague who relayed it.
+    """
+    from app import EmailClassification
+
+    row = db.session.get(EmailClassification, int(classification_id))
+    if row is None:
+        return None
+    addrs = {a.strip().lower() for a in
+             (row.from_addr, (row.payload or {}).get('resolved_sender'))
+             if a and a.strip()}
+    conditions = []
+    if addrs:
+        conditions.append(db.func.lower(EmailClassification.from_addr)
+                          .in_(sorted(addrs)))
+    if row.conversation_id:
+        conditions.append(
+            EmailClassification.conversation_id == row.conversation_id)
+    if not conditions:
+        return []
+
+    rows = (EmailClassification.query
+            .filter(EmailClassification.id != row.id,
+                    db.or_(*conditions))
+            .order_by(EmailClassification.created_at.desc(),
+                      EmailClassification.id.desc())
+            .limit(limit).all())
+    L = li.Klass.LABELS
+    out = []
+    for h in rows:
+        why = []
+        if (h.from_addr or '').strip().lower() in addrs:
+            why.append('same sender')
+        if row.conversation_id and h.conversation_id == row.conversation_id:
+            why.append('same conversation')
+        out.append({
+            'id': h.id,
+            'created_at': str(h.created_at)[:16] if h.created_at else '',
+            'subject': h.subject or '',
+            'from_addr': h.from_addr or '',
+            'classification': h.classification,
+            'label': L.get(h.classification, h.classification or ''),
+            'decided_by': h.decided_by or '',
+            'reason': h.reason or '',
+            'review_state': h.review_state or '',
+            'corrected_to': h.corrected_to or '',
+            'corrected_label': L.get(h.corrected_to, h.corrected_to or ''),
+            'correction_reason': h.correction_reason or '',
+            'corrected_by': h.corrected_by or '',
+            'matched_lead_id': h.matched_lead_id,
+            'created_lead_id': h.created_lead_id,
+            'match': why,
+        })
+    return out
+
+
+def accept(classification_id, *, actor=None, reason=None):
     """Create the lead this email should have produced.
 
     Uses the stored payload rather than re-fetching from Graph: the
     message may have been moved or deleted in the mailbox since, and a
     review queue that fails because someone tidied their inbox is not a
     review queue.
+
+    `reason` is one of ACCEPT_REASONS. "Not a duplicate" is the override
+    for mail the engine held as a copy of another lead: the new lead is
+    created the same way, and the correction is recorded under that
+    reason so the learning engine can tell a duplicate signal that misled
+    it from an ordinary low-confidence rescue. The email stays on the
+    trail of the lead it was wrongly filed against — trails are
+    append-only — and this row keeps matched_lead_id, so which lead that
+    was is not lost.
     """
     from app import EmailClassification, Lead
     from app.services import lead_intake_db as lidb
     from app.services import lead_assignment
 
+    reason = (reason or ACCEPT_REASONS[0]).strip()
+    if reason not in ACCEPT_REASONS:
+        return None, f'Unknown reason {reason!r}'
     row = db.session.get(EmailClassification, int(classification_id))
     if row is None:
         return None, 'Not found'
     if row.created_lead_id:
         return row, None                    # already accepted
+    if reason == NOT_A_DUPLICATE and not _duplicate_suspected(row):
+        return None, ('This email was not held as a duplicate — accept it '
+                      'as a lead instead.')
 
     payload = dict(row.payload or {})
     sender_addr = payload.get('resolved_sender') or row.from_addr or ''
@@ -279,8 +406,7 @@ def accept(classification_id, *, actor=None):
 
     row.created_lead_id = lead.id
     row.review_state = 'accepted'
-    lidb.correct(row, li.Klass.NEW_LEAD, reason='Accepted at review',
-                 by=actor)
+    lidb.correct(row, li.Klass.NEW_LEAD, reason=reason, by=actor)
     return row, None
 
 

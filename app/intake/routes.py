@@ -99,14 +99,35 @@ def review_page():
 @bp.route('/api/intake/review', methods=['GET'])
 @require(_PERM)
 def api_review():
-    return jsonify(ok=True, counts=svc.review_counts(),
-                   items=svc.review_queue())
+    # ?view=duplicates lists mail filed as a duplicate that nobody has
+    # checked; anything else is the pending queue, as before.
+    view = 'duplicates' if request.args.get('view') == 'duplicates' \
+        else 'pending'
+    return jsonify(ok=True, counts=svc.review_counts(), view=view,
+                   items=svc.review_queue(view=view))
+
+
+@bp.route('/api/intake/review/<int:cid>/history', methods=['GET'])
+@require(_PERM)
+def api_review_history(cid):
+    """Earlier decisions for the same sender and conversation."""
+    rows = svc.classification_history(cid)
+    if rows is None:
+        return jsonify(ok=False, error='Not found'), 404
+    return jsonify(ok=True, history=rows)
 
 
 @bp.route('/api/intake/review/<int:cid>/accept', methods=['POST'])
 @require(_PERM)
 def api_accept(cid):
-    row, err = svc.accept(cid, actor=_actor())
+    # An optional reason from svc.ACCEPT_REASONS — "Not a duplicate" is
+    # the override for mail held as a copy of another lead. It also rides
+    # into the audit event for the correction.
+    reason = (request.get_json(silent=True) or {}).get('reason') or None
+    if reason:
+        from flask import g
+        g.audit_reason = str(reason)[:400]
+    row, err = svc.accept(cid, actor=_actor(), reason=reason)
     if err:
         db.session.rollback()
         return jsonify(ok=False, error=err), 400

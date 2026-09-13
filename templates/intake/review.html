@@ -44,6 +44,24 @@
   .msg{font-size:12px;margin-top:6px}
   .msg.err{color:var(--red)} .msg.ok{color:var(--green,#1f6b3f)}
   .noacct{color:var(--amber,#b45309)}
+
+  /* the three explanation panels under each item */
+  .panels{display:flex;flex-direction:column;gap:6px;margin:0 0 10px}
+  details.xp{border:1px solid var(--border);border-radius:var(--r);
+             background:var(--surface-2)}
+  details.xp > summary{cursor:pointer;padding:6px 10px;font-size:12px;
+             font-weight:600;color:var(--ink-2)}
+  details.xp .xb{padding:4px 12px 10px;font-size:12px;color:var(--text-2)}
+  .xb table{width:100%;border-collapse:collapse;font-size:12px}
+  .xb th,.xb td{text-align:left;padding:3px 8px 3px 0;vertical-align:top;
+                border-bottom:1px dashed var(--border)}
+  .xb th{font-weight:600;color:var(--text-3);white-space:nowrap}
+  .xb td.w{text-align:right;font-variant-numeric:tabular-nums;width:48px}
+  .xb .neg{color:var(--red)} .xb .pos{color:var(--green,#1f6b3f)}
+  .kw{display:inline-block;padding:1px 7px;margin:0 4px 4px 0;
+      border:1px solid var(--border-2);border-radius:10px;font-size:11px}
+  .xb h4{margin:8px 0 4px;font-size:11.5px;text-transform:uppercase;
+         letter-spacing:.04em;color:var(--text-3)}
 </style>
 </head>
 <body>
@@ -66,6 +84,10 @@
 </div>
 
 <div class="kpis" id="kpis"></div>
+<div class="tabs">
+  <a class="tab on" id="tab-pending" onclick="show('pending')">Waiting for review</a>
+  <a class="tab" id="tab-duplicates" onclick="show('duplicates')">Held as duplicates</a>
+</div>
 <div id="items"><div class="empty">Loading…</div></div>
 
 <script>
@@ -86,8 +108,20 @@ async function jf(u, o){
   o.headers = Object.assign({'Content-Type':'application/json',
                              'X-CSRFToken': CSRF}, o.headers || {});
   if (u.charAt(0) === '/' && u.indexOf('{{ url_prefix }}') !== 0) u = '{{ url_prefix }}' + u;
-  const r = await fetch(u, o);
-  return r.json();
+  try {
+    const r = await fetch(u, o);
+    // An expired session answers with the login page, not JSON. Say so
+    // instead of failing to parse it.
+    const type = r.headers.get('content-type') || '';
+    if (type.indexOf('application/json') === -1){
+      return {ok:false, error: r.status === 400 || r.status === 401
+        ? 'Your session expired — refresh the page and try again.'
+        : 'Could not reach the server. Please try again.'};
+    }
+    return await r.json();
+  } catch (e) {
+    return {ok:false, error:'Could not reach the server. Please try again.'};
+  }
 }
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,
   c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -99,14 +133,125 @@ function renderKpis(c){
       k('now', c.pending, 'waiting for a decision')
     + k('', c.accepted, 'accepted')
     + k('', c.rejected, 'rejected with a reason')
-    + k('', c.reclassified, 'reclassified');
+    + k('', c.reclassified, 'reclassified')
+    + k('', c.duplicates || 0, 'held as duplicates, unchecked');
+}
+
+let VIEW = 'pending';
+function show(view){
+  VIEW = view;
+  document.getElementById('tab-pending').classList.toggle('on', view === 'pending');
+  document.getElementById('tab-duplicates').classList.toggle('on', view === 'duplicates');
+  load();
+}
+
+// ── explanation panels ─────────────────────────────────────────────
+const STEP_NAMES = {
+  '3': 'thread match', '4': 'sent by a Procam address',
+  '5': 'reply or forward prefix', '6': 'known supplier (Vendor Master)',
+  '7': 'inbound quotation', '8': 'logistics content check',
+  '9': 'duplicate score', '10': 'confidence score',
+  '10+ai': 'confidence score, then the model\u2019s second opinion'
+};
+const SIGNAL_NAMES = {
+  same_thread: 'Same thread', same_reference: 'Same enquiry reference',
+  same_sender_and_subject: 'Same sender and subject',
+  same_account_and_route: 'Same account and route',
+  same_attachment_name: 'Same attachment name',
+  same_account_in_window: 'Same account, recently',
+  same_cargo: 'Same cargo and weight'
+};
+function leadLink(id){
+  return id ? `<a href="{{ url_prefix }}/app?lead=${encodeURIComponent(id)}" target="_blank" rel="noopener">lead #${esc(id)}</a>` : '';
+}
+function classLabel(key){
+  return ((CLASSES.find(c => c.key === key) || {}).label) || key || '';
+}
+
+function whyPanel(it){
+  const p = it.payload || {};
+  const parts = p.score_parts || [];
+  const kws = p.keywords || [];
+  const dup = p.duplicate;
+  let html = '<h4>Confidence</h4>';
+  html += parts.length
+    ? `<table>${parts.map(pt => {
+        const n = Number(pt[1]) || 0;
+        return `<tr><td>${esc(pt[0])}</td><td class="w ${n < 0 ? 'neg' : 'pos'}">${n > 0 ? '+' : ''}${esc(n)}</td></tr>`;
+      }).join('')}<tr><th>score (kept between 0 and 100)</th><td class="w">${it.confidence == null ? '\u2014' : esc(it.confidence)}</td></tr></table>`
+    : '<div>No breakdown was stored for this decision.</div>';
+  html += '<h4>Enquiry words found</h4>';
+  html += kws.length ? kws.map(k => `<span class="kw">${esc(k)}</span>`).join('')
+                     : '<div>None.</div>';
+  html += '<h4>Duplicate score</h4>';
+  if(dup && dup.score){
+    html += `<div>${esc(dup.score)}% against ${leadLink(dup.lead_id) || 'no lead'}</div>`;
+    html += (dup.reasons && dup.reasons.length)
+      ? `<table>${dup.reasons.map(r => `<tr><td style="white-space:nowrap">${esc(SIGNAL_NAMES[r.signal] || r.signal)}</td><td>${esc(r.detail)}</td><td class="w">+${esc(r.weight)}</td></tr>`).join('')}</table>`
+      : '<div>No reasons were stored for this score.</div>';
+  } else {
+    html += `<div>${it.duplicate_score ? esc(it.duplicate_score) + '%, no reasons stored' : 'Nothing matched an existing lead.'}</div>`;
+  }
+  return html;
+}
+
+function explainPanel(it){
+  const p = it.payload || {};
+  const step = String(it.decided_by || '').replace('step_', '');
+  const row = (k, v) => v === '' || v == null ? '' : `<tr><th>${esc(k)}</th><td>${v}</td></tr>`;
+  let html = '<table>'
+    + row('Classified as', esc(it.label))
+    + row('Decided by', `${esc(it.decided_by)}${STEP_NAMES[step] ? ' \u2014 ' + esc(STEP_NAMES[step]) : ''}`)
+    + row('Reason', esc(it.reason))
+    + row('Confidence', it.confidence == null ? 'not scored (a rule decided)' : esc(it.confidence) + '%')
+    + row('Related lead', leadLink(it.matched_lead_id))
+    + row('Forward unwrapped', p.forward_resolved ? 'yes \u2014 judged as ' + esc(p.resolved_sender) : '')
+    + '</table>';
+  if(p.ai_class || p.ai_model){
+    html += '<h4>Model second opinion</h4><table>'
+      + row('Model', esc(p.ai_model || 'unknown'))
+      + row('Said', esc(classLabel(p.ai_class)) + (p.ai_confidence != null ? ` (${esc(p.ai_confidence)}%)` : ''))
+      + row('Why', esc(p.ai_reason))
+      + row('Applied', p.ai_applied ? 'yes \u2014 the rule had said ' + esc(classLabel(p.rule_class)) : 'no \u2014 the rule\u2019s answer stands')
+      + '</table>';
+  } else {
+    html += '<div style="margin-top:6px">No model was consulted.</div>';
+  }
+  return html;
+}
+
+async function loadHistory(id, el){
+  if(el.dataset.loaded) return;
+  el.dataset.loaded = '1';
+  const body = el.querySelector('.xb');
+  body.textContent = 'Loading\u2026';
+  const j = await jf('/api/intake/review/' + id + '/history');
+  if(!j || !j.ok){
+    el.dataset.loaded = '';
+    body.textContent = (j && j.error) || 'Could not load the history';
+    return;
+  }
+  if(!j.history.length){
+    body.textContent = 'Nothing earlier from this sender or conversation.';
+    return;
+  }
+  body.innerHTML = `<table><tr><th>When</th><th>Subject</th><th>Decided</th><th>Outcome</th><th>Shown because</th></tr>${
+    j.history.map(h => `<tr>
+      <td style="white-space:nowrap">${esc(h.created_at)}</td>
+      <td>${esc(h.subject) || '(no subject)'}${h.created_lead_id ? '<br>' + leadLink(h.created_lead_id) : (h.matched_lead_id ? '<br>' + leadLink(h.matched_lead_id) : '')}</td>
+      <td>${esc(h.label)}<br><span style="color:var(--text-3)">${esc(h.decided_by)}</span></td>
+      <td>${h.corrected_to ? esc(h.corrected_label) : esc(h.review_state)}${h.correction_reason ? '<br>' + esc(h.correction_reason) : ''}${h.corrected_by ? '<br><span style="color:var(--text-3)">by ' + esc(h.corrected_by) + '</span>' : ''}</td>
+      <td>${esc((h.match || []).join(', '))}</td>
+    </tr>`).join('')}</table>`;
 }
 
 function renderItems(items){
   const host = document.getElementById('items');
   if(!items.length){
-    host.innerHTML = '<div class="empty">Nothing waiting. '
-      + 'The classifier decided everything on its own.</div>';
+    host.innerHTML = VIEW === 'duplicates'
+      ? '<div class="empty">No unchecked duplicates in the last 30 days.</div>'
+      : '<div class="empty">Nothing waiting. '
+        + 'The classifier decided everything on its own.</div>';
     return;
   }
   host.innerHTML = items.map(it => {
@@ -129,19 +274,26 @@ function renderItems(items){
         <span><b>Owners</b> ${owners}</span>
         <span><b>Confidence</b> ${it.confidence == null ? '—' : it.confidence + '%'}</span>
         <span><b>Duplicate</b> ${it.duplicate_score || 0}%</span>
-        ${it.matched_lead_id ? `<span><b>Related lead</b> #${it.matched_lead_id}</span>` : ''}
+        ${it.matched_lead_id ? `<span><b>Related lead</b> ${leadLink(it.matched_lead_id)}</span>` : ''}
         ${p.attachments && p.attachments.length
           ? `<span><b>Attached</b> ${esc(p.attachments.join(', '))}</span>` : ''}
       </div>
       <div class="why">Classified <b>${esc(it.label)}</b> by ${esc(it.decided_by)} — ${esc(it.reason)}</div>
       ${p.body ? `<pre class="body">${esc(p.body.slice(0,1200))}</pre>` : ''}
+      <div class="panels">
+        <details class="xp"><summary>Why this score</summary><div class="xb">${whyPanel(it)}</div></details>
+        <details class="xp"><summary>Classifier explanation</summary><div class="xb">${explainPanel(it)}</div></details>
+        <details class="xp" ontoggle="if(this.open)loadHistory(${it.id}, this)"><summary>History \u2014 this sender and conversation</summary><div class="xb"></div></details>
+      </div>
       <div class="acts">
         <button class="btn btn-sm success" onclick="accept(${it.id})">Accept as lead</button>
+        ${it.duplicate_suspected
+          ? `<button class="btn btn-sm success" onclick="notDuplicate(${it.id})">Not a duplicate \u2014 create lead</button>` : ''}
         <span class="sep"></span>
-        <button class="btn btn-sm" onclick="quick(${it.id}, 'G_rate_sourcing')">Rate sourcing</button>
-        <button class="btn btn-sm" onclick="quick(${it.id}, 'H_quote_submission')">Quote submission</button>
-        <button class="btn btn-sm" onclick="quick(${it.id}, 'C_internal')">Internal</button>
-        <button class="btn btn-sm" onclick="quick(${it.id}, 'D_duplicate')">Duplicate</button>
+        <button class="btn btn-sm" onclick="quick(${it.id}, 'G_rate_sourcing')">Mark rate sourcing</button>
+        <button class="btn btn-sm" onclick="quick(${it.id}, 'H_quote_submission')">Mark quote</button>
+        <button class="btn btn-sm" onclick="quick(${it.id}, 'C_internal')">Mark internal</button>
+        <button class="btn btn-sm" onclick="quick(${it.id}, 'D_duplicate')">Mark duplicate</button>
         <span class="sep"></span>
         <select id="rc${it.id}">
           <option value="">Reclassify as…</option>
@@ -189,6 +341,17 @@ async function accept(id){
   const j = await jf('/api/intake/review/'+id+'/accept', {method:'POST', body:'{}'});
   if(!j || !j.ok) return fail(id, (j && j.error) || 'Could not accept');
   done(id, 'Accepted — lead #' + j.lead_id + ' created and assigned.');
+  renderKpis(j.counts);
+}
+
+// The override for mail held as a copy of another lead. The same accept
+// call, with a reason, so the correction is labelled "Not a duplicate"
+// and the learning engine can see which duplicate signal misled it.
+async function notDuplicate(id){
+  const j = await jf('/api/intake/review/'+id+'/accept',
+                     {method:'POST', body: JSON.stringify({reason: 'Not a duplicate'})});
+  if(!j || !j.ok) return fail(id, (j && j.error) || 'Could not accept');
+  done(id, 'Not a duplicate \u2014 lead #' + j.lead_id + ' created and assigned.');
   renderKpis(j.counts);
 }
 
@@ -256,8 +419,12 @@ async function reassign(id){
 }
 
 async function load(){
-  const j = await jf('/api/intake/review');
-  if(!j || !j.ok) return;
+  const j = await jf('/api/intake/review' + (VIEW === 'duplicates' ? '?view=duplicates' : ''));
+  if(!j || !j.ok){
+    document.getElementById('items').innerHTML =
+      `<div class="empty">${esc((j && j.error) || 'Could not load the queue')}</div>`;
+    return;
+  }
   renderKpis(j.counts);
   renderItems(j.items);
 }
