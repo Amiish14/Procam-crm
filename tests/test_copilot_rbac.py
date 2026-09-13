@@ -579,3 +579,92 @@ def test_abbreviations_expand_without_losing_the_original(world):
     out = vocabulary.expand('any RFQ pending')
     assert 'rfq' in out
     assert 'request for quotation' in out
+
+
+# ══════════════════════════════════════════════════════════════════
+# 11 · §6.8 — honest where the CRM is incomplete
+# ══════════════════════════════════════════════════════════════════
+def test_stale_says_so_when_it_is_measuring_the_activity_log(world):
+    """Production returned 461 stale out of 461 open, because almost no
+    activity is ever logged. Arithmetically right, and worse than
+    useless: it reads as "your whole desk has been neglected" when it
+    means "nobody records calls"."""
+    with flask_app.app_context():
+        sc = _scope_for('CPREP', DataScope.OWN)
+        result = catalogue.get('leads_stale').handler(sc, {})
+        assert result.empty is False
+        joined = ' '.join(result.notes)
+        assert 'activity log' in joined
+        assert 'not' in joined and 'follow-up' in joined
+
+
+def test_stale_stops_complaining_once_activity_is_logged(world):
+    """The other half — the note must not be permanent furniture.
+
+    The activity is dated a month back on purpose. Logging it today
+    would empty the stale list entirely and the function would return
+    before it ever reached the note, so the test would pass without
+    testing anything — which is exactly what the first version of it
+    did.
+    """
+    from datetime import datetime, timedelta
+
+    from app import Lead, LeadActivity
+
+    long_ago = datetime.utcnow() - timedelta(days=30)
+    with flask_app.app_context():
+        sc = _scope_for('CPREP', DataScope.OWN)
+        open_leads = (scope_mod.leads(sc=sc)
+                      .filter(~Lead.stage.in_(('Won', 'Lost', 'On Hold',
+                                               'Not Interested'))).all())
+        assert open_leads, 'need an open lead for this to mean anything'
+        added = []
+        for lead in open_leads:
+            act = LeadActivity(lead_id=lead.id, kind='call',
+                               subject='logged a month ago',
+                               occurred_at=long_ago)
+            db.session.add(act)
+            added.append(act)
+        db.session.commit()
+        try:
+            result = catalogue.get('leads_stale').handler(sc, {})
+            # still stale — the activity is a month old
+            assert result.empty is False
+            assert ' '.join(result.notes).count('activity log') == 0
+        finally:
+            for act in added:
+                db.session.delete(act)
+            db.session.commit()
+
+
+def test_an_ownerless_account_is_not_routed_to_its_owner(world):
+    """"Please contact the assigned account owner" is useless advice
+    when nobody is assigned — and it was what this said."""
+    from app import Company
+
+    with flask_app.app_context():
+        acct = db.session.get(Company, world['theirs']['account'])
+        original = acct.pic_emp_code
+        acct.pic_emp_code = None
+        acct.secondary_pic_emp_code = None
+        db.session.commit()
+        try:
+            sc = _scope_for('CPREP', DataScope.OWN, perms=[])
+            answer = svc.ask(
+                f'is {world["theirs"]["account_name"]} already handled',
+                sc=sc)
+            text = (answer.result.headline or '')
+            assert 'No owner is configured' in text
+            assert 'contact the account owner' not in text.lower()
+            assert 'administrator' in text.lower()
+        finally:
+            acct.pic_emp_code = original
+            db.session.commit()
+
+
+def test_an_owned_account_still_routes_to_its_owner(world):
+    with flask_app.app_context():
+        sc = _scope_for('CPREP', DataScope.OWN, perms=[])
+        answer = svc.ask(
+            f'is {world["theirs"]["account_name"]} already handled', sc=sc)
+        assert 'Contact the account owner' in (answer.result.headline or '')

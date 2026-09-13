@@ -165,10 +165,41 @@ def leads_stale(scope, params):
              'Owner': l.assigned_to or '—', '_chip': _lead_chip(l)}
             for l in found]
     rows, notes = _cap(rows, len(found))
+
+    # §6.8 — where the CRM is incomplete, say so rather than dress it up.
+    #
+    # In production this returned 461 stale out of 461 open, because
+    # almost no activity is ever logged. That answer is arithmetically
+    # correct and worse than useless: it reads as "your whole desk has
+    # been neglected" when it means "nobody records calls". A person
+    # acting on it would chase leads that were worked yesterday.
+    open_total = (sc_mod.leads(sc=scope)
+                  .filter(~Lead.stage.in_(_TERMINAL)).count())
+    with_activity = (sc_mod.leads(sc=scope)
+                     .filter(~Lead.stage.in_(_TERMINAL))
+                     .join(last_activity, last_activity.c.lead_id == Lead.id)
+                     .count())
+    # The signal is whether activity is recorded AT ALL — not how many
+    # leads came back stale. Keying off the stale count fired this
+    # caveat even when every lead had been diligently logged a month
+    # ago, which is the opposite of the case it exists for.
+    if open_total and not with_activity:
+        notes.append(
+            f'None of your {open_total} open leads has any activity '
+            f'recorded, so every one of them counts as stale. This is '
+            f'measuring the activity log, not your follow-up.')
+    elif open_total and with_activity < open_total / 4:
+        notes.append(
+            f'Only {with_activity} of {open_total} open leads has any '
+            f'activity logged, so treat this as a lower bound.')
+
     return Result(
         headline=f'{len(found)} lead(s) with no activity for {days}+ days.',
         columns=['Company', 'Stage', 'Value', 'Idle days', 'Owner'],
-        rows=rows, figures={'count': len(found), 'days': days}, notes=notes,
+        rows=rows,
+        figures={'count': len(found), 'days': days,
+                 'open_total': open_total, 'with_activity': with_activity},
+        notes=notes,
         sources=['leads.stage', 'lead_activities.occurred_at'])
 
 
@@ -636,10 +667,14 @@ def account_status(scope, params):
         e = Employee.query.filter_by(emp_code=code).first()
         return e.name if e else code
 
-    routing = (f'{company.name} is already a Procam account. '
-               f'Primary owner: {who(company.pic_emp_code)}')
-    if company.secondary_pic_emp_code:
-        routing += f' · Ops PIC: {who(company.secondary_pic_emp_code)}'
+    has_owner = bool(company.pic_emp_code)
+    routing = f'{company.name} is already a Procam account.'
+    if has_owner:
+        routing += f' Primary owner: {who(company.pic_emp_code)}'
+        if company.secondary_pic_emp_code:
+            routing += f' · Ops PIC: {who(company.secondary_pic_emp_code)}'
+    else:
+        routing += ' No owner is configured for it.'
     if company.vertical:
         routing += f' · Vertical: {company.vertical}'
 
@@ -647,10 +682,16 @@ def account_status(scope, params):
                 or scope.reaches(company.pic_emp_code or '')
                 or scope.reaches(company.secondary_pic_emp_code or ''))
     if not entitled:
-        return Result(
-            headline=routing + ' — please contact the assigned account '
-                                'owner for details.',
-            restricted=True, sources=['Account Master'])
+        # "Contact the assigned account owner" is useless advice when
+        # nobody is assigned — and it was what this said.
+        follow = (' Contact the account owner for details.' if has_owner
+                  else ' Nobody owns it yet, so ask an administrator to '
+                       'assign it before you approach them.')
+        return Result(headline=routing + follow, restricted=True,
+                      notes=([] if has_owner else
+                             ['An account with no owner cannot auto-assign '
+                              'its leads.']),
+                      sources=['Account Master'])
 
     open_opps = (sc_mod.opportunities(sc=scope)
                  .filter(Opportunity.company_id == company.id,
