@@ -102,6 +102,22 @@ def world():
             ids[tag] = {'account': acct.id, 'account_name': acct.name,
                         'lead': lead.id, 'opp': opp.id}
 
+        # A WON opportunity for the out-of-scope person, with its own
+        # distinctive value. Without it the leak sweep cannot see past
+        # any intent that filters on stage == 'Won' — handovers,
+        # conversion, cross-sell, performance, the daily digest — because
+        # there would be nothing won to leak.
+        won = Opportunity.query.filter_by(opp_number='OPP-CP-WON').first()
+        if won is None:
+            won = Opportunity(opp_number='OPP-CP-WON')
+            db.session.add(won)
+        won.owner_emp_code = 'CPOUT'
+        won.stage = 'Won'
+        won.company_id = ids['theirs']['account']
+        won.value_inr = 77_000_000
+        db.session.flush()
+        ids['theirs']['won_opp'] = won.id
+
         # A handful of lost leads WITH reasons, deliberately below
         # MIN_SAMPLE_FOR_ANALYSIS. Without these the thin-sample guard
         # cannot be told apart from "there is nothing lost at all".
@@ -380,7 +396,10 @@ def test_no_intent_leaks_the_other_verticals_account(world):
                 [str(v) for r in (result.rows or []) for v in r.values()])
             # The account NAME may legitimately appear — §5.1 routing.
             # Its VALUE may never.
-            if '90000000' in blob.replace(',', '') or '9.00 cr' in blob:
+            flat = blob.replace(',', '')
+            if ('90000000' in flat or '9.00 cr' in blob
+                    or '77000000' in flat or '7.70 cr' in blob
+                    or 'OPP-CP-WON' in blob):
                 leaked.append(f'{key}: disclosed an out-of-scope value')
         assert not leaked, '; '.join(leaked)
 
@@ -594,8 +613,8 @@ def test_stale_says_so_when_it_is_measuring_the_activity_log(world):
         result = catalogue.get('leads_stale').handler(sc, {})
         assert result.empty is False
         joined = ' '.join(result.notes)
-        assert 'activity log' in joined
-        assert 'not' in joined and 'follow-up' in joined
+        assert 'neither an activity nor an email' in joined
+        assert 'not your follow-up' in joined
 
 
 def test_stale_stops_complaining_once_activity_is_logged(world):
@@ -630,7 +649,8 @@ def test_stale_stops_complaining_once_activity_is_logged(world):
             result = catalogue.get('leads_stale').handler(sc, {})
             # still stale — the activity is a month old
             assert result.empty is False
-            assert ' '.join(result.notes).count('activity log') == 0
+            assert 'neither an activity nor an email' not in \
+                ' '.join(result.notes)
         finally:
             for act in added:
                 db.session.delete(act)
@@ -717,3 +737,54 @@ def test_a_populated_module_still_answers_normally(world):
         r = catalogue.get('quotes_above').handler(sc, {'amount': 999_999_999})
         assert 'no quotes recorded in the CRM at all' not in r.headline
         assert 'No quotes above' in r.headline
+
+
+def test_an_email_counts_as_contact_even_with_no_activity_logged(world):
+    """The change the production data demanded.
+
+    Seven activity rows against eleven thousand leads meant "stale" was
+    measuring the log, not the desk. The email trail carries real
+    timestamps, so a lead emailed yesterday is not stale however empty
+    lead_activities is.
+    """
+    from datetime import datetime, timedelta
+
+    from app import LeadEmail
+
+    with flask_app.app_context():
+        sc = _scope_for('CPREP', DataScope.OWN)
+        mine = world['mine']['account_name']
+
+        before = catalogue.get('leads_stale').handler(sc, {})
+        assert mine in {r['Company'] for r in (before.rows or [])}, \
+            'the lead should start out stale for this to prove anything'
+
+        mail = LeadEmail(lead_id=world['mine']['lead'], direction='outbound',
+                         subject='quote sent',
+                         sent_or_received_at=datetime.utcnow()
+                         - timedelta(days=1))
+        db.session.add(mail)
+        db.session.commit()
+        try:
+            after = catalogue.get('leads_stale').handler(sc, {})
+            assert mine not in {r['Company'] for r in (after.rows or [])}
+        finally:
+            db.session.delete(mail)
+            db.session.commit()
+
+
+def test_an_edit_is_not_contact(world):
+    """updated_at moves when somebody fixes a typo. Reporting that as
+    contact with a customer would be a lie the CRM tells itself."""
+    from datetime import datetime
+
+    from app import Lead
+
+    with flask_app.app_context():
+        sc = _scope_for('CPREP', DataScope.OWN)
+        lead = db.session.get(Lead, world['mine']['lead'])
+        lead.updated_at = datetime.utcnow()
+        db.session.commit()
+        result = catalogue.get('leads_stale').handler(sc, {})
+        names = {r['Company'] for r in result.rows}
+        assert world['mine']['account_name'] in names

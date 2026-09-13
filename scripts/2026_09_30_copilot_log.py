@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS copilot_log (
     model_used       INTEGER DEFAULT 0,
     latency_ms       INTEGER,
     created_at       DATETIME,
+    pinned           INTEGER DEFAULT 0,
+    pinned_at        DATETIME,
     helpful          INTEGER,
     feedback_reason  VARCHAR(60),
     feedback_note    VARCHAR(500),
@@ -75,6 +77,13 @@ INDEXES = (
     'CREATE INDEX IF NOT EXISTS ix_copilot_log_created ON copilot_log (created_at)',
     'CREATE INDEX IF NOT EXISTS ix_copilot_log_answered ON copilot_log (answered)',
     'CREATE INDEX IF NOT EXISTS ix_copilot_log_helpful ON copilot_log (helpful)',
+    'CREATE INDEX IF NOT EXISTS ix_copilot_log_pinned ON copilot_log (pinned)',
+)
+
+#: Added after the table shipped, so an existing install needs them too.
+ADD_COLUMNS = (
+    ('pinned', 'INTEGER DEFAULT 0'),
+    ('pinned_at', 'DATETIME'),
 )
 
 
@@ -115,6 +124,13 @@ def main():
             return
 
         conn.execute(text(DDL))
+        have = {r[1] for r in conn.execute(text(
+            'PRAGMA table_info(copilot_log)'))}
+        for col, ddl in ADD_COLUMNS:
+            if col not in have:
+                conn.execute(text(
+                    f'ALTER TABLE copilot_log ADD COLUMN {col} {ddl}'))
+                print(f'  + copilot_log.{col}')
         for stmt in INDEXES:
             conn.execute(text(stmt))
         print('  + copilot_log' if not exists else '  copilot_log present')

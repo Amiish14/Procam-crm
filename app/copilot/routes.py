@@ -66,6 +66,31 @@ def api_feedback():
     return jsonify(ok=True, reasons=list(svc.FEEDBACK_REASONS))
 
 
+@bp.route('/api/copilot/pin', methods=['POST'])
+def api_pin():
+    """§6.4 — pin a question so it can be re-asked, not a frozen answer."""
+    if not _authed():
+        return jsonify(ok=False, error='Not authenticated'), 401
+    d = request.get_json(silent=True) or {}
+    ok, err = svc.pin(d.get('log_id'), pinned=bool(d.get('pinned', True)),
+                      actor=_actor())
+    if not ok:
+        db.session.rollback()
+        return jsonify(ok=False, error=err), 400
+    return jsonify(ok=True, pinned=svc.pinned_for(_actor()))
+
+
+@bp.route('/api/copilot/brief', methods=['GET'])
+def api_brief():
+    """§6.5 — the morning brief, for the panel's first run and for a
+    dashboard tile later."""
+    if not _authed():
+        return jsonify(ok=False, error='Not authenticated'), 401
+    sc = scope_mod.current()
+    return jsonify(ok=True, brief=svc.morning_brief(sc),
+                   pinned=svc.pinned_for(_actor()))
+
+
 # ── §10 / Phase 5 — controlled actions, off unless enabled ───────────
 @bp.route('/api/copilot/actions', methods=['GET'])
 def api_actions():

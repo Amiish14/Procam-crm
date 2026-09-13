@@ -273,6 +273,34 @@
     body.innerHTML = '<div class="pai-hello">Ask me about your leads, ' +
       'quotes, RFQs and accounts. I answer from the CRM, and only from ' +
       'what <b>you</b> can already see.</div>';
+
+    // §6.5 — the morning brief, and §6.4's pinned questions
+    jf('/api/copilot/brief').then(function(j){
+      if (!j || !j.ok) return;
+      if (j.brief && !j.brief.empty){
+        var b = document.createElement('div');
+        b.className = 'pai-hello';
+        b.style.marginTop = '10px';
+        b.innerHTML = '<b>Right now</b><br>' + esc(j.brief.headline);
+        body.insertBefore(b, body.firstChild.nextSibling);
+      }
+      if ((j.pinned || []).length){
+        var p = document.createElement('div');
+        p.className = 'pai-chips';
+        p.style.marginTop = '10px';
+        p.innerHTML = '<div style="width:100%;font-size:11px;color:' +
+          'var(--text-3,#8a97a3);text-transform:uppercase;letter-spacing:' +
+          '.05em">Pinned</div>';
+        j.pinned.forEach(function(q){
+          var b2 = document.createElement('button');
+          b2.type = 'button';
+          b2.textContent = q.question.slice(0, 42);
+          b2.onclick = function(){ askIt(q.question); };
+          p.appendChild(b2);
+        });
+        body.appendChild(p);
+      }
+    });
     jf('/api/copilot/suggestions').then(function(j){
       if (!j || !j.ok) return;
       document.getElementById('paiScope').textContent = j.scope_note || '';
@@ -377,6 +405,7 @@
       html += '<div class="pai-acts">' +
         '<button type="button" data-fb="1">Helpful</button>' +
         '<button type="button" data-fb="0">Not helpful</button>' +
+        '<button type="button" data-pin="1">Pin</button>' +
         '</div>';
     }
     return html;
@@ -391,6 +420,14 @@
                     company:'/accounts/', quote:'/quotes/',
                     rfq:'/rfqs/', handover:'/handovers/'}[chip.type];
         if (path) location.href = PREFIX + path + chip.id;
+      };
+    });
+    turn.querySelectorAll('[data-pin]').forEach(function(btn){
+      btn.onclick = function(){
+        btn.classList.toggle('on');
+        btn.textContent = btn.classList.contains('on') ? 'Pinned' : 'Pin';
+        jf('/api/copilot/pin', {method:'POST', body: JSON.stringify(
+          {log_id: j.log_id, pinned: btn.classList.contains('on')})});
       };
     });
     turn.querySelectorAll('[data-fb]').forEach(function(btn){

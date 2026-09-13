@@ -247,3 +247,58 @@ def test_a_public_ai_host_is_refused_outright(world, monkeypatch):
 
     monkeypatch.setenv('PROCAM_AI_BASE_URL', 'http://10.0.0.9:8000/v1')
     assert model_mod.available() is True
+
+
+# ── §6.4 pinning · §6.5 morning brief ────────────────────────────────
+def test_a_question_can_be_pinned_and_unpinned(world):
+    body = _c('CAREP').post('/api/copilot/ask',
+                            json={'q': 'my open leads'}).get_json()
+    r = _c('CAREP').post('/api/copilot/pin',
+                         json={'log_id': body['log_id'], 'pinned': True})
+    assert r.status_code == 200
+    assert any(p['question'] == 'my open leads'
+               for p in r.get_json()['pinned'])
+
+    r = _c('CAREP').post('/api/copilot/pin',
+                         json={'log_id': body['log_id'], 'pinned': False})
+    assert not any(p['question'] == 'my open leads'
+                   for p in r.get_json()['pinned'])
+
+
+def test_pinning_saves_the_question_not_the_answer(world):
+    """A saved table of last month's pipeline would quietly become wrong
+    while still looking authoritative. The question re-runs."""
+    from app.models.copilot import CopilotLog
+
+    body = _c('CAREP').post('/api/copilot/ask',
+                            json={'q': 'my open leads'}).get_json()
+    _c('CAREP').post('/api/copilot/pin',
+                     json={'log_id': body['log_id'], 'pinned': True})
+    with flask_app.app_context():
+        row = db.session.get(CopilotLog, body['log_id'])
+        blob = ' '.join(str(v) for v in row.to_dict().values())
+        assert 'ApiCo' not in blob, 'the answer rows must not be stored'
+
+
+def test_you_cannot_pin_somebody_elses_question(world):
+    body = _c('CAADM').post('/api/copilot/ask',
+                            json={'q': 'my open leads'}).get_json()
+    r = _c('CAREP').post('/api/copilot/pin',
+                         json={'log_id': body['log_id'], 'pinned': True})
+    assert r.status_code == 400
+
+
+def test_the_morning_brief_matches_my_day(world):
+    """§6.5 is built from the same intent, so the greeting and the
+    question can never disagree."""
+    brief = _c('CAREP').get('/api/copilot/brief').get_json()
+    assert brief['ok']
+    asked = _c('CAREP').post('/api/copilot/ask',
+                             json={'q': 'my day'}).get_json()
+    assert brief['brief']['headline'] == asked['headline']
+
+
+def test_the_brief_is_scoped_like_everything_else(world):
+    rep = _c('CAREP').get('/api/copilot/brief').get_json()['brief']
+    adm = _c('CAADM').get('/api/copilot/brief').get_json()['brief']
+    assert rep['figures'] != adm['figures'] or rep['empty']

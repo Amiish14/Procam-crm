@@ -79,6 +79,57 @@ def _lead_chip(lead):
     return {'type': 'lead', 'id': lead.id, 'label': lead.company or 'Lead'}
 
 
+
+# ── what "last contact" actually means ───────────────────────────────
+#
+# lead_activities holds 7 rows against 11,101 leads: nobody logs calls.
+# Ranking staleness on it said every open lead had been neglected, which
+# is true of the log and false of the desk. The email trail, by
+# contrast, carries real inbound and outbound timestamps for every lead
+# the mailbox ever produced — so contact means either, and a lead is
+# stale only when neither has happened.
+
+def _contacted_since(cutoff):
+    """(activity_ids, email_ids) — leads touched since `cutoff`.
+
+    Two sets rather than a computed maximum: the question is only ever
+    "has anything happened since", and SQLite's max() over nullable
+    columns needs more care than the answer is worth.
+    """
+    from app import LeadActivity, LeadEmail
+
+    acted = {r[0] for r in LeadActivity.query
+             .with_entities(LeadActivity.lead_id)
+             .filter(LeadActivity.occurred_at >= cutoff).all()}
+    mailed = {r[0] for r in LeadEmail.query
+              .with_entities(LeadEmail.lead_id)
+              .filter(LeadEmail.sent_or_received_at >= cutoff).all()}
+    return acted, mailed
+
+
+def _last_contact(lead):
+    """The most recent real contact on one lead, or None.
+
+    Deliberately not `updated_at` — that moves when somebody edits a
+    field, which is not contact with a customer and should never be
+    reported as though it were.
+    """
+    from app import LeadActivity, LeadEmail
+
+    stamps = []
+    act = (LeadActivity.query.with_entities(LeadActivity.occurred_at)
+           .filter(LeadActivity.lead_id == lead.id)
+           .order_by(LeadActivity.occurred_at.desc()).first())
+    if act and act[0]:
+        stamps.append(act[0])
+    mail = (LeadEmail.query.with_entities(LeadEmail.sent_or_received_at)
+            .filter(LeadEmail.lead_id == lead.id)
+            .order_by(LeadEmail.sent_or_received_at.desc()).first())
+    if mail and mail[0]:
+        stamps.append(mail[0])
+    return max(stamps) if stamps else None
+
+
 def _nothing_recorded(label, module_hint=''):
     """The answer for a table that is empty, not a filter that matched.
 
@@ -117,8 +168,12 @@ def my_day(scope, params):
     overdue = mine.filter(Lead.followup_date.isnot(None),
                           Lead.followup_date < today).count()
     due_today = mine.filter(Lead.followup_date == today).count()
-    idle = mine.filter(or_(Lead.updated_at.is_(None),
-                           Lead.updated_at < _days_ago(3))).count()
+    # Same definition of contact as leads_stale, so the tile and the
+    # question can never disagree about who has gone quiet.
+    acted, mailed = _contacted_since(_days_ago(3))
+    touched = acted | mailed
+    idle = sum(1 for l in mine.with_entities(Lead.id).all()
+               if l[0] not in touched)
     awaiting_quote = mine.filter(Lead.stage == 'RFQ Generated').count()
     negotiating = mine.filter(Lead.stage == 'Under Negotiation').count()
     new_this_week = mine.filter(Lead.created_at >= _days_ago(7)).count()
@@ -145,77 +200,82 @@ def my_day(scope, params):
 #  LEADS
 # ══════════════════════════════════════════════════════════════════════
 @intent('leads_stale', 'Stale leads',
-        params={'days': 'how many days without activity (default 7)'},
+        params={'days': 'how many days without contact (default 7)'},
         personas=('sales', 'head'), phase=1,
         examples=('leads with no activity for 7 days',
                   'which of my leads have gone quiet',
                   'stale leads', 'untouched leads'))
 def leads_stale(scope, params):
-    from app import Lead, LeadActivity
+    """Leads nobody has been in contact with.
+
+    Contact means an activity OR an email, because in this CRM the
+    email trail is where contact actually lives — seven activity rows
+    against eleven thousand leads. Ranking on the log alone reported
+    every open lead as neglected, which told a salesperson to chase
+    people they had emailed that morning.
+    """
+    from app import Lead
 
     days = int(params.get('days') or DEFAULT_IDLE_DAYS)
     cutoff = _days_ago(days)
+    acted, mailed = _contacted_since(cutoff)
+    touched = acted | mailed
 
-    last_activity = (
-        LeadActivity.query
-        .with_entities(LeadActivity.lead_id,
-                       func.max(LeadActivity.occurred_at).label('last'))
-        .group_by(LeadActivity.lead_id).subquery())
+    open_q = sc_mod.leads(sc=scope).filter(~Lead.stage.in_(_TERMINAL))
+    open_leads = open_q.order_by(Lead.created_at.asc()).all()
+    found = [l for l in open_leads if l.id not in touched]
 
-    q = (sc_mod.leads(sc=scope)
-         .outerjoin(last_activity, last_activity.c.lead_id == Lead.id)
-         .filter(~Lead.stage.in_(_TERMINAL))
-         .filter(or_(last_activity.c.last.is_(None),
-                     last_activity.c.last < cutoff))
-         .order_by(Lead.created_at.asc()))
-
-    found = q.all()
     if not found:
-        return Result(headline=f'No leads have been idle for {days}+ days.',
-                      empty=True, sources=['lead_activities.occurred_at'])
+        return Result(
+            headline=f'Every open lead has been contacted in the last '
+                     f'{days} days.',
+            empty=True,
+            sources=['lead_activities.occurred_at',
+                     'lead_emails.sent_or_received_at'])
 
-    rows = [{'Company': l.company, 'Stage': l.stage,
-             'Value': _money(l.estimated_value_inr),
-             'Idle days': _age(l.updated_at or l.created_at) or 0,
-             'Owner': l.assigned_to or '—', '_chip': _lead_chip(l)}
-            for l in found]
-    rows, notes = _cap(rows, len(found))
+    rows = []
+    for l in found[:ROW_CAP]:
+        last = _last_contact(l)
+        rows.append({'Company': l.company, 'Stage': l.stage,
+                     'Value': _money(l.estimated_value_inr),
+                     'Last contact': (str(last)[:10] if last else 'never'),
+                     'Idle days': (_age(last) if last
+                                   else _age(l.created_at) or 0),
+                     'Owner': l.assigned_to or '—',
+                     '_chip': _lead_chip(l)})
+    notes = ([f'Showing the first {ROW_CAP} of {len(found)}.']
+             if len(found) > ROW_CAP else [])
 
-    # §6.8 — where the CRM is incomplete, say so rather than dress it up.
-    #
-    # In production this returned 461 stale out of 461 open, because
-    # almost no activity is ever logged. That answer is arithmetically
-    # correct and worse than useless: it reads as "your whole desk has
-    # been neglected" when it means "nobody records calls". A person
-    # acting on it would chase leads that were worked yesterday.
-    open_total = (sc_mod.leads(sc=scope)
-                  .filter(~Lead.stage.in_(_TERMINAL)).count())
-    with_activity = (sc_mod.leads(sc=scope)
-                     .filter(~Lead.stage.in_(_TERMINAL))
-                     .join(last_activity, last_activity.c.lead_id == Lead.id)
-                     .count())
-    # The signal is whether activity is recorded AT ALL — not how many
-    # leads came back stale. Keying off the stale count fired this
-    # caveat even when every lead had been diligently logged a month
-    # ago, which is the opposite of the case it exists for.
-    if open_total and not with_activity:
+    # §6.8 — when nothing is recorded anywhere, say which it is
+    # measuring. The test is whether contact EXISTS, not how many leads
+    # came back stale: keying off the stale count fires this at a desk
+    # that logged everything diligently a month ago, which is the
+    # opposite of the case it is for. That mistake has now been made
+    # twice, hence the explicit set.
+    ever_acted, ever_mailed = _contacted_since(_days_ago(36500))
+    ever = ever_acted | ever_mailed
+    never = sum(1 for l in found if l.id not in ever)
+    if open_leads and never >= len(open_leads):
         notes.append(
-            f'None of your {open_total} open leads has any activity '
-            f'recorded, so every one of them counts as stale. This is '
-            f'measuring the activity log, not your follow-up.')
-    elif open_total and with_activity < open_total / 4:
+            f'All {len(open_leads)} of your open leads are here, and '
+            f'neither an activity nor an email is recorded against any of '
+            f'them. This is measuring what the CRM holds, not your '
+            f'follow-up.')
+    elif open_leads and never > len(open_leads) * 0.75:
         notes.append(
-            f'Only {with_activity} of {open_total} open leads has any '
-            f'activity logged, so treat this as a lower bound.')
+            f'{never} of your {len(open_leads)} open leads have no contact '
+            f'recorded at all, so treat this as a lower bound.')
 
     return Result(
-        headline=f'{len(found)} lead(s) with no activity for {days}+ days.',
-        columns=['Company', 'Stage', 'Value', 'Idle days', 'Owner'],
+        headline=f'{len(found)} lead(s) with no contact for {days}+ days.',
+        columns=['Company', 'Stage', 'Value', 'Last contact', 'Idle days',
+                 'Owner'],
         rows=rows,
         figures={'count': len(found), 'days': days,
-                 'open_total': open_total, 'with_activity': with_activity},
+                 'open_total': len(open_leads), 'never_contacted': never},
         notes=notes,
-        sources=['leads.stage', 'lead_activities.occurred_at'])
+        sources=['lead_activities.occurred_at',
+                 'lead_emails.sent_or_received_at'])
 
 
 @intent('leads_open', 'Open leads',
@@ -997,9 +1057,19 @@ def next_best_action(scope, params):
         return Result(headline='Nothing open to act on.', empty=True,
                       sources=['leads.stage'])
 
+    # Idle means no contact, not no edit — see _last_contact.
+    contact = {}
+    acted, mailed = _contacted_since(_days_ago(3650))
+    ever = acted | mailed
+
     scored = []
     for l in candidates:
-        idle = _age(l.updated_at or l.created_at) or 0
+        if l.id in ever:
+            last = _last_contact(l)
+            idle = _age(last) or 0
+            contact[l.id] = last
+        else:
+            idle = _age(l.created_at) or 0
         value = float(l.estimated_value_inr or 0)
         if idle < 2:
             continue
@@ -1013,7 +1083,8 @@ def next_best_action(scope, params):
             reason = (f'Follow-up was due '
                       f'{(_now().date() - l.followup_date).days} days ago.')
         elif idle >= 14:
-            reason = f'No activity for {idle} days.'
+            reason = (f'No contact for {idle} days.' if l.id in ever
+                      else 'No contact has ever been recorded.')
         if not reason:
             continue
         scored.append((value * max(idle, 1), l, reason, idle, value))
@@ -1029,8 +1100,9 @@ def next_best_action(scope, params):
     return Result(headline=f'{len(rows)} lead(s) worth your attention first.',
                   columns=['Company', 'Stage', 'Value', 'Idle days', 'Why'],
                   rows=rows, figures={'count': len(scored)},
-                  sources=['leads.updated_at', 'leads.followup_date',
-                           'leads.stage'])
+                  sources=['lead_emails.sent_or_received_at',
+                           'lead_activities.occurred_at',
+                           'leads.followup_date', 'leads.stage'])
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1304,3 +1376,528 @@ def account_360(scope, params):
         columns=['Fact', 'Value'], rows=facts, notes=notes,
         figures={'open': len(open_opps), 'won': len(won)},
         sources=['Account Master', 'opportunities', 'quotes'])
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  THE MATRIX ROWS THAT HAD NO INTENT BEHIND THEM
+# ══════════════════════════════════════════════════════════════════════
+#
+# Nine rows of the §14 matrix were specified and never built. They are
+# here now, which is the difference between a design document and a
+# deliverable.
+
+@intent('pipeline_by_stage', 'Pipeline broken down',
+        permission='module.funnels',
+        params={'by': 'stage, vertical, owner or city (default stage)'},
+        personas=('head', 'mgmt'), phase=1,
+        examples=('pipeline by stage', 'pipeline by vertical',
+                  'pipeline by owner', 'break down the pipeline'))
+def pipeline_by_stage(scope, params):
+    """§5 asks for pipeline by vertical, owner, city and stage. One
+    intent with a dimension parameter, rather than four that drift."""
+    from app import Company, Opportunity
+
+    dimension = (params.get('by') or 'stage').strip().lower()
+    opps = (sc_mod.opportunities(sc=scope)
+            .filter(~Opportunity.stage.in_(_TERMINAL)).all())
+    if not opps:
+        return Result(headline='No open opportunities in your scope.',
+                      empty=True, sources=['opportunities.stage'])
+
+    companies = {}
+    if dimension in ('vertical', 'city', 'customer', 'account'):
+        for c in Company.query.with_entities(
+                Company.id, Company.name, Company.vertical,
+                Company.city).all():
+            companies[c[0]] = c
+
+    def key_for(o):
+        if dimension == 'owner':
+            return o.owner_emp_code or 'unassigned'
+        if dimension in ('vertical', 'city', 'customer', 'account'):
+            row = companies.get(o.company_id)
+            if row is None:
+                return 'unmapped account'
+            return {'vertical': row[2], 'city': row[3],
+                    'customer': row[1], 'account': row[1]}[dimension] or '—'
+        return o.stage or '—'
+
+    buckets = {}
+    for o in opps:
+        b = buckets.setdefault(key_for(o), {'n': 0, 'v': 0.0})
+        b['n'] += 1
+        b['v'] += float(o.value_inr or 0)
+
+    label = {'owner': 'Owner', 'vertical': 'Vertical', 'city': 'City',
+             'customer': 'Customer', 'account': 'Customer'}.get(
+                 dimension, 'Stage')
+    rows = [{label: k, 'Count': v['n'], 'Value': _money(v['v'])}
+            for k, v in sorted(buckets.items(), key=lambda kv: -kv[1]['v'])]
+    rows, notes = _cap(rows, len(rows))
+    total = sum(float(o.value_inr or 0) for o in opps)
+    return Result(
+        headline=(f'{_money(total)} across {len(opps)} opportunities, '
+                  f'by {label.lower()}.'),
+        columns=[label, 'Count', 'Value'], rows=rows,
+        figures={'total': total, 'count': len(opps), 'by': dimension},
+        notes=notes, sources=['opportunities.value_inr'])
+
+
+@intent('team_activity_gap', "Who hasn't updated the CRM",
+        permission='reports.action',
+        params={'days': 'window in days (default 7)'},
+        personas=('head', 'mgmt'), phase=2,
+        examples=("who hasn't updated CRM this week",
+                  'who has not logged anything', 'team activity gap'))
+def team_activity_gap(scope, params):
+    from app import Employee, Lead, LeadActivity, LeadEmail
+
+    days = int(params.get('days') or 7)
+    cutoff = _days_ago(days)
+
+    people = sc_mod.employees(sc=scope).filter(
+        Employee.is_active.is_(True)).all()
+    if not people:
+        return Result(headline='Nobody in your scope.', empty=True,
+                      sources=['employees'])
+
+    active = {r[0] for r in LeadActivity.query
+              .with_entities(LeadActivity.performed_by)
+              .filter(LeadActivity.occurred_at >= cutoff).all() if r[0]}
+    # An email sent from the trail counts too — see _last_contact.
+    mailed_leads = {r[0] for r in LeadEmail.query
+                    .with_entities(LeadEmail.lead_id)
+                    .filter(LeadEmail.sent_or_received_at >= cutoff).all()}
+    if mailed_leads:
+        for r in Lead.query.with_entities(Lead.assigned_to).filter(
+                Lead.id.in_(list(mailed_leads)[:5000])).all():
+            if r[0]:
+                active.add(r[0])
+
+    quiet = [e for e in people if e.emp_code not in active]
+    if not quiet:
+        return Result(
+            headline=f'Everyone has logged something in the last {days} '
+                     f'days.', empty=True,
+            sources=['lead_activities.performed_by'])
+
+    rows = [{'Person': e.name or e.emp_code, 'Code': e.emp_code,
+             'Vertical': e.vertical or '—',
+             'Open leads': sc_mod.leads(sc=scope).filter(
+                 Lead.assigned_to == e.emp_code,
+                 ~Lead.stage.in_(_TERMINAL)).count()}
+            for e in quiet]
+    rows.sort(key=lambda r: -r['Open leads'])
+    rows, notes = _cap(rows, len(rows))
+    if len(active) == 0:
+        notes.append('Nobody at all has logged anything, which usually '
+                     'means the activity log is not in use rather than '
+                     'that the team has stopped working.')
+    return Result(
+        headline=f'{len(quiet)} of {len(people)} have logged nothing in '
+                 f'{days} days.',
+        columns=['Person', 'Code', 'Vertical', 'Open leads'], rows=rows,
+        figures={'quiet': len(quiet), 'team': len(people)}, notes=notes,
+        sources=['lead_activities.performed_by',
+                 'lead_emails.sent_or_received_at'])
+
+
+@intent('conversion_rate', 'Conversion rate',
+        permission='reports.accounts',
+        params={'days': 'window in days (default 365)'},
+        personas=('head', 'mgmt'), phase=2,
+        examples=('what is my conversion rate', 'quote to order conversion',
+                  'win rate'))
+def conversion_rate(scope, params):
+    from app import Opportunity
+
+    days = int(params.get('days') or 365)
+    since = _days_ago(days)
+    opps = (sc_mod.opportunities(sc=scope)
+            .filter(Opportunity.created_at >= since).all()
+            if hasattr(Opportunity, 'created_at')
+            else sc_mod.opportunities(sc=scope).all())
+
+    decided = [o for o in opps if (o.stage or '') in ('Won', 'Lost')]
+    won = [o for o in decided if o.stage == 'Won']
+    if len(decided) < MIN_SAMPLE_FOR_ANALYSIS:
+        return Result(
+            headline=(f'Only {len(decided)} opportunity(s) have been won or '
+                      f'lost in the last {days} days — too few to quote a '
+                      f'rate.'),
+            empty=True,
+            notes=['A percentage from this few would look authoritative '
+                   'and mean nothing.'],
+            sources=['opportunities.stage'])
+
+    pct = round(100 * len(won) / len(decided))
+    won_value = sum(float(o.value_inr or 0) for o in won)
+    return Result(
+        headline=(f'{pct}% won — {len(won)} of {len(decided)} decided '
+                  f'opportunities in the last {days} days, '
+                  f'{_money(won_value)}.'),
+        figures={'rate_pct': pct, 'won': len(won), 'decided': len(decided),
+                 'won_value': won_value, 'window_days': days},
+        notes=[f'Measured over the {days} days to today, on '
+               f'opportunities that reached Won or Lost.'],
+        sources=['opportunities.stage', 'opportunities.value_inr'])
+
+
+@intent('daily_digest', 'What happened today',
+        permission='reports.action',
+        params={'days': 'window in days (default 1)'},
+        personas=('mgmt', 'head'), phase=2,
+        examples=('what happened in sales today', 'sales today',
+                  "today's activity", 'what changed today'))
+def daily_digest(scope, params):
+    from app import Lead, LeadStageHistory, Opportunity
+
+    days = int(params.get('days') or 1)
+    since = _days_ago(days)
+
+    new_leads = (sc_mod.leads(sc=scope)
+                 .filter(Lead.created_at >= since).count())
+    moves = (LeadStageHistory.query
+             .filter(LeadStageHistory.changed_at >= since)
+             .filter(LeadStageHistory.lead_id.in_(
+                 sc_mod.leads(sc=scope).with_entities(Lead.id))).count())
+    won = (sc_mod.opportunities(sc=scope)
+           .filter(Opportunity.stage == 'Won',
+                   Opportunity.won_at >= since).all())
+    lost = (sc_mod.leads(sc=scope)
+            .filter(Lead.stage == 'Lost', Lead.updated_at >= since).count())
+
+    figures = {'new_leads': new_leads, 'stage_moves': moves,
+               'won': len(won),
+               'won_value': sum(float(o.value_inr or 0) for o in won),
+               'lost': lost, 'window_days': days}
+    if not any((new_leads, moves, len(won), lost)):
+        return Result(
+            headline=f'Nothing moved in the last {days} day(s).',
+            figures=figures, empty=True,
+            sources=['leads', 'lead_stage_history', 'opportunities'])
+    return Result(
+        headline=(f'{new_leads} new lead(s) · {moves} stage move(s) · '
+                  f'{len(won)} won ({_money(figures["won_value"])}) · '
+                  f'{lost} lost.'),
+        figures=figures,
+        sources=['leads.created_at', 'lead_stage_history.changed_at',
+                 'opportunities.won_at'])
+
+
+@intent('rfqs_high_value_recent', 'New high-value RFQs',
+        permission='module.rfq',
+        params={'amount': 'the threshold in rupees',
+                'days': 'window in days (default 7)'},
+        personas=('mgmt', 'head'), phase=2,
+        examples=('new RFQs above 50 lakh this week',
+                  'big RFQs this week', 'high value RFQs'))
+def rfqs_high_value_recent(scope, params):
+    from app import Opportunity
+    from app.models.rfq import RFQ
+
+    if not sc_mod.rfqs(sc=scope).count():
+        return _nothing_recorded('RFQs',
+                                 'The RFQ module has no records yet.')
+    days = int(params.get('days') or 7)
+    threshold = float(params.get('amount') or 5_000_000)
+    recent = (sc_mod.rfqs(sc=scope)
+              .filter(RFQ.received_date >= _days_ago(days).date()).all())
+    rows = []
+    for r in recent:
+        value = 0.0
+        if r.opportunity_id:
+            opp = Opportunity.query.get(r.opportunity_id)
+            value = float(opp.value_inr or 0) if opp else 0.0
+        if value >= threshold:
+            rows.append({'RFQ': r.rfq_number, 'Subject': r.subject,
+                         'Value': _money(value),
+                         'Received': str(r.received_date or '')[:10],
+                         'Owner': r.lead_driver or '—',
+                         '_chip': {'type': 'rfq', 'id': r.id,
+                                   'label': r.rfq_number}})
+    if not rows:
+        return Result(
+            headline=(f'No RFQs above {_money(threshold)} in the last '
+                      f'{days} days.'), empty=True,
+            sources=['rfqs.received_date', 'opportunities.value_inr'])
+    rows.sort(key=lambda x: x['Received'], reverse=True)
+    capped, notes = _cap(rows, len(rows))
+    return Result(
+        headline=(f'{len(rows)} RFQ(s) above {_money(threshold)} in the '
+                  f'last {days} days.'),
+        columns=['RFQ', 'Subject', 'Value', 'Received', 'Owner'],
+        rows=capped, figures={'count': len(rows)}, notes=notes,
+        sources=['rfqs.received_date', 'opportunities.value_inr'])
+
+
+@intent('cross_sell_gap', 'Cross-sell gaps',
+        permission='reports.accounts',
+        params={'has': 'the vertical they already use',
+                'missing': 'the vertical they do not'},
+        personas=('head', 'mgmt'), phase=2,
+        examples=('which accounts use Transport but never Warehousing',
+                  'cross sell opportunities', 'single service accounts'))
+def cross_sell_gap(scope, params):
+    """§5 — "used Sea Freight but not Project Logistics".
+
+    With no parameters it answers the more useful general question:
+    which accounts have only ever bought one thing.
+    """
+    from app import Company, Opportunity
+
+    has = (params.get('has') or '').strip()
+    missing = (params.get('missing') or '').strip()
+
+    won = (sc_mod.opportunities(sc=scope)
+           .filter(Opportunity.stage == 'Won').all())
+    if not won:
+        return Result(headline='No won business recorded in your scope.',
+                      empty=True, sources=['opportunities.stage'])
+
+    verticals = {}
+    for c in Company.query.with_entities(Company.id, Company.name,
+                                         Company.vertical).all():
+        verticals[c[0]] = (c[1], c[2])
+
+    by_account = {}
+    for o in won:
+        name, vert = verticals.get(o.company_id, (None, None))
+        if not name:
+            continue
+        by_account.setdefault(name, set()).add(vert or 'unspecified')
+
+    if has and missing:
+        rows = [{'Account': n, 'Uses': ', '.join(sorted(v))}
+                for n, v in by_account.items()
+                if has in v and missing not in v]
+        head = (f'{len(rows)} account(s) use {has} but not {missing}.')
+    else:
+        rows = [{'Account': n, 'Uses': ', '.join(sorted(v))}
+                for n, v in by_account.items() if len(v) == 1]
+        head = f'{len(rows)} account(s) have only ever bought one service.'
+
+    if not rows:
+        return Result(headline='No cross-sell gap found.', empty=True,
+                      sources=['opportunities.stage', 'companies.vertical'])
+    rows.sort(key=lambda r: r['Account'])
+    capped, notes = _cap(rows, len(rows))
+    if all(r['Uses'] == 'unspecified' for r in capped):
+        notes.append('No vertical is recorded on these accounts, so this '
+                     'is grouping "unspecified" rather than a service.')
+    return Result(headline=head, columns=['Account', 'Uses'], rows=capped,
+                  figures={'count': len(rows)}, notes=notes,
+                  sources=['opportunities.stage', 'companies.vertical'])
+
+
+@intent('handover_missing_po', 'Won deals with no PO',
+        permission='module.handovers', personas=('ops', 'mgmt'), phase=2,
+        examples=('won deals with no PO', 'handovers missing a PO',
+                  'which wins have no purchase order'))
+def handover_missing_po(scope, params):
+    from app import Opportunity
+    from app.models.tms_handover import WonHandover
+
+    won = (sc_mod.opportunities(sc=scope)
+           .filter(Opportunity.stage == 'Won').all())
+    if not won:
+        return Result(headline='No won opportunities in your scope.',
+                      empty=True, sources=['opportunities.stage'])
+
+    have = {h.opportunity_id for h in
+            WonHandover.query.with_entities(
+                WonHandover.opportunity_id).all() if h[0]}
+    missing = [o for o in won if o.id not in have]
+    if not missing:
+        return Result(headline='Every won deal has a handover recorded.',
+                      empty=True, sources=['won_handovers'])
+    rows = [{'Opportunity': o.opp_number, 'Value': _money(o.value_inr),
+             'Won': str(o.won_at or '')[:10],
+             'Days since': _age(o.won_at) or 0,
+             'Owner': o.owner_emp_code or '—',
+             '_chip': {'type': 'opportunity', 'id': o.id,
+                       'label': o.opp_number}} for o in missing]
+    rows.sort(key=lambda r: -r['Days since'])
+    capped, notes = _cap(rows, len(rows))
+    return Result(
+        headline=(f'{len(missing)} won deal(s) with no handover or PO '
+                  f'captured — one PO to one project and job.'),
+        columns=['Opportunity', 'Value', 'Won', 'Days since', 'Owner'],
+        rows=capped, figures={'count': len(missing)}, notes=notes,
+        sources=['opportunities.stage', 'won_handovers.opportunity_id'])
+
+
+@intent('dq_missing_fields', 'Records missing key fields',
+        permission='admin.master', personas=('admin', 'head'), phase=2,
+        examples=('which leads are missing an owner',
+                  'data quality', 'incomplete records',
+                  'leads with no value'))
+def dq_missing_fields(scope, params):
+    """§5's data-quality assistant. Counts by defect so an admin can see
+    which gap is worth a campaign, rather than one list of everything."""
+    from app import Lead, Opportunity
+
+    open_leads = sc_mod.leads(sc=scope).filter(
+        ~Lead.stage.in_(_TERMINAL))
+    checks = [
+        ('Lead has no owner',
+         open_leads.filter(or_(Lead.assigned_to.is_(None),
+                               Lead.assigned_to == '')).count()),
+        ('Lead has no next action',
+         open_leads.filter(Lead.followup_date.is_(None)).count()),
+        ('Lead has no value',
+         open_leads.filter(or_(Lead.estimated_value_inr.is_(None),
+                               Lead.estimated_value_inr == 0)).count()),
+        ('Lead has no vertical',
+         open_leads.filter(or_(Lead.procam_vertical.is_(None),
+                               Lead.procam_vertical == '')).count()),
+        ('Lost lead has no reason',
+         sc_mod.leads(sc=scope).filter(
+             Lead.stage == 'Lost',
+             or_(Lead.lost_reason.is_(None),
+                 Lead.lost_reason == '')).count()),
+        ('Opportunity has no close date',
+         sc_mod.opportunities(sc=scope).filter(
+             ~Opportunity.stage.in_(_TERMINAL),
+             Opportunity.expected_close_date.is_(None)).count()),
+        ('Opportunity has no owner',
+         sc_mod.opportunities(sc=scope).filter(
+             or_(Opportunity.owner_emp_code.is_(None),
+                 Opportunity.owner_emp_code == '')).count()),
+    ]
+    rows = [{'Gap': name, 'Records': n} for name, n in checks if n]
+    if not rows:
+        return Result(headline='No missing fields found in your scope.',
+                      empty=True, sources=['Data Quality'])
+    rows.sort(key=lambda r: -r['Records'])
+    return Result(
+        headline=f'{sum(r["Records"] for r in rows)} record(s) with a '
+                 f'missing field, across {len(rows)} kinds of gap.',
+        columns=['Gap', 'Records'], rows=rows,
+        figures={k: v for k, v in checks},
+        notes=['The Data Quality screen lists the individual records and '
+               'can fix them in bulk.'],
+        sources=['Data Quality module'])
+
+
+@intent('dq_duplicates', 'Possible duplicate accounts',
+        permission='admin.master', personas=('admin',), phase=2,
+        examples=('are there duplicate accounts', 'duplicate customers',
+                  'accounts with the same name'))
+def dq_duplicates(scope, params):
+    """Presents; it does not re-score. The company-match service already
+    owns that judgement and a second opinion here would drift from it."""
+    import re as _re
+    from collections import defaultdict
+
+    from app import Company
+
+    groups = defaultdict(list)
+    for c in Company.query.with_entities(Company.id, Company.name).all():
+        key = _re.sub(r'[^a-z0-9]', '',
+                      (c[1] or '').lower()
+                      .replace('limited', 'ltd')
+                      .replace('private', 'pvt'))
+        if key:
+            groups[key].append(c[1])
+
+    dupes = [(k, names) for k, names in groups.items() if len(names) > 1]
+    if not dupes:
+        return Result(headline='No duplicate account names found.',
+                      empty=True, sources=['companies.name'])
+    rows = [{'Looks like one account': ' · '.join(sorted(set(names))),
+             'Records': len(names)}
+            for _k, names in sorted(dupes, key=lambda kv: -len(kv[1]))]
+    capped, notes = _cap(rows, len(rows))
+    notes.append('Matched on the name alone. The Data Mapping screen '
+                 'decides and merges.')
+    return Result(headline=f'{len(dupes)} possible duplicate account(s).',
+                  columns=['Looks like one account', 'Records'],
+                  rows=capped, figures={'groups': len(dupes)}, notes=notes,
+                  sources=['companies.name', 'Data Mapping'])
+
+
+# ── §5 capabilities that had no intent ───────────────────────────────
+@intent('my_performance', 'My numbers',
+        params={'days': 'window in days (default 90)'},
+        personas=('sales', 'head'), phase=2,
+        examples=('how am I doing', 'my numbers', 'my performance',
+                  'what have I booked'))
+def my_performance(scope, params):
+    from app import Lead, Opportunity
+
+    days = int(params.get('days') or 90)
+    since = _days_ago(days)
+    leads_in = sc_mod.leads(sc=scope).filter(Lead.created_at >= since).count()
+    opps = sc_mod.opportunities(sc=scope).all()
+    won = [o for o in opps if o.stage == 'Won' and (o.won_at or since) >= since]
+    lost = [o for o in opps if o.stage == 'Lost']
+    open_now = [o for o in opps if (o.stage or '') not in _TERMINAL]
+
+    figures = {
+        'new_leads': leads_in, 'won': len(won),
+        'won_value': sum(float(o.value_inr or 0) for o in won),
+        'lost': len(lost), 'open': len(open_now),
+        'open_value': sum(float(o.value_inr or 0) for o in open_now),
+        'window_days': days,
+    }
+    return Result(
+        headline=(f'Last {days} days — {leads_in} new lead(s), {len(won)} '
+                  f'won ({_money(figures["won_value"])}), {len(open_now)} '
+                  f'still open ({_money(figures["open_value"])}).'),
+        figures=figures,
+        sources=['leads.created_at', 'opportunities.stage',
+                 'opportunities.won_at'])
+
+
+@intent('closing_this_month', 'Likely to close this month',
+        permission='module.funnels', personas=('sales', 'head', 'mgmt'),
+        phase=2,
+        examples=('what is likely to close this month',
+                  'likely bookings', 'closing this month'))
+def closing_this_month(scope, params):
+    from datetime import date
+
+    from app import Opportunity
+
+    today = date.today()
+    if today.month == 12:
+        end = date(today.year + 1, 1, 1)
+    else:
+        end = date(today.year, today.month + 1, 1)
+
+    found = (sc_mod.opportunities(sc=scope)
+             .filter(~Opportunity.stage.in_(_TERMINAL),
+                     Opportunity.expected_close_date.isnot(None),
+                     Opportunity.expected_close_date < end)
+             .order_by(Opportunity.value_inr.desc().nullslast()).all())
+    if not found:
+        no_date = (sc_mod.opportunities(sc=scope)
+                   .filter(~Opportunity.stage.in_(_TERMINAL),
+                           Opportunity.expected_close_date.is_(None))
+                   .count())
+        return Result(
+            headline='Nothing is dated to close this month.',
+            empty=True,
+            notes=([f'{no_date} open opportunities have no expected close '
+                    f'date at all, so this cannot see them.']
+                   if no_date else []),
+            sources=['opportunities.expected_close_date'])
+
+    rows = [{'Opportunity': o.opp_number, 'Value': _money(o.value_inr),
+             'Probability': f'{o.probability or 0}%', 'Stage': o.stage,
+             'Close': str(o.expected_close_date or '')[:10],
+             'Owner': o.owner_emp_code or '—',
+             '_chip': {'type': 'opportunity', 'id': o.id,
+                       'label': o.opp_number}} for o in found]
+    capped, notes = _cap(rows, len(rows))
+    weighted = sum(float(o.value_inr or 0) * (o.probability or 0) / 100.0
+                   for o in found)
+    return Result(
+        headline=(f'{len(found)} opportunity(s) dated to close by '
+                  f'{end}, {_money(weighted)} weighted.'),
+        columns=['Opportunity', 'Value', 'Probability', 'Stage', 'Close',
+                 'Owner'],
+        rows=capped, figures={'count': len(found), 'weighted': weighted},
+        notes=notes, sources=['opportunities.expected_close_date',
+                              'opportunities.probability'])

@@ -33,6 +33,13 @@ class CopilotLog(db.Model):
                               index=True)
 
     # ── §6.4 feedback ────────────────────────────────────────────────
+    #: §6.4 — a pinned answer. Stored as a flag on the question rather
+    #: than a copy of the answer: re-running it gives today's numbers,
+    #: and a saved table of last month's pipeline would quietly become
+    #: wrong while looking authoritative.
+    pinned          = db.Column(db.Boolean, default=False, index=True)
+    pinned_at       = db.Column(db.DateTime)
+
     helpful         = db.Column(db.Boolean, nullable=True, index=True)
     feedback_reason = db.Column(db.String(60))
     feedback_note   = db.Column(db.String(500))
@@ -48,6 +55,7 @@ class CopilotLog(db.Model):
             'model_used': bool(self.model_used),
             'latency_ms': self.latency_ms or 0,
             'created_at': str(self.created_at)[:19],
+            'pinned': bool(self.pinned),
             'helpful': self.helpful,
             'feedback_reason': self.feedback_reason or '',
         }

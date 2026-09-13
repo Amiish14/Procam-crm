@@ -119,6 +119,57 @@ def ask(question, *, sc=None, history=None, actor=None, context=None):
 
 
 # ── intent classification ────────────────────────────────────────────
+#: §6.3 — a follow-up carries no subject of its own. "who owns it?"
+#: after an account question means that account; "which is biggest?"
+#: after a pipeline question means those opportunities. Resolved
+#: without a model, because a two-word follow-up is the commonest
+#: thing anybody types and it should not need a GPU.
+_FOLLOW_UPS = [
+    (r'^\s*(which|what)\s+is\s+(the\s+)?(biggest|largest)\b',
+     'top_opportunities'),
+    (r'^\s*who\s+owns?\s+(it|that|them)\b', 'account_owner'),
+    (r'^\s*who\s+(handles|manages)\s+(it|that|them)\b', 'account_owner'),
+    (r'^\s*(when|what)\s+(was|is)\s+the\s+last\s+(contact|activity)\b',
+     'lead_360'),
+    (r'^\s*(and\s+)?(the\s+)?(email|emails)\b', 'thread_summary'),
+    (r'^\s*(summari[sz]e|brief me)\s*(it|that)?\s*$', 'lead_360'),
+    (r'^\s*why\b', 'loss_analysis'),
+]
+
+
+def _missing_subject(key, params):
+    """True when an intent needs a name and the question gave none."""
+    intent = catalogue.get(key)
+    if intent is None:
+        return False
+    if 'account' in intent.params and not params.get('account'):
+        return True
+    return False
+
+
+def _carry_over(question, history):
+    """(intent, params) inherited from the previous turn, or (None, {}).
+
+    Only the account name is carried. Carrying more would let a stale
+    filter silently shape a new answer — and the previous turn's rows
+    may already be outside what this user is entitled to, since the
+    scope is re-resolved on every question.
+    """
+    if not history:
+        return None, {}
+    q = ' ' + (question or '').lower().strip() + ' '
+    for rx, key in _FOLLOW_UPS:
+        if re.search(rx, q):
+            params = {}
+            for earlier in reversed(list(history)[-4:]):
+                name = _account_name(str(earlier))
+                if name:
+                    params['account'] = name
+                    break
+            return key, params
+    return None, {}
+
+
 def classify(question, sc, *, history=None):
     """(intent_key, params, used_model).
 
@@ -128,6 +179,17 @@ def classify(question, sc, *, history=None):
     only when the patterns do not recognise the question.
     """
     key, params = _match_patterns(question)
+    if key and not _missing_subject(key, params):
+        return key, params, False
+
+    # A follow-up gets its say when the patterns produced nothing, or
+    # produced an intent with no subject — "who owns it?" matches the
+    # account rule and captures "it", which is not a company. A complete
+    # question is never reinterpreted this way, because it would have
+    # kept its subject.
+    carried, carried_params = _carry_over(question, history)
+    if carried:
+        return carried, carried_params, False
     if key:
         return key, params, False
 
@@ -203,6 +265,9 @@ _PATTERNS = [
      r'gone quiet|have not contacted)\b', 'accounts_inactive', {}),
 
     # ── handovers ───────────────────────────────────────────────────
+    (r'\bhandovers?\b.*\b(missing|no)\b.*\b(po|purchase order)\b',
+     'handover_missing_po', {}),
+    (r'\bhandovers?\b.*\bmissing\b', 'handover_missing_po', {}),
     (r'\bhand(ed |ing )?over', 'handovers_recent', {}),
 
     # ── loss and data quality ───────────────────────────────────────
@@ -234,6 +299,40 @@ _PATTERNS = [
     # after the lead rules above, so "summarise this lead" still wins.
     (r'^\s*(summari[sz]e|brief me on|tell me about)\b', 'account_360',
      {'_capture': 'account'}),
+
+    # ── the matrix rows built later ─────────────────────────────────
+    (r'\bpipeline\b.*\bby (stage|vertical|owner|city|customer)\b',
+     'pipeline_by_stage', {'_capture': 'by'}),
+    (r'\bbreak ?down\b.*\b(pipeline|funnel)\b', 'pipeline_by_stage', {}),
+    (r"\bwho (has ?n'?t|has not|hasnt)\b.*\b(updated|logged|touched)\b",
+     'team_activity_gap', {}),
+    (r'\bteam activity\b', 'team_activity_gap', {}),
+    (r'\b(conversion|win) rate\b', 'conversion_rate', {}),
+    (r'\bquote to order\b', 'conversion_rate', {}),
+    (r'\bwhat happened\b.*\b(today|sales)\b', 'daily_digest', {}),
+    (r'\b(sales today|today.s activity|what changed today)\b',
+     'daily_digest', {}),
+    (r'\b(new|big|large|high.?value)\b.*\brfqs?\b',
+     'rfqs_high_value_recent', {}),
+    (r'\brfqs?\b.*\b(above|over|this week)\b',
+     'rfqs_high_value_recent', {}),
+    (r'\bcross.?sell\b', 'cross_sell_gap', {}),
+    (r'\bsingle service\b', 'cross_sell_gap', {}),
+    (r'\baccounts?\b.*\buse[sd]?\b.*\bbut (never|not)\b', 'cross_sell_gap',
+     {}),
+    (r'\b(won deals?|wins?)\b.*\bno (po|purchase order|handover)\b',
+     'handover_missing_po', {}),
+    (r'\b(data quality|incomplete records|missing (an? )?(owner|field|'
+     r'value|vertical))\b', 'dq_missing_fields', {}),
+    (r'\bleads?\b.*\bmissing\b', 'dq_missing_fields', {}),
+    (r'\bleads?\b.*\bno (value|vertical)\b', 'dq_missing_fields', {}),
+    (r'\bduplicate (account|customer|compan)', 'dq_duplicates', {}),
+    (r'\b(account|customer|compan)\w*\b.*\bsame name\b',
+     'dq_duplicates', {}),
+    (r'\b(how am i doing|my numbers|my performance|what have i booked)\b',
+     'my_performance', {}),
+    (r'\b(likely to close|closing this month|likely bookings)\b',
+     'closing_this_month', {}),
 
     # ── search, LAST ────────────────────────────────────────────────
     # A "show me" or "find" prefix is the weakest signal in the list, so
@@ -305,6 +404,11 @@ def _match_patterns(question):
                 params['account'] = name
         if spec.get('_capture') == 'term':
             params['term'] = _search_term(question)
+        if spec.get('_capture') == 'by':
+            dim = re.search(r'\bby (stage|vertical|owner|city|customer)\b',
+                            q)
+            if dim:
+                params['by'] = dim.group(1)
         if 'weighted' in q:
             params['weighted'] = 'true'
         return key, params
@@ -493,6 +597,51 @@ def record_feedback(log_id, *, helpful, reason=None, note=None, actor=None):
     row.feedback_by = actor or ''
     db.session.commit()
     return True, None
+
+
+def pin(log_id, *, pinned, actor=None):
+    """§6.4 — save a question, not its answer.
+
+    Pinning the rows would freeze last month's pipeline into something
+    that still looks authoritative. Pinning the question means opening
+    it re-runs it, against today's data and today's permissions.
+    """
+    from datetime import datetime
+
+    from app import db
+    from app.models.copilot import CopilotLog
+
+    row = db.session.get(CopilotLog, int(log_id))
+    if row is None:
+        return False, 'Not found'
+    if actor and row.emp_code and row.emp_code != actor:
+        return False, 'That is not your question.'
+    row.pinned = bool(pinned)
+    row.pinned_at = datetime.utcnow() if pinned else None
+    db.session.commit()
+    return True, None
+
+
+def pinned_for(actor, *, limit=20):
+    from app.models.copilot import CopilotLog
+
+    rows = (CopilotLog.query
+            .filter(CopilotLog.emp_code == actor,
+                    CopilotLog.pinned.is_(True))
+            .order_by(CopilotLog.pinned_at.desc()).limit(limit).all())
+    return [{'id': r.id, 'question': r.question, 'intent': r.intent or ''}
+            for r in rows]
+
+
+def morning_brief(sc):
+    """§6.5 — the proactive greeting, from the same intent as My Day so
+    the two can never disagree."""
+    intent = catalogue.get('my_day')
+    if intent is None:
+        return None
+    result = intent.handler(sc, {})
+    return {'headline': result.headline, 'figures': result.figures,
+            'empty': result.empty}
 
 
 def suggestions(sc, *, limit=10):
