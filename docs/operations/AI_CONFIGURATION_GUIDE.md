@@ -28,11 +28,16 @@ every public provider in use. It never prints a key.
 
 ## Procam AI Copilot
 
-Works with **no configuration**: 37 catalogued questions (my open leads,
-follow-ups due, pipeline by stage, stale accounts, search the notes and
-emails …) answered straight from the database, confined to what the
-asker's Access Matrix profile allows. The model never writes a query; it
-can only pick one of the catalogued ones.
+Works with **no configuration**: 65 catalogued intents (my open leads,
+follow-ups due, pipeline health, account health, quotes pending
+approval, who knows an account, search the notes and emails …) answered
+straight from the database, confined to what the asker's Access Matrix
+profile allows. The model never writes a query; it can only pick one of
+the catalogued ones.
+
+The [Copilot Guide](COPILOT_GUIDE.md) covers the catalogue, the health
+and risk scores, search ranking, conversation memory, record context,
+confidence and clarification, and the security model.
 
 ### Optional: a self-hosted model
 

@@ -19,7 +19,7 @@ The health and risk intents add one rule of their own
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import timedelta
 
 from sqlalchemy import func, or_
 
@@ -30,7 +30,7 @@ from app.copilot.queries import (
     ROW_CAP, MIN_SAMPLE_FOR_ANALYSIS, _TERMINAL, _age, _cap, _clarify,
     _days_ago, _lead_chip, _money, _narrow_leads_to_service,
     _narrow_opps_to_service, _nothing_recorded, _now, _pick_company,
-    _resolve_lead, _service_filters, _service_param, _truthy, db_get)
+    _resolve_lead, _service_filters, _service_param)
 
 #: Opportunity stages that are decided. The Opportunity screen writes
 #: "Closed Won"/"Closed Lost"; the older paths and the Copilot's first

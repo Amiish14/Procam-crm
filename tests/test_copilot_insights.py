@@ -33,7 +33,6 @@ from app import (app as flask_app, db, Company, Contact,          # noqa: E402
                  Opportunity)
 from app.access import scope as scope_mod                        # noqa: E402
 from app.access.service import set_profile                       # noqa: E402
-from app.copilot import insights                                 # noqa: E402
 from app.copilot import intents as catalogue                     # noqa: E402
 from app.copilot import service as svc                           # noqa: E402
 from app.models.access import DataScope                          # noqa: E402
@@ -625,6 +624,34 @@ def test_two_matching_accounts_come_back_as_a_clarification(world):
             assert key == 'account_health'
             assert params['account'] in ('Insight Twin Alpha',
                                          'Insight Twin Beta')
+
+
+@pytest.mark.parametrize('key', [
+    'account_health', 'account_pipeline', 'cross_sell_account',
+    'relationship_map', 'key_contacts', 'account_owner', 'account_status',
+    'account_360', 'last_quote_for_account'])
+def test_every_account_clarification_option_re_asks_the_same_intent(
+        world, key):
+    """An option that routed somewhere else would answer a different
+    question than the one the person picked."""
+    with flask_app.app_context():
+        sc = _scope('CIREP', DataScope.OWN)
+        r = catalogue.get(key).handler(sc, {'account': 'Insight Twin'})
+        assert r.clarification, key
+        for option in r.clarification['options']:
+            got, params = svc._match_patterns(option['question'])
+            assert got == key, (option['question'], got)
+            assert params.get('account') == option['label']
+
+
+def test_an_account_intent_with_no_account_offers_the_askers_accounts(
+        world):
+    with flask_app.app_context():
+        sc = _scope('CIREP', DataScope.OWN)
+        r = catalogue.get('relationship_map').handler(sc, {})
+        assert r.clarification['question'] == 'Which account?'
+        labels = {o['label'] for o in r.clarification['options']}
+        assert labels and 'Insight Theirs Co' not in labels
 
 
 def test_next_best_action_puts_a_waiting_customer_first(world):
