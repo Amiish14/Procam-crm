@@ -77,26 +77,55 @@ def _pending(subject='Fw: RFQ - screen test', frm='buyer@screensteel.com',
 
 
 # ─── Account Master — §12, §15 ───────────────────────────────────────────
+# Both summary tests measure CHANGES, not totals. Every test module sets
+# its own DATABASE_URL, but the Flask app binds to whichever imports
+# first, so in a different collection order these accounts share a
+# database with other modules' — and "exactly 0 auto-assignable" was true
+# only when this module happened to run first.
+
 def test_the_summary_counts_what_can_actually_auto_assign(world):
+    """A domain without an owner cannot assign, and neither can an owner
+    without a domain. Only the pair counts."""
     with flask_app.app_context():
-        s = svc.account_summary()
-    assert s['total'] >= 2
-    assert s['no_owner'] >= 1
-    # A domain without an owner cannot assign, and neither can an owner
-    # without a domain. Only the pair counts.
-    assert s['auto_assignable'] == 0
+        before = svc.account_summary()['auto_assignable']
+
+        domain_only = Company(name='Domain Only Ltd', is_active=True,
+                              email_domains=['domainonly.example'])
+        owner_only = Company(name='Owner Only Ltd', is_active=True,
+                             pic_emp_code='VH9')
+        db.session.add_all([domain_only, owner_only])
+        db.session.commit()
+        try:
+            s = svc.account_summary()
+            assert s['auto_assignable'] == before
+            assert s['total'] >= 2 and s['no_owner'] >= 1
+        finally:
+            db.session.delete(domain_only)
+            db.session.delete(owner_only)
+            db.session.commit()
 
 
 def test_saving_both_owners_makes_an_account_auto_assignable(world):
     with flask_app.app_context():
+        before = svc.account_summary()
+        fresh = Company(name='Newly Mapped Ltd', is_active=True)
+        db.session.add(fresh)
+        db.session.commit()
+        ok, err = svc.save_account_owners(
+            fresh.id, primary='VH9', secondary='OPS9', backup='BAK9',
+            vertical='Project Logistics', domains='newlymapped.example')
+        assert ok, err
+        db.session.commit()
+        s = svc.account_summary()
+        assert s['auto_assignable'] == before['auto_assignable'] + 1
+        assert s['with_both'] == before['with_both'] + 1
+
+        # the fixture account is still mapped for the tests below
         ok, err = svc.save_account_owners(
             world['acct'], primary='VH9', secondary='OPS9', backup='BAK9',
             vertical='Project Logistics', domains='screensteel.com')
         assert ok, err
         db.session.commit()
-        s = svc.account_summary()
-        assert s['auto_assignable'] == 1
-        assert s['with_both'] == 1
 
 
 def test_the_same_person_cannot_hold_both_roles(world):
@@ -351,7 +380,10 @@ def test_merging_puts_the_email_on_the_lead_it_belongs_to(world, scratch_lead):
         assert err is None, err
         db.session.commit()
 
-        trail = LeadEmail.query.filter_by(lead_id=lead_id).all()
+        # Only the row the merge wrote: a lead can inherit orphaned emails
+        # from a lead another module deleted when SQLite reuses its id.
+        trail = LeadEmail.query.filter_by(lead_id=lead_id,
+                                          source='merged_at_review').all()
         assert len(trail) == 1
         assert trail[0].subject == 'RE: Existing RFQ for 40 MT'
         assert trail[0].body == 'Please quote for 40 MT.'
