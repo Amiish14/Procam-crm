@@ -222,3 +222,24 @@ def test_the_page_reenables_its_button_on_failure(user):
                            'level.html')) as fh:
         src = fh.read()
     assert 'btn.disabled = false' in src
+
+
+# ── an expired session is the other way to get "Unexpected token '<'" ──
+def test_an_unauthenticated_self_check_answers_json_not_a_login_page(user):
+    """The report's acceptance criteria name this case and nothing tested it.
+
+    A trainee who leaves the lesson open past their session and then
+    clicks "Check my answer" is not sending a bad token — they are not
+    logged in. If that redirected to the login page, the front-end would
+    parse HTML again and show the exact symptom this module was written
+    to end. It must be a JSON 401.
+    """
+    c = flask_app.test_client()                  # no session at all
+    token = _token(c)
+    for path, body in (('/api/academy/basics/practice', {'answer': 3}),
+                       ('/api/academy/basics/quiz', {'answers': {}})):
+        r = c.post(path, json=body, headers={'X-CSRFToken': token})
+        assert r.status_code == 401, f'{path} → {r.status_code}'
+        assert r.is_json, f'{path} answered {r.content_type}, not JSON'
+        assert r.get_json()['ok'] is False
+        assert not r.get_data(as_text=True).lstrip().startswith('<')
