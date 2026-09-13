@@ -1085,3 +1085,63 @@ def test_a_body_that_is_only_boilerplate_produces_no_chunk(world):
             lead.original_email_body = original
             retrieval.invalidate_lead(lead.id)
             db.session.commit()
+
+
+# ── C1 — the follow-ups behind My Day's count ────────────────────────
+def test_followups_lists_what_my_day_counts(world):
+    """My Day says "N overdue". This must be those N, from the same
+    column, or the number and the list disagree."""
+    from datetime import date, timedelta
+    from app import Lead
+    with flask_app.app_context():
+        lead = db.session.get(Lead, world['mine']['lead'])
+        lead.followup_date = date.today() - timedelta(days=3)
+        db.session.commit()
+        try:
+            sc = _scope_for('CPREP', DataScope.OWN)
+            day = catalogue.get('my_day').handler(sc, {})
+            fu = catalogue.get('followups_due').handler(sc, {})
+            assert fu.figures['overdue'] == day.figures['overdue']
+            assert world['mine']['account_name'] in \
+                {r['Company'] for r in fu.rows}
+            assert '3 day(s) overdue' in \
+                [r['Status'] for r in fu.rows][0]
+        finally:
+            lead.followup_date = None
+            db.session.commit()
+
+
+def test_followups_never_include_another_owners_lead(world):
+    from datetime import date, timedelta
+    from app import Lead
+    with flask_app.app_context():
+        theirs = db.session.get(Lead, world['theirs']['lead'])
+        theirs.followup_date = date.today() - timedelta(days=1)
+        db.session.commit()
+        try:
+            sc = _scope_for('CPREP', DataScope.OWN)
+            fu = catalogue.get('followups_due').handler(sc, {})
+            assert world['theirs']['account_name'] not in \
+                {r['Company'] for r in (fu.rows or [])}
+        finally:
+            theirs.followup_date = None
+            db.session.commit()
+
+
+def test_a_future_followup_only_appears_inside_the_window(world):
+    from datetime import date, timedelta
+    from app import Lead
+    with flask_app.app_context():
+        lead = db.session.get(Lead, world['mine']['lead'])
+        lead.followup_date = date.today() + timedelta(days=5)
+        db.session.commit()
+        try:
+            sc = _scope_for('CPREP', DataScope.OWN)
+            now = catalogue.get('followups_due').handler(sc, {})
+            week = catalogue.get('followups_due').handler(sc, {'days': 7})
+            names = lambda r: {x['Company'] for x in (r.rows or [])}
+            assert world['mine']['account_name'] not in names(now)
+            assert world['mine']['account_name'] in names(week)
+        finally:
+            lead.followup_date = None
+            db.session.commit()

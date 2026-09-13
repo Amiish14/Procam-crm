@@ -229,6 +229,13 @@ QUESTIONS = [
     (SALES, 'what did someone say about the tender deadline',
      'search_text'),
 
+    # ── Follow-ups ───────────────────────────────────────────────────
+    (SALES, 'which follow-ups are due', 'followups_due'),
+    (SALES, 'pending follow-ups', 'followups_due'),
+    (SALES, 'my overdue follow-ups', 'followups_due'),
+    (HEAD, 'follow ups due this week', 'followups_due'),
+    (SALES, 'follow-ups due today', 'followups_due'),
+
     # ── Questions the catalogue does NOT answer ──────────────────────
     #
     # As important as the rest. §3.4 forbids inventing an answer, and a

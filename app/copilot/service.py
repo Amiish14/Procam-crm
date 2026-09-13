@@ -205,6 +205,9 @@ def classify(question, sc, *, history=None):
 #: Cheap, deterministic recognition. Order matters — the first match
 #: wins, so put the specific before the general.
 _PATTERNS = [
+    (r'\bfollow.?ups?\b.*\b(due|pending|overdue|this week|today)\b',
+     'followups_due', {}),
+    (r'\b(pending|overdue|due)\b.*\bfollow.?ups?\b', 'followups_due', {}),
     (r'\b(my day|what.*(attention|work on|pending for me)|morning brief)\b',
      'my_day', {}),
 

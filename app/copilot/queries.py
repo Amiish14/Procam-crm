@@ -1953,3 +1953,59 @@ def search_text(scope, params):
         figures={'hits': len(hits), 'backend': found['backend']},
         notes=notes,
         sources=['lead_emails', 'lead_notes', 'leads.original_email_body'])
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  PENDING FOLLOW-UPS — the list behind My Day's counts
+# ══════════════════════════════════════════════════════════════════════
+@intent('followups_due', 'Follow-ups due',
+        params={'days': 'include follow-ups due within this many days '
+                        '(default 0: overdue and today)'},
+        personas=('sales', 'head'), phase=1,
+        examples=('which follow-ups are due', 'pending follow-ups',
+                  'my overdue follow-ups', 'follow ups due this week'))
+def followups_due(scope, params):
+    """My Day says "12 overdue". This is the twelve.
+
+    Ordered most overdue first, because that is the order to work them
+    in. Reads the same followup_date My Day and the tiles count, so the
+    list and the number cannot disagree.
+    """
+    from datetime import date, timedelta as _td
+
+    from app import Lead
+
+    ahead = max(int(params.get('days') or 0), 0)
+    today = date.today()
+    horizon = today + _td(days=ahead)
+
+    found = (sc_mod.leads(sc=scope)
+             .filter(~Lead.stage.in_(_TERMINAL),
+                     Lead.followup_date.isnot(None),
+                     Lead.followup_date <= horizon)
+             .order_by(Lead.followup_date.asc()).all())
+    if not found:
+        return Result(
+            headline=('No follow-ups are due.' if not ahead else
+                      f'No follow-ups due in the next {ahead} days.'),
+            empty=True, sources=['leads.followup_date'])
+
+    overdue = sum(1 for l in found if l.followup_date < today)
+    rows = []
+    for l in found[:ROW_CAP]:
+        late = (today - l.followup_date).days
+        rows.append({
+            'Company': l.company, 'Stage': l.stage,
+            'Due': str(l.followup_date),
+            'Status': (f'{late} day(s) overdue' if late > 0
+                       else 'today' if late == 0
+                       else f'in {-late} day(s)'),
+            'Owner': l.assigned_to or '—',
+            '_chip': _lead_chip(l)})
+    notes = ([f'Showing the first {ROW_CAP} of {len(found)}.']
+             if len(found) > ROW_CAP else [])
+    return Result(
+        headline=(f'{len(found)} follow-up(s) due — {overdue} overdue.'),
+        columns=['Company', 'Stage', 'Due', 'Status', 'Owner'],
+        rows=rows, figures={'count': len(found), 'overdue': overdue},
+        notes=notes, sources=['leads.followup_date'])
