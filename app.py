@@ -4749,6 +4749,12 @@ from app.services import audit_listener as _audit_listener  # noqa: E402,F401
 
 with app.app_context():
     init_db()
+    try:
+        from app.services import config_audit as _config_audit
+        _config_audit.record_if_changed(db)
+    except Exception as _exc:                          # pragma: no cover
+        db.session.rollback()
+        app.logger.warning('configuration audit skipped: %s', _exc)
 
 
 
