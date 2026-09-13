@@ -1861,14 +1861,26 @@ def closing_this_month(scope, params):
     from app import Opportunity
 
     today = date.today()
+    start = date(today.year, today.month, 1)
     if today.month == 12:
         end = date(today.year + 1, 1, 1)
     else:
         end = date(today.year, today.month + 1, 1)
 
+    # The lower bound is the whole point, and it was missing: without it
+    # every close date in the CRM's history counted as "this month", and
+    # production answered 355 of 377 open opportunities. An overdue date
+    # is worth knowing about, but it is a different question and gets
+    # its own line rather than being folded into the forecast.
+    overdue = (sc_mod.opportunities(sc=scope)
+               .filter(~Opportunity.stage.in_(_TERMINAL),
+                       Opportunity.expected_close_date.isnot(None),
+                       Opportunity.expected_close_date < start).count())
+
     found = (sc_mod.opportunities(sc=scope)
              .filter(~Opportunity.stage.in_(_TERMINAL),
                      Opportunity.expected_close_date.isnot(None),
+                     Opportunity.expected_close_date >= start,
                      Opportunity.expected_close_date < end)
              .order_by(Opportunity.value_inr.desc().nullslast()).all())
     if not found:
@@ -1876,12 +1888,17 @@ def closing_this_month(scope, params):
                    .filter(~Opportunity.stage.in_(_TERMINAL),
                            Opportunity.expected_close_date.is_(None))
                    .count())
+        notes = []
+        if overdue:
+            notes.append(f'{overdue} open opportunity(s) have a close date '
+                         f'that has already passed — worth re-dating.')
+        if no_date:
+            notes.append(f'{no_date} open opportunities have no expected '
+                         f'close date at all, so this cannot see them.')
         return Result(
-            headline='Nothing is dated to close this month.',
-            empty=True,
-            notes=([f'{no_date} open opportunities have no expected close '
-                    f'date at all, so this cannot see them.']
-                   if no_date else []),
+            headline='Nothing is dated to close in the rest of this month.',
+            empty=True, notes=notes, figures={'overdue': overdue,
+                                              'no_date': no_date},
             sources=['opportunities.expected_close_date'])
 
     rows = [{'Opportunity': o.opp_number, 'Value': _money(o.value_inr),
@@ -1893,11 +1910,16 @@ def closing_this_month(scope, params):
     capped, notes = _cap(rows, len(rows))
     weighted = sum(float(o.value_inr or 0) * (o.probability or 0) / 100.0
                    for o in found)
+    if overdue:
+        notes.append(f'Separately, {overdue} open opportunity(s) have a '
+                     f'close date that has already passed.')
     return Result(
-        headline=(f'{len(found)} opportunity(s) dated to close by '
-                  f'{end}, {_money(weighted)} weighted.'),
+        headline=(f'{len(found)} opportunity(s) dated to close in '
+                  f'{today.strftime("%B")}, {_money(weighted)} weighted.'),
         columns=['Opportunity', 'Value', 'Probability', 'Stage', 'Close',
                  'Owner'],
-        rows=capped, figures={'count': len(found), 'weighted': weighted},
+        rows=capped,
+        figures={'count': len(found), 'weighted': weighted,
+                 'overdue': overdue},
         notes=notes, sources=['opportunities.expected_close_date',
                               'opportunities.probability'])

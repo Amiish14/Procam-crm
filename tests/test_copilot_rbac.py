@@ -788,3 +788,47 @@ def test_an_edit_is_not_contact(world):
         result = catalogue.get('leads_stale').handler(sc, {})
         names = {r['Company'] for r in result.rows}
         assert world['mine']['account_name'] in names
+
+
+def test_closing_this_month_means_this_month(world):
+    """Production answered "355 of 377 open opportunities close by 1
+    October", because the filter had an upper bound and no lower one —
+    every close date in the CRM's history qualified. A forecast that
+    includes 2023 is not a forecast."""
+    from datetime import date, timedelta
+
+    from app import Opportunity
+
+    with flask_app.app_context():
+        today = date.today()
+        start = date(today.year, today.month, 1)
+        made = []
+        for tag, when in (('ancient', start - timedelta(days=800)),
+                          ('lastmonth', start - timedelta(days=5)),
+                          ('thismonth', start + timedelta(days=3))):
+            o = Opportunity.query.filter_by(
+                opp_number=f'OPP-CLOSE-{tag}').first()
+            if o is None:
+                o = Opportunity(opp_number=f'OPP-CLOSE-{tag}')
+                db.session.add(o)
+            o.owner_emp_code = 'CPREP'
+            o.stage = 'Quoted'
+            o.value_inr = 1_000_000
+            o.probability = 50
+            o.expected_close_date = when
+            made.append(o)
+        db.session.commit()
+        try:
+            sc = _scope_for('CPREP', DataScope.OWN)
+            r = catalogue.get('closing_this_month').handler(sc, {})
+            names = {row['Opportunity'] for row in (r.rows or [])}
+            assert 'OPP-CLOSE-thismonth' in names
+            assert 'OPP-CLOSE-lastmonth' not in names
+            assert 'OPP-CLOSE-ancient' not in names
+            # overdue is a different question, reported separately
+            assert r.figures['overdue'] >= 2
+            assert any('already passed' in n for n in r.notes)
+        finally:
+            for o in made:
+                db.session.delete(o)
+            db.session.commit()
