@@ -66,6 +66,65 @@ def api_feedback():
     return jsonify(ok=True, reasons=list(svc.FEEDBACK_REASONS))
 
 
+# ── §10 / Phase 5 — controlled actions, off unless enabled ───────────
+@bp.route('/api/copilot/actions', methods=['GET'])
+def api_actions():
+    if not _authed():
+        return jsonify(ok=False, error='Not authenticated'), 401
+    from app.copilot import actions
+    return jsonify(ok=True, enabled=actions.enabled(),
+                   actions=actions.available(scope_mod.current()))
+
+
+@bp.route('/api/copilot/actions/propose', methods=['POST'])
+def api_propose():
+    """Describes a change. Writes nothing."""
+    if not _authed():
+        return jsonify(ok=False, error='Not authenticated'), 401
+    from app.copilot import actions
+
+    d = request.get_json(silent=True) or {}
+    proposal, err = actions.propose(d.get('action'), scope_mod.current(),
+                                    d.get('params') or {})
+    if err:
+        return jsonify(ok=False, error=err), 400
+    return jsonify(ok=True, proposal=proposal.to_dict())
+
+
+@bp.route('/api/copilot/actions/commit', methods=['POST'])
+def api_commit():
+    """Applies a change, given the token from its own proposal."""
+    if not _authed():
+        return jsonify(ok=False, error='Not authenticated'), 401
+    from app.copilot import actions
+
+    d = request.get_json(silent=True) or {}
+    result, err = actions.commit(
+        d.get('action'), scope_mod.current(), d.get('params') or {},
+        d.get('token'), actor=_actor())
+    if err:
+        db.session.rollback()
+        return jsonify(ok=False, error=err), 400
+    _audit_action(d.get('action'), d.get('params') or {}, result)
+    return jsonify(ok=True, **(result or {}))
+
+
+def _audit_action(action_key, params, result):
+    """§10 requires a full audit on every write."""
+    from app.models.copilot import CopilotLog
+    try:
+        db.session.add(CopilotLog(
+            emp_code=_actor(),
+            question=f'[action] {action_key} {params}'[:1000],
+            intent=f'action:{action_key}',
+            data_scope=scope_mod.current().data_scope,
+            sources=(result or {}).get('message', '')[:500],
+            answered=True, model_used=False, latency_ms=0))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
 # ── admin: adoption analytics, §11 ───────────────────────────────────
 @bp.route('/copilot-analytics')
 @require('admin.access')
