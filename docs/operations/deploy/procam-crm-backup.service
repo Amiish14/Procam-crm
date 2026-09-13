@@ -1,0 +1,11 @@
+[Unit]
+Description=Procam CRM verified database backup
+After=network.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/backup_database.py --label daily --keep 14
+Nice=10
+IOSchedulingClass=idle

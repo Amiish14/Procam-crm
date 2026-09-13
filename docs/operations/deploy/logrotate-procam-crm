@@ -1,0 +1,14 @@
+/var/log/procam-crm/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 procamapp procamapp
+    sharedscripts
+    postrotate
+        # gunicorn reopens its log files on USR1
+        systemctl kill -s USR1 --kill-who=main procam-crm.service >/dev/null 2>&1 || true
+    endscript
+}

@@ -1,0 +1,9 @@
+[Unit]
+Description=Procam CRM task SLA sweep
+After=network.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/task_sla_sweep.py

@@ -67,8 +67,22 @@ def world():
                                   extracted_json={'name': 'A Contact'})
         db.session.add_all([opp, batch, card])
         db.session.commit()
-        return {'lead': lead.id, 'opp': opp.id, 'batch': batch.id,
+        made = {'lead': lead.id, 'opp': opp.id, 'batch': batch.id,
                 'card': card.id}
+    yield made
+    # Every module shares one database and SQLite reuses deleted ids, so
+    # anything left here attaches itself to another module's next lead.
+    with flask_app.app_context():
+        lid = made['lead']
+        for model in (LeadNote, LeadEmail, LeadAssignmentHistory,
+                      CopilotChunk, Opportunity):
+            model.query.filter_by(lead_id=lid).delete(
+                synchronize_session=False)
+        Lead.query.filter_by(id=lid).delete(synchronize_session=False)
+        ImportBatch.query.filter_by(id=made['batch']).delete()
+        BusinessCardImport.query.filter_by(id=made['card']).delete()
+        Lead.query.filter_by(company='Injected Co').delete()
+        db.session.commit()
 
 
 def _c(code, role='user'):

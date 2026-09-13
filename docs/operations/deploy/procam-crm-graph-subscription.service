@@ -1,0 +1,12 @@
+[Unit]
+Description=Procam CRM — keep the leads mailbox Graph subscription alive
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+# --enforce renews the sanctioned subscription, or creates it if missing,
+# and removes duplicates. Subscriptions lapse after ~2.9 days.
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/subscribe_leads_mailbox.py --enforce

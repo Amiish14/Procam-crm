@@ -89,6 +89,10 @@ def test_a_missing_attachment_does_not_reveal_the_server_path():
     r = c.get(f'/api/leads/{lid}/attachments/{aid}/download')
     assert r.status_code == 404
     assert b'/var/secret' not in r.data
+    with flask_app.app_context():
+        LeadAttachment.query.filter_by(id=aid).delete()
+        Lead.query.filter_by(id=lid).delete()
+        db.session.commit()
 
 
 def test_ordinary_users_are_not_told_the_model_host(monkeypatch):

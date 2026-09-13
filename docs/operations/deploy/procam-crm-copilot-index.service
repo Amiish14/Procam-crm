@@ -1,0 +1,14 @@
+[Unit]
+Description=Procam CRM — refresh the Copilot search index
+After=network.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+# Emails and notes added during the day are not indexed as they arrive.
+# A full rebuild, not --since: --since filters on leads.updated_at, which
+# adding an email or a note does not change. 10,000 leads rebuild in
+# about 16 s on a laptop, so the whole index is cheap.
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/build_copilot_index.py
+Nice=10
