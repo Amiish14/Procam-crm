@@ -3,10 +3,12 @@
 #  Version 3.0  |  Ready for Render / PRERNA-stack hosting
 # ============================================================
 
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for, abort
+from flask import (Flask, render_template, render_template_string, request,
+                   jsonify, session, redirect, url_for, abort)
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from flask_wtf.csrf import CSRFProtect, generate_csrf
+from flask_wtf.csrf import CSRFError, CSRFProtect, generate_csrf
+from werkzeug.exceptions import HTTPException, InternalServerError
 from flask_talisman import Talisman
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
@@ -184,6 +186,71 @@ def _set_csrf_cookie(response):
     except Exception:
         pass
     return response
+
+
+# ─────────────────── ERRORS UNDER /api ARE JSON ───────────────────
+#
+# Until this existed, every error under /api returned Flask's HTML error
+# page. A front-end calling response.json() on it threw
+#   SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON
+# and, because the promise rejected, the button appeared to do nothing.
+# That is how the Academy self-checks were dead: CSRFProtect rejected the
+# POST with a 400 HTML page long before the handler ran, and the page had
+# no way to say so.
+#
+# The specific bug is fixed at both ends, but this is the guard: any
+# future 4xx or 5xx on an API path answers in the shape the caller asked
+# for. Pages are untouched — access_denied.html and the ordinary error
+# pages render exactly as before.
+
+def _api_request():
+    """Whether this caller is expecting JSON rather than a page."""
+    try:
+        return ('/api/' in (request.path or '')
+                or (request.args.get('format') or '') == 'json'
+                or request.headers.get('X-Requested-With') == 'XMLHttpRequest')
+    except Exception:
+        return False
+
+
+@app.errorhandler(CSRFError)
+def _csrf_error(e):
+    """The commonest cause of an HTML body where JSON was expected.
+
+    Named separately from the generic handler so the message can say what
+    to do — a missing token is nearly always a stale page or a fetch that
+    forgot the header, and "try again" is the right advice for both.
+    """
+    if _api_request():
+        return jsonify(ok=False, code='csrf',
+                       error='Your session token has expired or was '
+                             'missing. Refresh the page and try again.'), 400
+    return render_template_string(
+        '<h1>Session expired</h1><p>Refresh the page and try again.</p>'), 400
+
+
+@app.errorhandler(HTTPException)
+def _http_error(e):
+    # Registered explicitly and also reached through _unhandled_error
+    # below, which routes HTTPException here. Either alone would do the
+    # job — the explicit registration is kept so the intent survives a
+    # Flask change to how handlers are looked up.
+    if _api_request():
+        return jsonify(ok=False, code=e.code,
+                       error=(e.description or e.name)), e.code
+    return e                      # pages keep their existing rendering
+
+
+@app.errorhandler(Exception)
+def _unhandled_error(e):
+    if isinstance(e, HTTPException):
+        return _http_error(e)
+    app.logger.exception('unhandled error on %s', getattr(request, "path", "?"))
+    if _api_request():
+        return jsonify(ok=False, code=500,
+                       error='Something went wrong. Nothing was changed.'), 500
+    return InternalServerError()
+
 
 Talisman(app,
          force_https=False,   # nginx already handles this

@@ -92,17 +92,60 @@ var KEY = '{{ spec.key }}';
 var NQ = {{ spec.quiz|length }};
 function esc(s){ return String(s == null ? '' : s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// The CSRF token, which this page used to omit. CSRFProtect rejected
+// every POST with a 400 and an HTML error page, the JSON parse threw,
+// the promise rejected, and the button did nothing at all.
+function csrfToken(){
+  var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
+// Resolves to {ok, data} or {ok:false, message} — never throws, and
+// never hands JSON.parse something that is not JSON.
 async function post(path, body){
-  var r = await fetch('{{ url_prefix }}' + path, {
-    method:'POST', credentials:'same-origin',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(body || {})});
-  return r.json();
+  try {
+    var r = await fetch('{{ url_prefix }}' + path, {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json',
+               'X-CSRFToken': csrfToken(),
+               'X-Requested-With':'XMLHttpRequest'},
+      body: JSON.stringify(body || {})});
+
+    var type = r.headers.get('content-type') || '';
+    if (type.indexOf('application/json') === -1){
+      // A page where JSON was expected: almost always an expired
+      // session. Say so instead of parsing HTML.
+      return {ok:false, message: r.status === 400 || r.status === 401
+        ? 'Your session expired — refresh the page and try again.'
+        : 'Could not reach the server. Please try again.'};
+    }
+    var data = await r.json();
+    if (!r.ok || data.ok === false){
+      return {ok:false, message: data.error
+        || 'Could not check that right now. Please try again.'};
+    }
+    return {ok:true, data: data};
+  } catch (e) {
+    return {ok:false,
+            message:'Could not reach the server. Please try again.'};
+  }
+}
+
+function showError(elId, message){
+  document.getElementById(elId).innerHTML =
+    '<span class="err">' + esc(message) + '</span>';
 }
 async function learned(){
-  await post('/api/academy/' + KEY + '/learned');
+  var btn = document.getElementById('btnLearned');
+  btn.disabled = true;
+  var res = await post('/api/academy/' + KEY + '/learned');
+  if (!res.ok){
+    btn.disabled = false;          // re-enable, never a dead button
+    document.getElementById('learnedMsg').innerHTML =
+      ' <span class="err">' + esc(res.message) + '</span>';
+    return;
+  }
   document.getElementById('learnedMsg').textContent = ' ✓ noted';
-  document.getElementById('btnLearned').disabled = true;
 }
 async function practice(){
   var el = document.getElementById('pAns');
@@ -112,7 +155,10 @@ async function practice(){
     document.getElementById('pMsg').innerHTML =
       '<span class="err">Give an answer first.</span>'; return;
   }
-  var d = await post('/api/academy/' + KEY + '/practice', {answer: answer});
+  var res = await post('/api/academy/' + KEY + '/practice',
+                       {answer: answer});
+  if (!res.ok){ showError('pMsg', res.message); return; }
+  var d = res.data;
   document.getElementById('pMsg').innerHTML = d.correct
     ? '<span class="pill won">Correct</span>'
     : '<span class="pill lost">Not quite</span> <span class="meta">'
@@ -128,7 +174,10 @@ async function submitQuiz(){
     }
     answers.push(picked.value);
   }
-  var d = await post('/api/academy/' + KEY + '/quiz', {answers: answers});
+  var res = await post('/api/academy/' + KEY + '/quiz',
+                       {answers: answers});
+  if (!res.ok){ showError('qMsg', res.message); return; }
+  var d = res.data;
   var msg = '<b>' + d.score + '%</b> — pass mark ' + d.pass_mark + '%. ';
   if(d.passed){
     msg += '<span class="pill won">Level complete</span>';
