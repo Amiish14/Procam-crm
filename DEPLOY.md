@@ -1,9 +1,19 @@
-# Procam CRM — Deployment Guide (v3.1)
+# Procam CRM — Deployment Guide (v3.1, first install)
+
+> **Production operations have moved.** For deploying updates to the
+> running Azure VM, backups, rollback and the runbook, use
+> [docs/operations/](docs/operations/README.md). This file describes the
+> original first install and is kept for reference.
+>
+> **Security note (2026-09):** an earlier version of this file published
+> the PCM001 bootstrap password. It remains in git history. If PCM001 was
+> ever seeded with it, rotate that password —
+> `scripts/audit_default_passwords.py` checks.
 
 Two supported deploy targets:
 
 - **Render** (SaaS, using `render.yaml`)
-- **Same Azure VM as the TMS** (nginx proxies `procamlogictech.com/CRM/` → gunicorn on `127.0.0.1:8001`)
+- **Same Azure VM as the TMS** (nginx proxies `procamlogictech.com/CRM/` → gunicorn on `127.0.0.1:8002`)
 
 ---
 
@@ -34,9 +44,9 @@ URL_PREFIX               # Set to /CRM when behind procamlogictech.com/CRM/
 2. In Render: **New +** → **Blueprint** → point at `github.com/Amiish14/Procam-crm`.
 3. Render reads `render.yaml`, creates the `procam-crm-db` Postgres and `procam-crm` web service.
 4. Under the service's **Environment** tab, add:
-   - `ADMIN_INITIAL_PASSWORD` = `admin@Procam25`
+   - `ADMIN_INITIAL_PASSWORD` = a 12+ character password you generate (never one written in any document)
    - `ANTHROPIC_API_KEY` = (from console.anthropic.com)
-5. First deploy will seed 115 employees + PCM001. Log in as `PCM001` / `admin@Procam25` → forced password change.
+5. First deploy will seed 115 employees + PCM001. Log in as `PCM001` with that password → forced password change.
 
 ---
 
@@ -62,11 +72,11 @@ python3 -m venv .venv
 sudo -u procamapp tee /var/www/procam-crm/.env >/dev/null <<'EOF'
 SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 DATABASE_URL=postgresql://procam:PASSWORD@localhost:5432/procam_crm
-ADMIN_INITIAL_PASSWORD=admin@Procam25
+ADMIN_INITIAL_PASSWORD=<generate: python3 -c "import secrets; print(secrets.token_urlsafe(18))">
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
 ANTHROPIC_MODEL=claude-sonnet-4-5-20250929
 URL_PREFIX=/CRM
-PORT=8001
+PORT=8002
 EOF
 ```
 
@@ -85,7 +95,7 @@ EOF
 ```bash
 sudo tee /etc/systemd/system/procam-crm.service >/dev/null <<'EOF'
 [Unit]
-Description=Procam CRM (Flask + gunicorn on 8001)
+Description=Procam CRM (Flask + gunicorn on 8002)
 After=network.target postgresql.service
 
 [Service]
@@ -94,7 +104,7 @@ Group=www-data
 WorkingDirectory=/var/www/procam-crm
 EnvironmentFile=/var/www/procam-crm/.env
 ExecStart=/var/www/procam-crm/.venv/bin/gunicorn \
-    app:app --workers 2 --bind 127.0.0.1:8001 --timeout 120 \
+    app:app --workers 2 --bind 127.0.0.1:8002 --timeout 120 \
     --access-logfile /var/log/procam-crm/access.log \
     --error-logfile /var/log/procam-crm/error.log
 Restart=always
@@ -129,7 +139,7 @@ scp hub/index.html procam-app:/var/www/procam-lr/hub/index.html
 
 ### 6. Test
 
-Open `https://procamlogictech.com/` → the **CRM** tile should be visible next to TMS / PMS / Verifleet. Click it → CRM login screen. Log in as `PCM001` / `admin@Procam25` → forced password change → dashboard.
+Open `https://procamlogictech.com/` → the **CRM** tile should be visible next to TMS / PMS / Verifleet. Click it → CRM login screen. Log in as `PCM001` with the generated password → forced password change → dashboard.
 
 ---
 
@@ -156,7 +166,7 @@ git push origin main
 
 ## First-login checklist
 
-1. Log in as `PCM001` / `admin@Procam25`
+1. Log in as `PCM001` with the generated password
 2. System forces a password change — pick something strong
 3. Verify the sidebar shows: Dashboard · Leads · Opportunities · Companies · People · Employees · Intelligence · Outreach · Imports · Settings
 4. Test import: upload a sample Excel to `/api/leads/import/preview`, review the JSON, POST the batch_id to `/api/leads/import/commit`

@@ -28,8 +28,15 @@ from sqlalchemy import text                                   # noqa: E402
 from werkzeug.security import check_password_hash             # noqa: E402
 
 
+#: Passwords that have been published in this repository's own docs.
+#: DEPLOY.md gave the PCM001 bootstrap password in plain text until
+#: 2026-09; git history still has it.
+PUBLISHED = ('admin@Procam25',)
+
+
 def exposed(conn):
-    """Active accounts whose password is their employee code."""
+    """Active accounts whose password is their employee code, or a
+    password this repository once published."""
     rows = conn.execute(text(
         "SELECT emp_code, role, COALESCE(is_super_admin, 0) AS is_super, "
         "       password_hash FROM employees WHERE is_active = 1")).fetchall()
@@ -37,10 +44,14 @@ def exposed(conn):
     for code, role, is_super, pw_hash in rows:
         if not pw_hash or not code:
             continue
-        if any(check_password_hash(pw_hash, guess)
-               for guess in (code.lower(), code)):
+        why = None
+        if any(check_password_hash(pw_hash, g) for g in (code.lower(), code)):
+            why = 'employee code'
+        elif any(check_password_hash(pw_hash, g) for g in PUBLISHED):
+            why = 'published in DEPLOY.md'
+        if why:
             out.append({'emp_code': code, 'role': role or '',
-                        'is_super_admin': bool(is_super)})
+                        'is_super_admin': bool(is_super), 'why': why})
     return out, len(rows)
 
 
@@ -53,13 +64,17 @@ def main():
         hits, total = exposed(conn)
     admins = [h for h in hits if h['role'] in ('admin', 'procam_admin')]
     print(f'\n  active accounts checked            {total}')
-    print(f'  password is the employee code      {len(hits)}')
+    print(f'  guessable password                 {len(hits)}')
+    print(f'    the employee code                '
+          f'{sum(h["why"] == "employee code" for h in hits)}')
+    print(f'    published in DEPLOY.md           '
+          f'{sum(h["why"] != "employee code" for h in hits)}')
     print(f'    of which admins                  {len(admins)}')
     print(f'    of which the super admin         '
           f'{sum(h["is_super_admin"] for h in hits)}')
     if args.list:
         for h in sorted(hits, key=lambda h: (h['role'], h['emp_code'])):
-            print(f'    {h["emp_code"]:<12} {h["role"]}')
+            print(f'    {h["emp_code"]:<12} {h["role"]:<10} {h["why"]}')
     return 1 if hits else 0
 
 

@@ -1261,6 +1261,25 @@ def index():
         pass
     return redirect(url_for('dashboard'))
 
+@app.route('/healthz')
+@limiter.limit("60/minute")
+def healthz():
+    """For the load balancer and uptime monitoring. No login, no data.
+
+    200 when the process is up and the database answers a query; 503
+    otherwise. Deliberately says nothing else — no version, no counts —
+    because anyone can call it.
+    """
+    from sqlalchemy import text as _sql
+    try:
+        db.session.execute(_sql('SELECT 1'))
+        return jsonify(ok=True), 200
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('healthz: database check failed')
+        return jsonify(ok=False), 503
+
+
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit("5/minute;20/hour", methods=['POST'])
 def login():
