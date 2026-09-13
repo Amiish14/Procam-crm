@@ -254,3 +254,22 @@ def test_company_wide_scope_sees_and_edits_everything(world):
     assert c.get(f'/api/quotes/{world["quote"]}').status_code == 200
     assert c.put(f'/api/agents/{world["agent"]}',
                  json={'city': 'Rotterdam'}).status_code == 200
+
+
+def test_quote_approval_needs_company_scope_or_the_vertical_head_role(world):
+    """The role name 'admin' in a session no longer approves quotes; the
+    Access Matrix (company-wide scope) or the Vertical_Head role does."""
+    with flask_app.app_context():
+        q = db.session.get(Quote, world['quote'])
+        q.status, q.prepared_by_id = 'Awaiting Approval', 'DSRATE'
+        # An administrator by role whose matrix profile is Own scope. The
+        # session guard reads the role from here, so this is what a
+        # role-name check would see.
+        Employee.query.filter_by(emp_code='DSTWO').first().role = 'admin'
+        db.session.commit()
+    r = _c('DSTWO', 'admin').post(f'/api/quotes/{world["quote"]}/approve',
+                                  json={})
+    assert r.status_code == 403
+    r = _c('DSADM', 'admin').post(f'/api/quotes/{world["quote"]}/approve',
+                                  json={})
+    assert r.status_code == 200, r.get_data(as_text=True)[:200]
