@@ -356,7 +356,9 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
                 from app.services import lead_vertical
                 from app.services import lead_intake_db as _lvdb
                 _acct, _ = _lvdb.resolve_account(
-                    extracted.get('email') or sender_email)
+                    extracted.get('email') or sender_email,
+                    text_for_gstin=f"{extracted.get('subject') or ''}\n"
+                                   f"{extracted.get('body_text') or ''}")
                 _guess, _conf, _why = lead_vertical.recommend(
                     f"{extracted.get('subject') or ''}\n"
                     f"{extracted.get('body_text') or ''}",

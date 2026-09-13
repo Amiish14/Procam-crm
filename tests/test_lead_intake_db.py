@@ -450,3 +450,74 @@ def test_the_dry_run_mirrors_the_production_path():
     assert 'email_parser.extract_lead(msg)' in src
     assert "_forward_resolved" in src, \
         'the dry run must pass the same flag production does'
+
+
+# ─── §13 path 5 — the GST / customer master ──────────────────────────────
+def _gstin(base14='27AAPFU0939F1Z'):
+    alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    total = 0
+    for i, char in enumerate(base14):
+        v = alphabet.index(char) * (2 if i % 2 else 1)
+        total += v // 36 + v % 36
+    return base14 + alphabet[(36 - total % 36) % 36]
+
+
+def test_a_gstin_in_the_body_resolves_the_account(world):
+    """The fifth path. A buyer writing from a personal address, with the
+    company GSTIN in the signature, still reaches the right account."""
+    from app import Company, db as _db
+
+    with flask_app.app_context():
+        number = _gstin()
+        company = Company.query.get(world['account_id'])
+        company.gstin = number
+        company.gstin_source = 'admin'
+        _db.session.commit()
+
+        found, how = lidb.resolve_account(
+            'procurement.head@unknown-startup.example',
+            text_for_gstin=f'Please quote. GSTIN {number}')
+        assert found is not None and found.id == world['account_id']
+        assert how == 'GSTIN'
+
+
+def test_a_lookalike_number_resolves_nothing(world):
+    """Without the checksum this would attach mail to a wrong account."""
+    from app import Company, db as _db
+
+    with flask_app.app_context():
+        number = _gstin()
+        company = Company.query.get(world['account_id'])
+        company.gstin = number
+        _db.session.commit()
+
+        wrong = number[:14] + ('A' if number[14] != 'A' else 'B')
+        found, how = lidb.resolve_account(
+            'procurement.head@unknown-startup.example',
+            text_for_gstin=f'ref {wrong}')
+        assert found is None
+        assert how != 'GSTIN'
+
+
+def test_the_sender_still_wins_over_a_gstin_in_the_text(world):
+    """A quoted GSTIN belonging to someone else must not beat the
+    sender's own domain — a forwarded chain carries other companies'."""
+    from app import Company, db as _db
+
+    with flask_app.app_context():
+        other = Company(name='Someone Else Ltd', gstin=_gstin())
+        _db.session.add(other)
+        _db.session.commit()
+
+        found, how = lidb.resolve_account(
+            'newbuyer@tatasteel.com',
+            text_for_gstin=f'their GSTIN is {other.gstin}')
+        assert found.id == world['account_id']
+        assert how == 'account email domain'
+
+
+def test_resolution_works_without_any_text(world):
+    """Every existing caller passes no text. None must not break it."""
+    with flask_app.app_context():
+        company, how = lidb.resolve_account('newbuyer@tatasteel.com')
+        assert company is not None and how == 'account email domain'

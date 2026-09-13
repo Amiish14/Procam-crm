@@ -629,3 +629,114 @@ def test_an_empty_message_that_scores_low_is_still_parked_not_reviewed():
     d = li.classify(msg(subject='Unsubscribe from our newsletter', body='',
                         frm='news@example.com'), li.Context())
     assert d.klass == K.NON_BUSINESS
+
+
+# ─── a status note appended to a subject is not a new thread ─────────────
+#
+# "RFQ-DLI-26-0061 Breakbulk Airoli - Not Quoted" is a colleague chasing
+# an enquiry we already hold. Matched on the raw subject it looked like a
+# different thread and parked as Internal.
+def test_a_trailing_status_note_still_matches_its_thread():
+    seen = []
+    ctx = li.Context(find_by_subject=lambda subject, **kw: (
+        seen.append(subject) or (77 if subject == 'RFQ-DLI-26-0061 '
+                                 'Breakbulk Movement Airoli' else None)))
+    d = li.classify(msg(subject='RE: RFQ-DLI-26-0061 Breakbulk Movement '
+                                'Airoli - Not Quoted',
+                        body='any update?'), ctx)
+    assert d.lead_id == 77, seen
+
+
+def test_stacked_notes_all_come_off():
+    assert li.match_subject('RFQ 41 Heavy Lift - Not Quoted - Closed') \
+        == 'RFQ 41 Heavy Lift'
+
+
+def test_a_note_is_only_stripped_from_the_end():
+    """"Not Quoted Logistics Pvt Ltd" is a company, not a status."""
+    subject = 'Not Quoted Logistics Pvt Ltd enquiry'
+    assert li.match_subject(subject) == subject
+
+
+def test_a_note_that_is_the_whole_subject_survives():
+    """Strip it and nothing identifies a thread, so it was the subject."""
+    assert li.match_subject('Closed') == 'Closed'
+    assert li.match_subject('FW: Regret') == 'Regret'
+
+
+def test_the_separator_is_required():
+    """"Enquiry status" is a subject. "Enquiry - status: won" is a note."""
+    assert li.match_subject('Enquiry update for Q3') == 'Enquiry update for Q3'
+    assert li.match_subject('Cargo ex Nhava Sheva - status: won') \
+        == 'Cargo ex Nhava Sheva'
+
+
+def test_reply_or_forward_is_still_judged_on_the_written_subject():
+    """match_subject() is for finding the thread. subject_kind() must
+    still see what was actually typed, or a reply stops looking like one."""
+    assert li.subject_kind('RE: RFQ 41 - Not Quoted') == 'reply'
+    assert li.strip_prefixes('RE: RFQ 41 - Not Quoted') == 'RFQ 41 - Not Quoted'
+
+
+# ─── §13 path 5 — the GST / customer master ──────────────────────────────
+def _valid_gstin(base14='27AAPFU0939F1Z'):
+    alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    total = 0
+    for i, char in enumerate(base14):
+        v = alphabet.index(char) * (2 if i % 2 else 1)
+        total += v // 36 + v % 36
+    return base14 + alphabet[(36 - total % 36) % 36]
+
+
+def test_a_valid_gstin_is_recognised():
+    g = _valid_gstin()
+    assert li.valid_gstin(g) is True
+    assert li.gstins(f'Our GSTIN is {g}, please quote.') == [g]
+
+
+def test_the_checksum_is_what_makes_it_a_gstin():
+    """The shape alone matches order references and container numbers.
+
+    Without the checksum this would look up any 15-character lookalike
+    and could attach an email to the wrong account.
+    """
+    g = _valid_gstin()
+    wrong = g[:14] + ('A' if g[14] != 'A' else 'B')
+    assert li.valid_gstin(wrong) is False
+    assert li.gstins(f'ref {wrong}') == []
+
+
+def test_a_gstin_is_found_case_insensitively_and_once():
+    g = _valid_gstin()
+    assert li.gstins(f'{g.lower()} ... and again {g}') == [g]
+
+
+def test_no_gstin_in_ordinary_text():
+    assert li.gstins('Container MSKU1234567, RFQ-DLI-26-0061, 40 MT') == []
+    assert li.gstins('') == []
+    assert li.gstins(None) == []
+
+
+def test_a_short_subject_keeps_its_note():
+    """"RFQ - Not Quoted" stripped to "RFQ" would match every RFQ ever
+    sent. Below the minimum the note stays, and nothing matches wrongly.
+
+    This is the case that exercises _MIN_SUBJECT: the earlier
+    whole-subject test does not, because "Closed" alone has no separator
+    for the pattern to anchor to in the first place.
+    """
+    assert li.match_subject('RFQ - Not Quoted') == 'RFQ - Not Quoted'
+    assert li.match_subject('ODC - Closed') == 'ODC - Closed'
+
+
+def test_a_status_word_mid_subject_is_left_alone():
+    """"- Final mile to Kandla" is where the cargo goes, not a status.
+
+    This is what anchors the pattern to the end of the string. Without
+    that anchor the separator plus "final" matches mid-subject and the
+    rest of the real subject is thrown away.
+    """
+    for subject in ('Transformer cargo - Final mile to Kandla plant',
+                    'Q3 - Update on the Nhava Sheva consignment',
+                    'Breakbulk - Pending customs at JNPT, please advise'):
+        assert li.match_subject(subject) == subject

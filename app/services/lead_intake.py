@@ -220,6 +220,40 @@ def thread_keys(msg):
     }
 
 
+#: 15 characters: 2-digit state code, 10-character PAN, entity digit,
+#: a literal Z, then a checksum. The shape alone matches too much —
+#: order references and container numbers pass it — so the checksum is
+#: verified before anything is looked up.
+_GSTIN = re.compile(r'\b(\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]Z[0-9A-Z])\b')
+_GSTIN_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
+
+def valid_gstin(candidate):
+    """The official checksum, so a lookalike is not looked up.
+
+    Each character is weighted alternately 1 and 2; a doubled value is
+    folded (quotient plus remainder over 36); the check character makes
+    the total a multiple of 36.
+    """
+    g = (candidate or '').strip().upper()
+    if len(g) != 15 or any(c not in _GSTIN_ALPHABET for c in g):
+        return False
+    total = 0
+    for i, char in enumerate(g[:14]):
+        value = _GSTIN_ALPHABET.index(char) * (2 if i % 2 else 1)
+        total += value // 36 + value % 36
+    return _GSTIN_ALPHABET[(36 - total % 36) % 36] == g[14]
+
+
+def gstins(text):
+    """Every valid GSTIN in the text, in order, without repeats."""
+    out = []
+    for hit in _GSTIN.findall((text or '').upper()):
+        if valid_gstin(hit) and hit not in out:
+            out.append(hit)
+    return out
+
+
 def strip_prefixes(subject):
     """"RE: FW: RE: Transport requirement" → "Transport requirement"."""
     s = (subject or '').strip()
@@ -230,6 +264,66 @@ def strip_prefixes(subject):
         if s == before:
             break
     return s.strip()
+
+
+#: Words a colleague appends to a subject to say what became of the
+#: enquiry, not to start a new one. "RFQ-DLI-26-0061 Breakbulk Airoli -
+#: Not Quoted" is a chase on an enquiry we already hold; matched on the
+#: raw subject it looks like a different thread and parks as Internal.
+_ANNOTATIONS = (
+    'not quoted', 'no quote', 'quoted', 'requoted', 're-quoted',
+    'regret', 'regretted', 'declined', 'rejected', 'lost', 'won',
+    'closed', 'cancelled', 'canceled', 'on hold', 'hold', 'dropped',
+    'submitted', 'submission', 'pending', 'awaited', 'awaiting',
+    'reminder', 'gentle reminder', 'follow up', 'follow-up', 'followup',
+    'urgent', 'most urgent', 'important', 'fyi', 'for your information',
+    'update', 'updated', 'revised', 'revision', 'final', 'draft',
+    'approved', 'confirmed', 'completed', 'done', 'status',
+    'no response', 'not received', 'received', 'nq',
+)
+
+#: A trailing "— Not Quoted", "| REGRET", "(follow up)", "- status:won".
+#: Anchored to the end and to a separator, so "Not Quoted Pvt Ltd" in the
+#: middle of a company name is untouched.
+_ANNOTATION_TAIL = re.compile(
+    r'[\s]*[\-–—|:/\[\(]+\s*(?:status\s*[:=]?\s*)?'
+    r'(?:' + '|'.join(re.escape(a) for a in _ANNOTATIONS) + r')'
+    r'\s*[\]\)]?\s*$',
+    re.IGNORECASE)
+
+#: Below this, stripping has eaten the subject rather than an annotation.
+#: "Closed" on its own is the whole subject, not a note about one.
+_MIN_SUBJECT = 8
+
+
+def strip_annotations(subject):
+    """Drop trailing status notes a colleague appended.
+
+    Only from the end, only after a separator, and only while enough
+    subject survives to still identify a thread. Stacked notes come off
+    one at a time — "RFQ 41 - Not Quoted - Closed" loses both.
+    """
+    s = (subject or '').strip()
+    for _ in range(4):
+        trimmed = _ANNOTATION_TAIL.sub('', s).strip(' -–—|:/')
+        if trimmed == s:
+            break
+        if len(trimmed) < _MIN_SUBJECT:
+            # What is left could not identify a thread on its own, so
+            # the words were the subject, not a note about it.
+            break
+        s = trimmed
+    return s.strip()
+
+
+def match_subject(subject):
+    """The form used to find the thread this message belongs to.
+
+    Prefixes and appended status notes both removed. Kept separate from
+    strip_prefixes(), which decides reply/forward/fresh and must see the
+    subject as it was written.
+    """
+    return strip_annotations(strip_prefixes(subject))
 
 
 def subject_kind(subject):
@@ -318,7 +412,7 @@ def classify(msg, ctx=None):
     from_domain = domain_of(from_addr)
     keys = thread_keys(msg)
     kind = subject_kind(subject)
-    stripped = strip_prefixes(subject)
+    stripped = match_subject(subject)
     to_all = recipients(msg, 'toRecipients')
     cc_all = recipients(msg, 'ccRecipients')
 

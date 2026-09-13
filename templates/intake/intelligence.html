@@ -43,6 +43,18 @@
             color:var(--text-3);margin-right:auto}
   .prop .pmsg{font-size:12px}
   .note{font-size:12.5px;color:var(--text-2);margin-bottom:10px;max-width:70ch}
+  .caps{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+        gap:10px;margin-bottom:22px}
+  .cap{display:flex;gap:10px;align-items:flex-start;padding:11px 13px;
+       border:1px solid var(--border);border-radius:var(--r-lg);
+       background:var(--card)}
+  .cap .dot{width:9px;height:9px;border-radius:50%;margin-top:5px;
+            flex:0 0 auto}
+  .cap.on  .dot{background:var(--green,#1f6b3f)}
+  .cap.off .dot{background:var(--amber,#b45309)}
+  .cap .cn{font-size:13px;font-weight:600;color:var(--ink)}
+  .cap .cd{font-size:11.5px;color:var(--text-2);margin-top:2px;
+           line-height:1.45}
 </style>
 </head>
 <body>
@@ -85,6 +97,14 @@ confidence score rather than on hard evidence.</div>
 applies itself — a rule that quietly starts dropping a real customer's
 mail is worse than the noise it removes, so each one waits for a
 decision.</div>
+<h2>What this host can read</h2>
+<div style="color:var(--text-2);font-size:12.5px;margin:-6px 0 10px">
+  An attachment the engine cannot open is skipped silently — losing a lead
+  to a malformed file would be worse than not reading it — so the only
+  place a missing reader shows up is here.
+</div>
+<div id="caps" class="caps"></div>
+
 <div id="proposals" style="margin-bottom:22px"></div>
 
 <h2>Why leads were rejected</h2>
@@ -159,7 +179,21 @@ async function load(){
 
   const maxR = Math.max(...(j.by_reason.map(r => r.count)), 1);
   bars('reasons', j.by_reason.map(r => ({label: r.reason, count: r.count})), maxR);
+  renderCapabilities(j.capabilities || []);
   loadProposals();
+}
+
+function renderCapabilities(caps){
+  const host = document.getElementById('caps');
+  if(!host) return;
+  host.innerHTML = caps.map(c => `
+    <div class="cap ${c.available ? 'on' : 'off'}">
+      <span class="dot"></span>
+      <div>
+        <div class="cn">${esc(c.name)}</div>
+        <div class="cd">${esc(c.detail)}</div>
+      </div>
+    </div>`).join('');
 }
 
 async function loadProposals(){

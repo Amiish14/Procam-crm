@@ -612,6 +612,10 @@ class Company(db.Model):
     # `website` is a marketing URL and a group may send from several
     # domains, so mail-domain matching gets its own list.
     email_domains          = db.Column(db.JSON, default=list)
+    # §13 path 5 — the GST / customer master. Exact where a name match is
+    # a guess, so it is checked before the fuzzy one.
+    gstin                  = db.Column(db.String(15), nullable=True, index=True)
+    gstin_source           = db.Column(db.String(30), nullable=True)
     strategic_flag    = db.Column(db.Boolean, default=False)
     priority          = db.Column(db.String(20), default='Medium')
     last_activity_at  = db.Column(db.DateTime, nullable=True, index=True)

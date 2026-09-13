@@ -231,7 +231,7 @@ def build_context():
 
 
 # ─── account → two owners ────────────────────────────────────────────────
-def resolve_account(from_addr, company_name=None):
+def resolve_account(from_addr, company_name=None, text_for_gstin=None):
     """(company, how) — the account this sender belongs to.
 
     Resolution order per §07, stopping at the first hit. Returns
@@ -262,6 +262,16 @@ def resolve_account(from_addr, company_name=None):
             Company.website.ilike(f'%{domain}%')).first()
         if hit:
             return hit, 'account website domain'
+
+    # §13 path 5 — the GST / customer master. The brief lists this last,
+    # but a GSTIN is a government-issued exact identifier and the company
+    # name below it is a fuzzy match. Letting a guess beat a fact is the
+    # same mistake as letting the model overturn a thread match, so the
+    # exact one is checked first. Say the word and the order flips.
+    for number in li.gstins(text_for_gstin or ''):
+        hit = Company.query.filter(Company.gstin == number).first()
+        if hit:
+            return hit, 'GSTIN'
 
     if company_name:
         try:

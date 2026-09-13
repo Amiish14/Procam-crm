@@ -391,3 +391,70 @@ def test_unlabelled_trail_rows_stay_with_the_customer_conversation(world):
         lid = lead.id
     customer = c.get(f'/api/leads/{lid}/emails?kind=customer').get_json()
     assert len(customer) == 1
+
+
+# ─── the host says what it cannot read — §20 ─────────────────────────────
+def test_the_dashboard_reports_whether_pdfs_can_be_read():
+    """A missing reader degrades silently in the ingest, by design.
+
+    Silent to the ingest must not mean invisible to an admin: without
+    this, pypdf being absent on a host looks exactly like every PDF
+    happening to contain nothing.
+    """
+    from app.intake import service
+
+    caps = {c['name']: c for c in service._capabilities()}
+    assert 'PDF attachments' in caps
+    pdf = caps['PDF attachments']
+    assert isinstance(pdf['available'], bool)
+    if not pdf['available']:
+        assert 'pip install' in pdf['detail']
+
+
+def test_the_capability_report_matches_what_is_actually_installed():
+    from app.intake import service
+    from app.services import attachment_text
+
+    caps = {c['name']: c['available'] for c in service._capabilities()}
+    assert caps['PDF attachments'] == attachment_text.pdf_supported()
+
+
+def test_the_model_switch_is_reported_too():
+    from app.intake import service
+    from app.services import lead_intake_ai
+
+    caps = {c['name']: c['available'] for c in service._capabilities()}
+    assert caps['Model second opinion'] == lead_intake_ai.is_enabled()
+
+
+def test_the_report_says_pdfs_are_unreadable_when_the_library_is_absent():
+    """The test host has pypdf, so asserting "available" proves nothing.
+
+    Forcing the absent case is the only way to know the report follows
+    reality rather than always saying yes.
+    """
+    from app.intake import service
+    from app.services import attachment_text
+
+    real = attachment_text.pdf_supported
+    attachment_text.pdf_supported = lambda: False
+    try:
+        caps = {c['name']: c for c in service._capabilities()}
+        assert caps['PDF attachments']['available'] is False
+        assert 'pip install' in caps['PDF attachments']['detail']
+    finally:
+        attachment_text.pdf_supported = real
+
+
+def test_and_says_they_are_readable_when_it_is_present():
+    from app.intake import service
+    from app.services import attachment_text
+
+    real = attachment_text.pdf_supported
+    attachment_text.pdf_supported = lambda: True
+    try:
+        caps = {c['name']: c for c in service._capabilities()}
+        assert caps['PDF attachments']['available'] is True
+        assert 'pip install' not in caps['PDF attachments']['detail']
+    finally:
+        attachment_text.pdf_supported = real

@@ -192,7 +192,9 @@ def review_queue(limit=200):
         from app.services import lead_intake_db as lidb
         company, how = (None, 'unmapped')
         try:
-            company, how = lidb.resolve_account(r.from_addr)
+            company, how = lidb.resolve_account(
+                r.from_addr,
+                text_for_gstin=(r.payload or {}).get('body'))
         except Exception:
             pass
         primary, secondary = lidb.owners_for(company)
@@ -240,7 +242,8 @@ def accept(classification_id, *, actor=None):
 
     payload = dict(row.payload or {})
     sender_addr = payload.get('resolved_sender') or row.from_addr or ''
-    company, _how = lidb.resolve_account(sender_addr)
+    company, _how = lidb.resolve_account(
+        sender_addr, text_for_gstin=payload.get('body'))
 
     lead = Lead(
         source='email',
@@ -365,8 +368,36 @@ def intelligence(days=30):
         'by_reason': sorted(
             ({'reason': k, 'count': v} for k, v in by_reason.items()),
             key=lambda d: -d['count'])[:20],
+        # What the engine cannot currently read. A missing library
+        # degrades silently by design — losing a lead because a PDF was
+        # malformed would be worse than not reading it — but silent to
+        # the ingest should not mean invisible to an admin.
+        'capabilities': _capabilities(),
         **review_counts(),
     }
+
+
+def _capabilities():
+    """Which optional readers are actually installed on this host."""
+    from app.services import attachment_text
+    from app.services import lead_intake_ai
+
+    pdf = attachment_text.pdf_supported()
+    return [
+        {'name': 'PDF attachments', 'available': pdf,
+         'detail': 'reading requirements out of PDF tenders and RFQs'
+                   if pdf else
+                   'pypdf is not installed — PDFs are skipped and only '
+                   'their filenames are read. Fix: pip install -r '
+                   'requirements.txt'},
+        {'name': 'Spreadsheet attachments', 'available': True,
+         'detail': 'xlsx and csv are read'},
+        {'name': 'Model second opinion',
+         'available': lead_intake_ai.is_enabled(),
+         'detail': 'consulted at step 10 between 25% and 79%'
+                   if lead_intake_ai.is_enabled() else
+                   'off — needs LEAD_INTAKE_AI=on and a key'},
+    ]
 
 
 def _pct(n, total):
