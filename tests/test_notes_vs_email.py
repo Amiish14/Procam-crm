@@ -342,3 +342,104 @@ def test_cancel_discards_only_the_unsaved_note():
     for forbidden in ('/emails', 'original_email', 'method:'):
         assert forbidden not in body, \
             f'Cancel must not touch anything but the textarea ({forbidden})'
+
+
+# ── A1 / A2 — a draft is on the trail, and "sent" moves it ───────────
+def _draft(client, lid, body='Dear Krishnan, our offer is attached.'):
+    return client.post(f'/api/leads/{lid}/emails',
+                       json={'subject': 'Our offer', 'body': body,
+                             'status': 'draft'}).get_json()['email']
+
+
+def test_a_draft_is_recorded_on_the_trail(client):
+    """Generating a draft wrote nothing to the trail: the helper for it
+    existed in the page and was never called."""
+    lid = _email_lead('Draft Trail Ltd')
+    d = _draft(client, lid)
+    trail = client.get(f'/api/leads/{lid}/emails').get_json()
+    drafts = [r for r in trail if r['direction'] == 'outbound']
+    assert len(drafts) == 1
+    assert drafts[0]['status'] == 'draft'
+    assert d['id'] == drafts[0]['id']
+
+
+def test_marking_sent_moves_the_draft_rather_than_copying_it(client):
+    lid = _email_lead('Sent Once Ltd')
+    d = _draft(client, lid)
+    r = client.post(f'/api/leads/{lid}/emails/{d["id"]}/sent', json={})
+    assert r.status_code == 200 and r.get_json()['ok']
+
+    outbound = [x for x in client.get(f'/api/leads/{lid}/emails').get_json()
+                if x['direction'] == 'outbound']
+    assert len(outbound) == 1, 'the email must not appear twice'
+    assert outbound[0]['status'] == 'sent'
+
+
+def test_marking_sent_cannot_change_what_was_written(client):
+    """The one change a trail row allows is its state. Content sent in
+    the request is ignored, so "sent" cannot be used to rewrite history."""
+    lid = _email_lead('Immutable Body Ltd')
+    d = _draft(client, lid, body='the words we actually sent')
+    client.post(f'/api/leads/{lid}/emails/{d["id"]}/sent',
+                json={'body': 'rewritten', 'subject': 'rewritten',
+                      'to_addr': 'someone@else.com'})
+    row = [x for x in client.get(f'/api/leads/{lid}/emails').get_json()
+           if x['id'] == d['id']][0]
+    assert row['body'] == 'the words we actually sent'
+    assert row['subject'] == 'Our offer'
+
+
+def test_a_customer_email_can_never_be_marked_sent(client):
+    """An inbound email is the customer's words. It is not ours to
+    mark sent, and the original enquiry least of all."""
+    with flask_app.app_context():
+        from app import LeadEmail
+        lid = _email_lead('Inbound Stays Inbound Ltd')
+        row = LeadEmail(lead_id=lid, direction='inbound',
+                        subject='RFQ', body=ENQUIRY, status='received')
+        db.session.add(row)
+        db.session.commit()
+        eid = row.id
+    r = client.post(f'/api/leads/{lid}/emails/{eid}/sent', json={})
+    assert r.status_code == 400
+    with flask_app.app_context():
+        from app import LeadEmail
+        assert db.session.get(LeadEmail, eid).status == 'received'
+
+
+def test_a_draft_cannot_be_marked_sent_through_another_lead(client):
+    lid = _email_lead('Owner Lead Ltd')
+    other = _email_lead('Other Lead Ltd')
+    d = _draft(client, lid)
+    r = client.post(f'/api/leads/{other}/emails/{d["id"]}/sent', json={})
+    assert r.status_code == 404
+
+
+def test_marking_sent_twice_is_harmless(client):
+    lid = _email_lead('Twice Sent Ltd')
+    d = _draft(client, lid)
+    client.post(f'/api/leads/{lid}/emails/{d["id"]}/sent', json={})
+    r = client.post(f'/api/leads/{lid}/emails/{d["id"]}/sent', json={})
+    assert r.status_code == 200 and r.get_json().get('already') is True
+
+
+def test_the_original_enquiry_survives_the_whole_draft_and_send_cycle(client):
+    """The acceptance case, end to end."""
+    lid = _email_lead('Full Cycle Ltd')
+    d = _draft(client, lid)
+    client.post(f'/api/leads/{lid}/emails/{d["id"]}/sent', json={})
+    client.post(f'/api/leads/{lid}/notes', json={'note_text': 'called'})
+    with flask_app.app_context():
+        lead = db.session.get(Lead, lid)
+        assert lead.original_email_body == ENQUIRY
+
+
+def test_the_page_records_the_draft_and_moves_it_on_send(client):
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, 'templates', 'app.html')) as fh:
+        src = fh.read()
+    gen = src[src.index('async function genEmail'):src.index('function copyMail')]
+    assert 'recordDraftOnTrail(' in gen, 'the draft must reach the trail'
+    sent = src[src.index('async function markSent'):]
+    sent = sent[:sent.index('\n}\n')]
+    assert '/sent`' in sent, 'marking sent must move the draft'

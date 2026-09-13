@@ -3403,6 +3403,39 @@ def api_lead_email_add(lid):
     return jsonify({'ok': True, 'email': row.to_dict()})
 
 
+@app.route('/api/leads/<int:lid>/emails/<int:email_id>/sent',
+           methods=['POST'])
+@require_auth
+def api_lead_email_mark_sent(lid, email_id):
+    """Move one outbound draft to sent. The only change a trail row allows.
+
+    Recording a draft and then recording "sent" as a second row left the
+    trail holding the same email twice. This is a state transition on the
+    draft itself — and only that: subject, body, recipients and author
+    are not accepted here and cannot change, so the trail stays
+    append-only in every sense that matters.
+
+    Refused for inbound mail (a customer's email is never "sent" by us),
+    for a row already sent, and for a row belonging to another lead.
+    """
+    _require_lead_access(lid)
+    row = LeadEmail.query.filter_by(id=email_id, lead_id=lid).first_or_404()
+    if row.direction != 'outbound':
+        return jsonify({'ok': False,
+                        'error': 'Only an outbound draft can be marked sent'}), 400
+    if row.status == 'sent':
+        return jsonify({'ok': True, 'email': row.to_dict(),
+                        'already': True})
+    if row.status != 'draft':
+        return jsonify({'ok': False,
+                        'error': f'A {row.status} email cannot be marked sent'}), 400
+    row.status = 'sent'
+    row.source = 'sent_in_crm'
+    row.sent_or_received_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'ok': True, 'email': row.to_dict()})
+
+
 @app.route('/api/leads/<int:lid>/history', methods=['GET'])
 @require_auth
 def api_lead_history(lid):
