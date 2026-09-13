@@ -92,26 +92,38 @@ def _samples(since, domains):
     try:
         rows = (db.session.query(Lead.original_email_from, Lead.email,
                                  Lead.original_email_subject,
-                                 Lead.original_email_body)
+                                 Lead.original_email_body,
+                                 Lead.project, Lead.notes)
                 .filter(Lead.source == 'email', Lead.created_at >= since)
                 .all())
     except Exception:
         db.session.rollback()
         return found
-    for original, contact, subject, body in rows:
+
+    for original, contact, subject, body, project, notes in rows:
         addr = (original or contact or '').strip().lower()
         if '@' not in addr:
             continue
         domain = addr.rsplit('@', 1)[1]
-        if domain in want and domain not in found and (subject or body):
-            found[domain] = {
-                'subject': subject or '',
-                'body': {'content': body or '', 'contentType': 'text'},
-                'from': {'emailAddress': {'address': addr}},
-                'toRecipients': [{'emailAddress': {
-                    'address': 'leads@procamgroup.in'}}],
-                'ccRecipients': [],
-            }
+        if domain not in want:
+            continue
+        # original_email_* only exists on leads captured after that
+        # column was added. Before it, the body lived in notes.
+        text = (body or notes or '').strip()
+        line = (subject or project or '').strip()
+        if not text:
+            continue        # judged on nothing is not judged
+        best = found.get(domain)
+        if best and len(best['body']['content']) >= len(text):
+            continue
+        found[domain] = {
+            'subject': line,
+            'body': {'content': text, 'contentType': 'text'},
+            'from': {'emailAddress': {'address': addr}},
+            'toRecipients': [{'emailAddress': {
+                'address': 'leads@procamgroup.in'}}],
+            'ccRecipients': [],
+        }
     return found
 
 
@@ -222,19 +234,30 @@ def main():
         verdicts = ({} if source == 'classified' else
                     _verdicts(_samples(since, [g[2] for g in head])))
 
-        worth, noise = [], []
+        print(f'\n  {len(verdicts)} of {len(head)} top domains had a '
+              f'stored email to judge.')
+
+        worth, noise, unknown = [], [], []
         for n, lead_n, domain, account in head:
             d = verdicts.get(domain)
             if d is None:
-                worth.append((n, domain, account, 'not judged'))
+                # No stored email to read. Absence of evidence is not a
+                # verdict: the first version of this called Siemens and
+                # Godrej robots because their bodies were never kept.
+                unknown.append((n, domain, account))
             elif d.klass == li.Klass.NEW_LEAD:
                 worth.append((n, domain, account,
                               f'{d.confidence or 0}% new enquiry'))
             elif d.klass == li.Klass.REVIEW:
                 worth.append((n, domain, account, 'needs review'))
             else:
+                # step and reason, because "Non-business" alone cannot
+                # be argued with — and the last two versions of this
+                # script were both wrong in ways the reason would have
+                # shown immediately.
                 noise.append((n, domain, account,
-                              li.Klass.LABELS.get(d.klass, d.klass)))
+                              f'{li.Klass.LABELS.get(d.klass, d.klass)} '
+                              f'[step {d.step}: {d.reason}]'))
 
         print(f'\n  Worth an owner — the engine running today still calls '
               f'these enquiries:\n')
@@ -249,6 +272,14 @@ def main():
         print(f'\n  Those {min(args.top, len(worth))} cover {share}% of the '
               f'history.')
 
+        if unknown:
+            unknown_total = sum(n for n, *_ in unknown)
+            print(f'\n  Cannot tell — {unknown_total} lead(s) whose email '
+                  f'body was never stored,\n  so there is nothing to judge. '
+                  f'Decide these by the name:\n')
+            for n, domain, account in unknown[:args.top]:
+                print(f'    {n:>6}  {domain:<34} {account}')
+
         if noise:
             noise_total = sum(n for n, *_ in noise)
             print(f'\n  NOT worth an owner — {noise_total} historical '
@@ -256,7 +287,8 @@ def main():
                   f'create. Creating accounts for these\n  would be '
                   f'building a customer list out of robots:\n')
             for n, domain, account, klass in noise[:args.top]:
-                print(f'    {n:>6}  {domain:<34} {account:<34} {klass}')
+                print(f'    {n:>6}  {domain:<30} {account[:28]:<30}')
+                print(f'            {klass}')
             print(f'\n  These already exist as leads, captured before the '
                   f'engine. Cleaning\n  them up is a separate, destructive '
                   f'decision — nothing here touches them.')
