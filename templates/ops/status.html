@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Operations Status — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Administration</div>
+    <h1>Operations Status</h1>
+    <div class="crm-sub">Health, backups, mailbox subscription, certificates, workers,
+      queues and scheduled jobs. The full report is written every 10 minutes by the
+      ops-status timer; the live section below is read on this page load.</div>
+  </div>
+  <div><a class="btn btn-ghost" href="{{ url_prefix }}/admin/ops">Refresh</a></div>
+</div>
+
+{% macro rows(items) %}
+<div class="card"><div class="table-wrap"><table>
+  <thead><tr><th>Status</th><th>Check</th><th>Detail</th><th>Measured (UTC)</th></tr></thead>
+  <tbody>{% for c in items %}
+    <tr>
+      <td><span class="pill {{ pill.get(c.status, 'muted') }}">{{ c.status }}</span></td>
+      <td><b>{{ c.label }}</b><div class="meta">{{ c.key }}</div></td>
+      <td style="max-width:40rem;overflow-wrap:anywhere">{{ c.detail }}</td>
+      <td class="meta">{{ (c.measured_at or '')|replace('T', ' ')|replace('+00:00', '') }}</td>
+    </tr>
+  {% endfor %}</tbody>
+</table></div></div>
+{% endmacro %}
+
+<h2 style="margin:18px 0 8px">Latest full report</h2>
+{% if stored.report %}
+  {% set r = stored.report %}
+  <div class="kpis">
+    <div class="kpi {{ {'FAIL': 'danger', 'WARN': 'warn', 'OK': 'success'}.get(r.overall, '') }}">
+      <div class="label">Overall</div><div class="value">{{ r.overall }}</div></div>
+    <div class="kpi {{ 'warn' if stored.stale else '' }}">
+      <div class="label">Report age</div><div class="value">{{ age_text }}</div></div>
+    <div class="kpi danger"><div class="label">Fail</div><div class="value">{{ r.counts.FAIL }}</div></div>
+    <div class="kpi warn"><div class="label">Warn</div><div class="value">{{ r.counts.WARN }}</div></div>
+    <div class="kpi"><div class="label">Unknown</div><div class="value">{{ r.counts.UNKNOWN }}</div></div>
+    <div class="kpi success"><div class="label">OK</div><div class="value">{{ r.counts.OK }}</div></div>
+  </div>
+  {% if stored.stale %}
+  <div class="card" style="margin:10px 0;padding:12px;border-left:4px solid var(--p-warning)">
+    This report is older than {{ stale_minutes }} minutes. The ops-status timer has
+    stopped or is failing: <code>systemctl status procam-crm-ops-status.timer</code>.
+  </div>
+  {% endif %}
+  <div class="meta" style="margin:8px 0">Generated {{ (r.generated_at or '')|replace('T', ' ') }} on {{ r.host }}
+    {% if not r.network %}· network checks were skipped{% endif %}
+    {% if r.only %}· partial run: {{ r.only|join(', ') }}{% endif %}</div>
+  {{ rows(r.checks) }}
+{% else %}
+  <div class="empty">{{ stored.error }}<br>
+    <span class="meta">Run <code>.venv/bin/python scripts/ops_status.py --write-status {{ stored.path }}</code>
+    or install <code>procam-crm-ops-status.timer</code> (docs/operations/deploy/).</span></div>
+{% endif %}
+
+<h2 style="margin:22px 0 8px">Live from this page load</h2>
+<div class="crm-sub" style="margin-bottom:10px">Read-only queries only — no integrity scan,
+  no network, no system commands.</div>
+{{ rows(live) }}
+
+<div class="meta" style="margin:14px 0">What each check means and what to do about it:
+  docs/operations/MONITORING_GUIDE.md · JSON: <a href="{{ url_prefix }}/api/ops/status">/api/ops/status</a></div>
+
+</div><!-- /crm-wrap -->
+</body>
+</html>
