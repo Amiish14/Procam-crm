@@ -38,7 +38,7 @@ MEMORY_TURNS = 6
 
 class Answer:
     def __init__(self, *, intent_key, result, prose, scope_note=None,
-                 clarify=None, ms=0, model_used=False):
+                 clarify=None, ms=0, model_used=False, log_id=None):
         self.intent_key = intent_key
         self.result = result
         self.prose = prose
@@ -46,11 +46,14 @@ class Answer:
         self.clarify = clarify
         self.ms = ms
         self.model_used = model_used
+        #: The audit row, so §6.4 feedback can attach to this answer.
+        self.log_id = log_id
 
     def to_dict(self):
         d = {'intent': self.intent_key, 'prose': self.prose,
              'clarify': self.clarify, 'ms': self.ms,
-             'model_used': self.model_used, 'scope_note': self.scope_note}
+             'model_used': self.model_used, 'scope_note': self.scope_note,
+             'log_id': self.log_id}
         d.update(self.result.to_dict() if self.result else
                  catalogue.Result().to_dict())
         return d
@@ -70,11 +73,20 @@ def ask(question, *, sc=None, history=None, actor=None):
     intent = catalogue.get(key) if key else None
 
     if intent is None:
-        return _unrecognised(question, sc, started)
+        # Logged like any other question. "What people asked that the
+        # catalogue could not answer" is the backlog §11 asks for, and
+        # returning early without auditing is how that column stays
+        # permanently empty and the Copilot never improves.
+        answer = _unrecognised(question, sc, started)
+        answer.log_id = _audit(question, answer, sc, actor=actor)
+        return answer
 
     if intent.permission and not sc.can(intent.permission):
-        # §6.6 — never a blunt access denied.
-        return _not_entitled(intent, sc, started)
+        # §6.6 — never a blunt access denied. Audited too: repeated
+        # refusals are a sign somebody's access is configured wrongly.
+        answer = _not_entitled(intent, sc, started)
+        answer.log_id = _audit(question, answer, sc, actor=actor)
+        return answer
 
     try:
         result = intent.handler(sc, params or {})
@@ -92,7 +104,7 @@ def ask(question, *, sc=None, history=None, actor=None):
     answer = Answer(intent_key=intent.key, result=result, prose=prose,
                     scope_note=_scope_note(sc), ms=ms,
                     model_used=model_used)
-    _audit(question, answer, sc, actor=actor)
+    answer.log_id = _audit(question, answer, sc, actor=actor)
     return answer
 
 
@@ -347,7 +359,7 @@ def _audit(question, answer, sc, *, actor=None):
     try:
         from app.models.copilot import CopilotLog
 
-        db.session.add(CopilotLog(
+        row = CopilotLog(
             emp_code=actor or sc.emp_code or '',
             question=(question or '')[:1000],
             intent=answer.intent_key or '',
@@ -358,8 +370,10 @@ def _audit(question, answer, sc, *, actor=None):
             restricted=bool(answer.result and answer.result.restricted),
             model_used=answer.model_used,
             latency_ms=answer.ms,
-        ))
+        )
+        db.session.add(row)
         db.session.commit()
+        return row.id
     except Exception:
         # A failed audit write leaves the session in a failed
         # transaction, and the next query on it raises
@@ -372,6 +386,7 @@ def _audit(question, answer, sc, *, actor=None):
         except Exception:
             pass
         _log_exception('audit')
+    return None
 
 
 def _log_exception(where):

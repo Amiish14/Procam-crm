@@ -1,0 +1,424 @@
+{#
+  Procam AI — the launcher and slide-over, §6.1–§6.4.
+
+  Included on every screen. Self-contained: its own styles, its own
+  state, no dependency on the host page beyond `url_prefix`. Nothing
+  here decides what the user may see — it renders what the server
+  returns, and the server has already applied the scope.
+#}
+<style>
+  .pai-fab{
+    position:fixed; right:18px; bottom:18px; z-index:900;
+    display:flex; align-items:center; gap:8px;
+    padding:11px 16px; border:0; border-radius:26px; cursor:pointer;
+    background:var(--ink,#16202b); color:#fff;
+    font:600 13px/1 'Inter',system-ui,sans-serif;
+    box-shadow:0 3px 14px rgba(0,0,0,.22);
+  }
+  .pai-fab:hover{transform:translateY(-1px)}
+  .pai-fab kbd{
+    font:500 10.5px/1 ui-monospace,monospace; opacity:.65;
+    border:1px solid rgba(255,255,255,.3); border-radius:3px;
+    padding:2px 4px;
+  }
+  .pai-scrim{
+    position:fixed; inset:0; z-index:940; background:rgba(10,16,22,.32);
+    opacity:0; pointer-events:none; transition:opacity .16s;
+  }
+  .pai-scrim.on{opacity:1; pointer-events:auto}
+
+  .pai-panel{
+    position:fixed; top:0; right:0; bottom:0; width:min(460px,100vw);
+    z-index:950; display:flex; flex-direction:column;
+    background:var(--card,#fff); border-left:1px solid var(--border,#dfe5ea);
+    transform:translateX(102%); transition:transform .2s ease;
+    font:400 14px/1.55 'Inter',system-ui,sans-serif; color:var(--text,#3d4c5a);
+  }
+  .pai-panel.on{transform:none}
+  @media (max-width:560px){
+    .pai-panel{width:100vw; border-left:0}
+    .pai-fab{right:12px; bottom:12px; padding:10px 14px}
+    .pai-fab kbd{display:none}
+  }
+
+  .pai-hd{
+    display:flex; align-items:center; gap:10px; padding:13px 15px;
+    border-bottom:1px solid var(--border,#dfe5ea); flex:0 0 auto;
+  }
+  .pai-hd b{font:700 14.5px 'Barlow','Inter',sans-serif;
+    color:var(--ink,#16202b)}
+  .pai-hd .sub{font-size:11.5px; color:var(--text-3,#8a97a3)}
+  .pai-x{
+    margin-left:auto; border:0; background:transparent; cursor:pointer;
+    font-size:20px; line-height:1; color:var(--text-3,#8a97a3); padding:4px 6px;
+  }
+
+  .pai-ctx{
+    display:flex; align-items:center; gap:7px; margin:9px 15px 0;
+    padding:6px 10px; border-radius:14px; font-size:12px;
+    background:var(--surface-2,#eef2f5); color:var(--ink-2,#2c3b4a);
+    align-self:flex-start; max-width:calc(100% - 30px);
+  }
+  .pai-ctx button{
+    border:0; background:transparent; cursor:pointer; font-size:14px;
+    line-height:1; color:var(--text-3,#8a97a3); padding:0 2px;
+  }
+
+  .pai-body{flex:1 1 auto; overflow-y:auto; padding:14px 15px}
+  .pai-turn{margin-bottom:18px}
+  .pai-q{
+    font-weight:600; color:var(--ink,#16202b); margin-bottom:7px;
+    font-size:13.5px;
+  }
+  .pai-q::before{content:'You  '; color:var(--text-3,#8a97a3);
+    font-weight:500; font-size:11px}
+  .pai-a{font-size:13.5px}
+  .pai-prose{margin-bottom:9px}
+
+  .pai-note{
+    font-size:11.5px; color:var(--text-3,#8a97a3); margin-bottom:8px;
+    font-style:italic;
+  }
+  .pai-src{
+    font-size:11px; color:var(--text-3,#8a97a3); margin-top:7px;
+    padding-top:6px; border-top:1px dotted var(--border,#dfe5ea);
+  }
+  .pai-src b{font-weight:600; color:var(--text-2,#61717f)}
+
+  .pai-figs{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:9px}
+  .pai-fig{
+    padding:5px 9px; border-radius:4px; font-size:12px;
+    background:var(--surface,#f1f4f7);
+  }
+  .pai-fig b{font-variant-numeric:tabular-nums; color:var(--ink,#16202b)}
+
+  .pai-tw{overflow-x:auto; margin-bottom:9px}
+  .pai-t{border-collapse:collapse; width:100%; font-size:12px}
+  .pai-t th{
+    text-align:left; font:600 10px/1.3 'Inter'; letter-spacing:.05em;
+    text-transform:uppercase; color:var(--text-3,#8a97a3);
+    padding:6px 8px; border-bottom:1px solid var(--border-2,#c9d3db);
+    white-space:nowrap;
+  }
+  .pai-t td{padding:6px 8px; border-bottom:1px solid var(--border,#eef2f5);
+    vertical-align:top}
+  .pai-chip{
+    background:none; border:0; padding:0; cursor:pointer; text-align:left;
+    color:var(--accent,#2f5d7c); font:inherit; text-decoration:underline;
+    text-underline-offset:2px;
+  }
+
+  .pai-acts{display:flex; gap:6px; flex-wrap:wrap; margin-top:8px}
+  .pai-acts button{
+    font:600 11.5px 'Inter'; padding:4px 9px; cursor:pointer;
+    border:1px solid var(--border-2,#c9d3db); border-radius:4px;
+    background:var(--card,#fff); color:var(--text-2,#61717f);
+  }
+  .pai-acts button:hover{border-color:var(--ink,#16202b);
+    color:var(--ink,#16202b)}
+  .pai-acts button.on{background:var(--ink,#16202b); color:#fff;
+    border-color:var(--ink,#16202b)}
+
+  .pai-chips{display:flex; flex-wrap:wrap; gap:6px; margin-top:10px}
+  .pai-chips button{
+    font:500 12px 'Inter'; padding:6px 11px; cursor:pointer;
+    border:1px solid var(--border-2,#c9d3db); border-radius:14px;
+    background:var(--card,#fff); color:var(--text-2,#61717f);
+  }
+  .pai-chips button:hover{border-color:var(--ink,#16202b);
+    color:var(--ink,#16202b)}
+
+  .pai-hello{color:var(--text-2,#61717f); font-size:13.5px}
+  .pai-hello b{color:var(--ink,#16202b)}
+
+  .pai-ft{
+    flex:0 0 auto; border-top:1px solid var(--border,#dfe5ea);
+    padding:11px 15px; display:flex; gap:8px; align-items:flex-end;
+  }
+  .pai-ft textarea{
+    flex:1; resize:none; min-height:38px; max-height:110px;
+    font:400 13.5px/1.45 'Inter'; padding:9px 11px;
+    border:1px solid var(--border-2,#c9d3db); border-radius:6px;
+    background:var(--surface,#fbfcfd); color:var(--ink,#16202b);
+  }
+  .pai-ft button{
+    border:0; border-radius:6px; cursor:pointer; padding:10px 14px;
+    background:var(--ink,#16202b); color:#fff; font:600 13px 'Inter';
+  }
+  .pai-ft button:disabled{opacity:.45; cursor:default}
+
+  .pai-scope{
+    font-size:11px; color:var(--text-3,#8a97a3); padding:0 15px 9px;
+  }
+  .pai-load{
+    display:inline-block; width:8px; height:8px; border-radius:50%;
+    background:var(--text-3,#8a97a3); animation:paiPulse 1s infinite;
+  }
+  @keyframes paiPulse{0%,100%{opacity:.25}50%{opacity:1}}
+  @media (prefers-reduced-motion:reduce){
+    .pai-panel,.pai-scrim{transition:none}
+    .pai-load{animation:none}
+  }
+</style>
+
+<button class="pai-fab" id="paiFab" type="button"
+        aria-haspopup="dialog" aria-controls="paiPanel">
+  Ask Procam AI <kbd>Ctrl K</kbd>
+</button>
+
+<div class="pai-scrim" id="paiScrim" hidden></div>
+
+<aside class="pai-panel" id="paiPanel" role="dialog" aria-modal="false"
+       aria-label="Procam AI" hidden>
+  <div class="pai-hd">
+    <div>
+      <b>Procam AI</b>
+      <div class="sub" id="paiModel">answers from the CRM you can see</div>
+    </div>
+    <button class="pai-x" id="paiClose" aria-label="Close">&times;</button>
+  </div>
+  <div id="paiCtxWrap"></div>
+  <div class="pai-scope" id="paiScope"></div>
+  <div class="pai-body" id="paiBody"></div>
+  <div class="pai-ft">
+    <textarea id="paiInput" rows="1" placeholder="Ask about leads, quotes, accounts…"
+              aria-label="Ask Procam AI"></textarea>
+    <button id="paiSend" type="button">Ask</button>
+  </div>
+</aside>
+
+<script>
+(function(){
+  var PREFIX = '{{ url_prefix }}';
+  var panel = document.getElementById('paiPanel');
+  var scrim = document.getElementById('paiScrim');
+  var body  = document.getElementById('paiBody');
+  var input = document.getElementById('paiInput');
+  var send  = document.getElementById('paiSend');
+  var ctxWrap = document.getElementById('paiCtxWrap');
+  var loaded = false;
+  var history = [];
+  var context = null;
+
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  function csrf(){
+    var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+    return m ? m[1] : '';
+  }
+
+  function jf(url, opts){
+    opts = opts || {};
+    opts.headers = Object.assign(
+      {'Content-Type':'application/json','X-CSRFToken':csrf()},
+      opts.headers || {});
+    if (url.charAt(0) === '/' && url.indexOf(PREFIX) !== 0) url = PREFIX + url;
+    return fetch(url, opts).then(function(r){ return r.json(); });
+  }
+
+  // ── §6.3 context: what record is the user looking at? ──────────
+  function detectContext(){
+    var m = location.pathname.match(
+      /\/(lead|opportunity|account|company|quote|rfq)s?\/(\d+)/i);
+    if (m) return {type:m[1].toLowerCase(), id:m[2], label:m[1]+' #'+m[2]};
+    var h = (location.hash || '').match(/(lead|opp|account|quote|rfq)[=\/](\d+)/i);
+    if (h) return {type:h[1].toLowerCase(), id:h[2], label:h[1]+' #'+h[2]};
+    return null;
+  }
+
+  function renderContext(){
+    if (!context){ ctxWrap.innerHTML = ''; return; }
+    ctxWrap.innerHTML =
+      '<div class="pai-ctx">Asking about <b>&nbsp;' + esc(context.label) +
+      '</b><button type="button" id="paiCtxX" title="Ask about everything ' +
+      'instead">&times;</button></div>';
+    var x = document.getElementById('paiCtxX');
+    if (x) x.onclick = function(){ context = null; renderContext(); };
+  }
+
+  // ── open / close ────────────────────────────────────────────────
+  function open(){
+    panel.hidden = false; scrim.hidden = false;
+    requestAnimationFrame(function(){
+      panel.classList.add('on'); scrim.classList.add('on');
+    });
+    input.focus();
+    if (!loaded){ loaded = true; firstRun(); }
+  }
+  function close(){
+    panel.classList.remove('on'); scrim.classList.remove('on');
+    setTimeout(function(){ panel.hidden = true; scrim.hidden = true; }, 180);
+  }
+
+  document.getElementById('paiFab').onclick = open;
+  document.getElementById('paiClose').onclick = close;
+  scrim.onclick = close;
+
+  document.addEventListener('keydown', function(e){
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')){
+      e.preventDefault();
+      panel.hidden ? open() : close();
+    }
+    if (e.key === 'Escape' && !panel.hidden) close();
+  });
+
+  // ── first run: greeting + role-aware chips, §6.2 ─────────────────
+  function firstRun(){
+    context = detectContext();
+    renderContext();
+    body.innerHTML = '<div class="pai-hello">Ask me about your leads, ' +
+      'quotes, RFQs and accounts. I answer from the CRM, and only from ' +
+      'what <b>you</b> can already see.</div>';
+    jf('/api/copilot/suggestions').then(function(j){
+      if (!j || !j.ok) return;
+      document.getElementById('paiScope').textContent = j.scope_note || '';
+      if (j.model && !j.model.available){
+        document.getElementById('paiModel').textContent =
+          'rules only — no model host configured';
+      }
+      var chips = document.createElement('div');
+      chips.className = 'pai-chips';
+      (j.suggestions || []).forEach(function(s){
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = s.label;
+        b.onclick = function(){ askIt(s.example || s.label); };
+        chips.appendChild(b);
+      });
+      body.appendChild(chips);
+    });
+  }
+
+  // ── asking ──────────────────────────────────────────────────────
+  function askIt(q){
+    q = (q || '').trim();
+    if (!q) return;
+    input.value = '';
+    var turn = document.createElement('div');
+    turn.className = 'pai-turn';
+    turn.innerHTML = '<div class="pai-q">' + esc(q) + '</div>' +
+      '<div class="pai-a"><span class="pai-load"></span></div>';
+    body.appendChild(turn);
+    body.scrollTop = body.scrollHeight;
+    send.disabled = true;
+
+    var payload = {q: q, history: history.slice(-6)};
+    if (context) payload.context = context;
+
+    jf('/api/copilot/ask', {method:'POST', body: JSON.stringify(payload)})
+      .then(function(j){
+        send.disabled = false;
+        if (!j || !j.ok){
+          turn.querySelector('.pai-a').textContent =
+            'Something went wrong asking that.';
+          return;
+        }
+        history.push(q);
+        turn.querySelector('.pai-a').innerHTML = renderAnswer(j);
+        wireChips(turn, j);
+        body.scrollTop = body.scrollHeight;
+      })
+      .catch(function(){
+        send.disabled = false;
+        turn.querySelector('.pai-a').textContent =
+          'Could not reach the CRM. Nothing was changed.';
+      });
+  }
+
+  function renderAnswer(j){
+    var html = '<div class="pai-prose">' + esc(j.prose || '') + '</div>';
+
+    (j.notes || []).forEach(function(n){
+      html += '<div class="pai-note">' + esc(n) + '</div>';
+    });
+
+    var figs = j.figures || {};
+    var keys = Object.keys(figs);
+    if (keys.length && !(j.rows || []).length){
+      html += '<div class="pai-figs">';
+      keys.forEach(function(k){
+        html += '<span class="pai-fig">' + esc(k.replace(/_/g,' ')) +
+                ' <b>' + esc(figs[k]) + '</b></span>';
+      });
+      html += '</div>';
+    }
+
+    var rows = j.rows || [], cols = j.columns || [];
+    if (rows.length && cols.length){
+      html += '<div class="pai-tw"><table class="pai-t"><thead><tr>';
+      cols.forEach(function(c){ html += '<th>' + esc(c) + '</th>'; });
+      html += '</tr></thead><tbody>';
+      rows.forEach(function(r, i){
+        html += '<tr>';
+        cols.forEach(function(c, ci){
+          var v = esc(r[c]);
+          if (ci === 0 && r._chip){
+            v = '<button class="pai-chip" data-row="' + i + '">' + v +
+                '</button>';
+          }
+          html += '<td>' + v + '</td>';
+        });
+        html += '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+
+    if ((j.sources || []).length){
+      html += '<div class="pai-src"><b>From</b> ' +
+              esc((j.sources || []).join(' · ')) + '</div>';
+    }
+
+    // §6.4 — feedback on every answer
+    if (j.log_id || j.intent){
+      html += '<div class="pai-acts">' +
+        '<button type="button" data-fb="1">Helpful</button>' +
+        '<button type="button" data-fb="0">Not helpful</button>' +
+        '</div>';
+    }
+    return html;
+  }
+
+  function wireChips(turn, j){
+    turn.querySelectorAll('.pai-chip').forEach(function(btn){
+      btn.onclick = function(){
+        var chip = (j.rows[+btn.dataset.row] || {})._chip;
+        if (!chip) return;
+        var path = {lead:'/leads/', opportunity:'/opportunities/',
+                    company:'/accounts/', quote:'/quotes/',
+                    rfq:'/rfqs/', handover:'/handovers/'}[chip.type];
+        if (path) location.href = PREFIX + path + chip.id;
+      };
+    });
+    turn.querySelectorAll('[data-fb]').forEach(function(btn){
+      btn.onclick = function(){
+        var helpful = btn.dataset.fb === '1';
+        turn.querySelectorAll('[data-fb]').forEach(function(b){
+          b.classList.remove('on');
+        });
+        btn.classList.add('on');
+        var reason = null;
+        if (!helpful){
+          reason = prompt('What was wrong? (wrong record / missing ' +
+                          'information / wrong interpretation / wrong ' +
+                          'calculation / access issue / CRM data is wrong)');
+        }
+        jf('/api/copilot/feedback', {method:'POST', body: JSON.stringify(
+          {log_id: j.log_id, helpful: helpful, reason: reason})});
+      };
+    });
+  }
+
+  send.onclick = function(){ askIt(input.value); };
+  input.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); askIt(input.value); }
+  });
+  input.addEventListener('input', function(){
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 110) + 'px';
+  });
+})();
+</script>

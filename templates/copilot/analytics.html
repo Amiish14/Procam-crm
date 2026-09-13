@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Procam AI — Adoption</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+        gap:1px;background:var(--border);border:1px solid var(--border);
+        margin-bottom:20px}
+  .k{background:var(--card);padding:13px 15px}
+  .k .n{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;
+        line-height:1.1}
+  .k .l{font-size:11.5px;color:var(--text-2);margin-top:3px}
+  .k.warn .n{color:var(--amber,#b45309)}
+  table{border-collapse:collapse;width:100%;font-size:13px;
+        background:var(--card);border:1px solid var(--border)}
+  th{text-align:left;font-size:11px;text-transform:uppercase;
+     letter-spacing:.05em;color:var(--text-3);padding:8px 11px;
+     border-bottom:1px solid var(--border-2);background:var(--surface)}
+  td{padding:8px 11px;border-bottom:1px solid var(--border)}
+  h2{font-family:'Barlow',sans-serif;font-size:19px;margin:26px 0 10px}
+  .mdl{padding:11px 14px;border-radius:var(--r);margin-bottom:18px;
+       font-size:13px}
+  .mdl.on{background:var(--green-soft,#e2f0ec)}
+  .mdl.off{background:var(--amber-soft,#fbf0df)}
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+<div class="hero">
+  <div>
+    <h1>Procam AI — Adoption</h1>
+    <div style="color:var(--text-2);font-size:13px;margin-top:4px">
+      What people ask, what it could not answer, and how fast. The
+      unanswered list is the backlog — it says what to build next.
+    </div>
+  </div>
+</div>
+
+<div id="model"></div>
+<div class="kpis" id="kpis"></div>
+<h2>What was asked</h2>
+<div id="intents"></div>
+<h2>Could not answer</h2>
+<div id="unmatched"></div>
+<h2>Slower than 2 seconds</h2>
+<div id="slow"></div>
+
+<script>
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+function table(host, cols, rows, empty){
+  const el = document.getElementById(host);
+  if(!rows.length){ el.innerHTML = '<div class="empty">'+empty+'</div>'; return; }
+  el.innerHTML = '<table><thead><tr>'
+    + cols.map(c=>'<th>'+esc(c[0])+'</th>').join('')
+    + '</tr></thead><tbody>'
+    + rows.map(r=>'<tr>'+cols.map(c=>'<td>'+esc(c[1](r))+'</td>').join('')+'</tr>').join('')
+    + '</tbody></table>';
+}
+
+fetch('{{ url_prefix }}/api/copilot/analytics?days=30')
+  .then(r=>r.json()).then(j=>{
+  if(!j.ok) return;
+
+  const m = j.model || {};
+  document.getElementById('model').innerHTML =
+    '<div class="mdl '+(m.available?'on':'off')+'">'
+    + (m.available
+        ? 'Model host: <b>'+esc(m.base_url)+'</b> · '+esc(m.model)
+        : 'No model — answering from rules alone. '+esc(m.reason||''))
+    + '</div>';
+
+  const k=(cls,n,l)=>`<div class="k ${cls}"><div class="n">${n}</div>
+    <div class="l">${l}</div></div>`;
+  document.getElementById('kpis').innerHTML =
+      k('', j.total, 'questions asked')
+    + k('', (j.answer_rate==null?'—':j.answer_rate+'%'), 'answered')
+    + k('', (j.satisfaction==null?'—':j.satisfaction+'%'),
+        j.rated ? j.rated+' rated' : 'nothing rated yet')
+    + k(j.unmatched.length?'warn':'', j.unmatched.length,
+        'unrecognised questions');
+
+  table('intents', [['Intent', r=>r.intent], ['Asked', r=>r.count]],
+        j.by_intent, 'Nothing asked yet.');
+  table('unmatched', [['Question', r=>r.question],
+                      ['Who', r=>r.emp_code],
+                      ['When', r=>r.created_at]],
+        j.unmatched, 'Everything asked was recognised.');
+  table('slow', [['Question', r=>r.question], ['Intent', r=>r.intent],
+                 ['ms', r=>r.latency_ms]],
+        j.slow, 'Nothing took longer than two seconds.');
+});
+</script>
+</div>
+</body>
+</html>
