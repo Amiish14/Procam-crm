@@ -1410,7 +1410,18 @@ def _follow_up(question, state, sc):
     rest = re.sub(r'\b(?:only|just|instead|please|then|too|as well)\b', ' ',
                   rest, flags=re.IGNORECASE)
     candidate = ' '.join(rest.split()).strip(' ?.!,')
-    if candidate and any(w[:1].isupper() for w in candidate.split()):
+    if not lead:
+        # Without "and…", "what about…", "only…" leading it, a short
+        # question is a follow-up only when it is nothing BUT modifiers.
+        # "how is everyone today" has a window in it and is a new
+        # question; reading it as the last answer for one day would be
+        # confidently answering something nobody asked. A bare name is
+        # left to search for the same reason.
+        leftover = re.sub(r'\b(?:the|in|of|for|and|a|an)\b', ' ', candidate,
+                          flags=re.IGNORECASE).strip(' ?.!,')
+        if leftover:
+            return None
+    elif candidate and any(w[:1].isupper() for w in candidate.split()):
         name = _clean_name(candidate)
     if name:
         if 'account' in declared:

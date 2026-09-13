@@ -312,6 +312,31 @@ def test_and_for_an_account_switches_to_its_account_variant(world):
         assert 'OPP-CV-MINE' in _text(a)
 
 
+def test_an_account_name_keeps_its_own_small_words(world):
+    """"and", "of", "the" inside a company's name are part of the name."""
+    state = ('pipeline_value', {})
+    plan = svc._follow_up('what about Sons and Partners of the Coast',
+                          state, None)
+    assert plan.key == 'account_pipeline'
+    assert plan.params == {'account': 'Sons and Partners of the Coast'}
+
+
+def test_a_new_question_with_a_time_word_is_not_a_follow_up(world):
+    """Only questions made of modifiers continue the conversation —
+    "how is everyone today" has a window in it and is not "the last
+    answer, for one day"."""
+    with flask_app.app_context():
+        sc = _sc('CVREP')
+        cid = svc.ask('new leads this week', sc=sc).conversation_id
+        for question in ('how is everyone today',
+                         'is the office open this month'):
+            a = svc.ask(question, sc=sc, conversation_id=cid)
+            assert a.resolution != 'memory', question
+        bare = svc.ask('Project Freight only', sc=sc, conversation_id=cid)
+        assert bare.resolution == 'memory'
+        assert bare.result.filters == {'vertical': 'Project Freight'}
+
+
 def test_a_modifier_the_intent_cannot_take_is_said_not_dropped(world):
     with flask_app.app_context():
         sc = _sc('CVREP')
