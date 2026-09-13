@@ -329,17 +329,42 @@ def _one(conn, sql):
         return None
 
 
+def backup_files(folder):
+    """Every file in ``folder`` that looks like a database backup — the
+    script's own procam_crm-*.db and the hand-made .bak copies."""
+    if not os.path.isdir(folder):
+        return []
+    return [os.path.join(folder, f) for f in os.listdir(folder)
+            if f.endswith(('.db', '.sqlite', '.bak')) or '.db.' in f]
+
+
+def newest_backup(folder):
+    files = backup_files(folder)
+    return max(files, key=os.path.getmtime) if files else None
+
+
+def subscription_id_file(root=None):
+    return _env('LEADS_SUBSCRIPTION_ID_FILE') or os.path.join(
+        root or _ROOT, '.leads_subscription_id')
+
+
+def copilot_coverage(conn):
+    """(leads, indexed leads or None when the table is missing, leads
+    with an enquiry to index)."""
+    leads = _one(conn, 'SELECT COUNT(*) FROM leads') or 0
+    indexed = _one(conn, 'SELECT COUNT(DISTINCT lead_id) FROM copilot_chunk')
+    with_text = _one(conn, "SELECT COUNT(*) FROM leads WHERE "
+                           "COALESCE(original_email_body, '') != ''")
+    return leads, indexed, with_text
+
+
 def check_ops(rep, conn, db_path):
     area = 'ops'
     backups = os.path.join(_ROOT, 'backups')
-    files = []
-    if os.path.isdir(backups):
-        files = [os.path.join(backups, f) for f in os.listdir(backups)
-                 if f.endswith(('.db', '.sqlite', '.bak')) or '.db.' in f]
-    if not files:
+    newest = newest_backup(backups)
+    if not newest:
         rep.add(area, 'backups', FAIL, f'no database backup in {backups}')
     else:
-        newest = max(files, key=os.path.getmtime)
         age_h = (time.time() - os.path.getmtime(newest)) / 3600
         small = (db_path and os.path.exists(db_path) and
                  os.path.getsize(newest) < 0.5 * os.path.getsize(db_path))
@@ -353,8 +378,7 @@ def check_ops(rep, conn, db_path):
     rep.add(area, 'disk free', FAIL if free < 1 else WARN if free < 5
             else PASS, f'{free:.1f} GB on the database volume')
 
-    sub = _env('LEADS_SUBSCRIPTION_ID_FILE') or os.path.join(
-        _ROOT, '.leads_subscription_id')
+    sub = subscription_id_file()
     if os.path.exists(sub):
         age_d = (time.time() - os.path.getmtime(sub)) / 86400
         rep.add(area, 'Graph subscription', WARN if age_d > 2.5 else PASS,
@@ -366,10 +390,7 @@ def check_ops(rep, conn, db_path):
         rep.add(area, 'Graph subscription', WARN, 'no subscription id file '
                 '— real-time ingest is not subscribed from this host')
 
-    leads = _one(conn, 'SELECT COUNT(*) FROM leads') or 0
-    indexed = _one(conn, 'SELECT COUNT(DISTINCT lead_id) FROM copilot_chunk')
-    with_text = _one(conn, "SELECT COUNT(*) FROM leads WHERE "
-                           "COALESCE(original_email_body, '') != ''")
+    leads, indexed, with_text = copilot_coverage(conn)
     if indexed is None:
         rep.add(area, 'Copilot index', WARN, 'copilot_chunk table missing')
     else:

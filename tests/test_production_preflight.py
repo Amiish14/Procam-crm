@@ -122,3 +122,18 @@ def test_a_missing_backup_fails(tmp_path, monkeypatch):
     with read_only_engine('sqlite:///' + str(path)).connect() as conn:
         pf.check_ops(rep, conn, str(path))
     assert _status(rep, 'backups') == pf.PASS
+
+
+def test_backup_helpers_find_backups_and_ignore_other_files(tmp_path):
+    """app/ops/checks.py reuses these; they must agree with check_ops."""
+    assert pf.backup_files(str(tmp_path / 'absent')) == []
+    assert pf.newest_backup(str(tmp_path)) is None
+    (tmp_path / 'notes.txt').write_text('x')
+    old = tmp_path / 'procam_crm-2026-01-01-000000.db'
+    old.write_text('x')
+    os.utime(old, (1_700_000_000, 1_700_000_000))
+    new = tmp_path / 'procam_crm.db.bak-today'
+    new.write_text('x')
+    assert sorted(os.path.basename(f) for f in pf.backup_files(
+        str(tmp_path))) == [old.name, new.name]
+    assert pf.newest_backup(str(tmp_path)) == str(new)
