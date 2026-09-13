@@ -584,6 +584,36 @@ def has_substance(msg):
     return bool((msg.get('_attachment_text') or '').strip())
 
 
+#: The words the scorer treats as evidence of an enquiry, extracted so
+#: a correction can be learned from later. Kept in step with the
+#: patterns in confidence_parts() — these are the same vocabulary, named.
+_KEYWORD_PATTERNS = (
+    ('rfq', r'\brfq\b'), ('rfp', r'\brfp\b'), ('rfi', r'\brfi\b'),
+    ('tender', r'\btender\b'), ('quotation', r'\bquotation\b'),
+    ('quote', r'\bquote\b'), ('enquiry', r'\b(enquiry|inquiry)\b'),
+    ('cargo', r'\bcargo\b'), ('consignment', r'\bconsignment\b'),
+    ('shipment', r'\bshipment\b'), ('container', r'\bcontainers?\b'),
+    ('freight', r'\bfreight\b'), ('odc', r'\bodc\b'),
+    ('breakbulk', r'\bbreak[\s-]?bulk\b'), ('trailer', r'\btrailers?\b'),
+    ('vessel', r'\bvessel\b'), ('transport', r'\btransport(ation)?\b'),
+    ('logistics', r'\blogistics\b'), ('clearance', r'\bclearance\b'),
+    ('warehouse', r'\bwarehous\w*'), ('charter', r'\bcharter\w*'),
+    ('rigging', r'\brigging\b'), ('axle', r'\baxles?\b'),
+    ('heavy lift', r'\bheavy[\s-]?lift\b'), ('tonnes', r'\b(tonnes?|mts?)\b'),
+)
+
+
+def keywords(msg):
+    """The enquiry vocabulary actually present in this message.
+
+    Stored with every classification so the learning engine can ask
+    which words keep appearing in mail that people correct — the
+    "extracted keywords" the training dataset is meant to carry.
+    """
+    low = searchable_text(msg).lower()
+    return [name for name, rx in _KEYWORD_PATTERNS if re.search(rx, low)]
+
+
 def confidence_parts(msg, ctx=None, *, sender_is_internal=False,
                      kind='fresh', from_domain=''):
     """The score broken into named contributions.

@@ -820,3 +820,19 @@ def test_the_hint_never_decides_on_its_own():
                              'cargo, urgent requirement.',
                         frm='enquiry@somelogistics.com'), li.Context())
     assert d.klass == K.NEW_LEAD
+
+
+# ── B5 — the evidence travels with the verdict ───────────────────────
+def test_keywords_are_extracted_from_subject_body_and_attachments():
+    m = msg(subject='RFQ for ODC cargo', body='Please quote 40 MT to Kandla',
+            attachments=[{'name': 'Breakbulk_list.xlsx'}])
+    kws = li.keywords(m)
+    for expected in ('rfq', 'odc', 'cargo', 'quote', 'breakbulk', 'tonnes'):
+        assert expected in kws, (expected, kws)
+
+
+def test_a_newsletter_yields_no_enquiry_keywords():
+    """The other half: a keyword list that finds something everywhere
+    is not evidence of anything."""
+    m = msg(subject='Monthly newsletter', body='Read our latest articles.')
+    assert li.keywords(m) == []

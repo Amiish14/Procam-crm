@@ -350,7 +350,20 @@ def _reviewable(msg, decision=None):
             'attachments': li.attachment_names(msg)[:20],
             'resolved_sender': msg.get('_resolved_sender') or '',
             'forward_resolved': bool(msg.get('_forward_resolved')),
+            # The training dataset carries the evidence, not only the
+            # verdict: which enquiry words were present, and which named
+            # contributions produced the confidence score. Without them a
+            # correction says the engine was wrong but not what misled it.
+            'keywords': li.keywords(msg),
         }
+        try:
+            out['score_parts'] = [
+                [name, n] for name, n in li.confidence_parts(
+                    msg, sender_is_internal=False,
+                    kind=li.subject_kind(msg.get('subject') or ''),
+                    from_domain=li.domain_of(li.effective_sender(msg)))]
+        except Exception:
+            pass
         # Phase 4 — what the model said, and whether it was applied, kept
         # beside the rule's own answer so the two can be compared once
         # there is enough of both to judge.

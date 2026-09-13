@@ -521,3 +521,19 @@ def test_resolution_works_without_any_text(world):
     with flask_app.app_context():
         company, how = lidb.resolve_account('newbuyer@tatasteel.com')
         assert company is not None and how == 'account email domain'
+
+
+def test_the_training_payload_carries_keywords_and_score_parts(world):
+    """A correction says the engine was wrong. The keywords and the named
+    score contributions say what misled it — without them the dataset
+    cannot be learned from, only counted."""
+    with flask_app.app_context():
+        m = {'subject': 'RFQ for ODC cargo',
+             'body': {'content': 'Please quote 40 MT to Kandla'},
+             'from': {'emailAddress': {'address': 'buyer@x.com'}},
+             'toRecipients': [], 'ccRecipients': []}
+        p = lidb._reviewable(m)
+        assert 'rfq' in p['keywords'] and 'odc' in p['keywords']
+        names = [name for name, _n in p['score_parts']]
+        assert 'base' in names
+        assert 'asks for a price' in names
