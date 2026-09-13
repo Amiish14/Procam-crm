@@ -75,6 +75,17 @@
   .pai-a{font-size:13.5px}
   .pai-prose{margin-bottom:9px}
 
+  /* Facts and suggestions look different on purpose. A figure read from
+     the CRM and "call this lead" must never be mistaken for each other. */
+  .pai-kind{
+    display:inline-block; font:600 10px/1 'Inter'; letter-spacing:.06em;
+    text-transform:uppercase; padding:3px 6px; border-radius:3px;
+    margin-bottom:6px;
+  }
+  .pai-kind.fact{background:var(--surface-2,#eef2f5); color:var(--text-2,#61717f)}
+  .pai-kind.suggest{background:#fff4dc; color:#8a5a00}
+  .pai-kind.ai{background:#e9eefc; color:#2e4a9a}
+  .pai-suggest{border-left:3px solid #d9a441; padding-left:9px}
   .pai-note{
     font-size:11.5px; color:var(--text-3,#8a97a3); margin-bottom:8px;
     font-style:italic;
@@ -454,7 +465,13 @@
   }
 
   function renderAnswer(j){
-    var html = '<div class="pai-prose">' + esc(j.prose || '') + '</div>';
+    // What kind of statement this is, said before the statement.
+    var kind = j.recommendation
+      ? '<span class="pai-kind suggest">Suggestion</span>'
+      : j.model_used
+        ? '<span class="pai-kind ai">AI summary of CRM data</span>'
+        : '<span class="pai-kind fact">From the CRM</span>';
+    var html = kind + '<div class="pai-prose">' + esc(j.prose || '') + '</div>';
 
     (j.notes || []).forEach(function(n){
       html += '<div class="pai-note">' + esc(n) + '</div>';
@@ -473,7 +490,8 @@
 
     var rows = j.rows || [], cols = j.columns || [];
     if (rows.length && cols.length){
-      html += '<div class="pai-tw"><table class="pai-t"><thead><tr>';
+      html += '<div class="pai-tw' + (j.recommendation ? ' pai-suggest' : '')
+            + '"><table class="pai-t"><thead><tr>';
       cols.forEach(function(c){ html += '<th>' + esc(c) + '</th>'; });
       html += '</tr></thead><tbody>';
       rows.forEach(function(r, i){

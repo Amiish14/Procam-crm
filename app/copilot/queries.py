@@ -1066,6 +1066,7 @@ def next_best_action(scope, params):
              'Idle days': idle, 'Why': reason, '_chip': _lead_chip(l)}
             for _s, l, reason, idle, v in scored[:limit]]
     return Result(headline=f'{len(rows)} lead(s) worth your attention first.',
+                  recommendation=True,
                   columns=['Company', 'Stage', 'Value', 'Idle days', 'Why'],
                   rows=rows, figures={'count': len(scored)},
                   sources=['lead_emails.sent_or_received_at',

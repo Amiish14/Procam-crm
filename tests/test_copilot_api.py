@@ -445,3 +445,38 @@ def test_analytics_reports_whether_the_text_index_exists(world):
     assert 'index' in body
     assert 'chunks' in body['index']
     assert 'backend' in body['index']
+
+
+# ── C3 / C5 ──────────────────────────────────────────────────────────
+def test_a_suggestion_is_marked_as_one(world):
+    """§3.5 — facts and recommendations visually distinct. The flag is
+    what the panel styles on."""
+    from app.copilot import intents as cat
+    from app.access import scope as sc_mod
+    with flask_app.app_context():
+        sc = sc_mod.for_employee('CAREP')
+        assert cat.get('next_best_action').handler(sc, {}).recommendation \
+            is True or cat.get('next_best_action').handler(sc, {}).empty
+        assert cat.get('leads_open').handler(sc, {}).recommendation is False
+
+
+def test_the_panel_labels_facts_suggestions_and_ai_summaries(world):
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, 'templates', '_copilot_panel.html')) as fh:
+        src = fh.read()
+    render = src[src.index('function renderAnswer'):]
+    render = render[:render.index('var figs')]
+    assert 'j.recommendation' in render and 'Suggestion' in render
+    assert 'j.model_used' in render and 'AI summary' in render
+    assert 'From the CRM' in render
+
+
+def test_the_answer_is_logged(world):
+    """§11 lists the answer. The headline, not the rows."""
+    from app.models.copilot import CopilotLog
+    body = _c('CAREP').post('/api/copilot/ask',
+                            json={'q': 'my open leads'}).get_json()
+    with flask_app.app_context():
+        row = db.session.get(CopilotLog, body['log_id'])
+        assert row.answer == body['headline']
+        assert len(row.answer) <= 500

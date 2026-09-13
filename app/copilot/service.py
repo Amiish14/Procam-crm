@@ -639,6 +639,8 @@ def _audit(question, answer, sc, *, actor=None):
             data_scope=sc.data_scope,
             sources=', '.join((answer.result.sources
                                if answer.result else []))[:500],
+            answer=((answer.result.headline if answer.result else '')
+                    or answer.prose or '')[:500],
             answered=bool(answer.result and not answer.result.empty),
             restricted=bool(answer.result and answer.result.restricted),
             model_used=answer.model_used,

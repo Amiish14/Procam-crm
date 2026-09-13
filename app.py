@@ -3853,6 +3853,7 @@ def init_db():
             ('leads',         'vertical_confidence', 'INTEGER'),
             ('leads',         'vertical_reason',     'VARCHAR(200)'),
             ('lead_notes',    'revisions',           'TEXT'),
+            ('copilot_log',   'answer',              'VARCHAR(500)'),
         ]
         for tbl, col, dtype in _adds:
             try:

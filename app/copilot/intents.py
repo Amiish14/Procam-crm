@@ -52,6 +52,9 @@ class Result:
     restricted: bool = False
     #: Free-text caveats: incomplete data, an assumption, a window.
     notes: list = field(default_factory=list)
+    #: True when the rows are suggestions rather than facts — the panel
+    #: styles them apart so "call this lead" is never read as a record.
+    recommendation: bool = False
 
     def to_dict(self):
         return {
@@ -59,6 +62,7 @@ class Result:
             'rows': self.rows, 'figures': self.figures,
             'sources': self.sources, 'empty': self.empty,
             'restricted': self.restricted, 'notes': self.notes,
+            'recommendation': self.recommendation,
         }
 
 

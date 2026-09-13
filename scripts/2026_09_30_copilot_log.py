@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS copilot_log (
     intent           VARCHAR(60),
     data_scope       VARCHAR(12),
     sources          VARCHAR(500),
+    answer           VARCHAR(500),
     answered         INTEGER DEFAULT 0,
     restricted       INTEGER DEFAULT 0,
     model_used       INTEGER DEFAULT 0,
@@ -110,6 +111,7 @@ INDEXES = (
 ADD_COLUMNS = (
     ('pinned', 'INTEGER DEFAULT 0'),
     ('pinned_at', 'DATETIME'),
+    ('answer', 'VARCHAR(500)'),
 )
 
 

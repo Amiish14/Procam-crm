@@ -239,4 +239,4 @@ def test_only_the_four_actions_the_brief_names_exist(world):
     """Adding a fifth should be a code change somebody reviews, not
     something that appears because a model asked for it."""
     assert set(actions.ACTIONS) == {
-        'create_activity', 'set_followup', 'reassign_lead', 'update_stage'}
+        'create_activity', 'create_reminder', 'reassign_lead', 'update_stage'}

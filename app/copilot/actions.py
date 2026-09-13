@@ -189,8 +189,13 @@ def create_activity(scope, params, *, commit=False, actor=None):
             'message': f'Logged on {lead.company}.'}, None
 
 
-@action('set_followup', 'Set a follow-up date', permission=None)
-def set_followup(scope, params, *, commit=False, actor=None):
+@action('create_reminder', 'Create a reminder', permission=None)
+def create_reminder(scope, params, *, commit=False, actor=None):
+    """§10 names "create reminder". In this CRM a reminder IS the lead's
+    follow-up date: it is what drives Overdue and Due Today on My Work and
+    the Copilot's own follow-ups list, so a separate reminder record would
+    be a second place to look that nothing else reads.
+    """
     from datetime import date
 
     from app import db
@@ -206,7 +211,7 @@ def set_followup(scope, params, *, commit=False, actor=None):
 
     if not commit:
         return _proposal(
-            'set_followup', target=f'lead:{lead.id}',
+            'create_reminder', target=f'lead:{lead.id}',
             summary=(f'Set the follow-up on {lead.company} to {when} '
                      f'(currently {lead.followup_date or "none"}).'),
             changes={'lead_id': lead.id, 'date': str(when)}), None

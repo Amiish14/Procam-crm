@@ -24,6 +24,11 @@ class CopilotLog(db.Model):
     intent        = db.Column(db.String(60), index=True)
     data_scope    = db.Column(db.String(12))
     sources       = db.Column(db.String(500))
+    #: §11 asks for the answer. The one-line headline, capped — not the
+    #: table rows, which would copy a slice of the CRM into a log with
+    #: different retention. Enough to see what was said when feedback
+    #: says it was wrong.
+    answer        = db.Column(db.String(500))
     answered      = db.Column(db.Boolean, default=False, index=True)
     #: The §6.6 safe form was returned instead of detail.
     restricted    = db.Column(db.Boolean, default=False)
@@ -50,6 +55,7 @@ class CopilotLog(db.Model):
             'id': self.id, 'emp_code': self.emp_code,
             'question': self.question, 'intent': self.intent or '',
             'data_scope': self.data_scope, 'sources': self.sources or '',
+            'answer': self.answer or '',
             'answered': bool(self.answered),
             'restricted': bool(self.restricted),
             'model_used': bool(self.model_used),
