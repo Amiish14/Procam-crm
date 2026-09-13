@@ -461,9 +461,9 @@ class Lead(db.Model):
     phone2           = db.Column(db.String(30))
     linkedin         = db.Column(db.String(200))
     # Pipeline
-    stage            = db.Column(db.String(40), default='New Opportunity')
+    stage            = db.Column(db.String(40), default='New Opportunity', index=True)
     procam_vertical  = db.Column(db.String(60))
-    assigned_to      = db.Column(db.String(100))   # emp_code — primary PIC
+    assigned_to      = db.Column(db.String(100), index=True)   # emp_code — primary PIC
     assigned_name    = db.Column(db.String(100))
     # Secondary PIC — a monitor/backup, not a co-owner. Mirrors the
     # primary pair above rather than using crm_lead_members, because the
@@ -472,7 +472,7 @@ class Lead(db.Model):
     # a field they filter on.
     secondary_owner      = db.Column(db.String(100), index=True)
     secondary_owner_name = db.Column(db.String(100))
-    followup_date    = db.Column(db.Date)
+    followup_date    = db.Column(db.Date, index=True)
     notes            = db.Column(db.Text)
     history          = db.Column(db.Text)
     # Activity dates
@@ -495,8 +495,8 @@ class Lead(db.Model):
     onboarded_date   = db.Column(db.Date, default=date.today)   # Date entered into system
     week_tag         = db.Column(db.String(20))
     email_sent_flag  = db.Column(db.String(100))
-    created_at       = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at       = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at       = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    updated_at       = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
 
     # ── v2026-08 · CRM enhancement pack ─────────────────────────────
     # Additional company / commercial fields — nullable so legacy rows
@@ -667,7 +667,7 @@ class Contact(db.Model):
     website     = db.Column(db.String(200))
     linkedin    = db.Column(db.String(200))
     agent_type  = db.Column(db.String(60))   # Overseas Agent, Partner, Vendor, Client
-    assigned_to = db.Column(db.String(100))
+    assigned_to = db.Column(db.String(100), index=True)
     notes       = db.Column(db.Text)
     created_at  = db.Column(db.DateTime, default=datetime.utcnow)
     # ── v2026-08 · Pre-Sales Phase 1 extensions ────────────────────
@@ -821,7 +821,7 @@ class Opportunity(db.Model):
     lead_id       = db.Column(db.Integer, db.ForeignKey('leads.id'), index=True)
     company_id    = db.Column(db.Integer, db.ForeignKey('companies.id'), index=True)
     title         = db.Column(db.String(255))
-    stage         = db.Column(db.String(40), default='RFQ')
+    stage         = db.Column(db.String(40), default='RFQ', index=True)
     value_inr     = db.Column(db.Numeric(15, 2))
     currency      = db.Column(db.String(6), default='INR')
     probability   = db.Column(db.Integer, default=50)   # 0-100
@@ -2946,14 +2946,31 @@ LOST_REASONS = [
 ]
 
 
+#: The Lead columns the dashboard summary reads — and only these. Loading
+#: full Lead objects pulled every email body and extracted-JSON blob for
+#: thousands of leads on each dashboard refresh; profiling put most of the
+#: 345 ms answer in building those objects.
+_SUMMARY_COLUMNS = (
+    'stage', 'intro_mail_date', 'phone_call_date', 'meeting_date', 'rfq_date',
+    'opp_number', 'cost_million', 'followup_date', 'updated_at', 'industry',
+    'procam_vertical', 'state', 'source', 'lost_reason', 'assigned_to',
+    'assigned_name', 'stage_entered_at', 'created_at',
+)
+
+
 @app.route('/api/dashboard/summary')
 @require_auth
 def api_dashboard_summary():
     """Everything the dashboard needs to redraw in one round-trip."""
     scoped_q, allowed_codes = _scope_for_current_session()
     q = _apply_dashboard_filters(scoped_q, request.args)
-    leads = q.all()
-    today = date.today()
+    leads = q.with_entities(*[getattr(Lead, c) for c in _SUMMARY_COLUMNS]).all()
+    return jsonify(_dashboard_summary_payload(leads, allowed_codes,
+                                              date.today()))
+
+
+def _dashboard_summary_payload(leads, allowed_codes, today):
+    """The summary computed from lead rows (objects or column rows)."""
 
     def _cnt(pred):
         return sum(1 for l in leads if pred(l))
@@ -3091,7 +3108,7 @@ def api_dashboard_summary():
                                  .order_by(Employee.name).all()],
     }
 
-    return jsonify({
+    return ({
         'scope': {
             'role': session.get('role'),
             'emp_code': session.get('emp_code'),
@@ -4297,6 +4314,18 @@ def _load_seed_employees(path=SEED_EMPLOYEES_CSV):
     return rows
 
 
+#: (index name, table, column) — see init_db.
+BOOT_INDEXES = (
+    ('ix_leads_assigned_to', 'leads', 'assigned_to'),
+    ('ix_leads_stage', 'leads', 'stage'),
+    ('ix_leads_created_at', 'leads', 'created_at'),
+    ('ix_leads_updated_at', 'leads', 'updated_at'),
+    ('ix_leads_followup_date', 'leads', 'followup_date'),
+    ('ix_contacts_assigned_to', 'contacts', 'assigned_to'),
+    ('ix_opportunities_stage', 'opportunities', 'stage'),
+)
+
+
 def init_db():
     with app.app_context():
         # Models that live in app/models are otherwise imported lazily, so
@@ -4341,6 +4370,19 @@ def init_db():
             ('lead_notes',    'revisions',           'TEXT'),
             ('copilot_log',   'answer',              'VARCHAR(500)'),
         ]
+        # Indexes for the filters nearly every page uses. Named as the
+        # models declare them, so create_all on a new database and this on
+        # an existing one produce the same schema (and the preflight's
+        # drift check agrees). IF NOT EXISTS makes it free after the first
+        # boot; building them on tens of thousands of rows takes moments.
+        for _ix, _tbl, _col in BOOT_INDEXES:
+            try:
+                db.session.execute(_sql(
+                    f'CREATE INDEX IF NOT EXISTS {_ix} ON {_tbl} ({_col})'))
+                db.session.commit()
+            except Exception as _exc:
+                db.session.rollback()
+                app.logger.warning('index %s not created: %s', _ix, _exc)
         for tbl, col, dtype in _adds:
             try:
                 # Postgres path — supports IF NOT EXISTS on ALTER.

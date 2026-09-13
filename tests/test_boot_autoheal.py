@@ -69,3 +69,40 @@ def test_a_table_not_created_yet_is_not_reported_as_a_failure():
     out = subprocess.run(boot, cwd=_ROOT, env=env, check=True,
                          capture_output=True, text=True, timeout=120)
     assert 'autoheal FAILED' not in out.stdout + out.stderr, out.stderr[-500:]
+
+
+def test_boot_builds_the_indexes_an_existing_database_lacks():
+    """create_all never adds an index to a table that already exists, so
+    production would never get them. The boot does."""
+    path = os.path.join(tempfile.mkdtemp(), 'idx.db')
+    env = dict(os.environ, DATABASE_URL='sqlite:///' + path,
+               SECRET_KEY='test', ADMIN_INITIAL_PASSWORD='BootTestOnly12345',
+               SESSION_COOKIE_SECURE='false')
+    boot = [sys.executable, '-c', 'import app']
+    subprocess.run(boot, cwd=_ROOT, env=env, check=True,
+                   capture_output=True, timeout=120)
+    db = sqlite3.connect(path)
+    db.execute('DROP INDEX IF EXISTS ix_leads_assigned_to')
+    db.commit()
+    db.close()
+    subprocess.run(boot, cwd=_ROOT, env=env, check=True,
+                   capture_output=True, timeout=120)
+    db = sqlite3.connect(path)
+    plan = ' '.join(r[3] for r in db.execute(
+        "EXPLAIN QUERY PLAN SELECT id FROM leads WHERE assigned_to = 'X'"))
+    db.close()
+    assert 'ix_leads_assigned_to' in plan
+
+
+def test_boot_index_names_match_the_models():
+    src = subprocess.run(
+        [sys.executable, '-c',
+         'import app as A\n'
+         'names = {i.name for t in A.db.metadata.sorted_tables '
+         'for i in t.indexes}\n'
+         'missing = [n for n, _t, _c in A.BOOT_INDEXES if n not in names]\n'
+         'print("MISSING", missing)'],
+        cwd=_ROOT, capture_output=True, text=True, timeout=120,
+        env=dict(os.environ, DATABASE_URL='sqlite://', SECRET_KEY='t',
+                 ADMIN_INITIAL_PASSWORD='BootTestOnly12345'))
+    assert 'MISSING []' in src.stdout, src.stdout[-300:] + src.stderr[-300:]
