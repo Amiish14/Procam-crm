@@ -57,9 +57,13 @@ profile, or ask the Copilot "my open leads" as them.
 
 | Page | Use |
 |---|---|
-| **/CRM/lead-review** | Emails the classifier was unsure about. Accept as lead, or one click: Rate sourcing, Quote submission, Internal, Duplicate. Each correction is training data. |
+| **/CRM/lead-review** | Emails the classifier was unsure about. Accept as lead, merge, reject, or one click: Mark rate sourcing, quote, internal, duplicate. The **Held as duplicates** tab lets a wrong duplicate be overruled (**Not a duplicate**). Each item explains its score and shows earlier decisions for the sender. Each correction is training data. |
+| **/CRM/intake/vendors** | Vendor Master (Master Data permission): domains whose mail is rate sourcing, with categories. Deactivate, never delete. |
 | **/CRM/intake-intelligence** | How the classifier is doing: accuracy, false positives (non-leads that became leads), missed enquiries rescued from review, proposals learned from corrections. Apply or dismiss proposals. |
 | **/CRM/accounts/owners** | Which employee owns each account. New email leads are assigned from this. |
+
+How the classifier decides, what each duplicate signal means and what
+every review action teaches it: [Classification Guide](CLASSIFICATION_GUIDE.md).
 
 Reassigning a lead needs a reason. Repeated reassignments of one
 account's leads to the same person turn into a proposal to change the
