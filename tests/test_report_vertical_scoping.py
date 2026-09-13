@@ -52,8 +52,14 @@ def seeded():
         db.session.commit()
 
         for code, vert, tag in (('ZREP_H', HEAVY, 'H'), ('ZREP_P', PFM, 'P')):
+            # A development stage unique to each vertical. The aggregate
+            # report returns only stage names and counts, so without a
+            # stage that exists in one vertical alone there was nothing
+            # to assert on and its leak test skipped — for as long as it
+            # existed, nothing proved a head could not see the other
+            # vertical's accounts through the totals.
             c = _main.Company(name=f'Acct-{tag}', pic_emp_code=code,
-                              is_active=True)
+                              is_active=True, dev_stage=f'Stage-{tag}')
             db.session.add(c)
             db.session.flush()
             lead = _main.Lead(company=f'Acct-{tag}', assigned_to=code,
@@ -107,7 +113,7 @@ CASES = [
     ('/reports/activities-by-account',  'Acct-H',  'Acct-P'),
     ('/reports/network-contribution',   'src-H',   'src-P'),
     ('/reports/dormant-accounts',       'Acct-H',  'Acct-P'),
-    ('/reports/accounts-by-stage',      None,      None),
+    ('/reports/accounts-by-stage',      'Stage-H', 'Stage-P'),
 ]
 
 
