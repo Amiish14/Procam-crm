@@ -146,6 +146,7 @@ def _signals(d):
     ('RFQ 2026', []),
     ('RFQ 12.09.2026', []),
     ('rfq heavy transport xlsx', []),
+    ('Enquiry\nTender No.KPCL/2026/9001', ['KPCL20269001']),
 ])
 def test_enquiry_references_are_numbers_not_words(text, keys):
     assert [k for _raw, k in li.enquiry_references(text)] == keys
@@ -218,6 +219,17 @@ def test_the_same_tender_number_from_another_sender_is_a_duplicate(world):
     assert d['lead_id'] == lead_id
     assert d['score'] >= 70
     assert 'same_reference' in _signals(d)
+
+
+def test_a_reference_in_an_html_table_is_read_from_the_text(world):
+    lead_id = world['lead'](email='a@duphtml.example',
+                            original_email_body='Tender No. KPCL/2026/9001')
+    m = msg('Enquiry', frm='b@duphtml-other.example')
+    m['body'] = {'contentType': 'html', 'content':
+                 '<table><tr><td>Tender No.</td>'
+                 '<td>KPCL/2026/9001</td></tr></table>'}
+    d = _breakdown(m)
+    assert d['lead_id'] == lead_id and 'same_reference' in _signals(d)
 
 
 def test_a_different_reference_number_is_not_the_same_reference(world):

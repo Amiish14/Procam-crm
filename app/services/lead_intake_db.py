@@ -232,7 +232,15 @@ class _Probe:
         if len(self.subject) < 6:
             self.subject = ''
 
-        self.text = li.searchable_text(msg)
+        # The body as text, not HTML: in a table-formatted enquiry the
+        # reference number and its label sit in different cells, and only
+        # the text form puts them next to each other.
+        try:
+            body = email_parser._get_body_text(msg)
+        except Exception:
+            body = li.body_text(msg)
+        self.text = li.searchable_text(
+            dict(msg, body={'content': body or ''}))
         self.references = li.enquiry_references(self.text)
         self.files = {}
         for name in li.attachment_names(msg):
@@ -241,11 +249,6 @@ class _Probe:
                 self.files.setdefault(key, name)
         self.weights = li.cargo_weights(self.text)
 
-        body = ''
-        try:
-            body = email_parser._get_body_text(msg)
-        except Exception:
-            body = li.body_text(msg)
         origin, destination = email_parser._extract_origin_destination(
             f"{msg.get('subject') or ''}\n{body}")
         self.route = _route_key(origin, destination)

@@ -776,6 +776,10 @@ _REFERENCE_RE = re.compile(
     r'(?:[\s.:#\-_/]*(?:no|nos|number|num|ref|id)\b)?'
     r'(?:[\s.:#\-_/]*(?:no|number)\b)?'
     r'[\s.:#\-_/]*'
+    # The digit is required inside the pattern, not only checked after:
+    # otherwise "Enquiry\nTender No. 123" spends the word "Tender" as the
+    # enquiry's reference and the real one is never reached.
+    r'(?=[a-z0-9\-/_.]*\d)'
     r'([a-z0-9](?:[a-z0-9]|[\-/_.](?=[a-z0-9])){3,40})',
     re.IGNORECASE)
 _DATE_LIKE = re.compile(r'^\d{1,4}[\-/._]\d{1,2}[\-/._]\d{1,4}$')
