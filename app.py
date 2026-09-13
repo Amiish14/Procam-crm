@@ -3641,6 +3641,14 @@ def api_lead_note_edit(lid, note_id):
     row = LeadNote.query.filter_by(id=note_id, lead_id=lid).first_or_404()
     if row.is_deleted:
         return jsonify({'error': 'That note was deleted'}), 404
+    # A note is its author's record of a conversation. Seeing the lead is
+    # not permission to rewrite a colleague's account of a call; the
+    # author, or someone whose scope reaches the author, may edit.
+    from app.access import scope as _scope
+    _sc = _scope.current()
+    if not (_sc.codes is None or (row.author or '') == session.get('emp_code')
+            or (row.author and _sc.reaches(row.author))):
+        return jsonify({'error': 'Only the author of a note can edit it'}), 403
     d = request.get_json(silent=True) or {}
     text_ = (d.get('note_text') or '').strip()
     if not text_:
@@ -3675,7 +3683,87 @@ def api_lead_note_revisions(lid, note_id):
     _require_lead_access(lid)
     row = LeadNote.query.filter_by(id=note_id, lead_id=lid).first_or_404()
     return jsonify({'ok': True, 'current': row.to_dict(),
-                    'revisions': row.revision_list()})
+                    'revisions': row.revision_list(),
+                    'versions': _note_versions(row)})
+
+
+def _note_versions(row):
+    """The note's life as numbered versions, oldest first.
+
+    revisions[] stores each replaced text with who replaced it and when,
+    so version 1 was written by the author at creation and version k+1 by
+    whoever replaced version k. The last version is the current text."""
+    history = row.revision_list()
+    texts = [(h.get('note_text') or '', h.get('note_type') or 'general')
+             for h in history] + [(row.note_text or '',
+                                   row.note_type or 'general')]
+    writers = [(row.author or '', str(row.created_at)[:19]
+                if row.created_at else '')]
+    writers += [(h.get('replaced_by') or '', h.get('replaced_at') or '')
+                for h in history]
+    codes = {w for w, _ in writers if w}
+    names = {e.emp_code: e.name for e in Employee.query.filter(
+        Employee.emp_code.in_(codes)).all()} if codes else {}
+    out = []
+    for i, ((text_, kind), (who, when)) in enumerate(zip(texts, writers)):
+        out.append({'version': i + 1, 'note_text': text_, 'note_type': kind,
+                    'written_by': who, 'written_by_name': names.get(who, who),
+                    'written_at': when, 'current': i == len(texts) - 1})
+    return out
+
+
+@app.route('/api/leads/<int:lid>/classification', methods=['GET'])
+@require_auth
+def api_lead_classification(lid):
+    """How this lead came to be: the intake decision that created it and
+    the vertical recommendation, in words a salesperson can check."""
+    lead = _require_lead_access(lid)
+    row = (EmailClassification.query
+           .filter(EmailClassification.created_lead_id == lid)
+           .order_by(EmailClassification.id.desc()).first())
+    decision = None
+    if row is not None:
+        from app.services.lead_intake import Klass
+        payload = dict(row.payload or {})
+        cls = row.corrected_to or row.classification
+        decision = {
+            'classification': cls,
+            'label': Klass.LABELS.get(cls, cls or ''),
+            'decided_by': row.decided_by or '',
+            'reason': row.reason or '',
+            'confidence': row.confidence,
+            'corrected': bool(row.corrected_to),
+            'correction_reason': row.correction_reason or '',
+            'keywords': payload.get('keywords') or [],
+            'score_parts': payload.get('score_parts') or {},
+        }
+    return jsonify({'ok': True, 'decision': decision, 'vertical': {
+        'value': lead.procam_vertical or '',
+        'confidence': lead.vertical_confidence,
+        'reason': lead.vertical_reason or '',
+    }})
+
+
+@app.route('/api/notes/search', methods=['GET'])
+@require_auth
+def api_notes_search():
+    """Search the notes the viewer may see.
+
+    Keyword search ranks by how many query words a note contains, how
+    often, and how recent it is. With an internal embedder configured the
+    Copilot index adds notes that match by meaning rather than wording.
+    Filters: author, date range, lead."""
+    from app.notes_search import search_notes
+    a = request.args
+    try:
+        limit = max(1, min(int(a.get('limit') or 50), 200))
+    except ValueError:
+        limit = 50
+    result = search_notes(a.get('q') or '', author=a.get('author') or None,
+                          date_from=a.get('from') or None,
+                          date_to=a.get('to') or None,
+                          lead_id=a.get('lead_id') or None, limit=limit)
+    return jsonify(ok=True, **result)
 
 
 @app.route('/api/leads/<int:lid>/notes/<int:note_id>', methods=['DELETE'])

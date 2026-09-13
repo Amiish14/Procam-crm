@@ -1150,6 +1150,7 @@ window.CRMToast = (function(){
   <div class="sbi" onclick="nav('leads')" data-p="leads"><span class="ic">📋</span>My Leads<span class="sb-cnt" id="sbN">0</span></div>
   <div class="sbi" onclick="nav('outreach')" data-p="outreach"><span class="ic">✉️</span>AI Outreach</div>
   <div class="sbi" onclick="nav('contacts')" data-p="contacts"><span class="ic">🌐</span>Global CRM</div>
+  <div class="sbi" onclick="nav('notessearch')" data-p="notessearch"><span class="ic">🔎</span>Notes Search</div>
   <div class="sbi" onclick="nav('accounts')" data-p="accounts"><span class="ic">🏢</span>Accounts<span class="sb-cnt" id="sbAcc">0</span></div>
   <div class="sbi" onclick="nav('projects')" data-p="projects"><span class="ic">🏗️</span>Project Intelligence<span class="sb-cnt" id="sbPrj">0</span></div>
   <div class="sbi" onclick="nav('pwchange')" data-p="pwchange"><span class="ic">🔑</span>Change Password</div>
@@ -1443,6 +1444,19 @@ window.CRMToast = (function(){
 </div>
 
 <!-- GLOBAL CRM -->
+<div class="page" id="pg-notessearch">
+  <div class="pg-hd"><div><div class="pg-ttl">Notes Search</div><div class="pg-sub">Call notes, meeting summaries and remarks on the leads you can open</div></div></div>
+  <div class="card" style="padding:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:end">
+    <div class="fmg" style="flex:2;min-width:220px"><label class="fml">Search</label><input class="fmc" id="nsQ" placeholder="e.g. crane availability Kandla" onkeydown="if(event.key==='Enter')rNotesSearch()"></div>
+    <div class="fmg" style="min-width:160px"><label class="fml">Author</label><select class="fmc" id="nsAuthor"><option value="">Anyone</option></select></div>
+    <div class="fmg"><label class="fml">From</label><input type="date" class="fmc" id="nsFrom"></div>
+    <div class="fmg"><label class="fml">To</label><input type="date" class="fmc" id="nsTo"></div>
+    <button class="btn btn-red" onclick="rNotesSearch()">Search</button>
+  </div>
+  <div id="nsMeta" style="font-size:12px;color:var(--text-3);margin:8px 2px"></div>
+  <div id="nsResults"></div>
+</div>
+
 <div class="page" id="pg-contacts">
   <div class="pg-hd"><div><div class="pg-ttl">Global CRM</div><div class="pg-sub">Contacts, companies & overseas agents — auto-built from leads + manual entry</div></div><button class="btn btn-red" onclick="openCt()">+ Add</button></div>
   <div class="tabs"><div class="tab on" onclick="ctTab('person')">People</div><div class="tab" onclick="ctTab('company')">Companies</div><div class="tab" onclick="ctTab('agent')">Overseas Agents</div></div>
@@ -2137,7 +2151,7 @@ function deepLinkNotFound(kind, id, why){
 }
 
 // ── NAV ──
-const PG_TITLES={dash:'Overview',pipeline:'Sales Pipeline','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-biz':'Business Discussion','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated','inb-quoted':'Quoted','inb-negot':'Under Negotiation',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard',access:'User Access Matrix',master:'Master Data',mapping:'Data Mapping'};
+const PG_TITLES={dash:'Overview',pipeline:'Sales Pipeline','inb-new':'New','inb-call':'Call Done','inb-prof':'Profile Sent','inb-biz':'Business Discussion','inb-appt':'Appointment','inb-visit':'Visit Done','inb-rfq':'RFQ Generated','inb-quoted':'Quoted','inb-negot':'Under Negotiation',leads:'My Leads',outreach:'AI Outreach',contacts:'Global CRM',notessearch:'Notes Search',pwchange:'Change Password',all:'All Leads',opp:'Opportunities',news:'Market Intelligence',team:'Team',assign:'Assign',employees:'Employees',upload:'Upload',kpi:'KPI Settings',perf:'My Performance',scorecard:'Team Scorecard',access:'User Access Matrix',master:'Master Data',mapping:'Data Mapping'};
 // Legacy 6-stage inbox nav ids alias into the unified Sales Pipeline
 // page pre-filtered to the corresponding stage. Preserves any old
 // bookmarked deep-link.
@@ -2169,7 +2183,8 @@ function nav(p){
   const t=g('topPgTtl'); if(t) t.textContent=PG_TITLES[p]||'';
   const fns={dash:rDash,pipeline:rPipeline,leads:rLeads,all:rAll,outreach:rOR,contacts:rCt,news:rNews,
               team:rTeam,assign:rAssign,employees:rEmps,opp:rOpp,upload:()=>upTab('xl'),
-              kpi:rKpiAdmin,perf:rPerf,scorecard:rScorecard,access:rAccess,master:rMaster,mapping:rMapping};
+              kpi:rKpiAdmin,perf:rPerf,scorecard:rScorecard,access:rAccess,master:rMaster,mapping:rMapping,
+              notessearch:nsInit};
   if(fns[p]) try{fns[p]();}catch(err){console.error('nav error for page',p,err);}
   if(p==='inb-new')   rInbox('New','inbNew');
   if(p==='inb-call')  rInbox('Call Done','inbCall');
@@ -2848,7 +2863,10 @@ async function openLd(id){
     <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="lEm" value="${e(l.email||'')}"></div><div class="fmg"><label class="fml">Phone</label><input class="fmc" id="lPh" value="${e(l.phone||'')}"></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Primary PIC</label><select class="fmc" id="lAsgn" ${isAdmin?'':'disabled'}>${uOpts}</select></div><div class="fmg"><label class="fml">Secondary PIC <span style="font-weight:400;color:var(--text-3)">— monitor / backup</span></label><select class="fmc" id="lAsgn2" ${isAdmin?'':'disabled'}>${sOpts}</select></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">If changing the PIC, why? <span style="font-weight:400;color:var(--text-3)">— recorded in the assignment history</span></label><select class="fmc" id="lReasgn" ${isAdmin?'':'disabled'}>${['','Different geography','Different service vertical','Different customer relationship owner','Capacity / workload','Specialist required','Incorrect automatic assignment','Other'].map(r=>`<option value="${e(r)}">${e(r||'— not changing the PIC —')}</option>`).join('')}</select></div></div>
-    <div class="fmr"><div class="fmg"><label class="fml">Procam vertical</label><select class="fmc" id="lVt">${['Heavy Transport','Project Freight','Warehousing','Installation'].map(v=>`<option${v===l.procam_vertical?' selected':''}>${v}</option>`).join('')}</select></div></div>
+    <div class="fmr"><div class="fmg"><label class="fml">Procam vertical</label><select class="fmc" id="lVt">${['Heavy Transport','Project Freight','Warehousing','Installation'].map(v=>`<option${v===l.procam_vertical?' selected':''}>${v}</option>`).join('')}</select>
+      ${l.vertical_confidence!=null ? `<div style="font-size:11.5px;color:var(--text-3);margin-top:4px">Suggested at intake with <b>${e(l.vertical_confidence)}%</b> confidence${l.vertical_reason?` — ${e(l.vertical_reason)}`:''}</div>` : ''}
+    </div></div>
+    <div class="fmg" id="lClassExpl" style="display:none"></div>
     <div class="fmr"><div class="fmg"><label class="fml">Next follow-up</label><input type="date" class="fmc" id="lFu" value="${l.followup||''}"></div><div class="fmg"><label class="fml">Onboarded date</label><input class="fmc" value="${l.onboarded_date||'—'}" disabled style="background:var(--surface-2);color:var(--text-3)"></div></div>
     <div class="fmg">
       <label class="fml">Notes / call summary</label>
@@ -2880,6 +2898,7 @@ async function openLd(id){
   `;
   g('ldMob').style.display='flex';
   loadLeadNotes(l.id);
+  loadLeadClassification(l.id);
   loadMailTrail(l.id);
   loadRateSourcing(l.id);
 }
@@ -2909,12 +2928,136 @@ async function loadLeadNotes(id){
         ${nt.migrated_from_legacy
           ? '<span title="Rescued from the old combined field — may be email text" style="color:var(--amber,#b45309)">migrated</span>'
           : ''}
-        <button class="btn btn-ghost btn-sm" style="margin-left:auto;padding:1px 7px;font-size:11px"
+        ${nt.edited ? `<span title="This note was edited — every earlier version is kept">edited · ${e(nt.revision_count)} earlier version${nt.revision_count===1?'':'s'}</span>` : ''}
+        <span style="margin-left:auto;display:flex;gap:4px">
+        ${nt.edited ? `<button class="btn btn-ghost btn-sm" style="padding:1px 7px;font-size:11px"
+                onclick="showNoteHistory(${nt.lead_id},${nt.id})">History</button>` : ''}
+        ${(nt.author===ME.emp_code || isAdminUser()) ? `<button class="btn btn-ghost btn-sm" style="padding:1px 7px;font-size:11px"
+                onclick="editLeadNote(${nt.lead_id},${nt.id})">Edit</button>` : ''}
+        <button class="btn btn-ghost btn-sm" style="padding:1px 7px;font-size:11px"
                 onclick="deleteLeadNote(${nt.lead_id},${nt.id})"
                 title="Delete this note only — the email is not affected">Delete note</button>
+        </span>
       </div>
-      <div style="font-size:12.5px;color:var(--text);white-space:pre-wrap;margin-top:3px">${e(nt.note_text)}</div>
+      <div id="noteBody${nt.id}" data-note-type="${e(nt.note_type)}" style="font-size:12.5px;color:var(--text);white-space:pre-wrap;margin-top:3px">${e(nt.note_text)}</div>
+      <div id="noteHist${nt.id}" style="display:none"></div>
     </div>`).join('');
+}
+
+async function nsInit(){
+  const sel = g('nsAuthor');
+  if(sel && sel.options.length <= 1){
+    const emps = await api('/api/employees').catch(()=>[]);
+    (Array.isArray(emps)?emps:[]).forEach(x=>{
+      const o = document.createElement('option'); o.value = x.emp_code; o.textContent = x.name || x.emp_code; sel.appendChild(o);
+    });
+  }
+}
+
+async function rNotesSearch(){
+  const p = new URLSearchParams();
+  const q = (g('nsQ')?.value||'').trim();
+  if(q) p.set('q', q);
+  if(g('nsAuthor')?.value) p.set('author', g('nsAuthor').value);
+  if(g('nsFrom')?.value) p.set('from', g('nsFrom').value);
+  if(g('nsTo')?.value) p.set('to', g('nsTo').value);
+  if(![...p.keys()].length){ toast('Type something to search for, or pick an author or dates','err'); return; }
+  g('nsMeta').textContent = 'Searching…';
+  const r = await api('/api/notes/search?'+p.toString());
+  const rows = (r && r.results) || [];
+  g('nsMeta').textContent = r && r.ok ? `${r.total} note${r.total===1?'':'s'} found${r.backend==='keyword+semantic'?' · includes matches by meaning':''}` : 'Search failed';
+  g('nsResults').innerHTML = rows.map(x=>`<div class="card" style="padding:10px 12px;margin-bottom:8px;cursor:pointer" onclick="openLd(${x.lead_id})">
+      <div style="font-size:11.5px;color:var(--text-3)"><b style="color:var(--ink-2)">${e(x.company||('Lead #'+x.lead_id))}</b> · ${e(NOTE_LABEL[x.note_type]||'Note')} · ${e(x.author_name||x.author)} · ${e(x.created_at)}</div>
+      <div style="font-size:12.5px;white-space:pre-wrap;margin-top:3px">${e(x.snippet)}</div>
+    </div>`).join('') || '<div style="font-size:12.5px;color:var(--text-3)">No notes match.</div>';
+}
+
+function isAdminUser(){ return (ME && (ME.role==='admin' || ME.is_super_admin)); }
+
+/* Edit in place. The server keeps the replaced text as a version, so an
+   edit adds to the note's history rather than rewriting it. */
+function editLeadNote(leadId, noteId){
+  const body = g('noteBody'+noteId);
+  if(!body || body.dataset.editing) return;
+  body.dataset.editing = '1';
+  const original = body.textContent;
+  body.innerHTML = `<textarea class="fmc" rows="3" id="noteEdit${noteId}"></textarea>
+    <div style="display:flex;gap:6px;margin-top:4px">
+      <button class="btn btn-sm" onclick="saveLeadNoteEdit(${leadId},${noteId})">Save</button>
+      <button class="btn btn-ghost btn-sm" onclick="loadLeadNotes(${leadId})">Cancel</button>
+      <span style="font-size:11px;color:var(--text-3)">The current text is kept as an earlier version.</span>
+    </div>`;
+  g('noteEdit'+noteId).value = original;
+}
+
+async function saveLeadNoteEdit(leadId, noteId){
+  const text = (g('noteEdit'+noteId)?.value || '').trim();
+  if(!text){ toast('A note cannot be empty','err'); return; }
+  const r = await api('/api/leads/'+leadId+'/notes/'+noteId,
+    {method:'PUT', body: JSON.stringify({note_text: text})});
+  if(r && r.ok){ loadLeadNotes(leadId); toast('Note updated ✓','ok'); }
+  else toast((r && r.error) || 'Could not update the note','err');
+}
+
+/* Word-level difference between two versions: removed words struck
+   through, added words highlighted. Both sides are escaped first. */
+function noteDiff(before, after){
+  const a = (before||'').split(/(\s+)/), b = (after||'').split(/(\s+)/);
+  if(a.length * b.length > 250000) return e(after);   // too long to diff
+  const dp = Array.from({length:a.length+1}, ()=>new Uint16Array(b.length+1));
+  for(let i=a.length-1;i>=0;i--) for(let j=b.length-1;j>=0;j--)
+    dp[i][j] = a[i]===b[j] ? dp[i+1][j+1]+1 : Math.max(dp[i+1][j], dp[i][j+1]);
+  let i=0, j=0, out='';
+  while(i<a.length && j<b.length){
+    if(a[i]===b[j]){ out += e(a[i]); i++; j++; }
+    else if(dp[i+1][j] >= dp[i][j+1]){ out += `<del style="background:#FDE8E8;color:#9B1C1C">${e(a[i])}</del>`; i++; }
+    else { out += `<ins style="background:#DEF7EC;color:#03543F;text-decoration:none">${e(b[j])}</ins>`; j++; }
+  }
+  while(i<a.length){ out += `<del style="background:#FDE8E8;color:#9B1C1C">${e(a[i++])}</del>`; }
+  while(j<b.length){ out += `<ins style="background:#DEF7EC;color:#03543F;text-decoration:none">${e(b[j++])}</ins>`; }
+  return out;
+}
+
+async function showNoteHistory(leadId, noteId){
+  const host = g('noteHist'+noteId);
+  if(!host) return;
+  if(host.style.display === 'block'){ host.style.display = 'none'; return; }
+  const r = await api('/api/leads/'+leadId+'/notes/'+noteId+'/revisions');
+  const versions = (r && r.versions) || [];
+  host.innerHTML = versions.slice().reverse().map((v, idx, arr) => {
+    const prev = arr[idx+1];
+    return `<div style="border-left:2px dashed var(--border-2);margin:6px 0 0 4px;padding:4px 0 4px 10px">
+      <div style="font-size:11px;color:var(--text-3)">
+        <b style="color:var(--ink-2)">Version ${e(v.version)}${v.current?' · current':''}</b>
+        · ${e(v.written_by_name||v.written_by||'—')} · ${e((v.written_at||'').replace('T',' '))}
+        · ${e(NOTE_LABEL[v.note_type]||'Note')}
+      </div>
+      <div style="font-size:12.5px;white-space:pre-wrap;margin-top:2px">${prev ? noteDiff(prev.note_text, v.note_text) : e(v.note_text)}</div>
+    </div>`;
+  }).join('') || '<div style="font-size:12px;color:var(--text-3)">No earlier versions.</div>';
+  host.style.display = 'block';
+}
+
+/* Why the lead exists and why it has its vertical — the intake decision
+   in words the salesperson can check against the email. */
+async function loadLeadClassification(id){
+  const host = g('lClassExpl');
+  if(!host) return;
+  let r = null;
+  try { r = await api('/api/leads/'+id+'/classification'); } catch(err){ r = null; }
+  const d = r && r.decision;
+  if(!d){ host.style.display = 'none'; return; }
+  const parts = Object.entries(d.score_parts || {}).map(([k,v]) =>
+    `<span class="pill" style="font-size:10.5px">${e(k.replace(/_/g,' '))} ${e(v)}</span>`).join(' ');
+  host.innerHTML = `<label class="fml">Why this is a lead <span style="font-weight:400;color:var(--text-3)">— the intake decision</span></label>
+    <div style="font-size:12px;color:var(--text-2);line-height:1.6">
+      <b>${e(d.label)}</b>${d.confidence!=null?` · ${e(d.confidence)}% confidence`:''} · decided by ${e(d.decided_by||'rules')}
+      ${d.corrected?` · corrected at review${d.correction_reason?` (${e(d.correction_reason)})`:''}`:''}
+      <div>${e(d.reason)}</div>
+      ${(d.keywords||[]).length?`<div>Signals: ${(d.keywords||[]).map(k=>`<span class="pill" style="font-size:10.5px">${e(k)}</span>`).join(' ')}</div>`:''}
+      ${parts?`<div>Score: ${parts}</div>`:''}
+    </div>`;
+  host.style.display = 'block';
 }
 
 async function addLeadNote(){
