@@ -1026,3 +1026,62 @@ def test_genuinely_different_passages_are_both_kept(world):
             lead.original_email_body = original
             retrieval.invalidate_lead(lead.id)
             db.session.commit()
+
+
+def test_the_gateway_banner_is_not_indexed_as_content(world):
+    """It led half the live search results.
+
+    The mail gateway stamps "CAUTION: This email originated from outside
+    the organization…" on every external message, so a reader saw that
+    where the enquiry should have been. It is furniture, identical on
+    thousands of messages, and not what anybody searched for.
+    """
+    from app.copilot import retrieval
+
+    banner = ('CAUTION: This email originated from outside of the '
+              'organization. Do not click links or open attachments '
+              'unless you recognize the sender and know the content is '
+              'safe.\n')
+    out = retrieval.strip_boilerplate(
+        banner + 'Please quote for a 220 MT transformer to Jalandhar.')
+    assert out.startswith('Please quote')
+    assert 'CAUTION' not in out
+
+
+def test_stripping_never_eats_the_enquiry(world):
+    """Over-stripping loses the customer's words, which is worse than
+    showing a banner. Each pattern is anchored for that reason."""
+    from app.copilot import retrieval
+
+    for body in ('A normal enquiry with no banner at all.',
+                 'We need caution around the axle loading on this route.',
+                 'Please treat as confidential and quote 40 MT to Kandla.'):
+        assert retrieval.strip_boilerplate(body) == body.strip(), body
+
+
+def test_a_body_that_is_only_boilerplate_produces_no_chunk(world):
+    """Indexing the banner alone would be a hit that says nothing."""
+    from app import Lead, LeadEmail
+    from app.copilot import retrieval
+    from app.models.copilot import CopilotChunk
+
+    with flask_app.app_context():
+        lead = db.session.get(Lead, world['mine']['lead'])
+        original = lead.original_email_body
+        lead.original_email_body = None
+        mail = LeadEmail(
+            lead_id=lead.id, direction='inbound', subject='',
+            body='CAUTION: This email originated from outside of the '
+                 'organization. Do not click links or open attachments '
+                 'unless you recognize the sender and know the content '
+                 'is safe.')
+        db.session.add(mail)
+        db.session.commit()
+        try:
+            retrieval.index_lead(lead)
+            assert CopilotChunk.query.filter_by(lead_id=lead.id).count() == 0
+        finally:
+            LeadEmail.query.filter_by(id=mail.id).delete()
+            lead.original_email_body = original
+            retrieval.invalidate_lead(lead.id)
+            db.session.commit()

@@ -65,6 +65,37 @@ def tokens(text):
             if len(t) > 2 and t not in _STOP]
 
 
+# ── boilerplate ──────────────────────────────────────────────────────
+#
+# The mail gateway stamps a banner on every external email, and it is
+# the first thing in the body. Indexed as-is, it became the visible
+# opening of half the search results — a reader saw "CAUTION: This email
+# originated from outside…" where the enquiry should have been. It is
+# not content; it is furniture, and identical on thousands of messages.
+
+_BOILERPLATE = (
+    re.compile(r'^\s*CAUTION\s*:.*?content is safe\.?\s*', re.I | re.S),
+    re.compile(r'^\s*\[?EXTERNAL(?:\s+EMAIL)?\]?\s*:?\s*', re.I),
+    re.compile(r'^\s*(?:Confidential|RESTRICTED|Internal Use Only)\s*$',
+               re.I | re.M),
+    re.compile(r'\s*Sent from my (?:iPhone|iPad|Android|Samsung).*$',
+               re.I | re.S),
+)
+
+
+def strip_boilerplate(text):
+    """Drop the gateway banner and signature furniture from a body.
+
+    Conservative on purpose: each pattern is anchored, and only removes
+    text that is demonstrably not the customer's. Over-stripping would
+    lose the enquiry, which is worse than showing a banner.
+    """
+    out = (text or '')
+    for rx in _BOILERPLATE:
+        out = rx.sub('', out, count=1)
+    return out.strip()
+
+
 # ── chunking ─────────────────────────────────────────────────────────
 def split(text, *, size=CHUNK_CHARS, overlap=CHUNK_OVERLAP):
     """Overlapping windows, broken on a line where possible.
@@ -144,7 +175,11 @@ def index_lead(lead, *, commit=True):
     # normalised text, keeping whichever source is seen first.
     seen = set()
     for source, subject, text in chunks_for_lead(lead):
-        for n, piece in enumerate(split(f'{subject}\n{text}'.strip())):
+        cleaned = strip_boilerplate(text)
+        if not cleaned:
+            continue
+        for n, piece in enumerate(
+                split(f'{subject}\n{cleaned}'.strip())):
             fingerprint = hashlib.sha1(
                 ' '.join(piece.lower().split()).encode()).hexdigest()
             if fingerprint in seen:
