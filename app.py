@@ -4373,7 +4373,7 @@ def init_db():
     with app.app_context():
         # Models that live in app/models are otherwise imported lazily, so
         # create_all would not know about them on a fresh database.
-        for _m in ('app.models.audit',):
+        for _m in ('app.models.audit', 'app.models.data_quality'):
             try:
                 __import__(_m)
             except Exception as _exc:              # pragma: no cover

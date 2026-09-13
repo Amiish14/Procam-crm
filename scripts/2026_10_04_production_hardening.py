@@ -3,6 +3,7 @@ Schema for the production-hardening release. Additive only.
 
 Adds
     audit_events                         the general audit trail (table)
+    data_quality_snapshots               daily data-quality counts (table)
     employees.session_version            ends other sessions on reset
     employees.failed_logins              sign-in lockout counter
     employees.locked_until               sign-in lock expiry
@@ -47,9 +48,9 @@ except ImportError:
 from sqlalchemy import create_engine, text          # noqa: E402
 
 #: New tables in this release (their model modules are imported below).
-RELEASE_TABLES = ['audit_events']
+RELEASE_TABLES = ['audit_events', 'data_quality_snapshots']
 #: Modules whose import registers those models.
-MODEL_MODULES = ['app.models.audit']
+MODEL_MODULES = ['app.models.audit', 'app.models.data_quality']
 #: New nullable columns on existing tables: (table, column, SQLite type).
 RELEASE_COLUMNS = [
     ('employees', 'session_version', 'INTEGER DEFAULT 0'),

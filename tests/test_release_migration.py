@@ -30,6 +30,7 @@ def _old_database():
                    check=True, capture_output=True, timeout=180)
     db = sqlite3.connect(path)
     db.execute('DROP TABLE IF EXISTS audit_events')
+    db.execute('DROP TABLE IF EXISTS data_quality_snapshots')
     for col in ('session_version', 'failed_logins', 'locked_until',
                 'temp_password_expires_at'):
         db.execute(f'ALTER TABLE employees DROP COLUMN {col}')
@@ -48,6 +49,7 @@ def test_check_writes_nothing_then_apply_then_nothing_left():
     out = _run(path, '--check')
     assert out.returncode == 0, out.stderr[-500:]
     assert 'WOULD add table  audit_events' in out.stdout
+    assert 'WOULD add table  data_quality_snapshots' in out.stdout
     assert 'employees.session_version' in out.stdout
     assert 'ix_leads_assigned_to' in out.stdout
     assert open(path, 'rb').read() == before
