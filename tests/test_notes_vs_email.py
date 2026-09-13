@@ -357,7 +357,11 @@ def test_a_draft_is_recorded_on_the_trail(client):
     lid = _email_lead('Draft Trail Ltd')
     d = _draft(client, lid)
     trail = client.get(f'/api/leads/{lid}/emails').get_json()
-    drafts = [r for r in trail if r['direction'] == 'outbound']
+    # Only rows this test wrote. Another module leaves outbound emails on
+    # leads it deletes, SQLite hands the freed id to _email_lead, and a
+    # count of every outbound row then includes a stranger's.
+    drafts = [r for r in trail if r['direction'] == 'outbound'
+              and r['created_by'] == 'NOTEADM']
     assert len(drafts) == 1
     assert drafts[0]['status'] == 'draft'
     assert d['id'] == drafts[0]['id']
@@ -370,7 +374,8 @@ def test_marking_sent_moves_the_draft_rather_than_copying_it(client):
     assert r.status_code == 200 and r.get_json()['ok']
 
     outbound = [x for x in client.get(f'/api/leads/{lid}/emails').get_json()
-                if x['direction'] == 'outbound']
+                if x['direction'] == 'outbound'
+                and x['created_by'] == 'NOTEADM']
     assert len(outbound) == 1, 'the email must not appear twice'
     assert outbound[0]['status'] == 'sent'
 
@@ -387,6 +392,30 @@ def test_marking_sent_cannot_change_what_was_written(client):
            if x['id'] == d['id']][0]
     assert row['body'] == 'the words we actually sent'
     assert row['subject'] == 'Our offer'
+
+
+def test_direction_alone_refuses_an_inbound_row_marked_draft(client):
+    """The discriminating case for the direction guard.
+
+    An ordinary inbound email has status 'received', which the status
+    check already refuses — so a test using one passes whether or not
+    direction is checked at all. An inbound row that somehow carries
+    'draft' gets past the status check, and only the direction check
+    stands between it and being reported as something we sent.
+    """
+    with flask_app.app_context():
+        from app import LeadEmail
+        lid = _email_lead('Odd Inbound Draft Ltd')
+        row = LeadEmail(lead_id=lid, direction='inbound', subject='RFQ',
+                        body=ENQUIRY, status='draft')
+        db.session.add(row)
+        db.session.commit()
+        eid = row.id
+    r = client.post(f'/api/leads/{lid}/emails/{eid}/sent', json={})
+    assert r.status_code == 400
+    with flask_app.app_context():
+        from app import LeadEmail
+        assert db.session.get(LeadEmail, eid).status == 'draft'
 
 
 def test_a_customer_email_can_never_be_marked_sent(client):
@@ -439,7 +468,10 @@ def test_the_page_records_the_draft_and_moves_it_on_send(client):
     with open(os.path.join(root, 'templates', 'app.html')) as fh:
         src = fh.read()
     gen = src[src.index('async function genEmail'):src.index('function copyMail')]
-    assert 'recordDraftOnTrail(' in gen, 'the draft must reach the trail'
+    # 'await' as well as the name: a textual check for the name alone
+    # passed when the call was short-circuited to `null && …`.
+    assert 'await recordDraftOnTrail(' in gen, 'the draft must reach the trail'
+    assert 'OR_DRAFT_ID = (rec' in gen
     sent = src[src.index('async function markSent'):]
     sent = sent[:sent.index('\n}\n')]
     assert '/sent`' in sent, 'marking sent must move the draft'
