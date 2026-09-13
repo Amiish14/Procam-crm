@@ -69,10 +69,17 @@ def _emp_role():
     return session.get('role') or ''
 
 
+def _unrestricted():
+    """Company-wide scope in the Access Matrix — what "admin" meant in the
+    checks below before the matrix existed."""
+    from app.access import scope as _scope
+    return _scope.current().codes is None
+
+
 def _has_role_key(emp, role_key):
     if not emp:
         return False
-    if _emp_role() == 'admin':
+    if _unrestricted():
         return True
     return (getattr(emp, 'role', '') or '') == role_key
 
@@ -476,12 +483,12 @@ def api_approve(qid):
                        error=f'Only Awaiting-Approval quotes may be approved. Current: {q.status}'), 400
     actor = session.get('emp_code')
     emp = _current_emp()
-    if _emp_role() != 'admin' and not _has_role_key(emp, 'Vertical_Head'):
+    if not _unrestricted() and not _has_role_key(emp, 'Vertical_Head'):
         return jsonify(ok=False,
                        error='Only Vertical_Head (or admin) may approve'), 403
     # Maker-checker
     if q.prepared_by_id and q.prepared_by_id == actor \
-       and _emp_role() != 'admin':
+       and not _unrestricted():
         return jsonify(ok=False,
                        error='Preparer cannot approve their own quote'), 403
     old = q.status

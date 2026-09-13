@@ -63,13 +63,20 @@ def _emp_role():
     return session.get('role') or ''
 
 
+def _unrestricted():
+    """Company-wide scope in the Access Matrix — what "admin" meant in the
+    checks below before the matrix existed."""
+    from app.access import scope as _scope
+    return _scope.current().codes is None
+
+
 def _has_role_key(emp, role_key):
     """True if the acting user is an admin, has the CRM role_key as their
     Employee.role, or is a member on ANY record with that role.
     Kept intentionally permissive for RBAC-lite gating."""
     if not emp:
         return False
-    if _emp_role() == 'admin':
+    if _unrestricted():
         return True
     # Employee.role stores generic buckets (admin/sales/presales/user).
     # The role_key match here is a loose check for the seven CRM roles.
@@ -426,7 +433,7 @@ def api_submit_rate(rid, line_id):
 
     # Only the assigned sourcing owner (or admin / Rate_Sourcing role) may
     # submit the rate.
-    if _emp_role() != 'admin' \
+    if not _unrestricted() \
        and line.sourcing_owner_id and line.sourcing_owner_id != actor \
        and not _has_role_key(emp, 'Rate_Sourcing'):
         return jsonify(ok=False,

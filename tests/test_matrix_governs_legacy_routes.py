@@ -128,3 +128,30 @@ def test_two_employees_without_email_can_be_created(people):
         Employee.query.filter(Employee.emp_code.in_(['MLNOMAIL1',
                                                      'MLNOMAIL2'])).delete()
         db.session.commit()
+
+
+def test_presales_accounts_follow_the_matrix_not_the_role(people):
+    from app import Company
+    with flask_app.app_context():
+        mine = Company(name='ML Warehouse Account', is_active=True,
+                       pic_emp_code='MLREP')
+        other = Company(name='ML Installation Account', is_active=True,
+                        pic_emp_code='MLOTHER')
+        db.session.add_all([mine, other])
+        db.session.commit()
+        ids = (mine.id, other.id)
+    try:
+        def seen(code, role):
+            r = _c(code, role).get('/api/accounts')
+            assert r.status_code == 200, r.get_data(as_text=True)[:200]
+            return {a['id'] for a in r.get_json()['accounts']} & set(ids)
+        # an administrator narrowed to Own sees neither
+        assert seen('MLNARROW', 'admin') == set()
+        # a vertical head sees the account of their vertical, not another
+        assert seen('MLHEAD', 'user') == {ids[0]}
+        assert seen('MLOTHER', 'user') == {ids[1]}
+    finally:
+        with flask_app.app_context():
+            Company.query.filter(Company.id.in_(ids)).delete(
+                synchronize_session=False)
+            db.session.commit()

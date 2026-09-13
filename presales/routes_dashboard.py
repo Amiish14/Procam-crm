@@ -35,26 +35,25 @@ def _current_emp():
     return Employee.query.filter_by(emp_code=code).first() if code else None
 
 
+def _sees_all(emp: Employee):
+    from app.access import scope as _scope
+    return _scope.for_employee(emp.emp_code).codes is None
+
+
 def _scoped_accounts(emp: Employee):
+    """Accounts within the viewer's Access Matrix scope."""
+    from app.access import scope as _scope
     q = Company.query.filter(Company.is_active.is_(True))
-    if emp.role == 'admin':
-        return q
-    if emp.is_vertical_head:
-        subs = [emp.emp_code] + [e.emp_code for e in
-                Employee.query.filter_by(vertical_head_id=emp.id).all()]
-        return q.filter(Company.pic_emp_code.in_(subs))
-    return q.filter(Company.pic_emp_code == emp.emp_code)
+    return _scope.companies(q, sc=_scope.for_employee(emp.emp_code))
 
 
 def _scoped_projects(emp: Employee):
+    from app.access import scope as _scope
     q = Project.query.filter(Project.is_archived.is_(False))
-    if emp.role == 'admin':
+    sc = _scope.for_employee(emp.emp_code)
+    if sc.codes is None:
         return q
-    if emp.is_vertical_head:
-        subs = [emp.emp_code] + [e.emp_code for e in
-                Employee.query.filter_by(vertical_head_id=emp.id).all()]
-        return q.filter(Project.pic_emp_code.in_(subs))
-    return q.filter(Project.pic_emp_code == emp.emp_code)
+    return q.filter(Project.pic_emp_code.in_(sc.codes or ['']))
 
 
 # ─── Dashboard summary ────────────────────────────────────────────────
@@ -99,7 +98,7 @@ def api_presales_dashboard():
     top_accounts = (db.session.query(
         Company.name, func.count(Opportunity.id).label('rfqs'))
         .join(Opportunity, Opportunity.source_account_id == Company.id)
-        .filter(Company.id.in_([a.id for a in acc_q.all()]) if emp.role != 'admin' else True)
+        .filter(Company.id.in_([a.id for a in acc_q.all()]) if not _sees_all(emp) else True)
         .group_by(Company.name)
         .order_by(func.count(Opportunity.id).desc())
         .limit(10).all())
@@ -214,7 +213,7 @@ def api_report_attribution():
         Opportunity.source_type, Opportunity.source_account_id,
         Opportunity.source_project_id, Opportunity.created_at,
     ).filter(Opportunity.source_type.isnot(None))
-    if emp.role != 'admin':
+    if not _sees_all(emp):
         # limit to opps whose source Account belongs to the user's scope
         scoped_ids = {a.id for a in _scoped_accounts(emp).all()}
         q = q.filter((Opportunity.source_account_id.in_(scoped_ids)) |

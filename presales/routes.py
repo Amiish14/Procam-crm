@@ -47,19 +47,15 @@ def _visible_account_ids(emp: Employee):
     """Return None (= all visible) for admin/vertical head; a set of ids
     otherwise. Vertical heads see accounts assigned to any emp_code in
     their reporting chain."""
-    if emp.role == 'admin':
+    # The Access Matrix decides, as everywhere else: company-wide scope
+    # sees all, vertical and own scope see the accounts their scope reaches.
+    # (This used to test the role name and the reporting chain, so a
+    # narrowed administrator still saw every account here.)
+    from app.access import scope as _scope
+    sc = _scope.for_employee(emp.emp_code)
+    if sc.codes is None:
         return None
-    if emp.is_vertical_head:
-        subs = [emp.emp_code]
-        for e in Employee.query.filter_by(vertical_head_id=emp.id).all():
-            subs.append(e.emp_code)
-        ids = {c.id for c in Company.query.filter(
-            Company.pic_emp_code.in_(subs)).all()}
-        return ids
-    # regular user — only their own
-    ids = {c.id for c in Company.query.filter(
-        Company.pic_emp_code == emp.emp_code).all()}
-    return ids
+    return {c.id for c in _scope.companies(sc=sc).with_entities(Company.id)}
 
 
 # ─── list + create ─────────────────────────────────────────────────────
@@ -208,7 +204,7 @@ def api_accounts_assign(aid):
     emp = _current_emp()
     c = Company.query.get_or_404(aid)
     ids = _visible_account_ids(emp)
-    if ids is not None and c.id not in ids and emp.role != 'admin':
+    if ids is not None and c.id not in ids:
         return jsonify(ok=False, error='forbidden'), 403
     body = request.get_json(silent=True) or {}
     try:

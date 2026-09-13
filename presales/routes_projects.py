@@ -43,16 +43,15 @@ def _current_emp():
 
 
 def _visible_project_ids(emp: Employee):
-    if emp.role == 'admin':
+    # Access Matrix scope, applied to the project's PIC.
+    from app.access import scope as _scope
+    sc = _scope.for_employee(emp.emp_code)
+    if sc.codes is None:
         return None
-    if emp.is_vertical_head:
-        subs = [emp.emp_code]
-        for e in Employee.query.filter_by(vertical_head_id=emp.id).all():
-            subs.append(e.emp_code)
-        return {p.id for p in Project.query.filter(
-            Project.pic_emp_code.in_(subs)).all()}
-    return {p.id for p in Project.query.filter(
-        Project.pic_emp_code == emp.emp_code).all()}
+    if not sc.codes:
+        return set()
+    return {p.id for p in Project.query.with_entities(Project.id).filter(
+        Project.pic_emp_code.in_(sc.codes))}
 
 
 def _parse_date(s):
@@ -277,7 +276,7 @@ def api_projects_link_account(pid):
     emp = _current_emp()
     p = Project.query.get_or_404(pid)
     ids = _visible_project_ids(emp)
-    if ids is not None and p.id not in ids and emp.role != 'admin':
+    if ids is not None and p.id not in ids:
         return jsonify(ok=False, error='forbidden'), 403
     b = request.get_json(silent=True) or {}
     op = (b.get('op') or 'add').lower()
@@ -313,7 +312,7 @@ def api_projects_link_contact(pid):
     emp = _current_emp()
     p = Project.query.get_or_404(pid)
     ids = _visible_project_ids(emp)
-    if ids is not None and p.id not in ids and emp.role != 'admin':
+    if ids is not None and p.id not in ids:
         return jsonify(ok=False, error='forbidden'), 403
     b = request.get_json(silent=True) or {}
     cid = b.get('contact_id')
@@ -343,7 +342,7 @@ def api_projects_convert(pid):
     emp = _current_emp()
     p = Project.query.get_or_404(pid)
     ids = _visible_project_ids(emp)
-    if ids is not None and p.id not in ids and emp.role != 'admin':
+    if ids is not None and p.id not in ids:
         return jsonify(ok=False, error='forbidden'), 403
     b = request.get_json(silent=True) or {}
     account = None
