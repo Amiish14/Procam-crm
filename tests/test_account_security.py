@@ -141,8 +141,16 @@ def test_a_deactivated_employee_is_logged_out_on_the_next_request(people):
         db.session.commit()
     r = c.get('/api/leads')
     assert r.status_code == 401 and r.get_json()['code'] == 'inactive'
-    with c.session_transaction() as s:
-        assert 'emp_code' not in s
+    # The session the server sends back no longer names the employee.
+    # Decoded from the response rather than read from the test client's
+    # jar: the cookie is Secure, and the client on plain http ignores
+    # it, which a browser on https would not.
+    signer = flask_app.session_interface.get_signing_serializer(flask_app)
+    sent = [h.split(';', 1)[0].split('=', 1)[1]
+            for h in r.headers.getlist('Set-Cookie')
+            if h.startswith(flask_app.config['SESSION_COOKIE_NAME'] + '=')]
+    assert sent, 'the session cookie was not rewritten'
+    assert 'emp_code' not in (signer.loads(sent[0]) if sent[0] else {})
 
 
 def test_a_default_password_session_cannot_use_the_api(people):
