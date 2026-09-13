@@ -2708,9 +2708,16 @@ def api_my_work():
             return 0
 
     # ── Pendency buckets ──────────────────────────────────────────────
-    stale_cut = datetime.utcnow() - _td(days=3)
-    untouched = mine.filter(db.or_(Lead.updated_at.is_(None),
-                                   Lead.updated_at < stale_cut))
+    # v2026-09-13 — "untouched" used to mean `updated_at` older than
+    # three days, which counts a typo fix as contact with a customer and
+    # counts an email sent this morning as nothing. It now reads
+    # app.services.contact, the one definition the Copilot also uses, so
+    # this tile and "what needs my attention today" cannot report
+    # different numbers on the same screen.
+    from app.services import contact as _contact
+    _touched = _contact.contacted_since(datetime.utcnow() - _td(days=3))
+    untouched = (mine.filter(~Lead.id.in_(_touched)) if _touched
+                 else mine)
     overdue   = mine.filter(Lead.followup_date.isnot(None),
                             Lead.followup_date < today)
     due_today = mine.filter(Lead.followup_date == today)

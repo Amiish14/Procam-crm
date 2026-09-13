@@ -82,52 +82,20 @@ def _lead_chip(lead):
 
 # ── what "last contact" actually means ───────────────────────────────
 #
-# lead_activities holds 7 rows against 11,101 leads: nobody logs calls.
-# Ranking staleness on it said every open lead had been neglected, which
-# is true of the log and false of the desk. The email trail, by
-# contrast, carries real inbound and outbound timestamps for every lead
-# the mailbox ever produced — so contact means either, and a lead is
-# stale only when neither has happened.
+# One definition, in app/services/contact.py, shared with the Sales
+# Intelligence tiles. Keeping a second copy here is how the tile and the
+# question end up disagreeing on the same screen — which they did, until
+# this was pulled out.
 
 def _contacted_since(cutoff):
-    """(activity_ids, email_ids) — leads touched since `cutoff`.
-
-    Two sets rather than a computed maximum: the question is only ever
-    "has anything happened since", and SQLite's max() over nullable
-    columns needs more care than the answer is worth.
-    """
-    from app import LeadActivity, LeadEmail
-
-    acted = {r[0] for r in LeadActivity.query
-             .with_entities(LeadActivity.lead_id)
-             .filter(LeadActivity.occurred_at >= cutoff).all()}
-    mailed = {r[0] for r in LeadEmail.query
-              .with_entities(LeadEmail.lead_id)
-              .filter(LeadEmail.sent_or_received_at >= cutoff).all()}
-    return acted, mailed
+    from app.services import contact as _contact
+    touched = _contact.contacted_since(cutoff)
+    return touched, set()          # (acted, mailed) — callers union them
 
 
 def _last_contact(lead):
-    """The most recent real contact on one lead, or None.
-
-    Deliberately not `updated_at` — that moves when somebody edits a
-    field, which is not contact with a customer and should never be
-    reported as though it were.
-    """
-    from app import LeadActivity, LeadEmail
-
-    stamps = []
-    act = (LeadActivity.query.with_entities(LeadActivity.occurred_at)
-           .filter(LeadActivity.lead_id == lead.id)
-           .order_by(LeadActivity.occurred_at.desc()).first())
-    if act and act[0]:
-        stamps.append(act[0])
-    mail = (LeadEmail.query.with_entities(LeadEmail.sent_or_received_at)
-            .filter(LeadEmail.lead_id == lead.id)
-            .order_by(LeadEmail.sent_or_received_at.desc()).first())
-    if mail and mail[0]:
-        stamps.append(mail[0])
-    return max(stamps) if stamps else None
+    from app.services import contact as _contact
+    return _contact.last_contact(lead)
 
 
 def _nothing_recorded(label, module_hint=''):
