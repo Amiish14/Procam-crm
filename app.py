@@ -290,6 +290,7 @@ Talisman(app,
 
 @app.route('/api/csp-report', methods=['POST'])
 @csrf.exempt
+@limiter.limit("30/minute")
 def csp_report():
     try:
         app.logger.warning('CSP-VIOLATION %s', (request.get_json(force=True, silent=True) or {}))
