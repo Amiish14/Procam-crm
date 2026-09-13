@@ -1,7 +1,7 @@
 """
 Data-quality audit. Read-only: writes CSV files, never the database.
 
-Twelve reports, each a CSV of the rows that need a person's attention,
+Thirteen reports, each a CSV of the rows that need a person's attention,
 plus summary.csv with the count per report. Nothing here fixes anything —
 every row is a decision (who owns this account, which of these two is
 the real company) that the software must not guess.
@@ -333,6 +333,41 @@ def incomplete_contacts(conn):
              'mobile', 'designation', 'problems'], out)
 
 
+def quotes_received_filed_as_sent(conn):
+    """Emails from outside Procam filed as if Procam sent them.
+
+    Until 2026-09 an agent's quotation to Procam, or a supplier's reply,
+    was filed as outbound; a quotation also moved the lead to Quoted and
+    wrote the agent's price into quoted_amount_inr. The code is fixed;
+    this lists the leads it already touched, for a person to check the
+    stage and amount. Nothing is corrected automatically — some of those
+    leads have since been quoted for real."""
+    internal = {'procamlogistics.com', 'procamgroup.in'} | {
+        d.strip().lower() for d in
+        (os.environ.get('INTERNAL_EMAIL_DOMAINS') or '').split(',')
+        if d.strip()}
+    cols = {r[1] for r in conn.execute(text('PRAGMA table_info(lead_emails)'))}
+    if 'intake_class' not in cols:
+        return (['lead_id'], [])
+    out = []
+    for r in _rows(conn, """
+            SELECT e.lead_id, e.id AS email_id, e.intake_class, e.from_addr,
+                   e.subject, e.sent_or_received_at, l.company, l.stage,
+                   l.quoted_amount_inr, l.assigned_to
+              FROM lead_emails e JOIN leads l ON l.id = e.lead_id
+             WHERE e.direction = 'outbound'
+               AND e.intake_class IN ('H_quote_submission', 'G_rate_sourcing')
+             ORDER BY e.lead_id, e.id"""):
+        domain = (r['from_addr'] or '').rsplit('@', 1)[-1].lower().strip('> ')
+        if domain and domain not in internal:
+            out.append({**r, 'stage_possibly_wrong':
+                        'yes' if r['intake_class'] == 'H_quote_submission'
+                        and r['stage'] == 'Quoted' else ''})
+    return (['lead_id', 'company', 'stage', 'stage_possibly_wrong',
+             'quoted_amount_inr', 'assigned_to', 'email_id', 'intake_class',
+             'from_addr', 'subject', 'sent_or_received_at'], out)
+
+
 REPORTS = {
     'accounts_without_owner': accounts_without_owner,
     'leads_without_owner': leads_without_owner,
@@ -346,6 +381,7 @@ REPORTS = {
     'duplicate_contacts': duplicate_contacts,
     'accounts_missing_gstin': accounts_missing_gstin,
     'incomplete_contacts': incomplete_contacts,
+    'quotes_received_filed_as_sent': quotes_received_filed_as_sent,
 }
 
 

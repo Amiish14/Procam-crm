@@ -409,6 +409,8 @@ def test_a_non_lead_is_filed_rather_than_dropped():
     assert 'LeadEmail(' in body, 'the email must land on the lead trail'
     assert "lead.stage = 'Quoted'" in body, \
         'a quotation should move the enquiry on'
+    assert "decision.klass == _li.Klass.QUOTE and outbound" in body, \
+        'only a quotation we sent moves the enquiry on'
 
 
 def test_the_created_lead_keeps_its_thread_identity():

@@ -104,7 +104,15 @@ def _file_against_lead(db, decision, msg, extracted, log):
             return None                       # already on the trail
 
         keys = _thread_keys(msg)
-        outbound = decision.klass in (_li.Klass.QUOTE, _li.Klass.RATE_SOURCING)
+        # Only what our own people send is outbound. The classifier gives
+        # the same two classes to mail coming IN: a known supplier's reply
+        # (rule 6) and an agent quoting Procam (rule 7). Those were filed
+        # as sent by us, moved the lead to Quoted before Procam had quoted
+        # anyone, and wrote the agent's buying price into
+        # quoted_amount_inr. Rule 4 is the "sender is one of ours" branch.
+        from_us = decision.step == 4
+        outbound = from_us and decision.klass in (_li.Klass.QUOTE,
+                                                  _li.Klass.RATE_SOURCING)
         row = LeadEmail(
             lead_id=decision.lead_id,
             direction='outbound' if outbound else 'inbound',
@@ -127,7 +135,7 @@ def _file_against_lead(db, decision, msg, extracted, log):
         # A quotation going out moves the enquiry on. Nothing else here
         # changes a stage: an inbound reply is information, not progress,
         # and advancing a lead on one would corrupt the pipeline.
-        if decision.klass == _li.Klass.QUOTE:
+        if decision.klass == _li.Klass.QUOTE and outbound:
             lead = db.session.get(Lead, decision.lead_id)
             if lead is not None:
                 if (lead.stage or '') not in ('Quoted', 'Won', 'Lost',

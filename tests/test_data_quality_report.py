@@ -76,6 +76,11 @@ def dbpath():
       "(2, 'Dup', 'OK@x.com', NULL, 1, 'CFO', 1),"
       "(3, '', NULL, NULL, NULL, NULL, 1),"
       "(4, 'Phone dup', 'p@y.com', '+91 98765 43210', 1, 'COO', 1)")
+    x("INSERT INTO lead_emails (lead_id, direction, intake_class, from_addr) "
+      "VALUES (1, 'outbound', 'H_quote_submission', 'sales@procamgroup.in'),"
+      "       (4, 'outbound', 'H_quote_submission', 'rates@agent.example'),"
+      "       (5, 'inbound', 'H_quote_submission', 'rates@agent.example')")
+    x("UPDATE leads SET stage = 'Quoted' WHERE id = 4")
     db.commit()
     db.close()
     return path
@@ -137,7 +142,7 @@ def test_run_writes_private_csvs_and_never_the_database(dbpath, conn):
     before = hashlib.sha256(open(dbpath, 'rb').read()).hexdigest()
     out = os.path.join(tempfile.mkdtemp(), 'dq')
     summary = dq.run(conn, out)
-    assert len(summary) == len(dq.REPORTS) == 12
+    assert len(summary) == len(dq.REPORTS) == 13
     assert hashlib.sha256(open(dbpath, 'rb').read()).hexdigest() == before
     path = os.path.join(out, 'leads_without_owner.csv')
     assert oct(os.stat(path).st_mode & 0o777) == '0o600'
@@ -148,3 +153,9 @@ def test_run_writes_private_csvs_and_never_the_database(dbpath, conn):
 def test_the_engine_refuses_writes(conn):
     with pytest.raises(Exception, match='readonly'):
         conn.exec_driver_sql("UPDATE companies SET name = 'x'")
+
+
+def test_quotes_received_filed_as_sent(conn):
+    rows = dq.quotes_received_filed_as_sent(conn)[1]
+    assert [(r['lead_id'], r['stage_possibly_wrong']) for r in rows] == [
+        (4, 'yes')]
