@@ -71,16 +71,29 @@ def counts(conn):
                      "WHERE migrated_from_legacy = 1")
                  if 'migrated_from_legacy' in notes_cols else 0)
 
+    # Unrecoverable split by whether a mailbox lookup is even possible:
+    # without an internetMessageId there is nothing to search for.
+    no_mid = one(
+        "SELECT COUNT(*) FROM leads "
+        "WHERE original_email_source = 'migrated_from_notes' "
+        "AND COALESCE(email_message_id, '') = ''")
+    damaged = restored + unrecoverable
     return {'email_leads': email_leads, 'intact': intact,
             'restored': restored, 'unrecoverable': unrecoverable,
+            'unrecoverable_no_message_id': no_mid,
             'preserved_as_note': preserved,
-            'email_lead_with_no_body': no_email}
+            'email_lead_with_no_body': no_email,
+            'damaged': damaged,
+            'recovery_pct': (round(100.0 * restored / damaged, 1)
+                             if damaged else None)}
 
 
 def graph_blocker():
     """Why mailbox recovery has not run, in words an admin can act on."""
-    need = [k for k in ('GRAPH_TENANT_ID', 'GRAPH_CLIENT_ID',
-                        'GRAPH_CLIENT_SECRET')
+    # The names email_ingest/graph_client.py reads. This used to check
+    # GRAPH_*, which nothing sets, so a configured server was always
+    # reported as unconfigured.
+    need = [k for k in ('MS_TENANT_ID', 'MS_CLIENT_ID', 'MS_CLIENT_SECRET')
             if not os.environ.get(k)]
     if need:
         return ('Graph credentials are not configured on this host: '
@@ -110,6 +123,13 @@ def main():
         print(f'    no body at all                {c["email_lead_with_no_body"]}')
         print(f'\n  Damaged text kept as a flagged note   '
               f'{c["preserved_as_note"]}')
+        pct = c['recovery_pct']
+        print(f'  Recovery: {c["restored"]} of {c["damaged"]} damaged '
+              f'enquiries restored'
+              + (f' ({pct}%)' if pct is not None else ' (none damaged)'))
+        if c['unrecoverable_no_message_id']:
+            print(f'  {c["unrecoverable_no_message_id"]} have no message id '
+                  f'and cannot be looked up in the mailbox at all.')
 
         if c['unrecoverable']:
             print(f'\n  BLOCKED: {graph_blocker()}')

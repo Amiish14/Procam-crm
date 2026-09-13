@@ -18,6 +18,13 @@ What it does
     note by the split migration, so recovery adds the email back without
     taking the note away.
 
+Safety
+    Only leads the split migration flagged are ever touched; --ids narrows
+    that set and cannot add a healthy lead to it. The trail row replaced is
+    the one for this message (or the damaged one with no message id),
+    never a later reply. Before committing, every value about to change is
+    written to backups/recovery_preimage_<timestamp>.json.
+
 Usage
     python scripts/2026_09_22_recover_lost_emails.py --check
     python scripts/2026_09_22_recover_lost_emails.py --ids 10440,11102
@@ -72,12 +79,52 @@ def _html_to_text(html):
 
 
 def damaged_leads(Lead, ids=None):
+    """Leads whose enquiry the split migration flagged as overwritten.
+
+    --ids narrows this set; it never widens it. Passing the id of a
+    healthy lead used to overwrite its real original email with whatever
+    the mailbox returned, so an id outside the flagged set is refused.
+    Explicit ids do skip the looks-like-an-email heuristic — that is what
+    they are for, when the heuristic misjudged a short damaged body.
+    """
     q = Lead.query.filter(Lead.email_message_id.isnot(None),
-                          Lead.email_message_id != '')
+                          Lead.email_message_id != '',
+                          Lead.original_email_source == 'migrated_from_notes')
     if ids:
         return q.filter(Lead.id.in_(ids)).all()
-    rows = q.filter(Lead.original_email_source == 'migrated_from_notes').all()
-    return [r for r in rows if not looks_like_an_email(r.original_email_body)]
+    return [r for r in q.all()
+            if not looks_like_an_email(r.original_email_body)]
+
+
+def _trail_row(LeadEmail, lead, imid):
+    """The trail row this message belongs in.
+
+    The row carrying this message id, or failing that an inbound row with
+    no message id (the damaged original). Never a different message — a
+    lead can hold later customer replies, and those are real emails."""
+    rows = LeadEmail.query.filter_by(lead_id=lead.id,
+                                     direction='inbound').all()
+    for row in rows:
+        if row.message_id == imid:
+            return row
+    for row in rows:
+        if not row.message_id:
+            return row
+    return None
+
+
+def _save_preimage(records):
+    """Everything about to be overwritten, to a file, before the commit.
+    Rollback is a matter of writing these values back."""
+    import json
+    folder = os.path.join(_ROOT, 'backups')
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, 'recovery_preimage_'
+                        + datetime.now().strftime('%Y%m%d-%H%M%S') + '.json')
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, 'w') as fh:
+        json.dump(records, fh, indent=1, default=str)
+    return path
 
 
 def main():
@@ -97,18 +144,28 @@ def main():
     ids = None
     if args.ids:
         ids = [int(x) for x in args.ids.split(',') if x.strip().isdigit()]
+        if not ids:
+            raise SystemExit('--ids needs comma-separated numeric lead ids.')
 
     from app import app as flask_app, db, Lead, LeadEmail    # noqa: E402
 
-    mailbox = os.environ.get('EMAIL_INGEST_MAILBOX')
+    # The mailbox the webhook ingests from. EMAIL_INGEST_MAILBOX is the
+    # legacy poller's name for it and still wins when set.
+    from email_ingest import service as _mail
+    mailbox = os.environ.get('EMAIL_INGEST_MAILBOX') or _mail.crm_inbox_email()
     if not mailbox:
-        raise SystemExit('EMAIL_INGEST_MAILBOX is not set — nothing to '
-                         'search.')
+        raise SystemExit('No mailbox configured (CRM_INBOX_EMAIL) — nothing '
+                         'to search.')
     print(f'mailbox: {mailbox}')
 
     with flask_app.app_context():
         targets = damaged_leads(Lead, ids)
         print(f'leads to recover: {len(targets)}')
+        if ids:
+            refused = sorted(set(ids) - {t.id for t in targets})
+            if refused:
+                print(f'  refused (not flagged as damaged, or no message id): '
+                      f'{", ".join(map(str, refused))}')
         if not targets:
             return
         wanted = {}
@@ -133,6 +190,7 @@ def main():
               f'of {len(wanted)}')
 
         recovered = 0
+        preimage = []
         for imid, leads in wanted.items():
             msg = found.get(imid)
             for lead in leads:
@@ -152,16 +210,28 @@ def main():
                     continue
                 sender = ((msg.get('from') or {}).get('emailAddress')
                           or {}).get('address')
+                row = _trail_row(LeadEmail, lead, imid)
+                preimage.append({
+                    'lead_id': lead.id, 'message_id': imid,
+                    'original_email_body': lead.original_email_body,
+                    'original_email_subject': lead.original_email_subject,
+                    'original_email_from': lead.original_email_from,
+                    'original_email_source': lead.original_email_source,
+                    'lead_email': None if row is None else {
+                        'id': row.id, 'body': row.body,
+                        'subject': row.subject, 'from_addr': row.from_addr,
+                        'source': row.source, 'status': row.status,
+                        'message_id': row.message_id},
+                })
                 lead.original_email_body = body[:8000]
                 lead.original_email_subject = (msg.get('subject') or '')[:500]
                 lead.original_email_from = (sender or '')[:320] or None
                 lead.original_email_source = 'recovered_from_mailbox'
-                row = LeadEmail.query.filter_by(
-                    lead_id=lead.id, direction='inbound').first()
                 if row is None:
                     row = LeadEmail(lead_id=lead.id, direction='inbound',
                                     message_id=imid)
                     db.session.add(row)
+                row.message_id = row.message_id or imid
                 row.body = body[:8000]
                 row.subject = lead.original_email_subject
                 row.from_addr = lead.original_email_from
@@ -172,6 +242,9 @@ def main():
         if args.check:
             print('\n== nothing written ==')
         else:
+            if preimage:
+                path = _save_preimage(preimage)
+                print(f'\n  previous values saved to {path}')
             db.session.commit()
             print(f'\n  recovered {recovered} lead(s). The text that had '
                   f'overwritten them\n  remains as a flagged note — nothing '

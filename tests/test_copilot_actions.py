@@ -240,3 +240,26 @@ def test_only_the_four_actions_the_brief_names_exist(world):
     something that appears because a model asked for it."""
     assert set(actions.ACTIONS) == {
         'create_activity', 'create_reminder', 'reassign_lead', 'update_stage'}
+
+
+def test_a_token_forged_with_a_guessable_key_is_refused(world, on,
+                                                         monkeypatch):
+    """Confirmation tokens used to be signed with the literal 'procam-ai'
+    whenever SECRET_KEY was absent from the environment — a key anyone
+    reading the source knew. They are now signed with the app's own key,
+    which has no known fallback."""
+    monkeypatch.delenv('SECRET_KEY', raising=False)
+    params = {'lead_id': world['mine'], 'note': 'forged'}
+    real = flask_app.secret_key
+    try:
+        with flask_app.app_context():
+            flask_app.secret_key = 'procam-ai'          # attacker's guess
+            forged, err = actions.propose('create_activity', _sc('ACADM'),
+                                          params)
+            assert err is None
+            flask_app.secret_key = 'the-real-unguessable-key'
+            r, err = actions.commit('create_activity', _sc('ACADM'), params,
+                                    forged.token, actor='ACADM')
+            assert r is None and 'does not match' in err
+    finally:
+        flask_app.secret_key = real

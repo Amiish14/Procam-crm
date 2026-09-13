@@ -137,6 +137,11 @@ app.logger.setLevel(
             _logging.INFO))
 
 app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
+if not os.environ.get('SECRET_KEY'):
+    # A per-process random key means every gunicorn worker signs sessions
+    # and CSRF tokens differently, and every restart logs everyone out.
+    app.logger.warning('SECRET_KEY is not set — using a random per-process '
+                       'key. Set it in .env before running in production.')
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///procam_crm.db')
 if db_url.startswith('postgres://'):
     db_url = db_url.replace('postgres://', 'postgresql://', 1)

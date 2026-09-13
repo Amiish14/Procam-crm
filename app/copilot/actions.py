@@ -65,7 +65,15 @@ class Proposal:
 
 
 def _secret():
-    return (os.environ.get('SECRET_KEY') or 'procam-ai').encode()
+    """The app's own session key. There is deliberately no fallback
+    constant: a known key would let anyone mint a confirmation token.
+    When SECRET_KEY is unset app.py generates a random one per process,
+    so a token then fails closed rather than open."""
+    from flask import current_app
+    key = current_app.secret_key
+    if not key:
+        raise RuntimeError('no secret key — Copilot actions are unavailable')
+    return key.encode() if isinstance(key, str) else key
 
 
 def _sign(payload):

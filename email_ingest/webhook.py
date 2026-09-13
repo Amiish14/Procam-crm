@@ -132,6 +132,17 @@ def handle_notification(payload: dict) -> dict:
     if not notifications:
         return {'processed': 0, 'note': 'empty payload'}
 
+    # Fail closed. The clientState secret is the only proof a POST came
+    # from our Graph subscription; without it configured, accepting the
+    # notification would let anyone on the internet name a message for
+    # ingestion. A subscription cannot be created without the secret, so
+    # a correctly configured server never reaches this.
+    if not secret_expected:
+        log.error('EMAIL_WEBHOOK_SECRET is not set — refusing %d webhook '
+                  'notification(s).', len(notifications))
+        return {'processed': 0, 'refused': len(notifications),
+                'error': 'EMAIL_WEBHOOK_SECRET not configured'}
+
     graph = GraphClient()
     stats = {'processed': 0, 'created': 0, 'skipped': 0, 'failed': 0,
              'rejected_mailbox': 0}
@@ -139,7 +150,7 @@ def handle_notification(payload: dict) -> dict:
     with app.app_context():
         for n in notifications:
             import hmac as _hmac
-            if secret_expected and not _hmac.compare_digest(
+            if not _hmac.compare_digest(
                     (n.get('clientState') or ''), secret_expected):
                 log.warning('webhook: clientState mismatch — rejecting one item')
                 stats['failed'] += 1
