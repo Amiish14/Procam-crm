@@ -65,13 +65,9 @@ def _stamp_quote(lead, mail_row, got, log):
     quote['recorded_from'] = mail_row.message_id if mail_row else None
     current['last_quote'] = quote
     lead.opp_notes = _json.dumps(current, default=str)
-    if got.get('amount'):
-        try:
-            lead.quoted_amount_inr = (got['amount']
-                                      if got.get('currency') in (None, 'INR')
-                                      else lead.quoted_amount_inr)
-        except Exception:
-            pass
+    # Offered to the PIC on the lead as a suggestion, not written into the
+    # quote value: an amount read from an email counts only once a person
+    # confirms it (app/services/lead_value.quote_suggestion).
     log.info('quote recorded on lead %s: %s', lead.id, quote)
 
 

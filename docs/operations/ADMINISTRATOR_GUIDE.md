@@ -69,6 +69,31 @@ Reassigning a lead needs a reason. Repeated reassignments of one
 account's leads to the same person turn into a proposal to change the
 account owner (future leads only).
 
+## Lead values and exchange rates
+
+Lead values are entered in rupees (or USD/EUR) and shown in lakh, or
+crore from ₹1 crore up — never millions. Lists and reports read the
+**quote value** once a lead has one, otherwise the **opportunity value**.
+
+**Master Data → Exchange Rates** holds INR per USD and per EUR. A lead
+converts its value when it is saved and keeps that rate, so updating a
+rate never moves values already saved. Until a rate is set, a USD/EUR
+value is refused with a message telling the user to enter INR. Every
+rate change is in the audit trail (`config.fx_rate`).
+
+Re-quoting keeps the version it replaces: the lead shows **Revision N**
+and **Earlier versions**. Filling in a blank field is not a re-quote.
+
+An amount read from one of our quotation emails is offered on the lead
+as a suggestion (**Use these**); it counts only once the PIC saves it.
+
+Three Data Quality checks follow the gaps: quoted leads with no quote
+value or date, won leads with no value, open quotes past validity.
+
+KPI targets for Business Won and Pipeline Value are still set in INR
+millions; the actuals they compare against are computed from the rupee
+values.
+
 ## Bulk lead administration
 
 **/CRM/admin/leads**. Archive (reversible) is the normal action. Bulk

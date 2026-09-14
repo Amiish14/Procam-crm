@@ -109,4 +109,7 @@ SYSTEM_LISTS = [
      'one that teaches nothing.'),
     ('project_stage',   'Project Stage',  'Project intelligence stages.'),
     ('account_stage',   'Account Stage',  'Account development stages.'),
+    ('fx_rate',         'Exchange Rates',
+     'INR per unit of each foreign currency lead values are entered in. '
+     'A lead keeps the rate it was saved at.'),
 ]

@@ -1277,7 +1277,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
     <div class="tw"><table>
       <thead><tr><th>PIC</th><th>Total</th><th>Active</th><th>Calls</th><th>Profile</th>
       <th>Appts</th><th>Visits</th><th>RFQ</th><th>Won</th><th>Lost</th>
-      <th>Conv %</th><th>Pipeline ₹M</th><th>Won ₹M</th></tr></thead>
+      <th>Conv %</th><th>Pipeline ₹ L</th><th>Won ₹ L</th></tr></thead>
       <tbody id="picTb"></tbody></table></div>
   </div>
 
@@ -1300,7 +1300,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
     <div class="tw"><table>
       <thead><tr><th>Company / Project</th><th>Industry</th><th>State</th>
       <th>PIC</th><th>Vertical</th><th>Stage</th><th>Follow-up</th>
-      <th>Onboarded</th><th>₹M</th><th></th></tr></thead>
+      <th>Onboarded</th><th title="Lakh; values of ₹1 crore and above show in crore">₹ L</th><th></th></tr></thead>
       <tbody id="dashTb"></tbody></table></div>
     <div id="detPager" style="padding:.5rem 1rem;text-align:right;font-size:.8rem;color:#6B7280;"></div>
   </div>
@@ -1323,7 +1323,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
       <button class="btn btn-ghost btn-sm" onclick="clrF('l')">Clear</button>
       <span class="f-cnt" id="lCnt"></span>
     </div>
-    <div class="tw"><table><thead><tr><th>#</th><th>Company / Project</th><th>Industry</th><th>State</th><th>₹M</th><th>Contact</th><th>Stage</th><th>Vertical</th><th>Followup</th><th>Opp#</th><th>Onboarded</th><th></th></tr></thead><tbody id="lTb"></tbody></table></div>
+    <div class="tw"><table><thead><tr><th>#</th><th>Company / Project</th><th>Industry</th><th>State</th><th title="Lakh; values of ₹1 crore and above show in crore">₹ L</th><th>Contact</th><th>Stage</th><th>Vertical</th><th>Followup</th><th>Opp#</th><th>Onboarded</th><th></th></tr></thead><tbody id="lTb"></tbody></table></div>
   </div>
 </div>
 
@@ -1346,7 +1346,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
       <button class="btn btn-ghost btn-sm" onclick="clrF('a')">Clear</button>
       <span class="f-cnt" id="aCnt"></span>
     </div>
-    <div class="tw"><table><thead><tr><th>#</th><th>Company</th><th>Industry</th><th>State</th><th>₹M</th><th>Contact</th><th>Stage</th><th>Assigned</th><th>Source</th><th>Opp#</th><th>Onboarded</th><th></th></tr></thead><tbody id="aTb"></tbody></table></div>
+    <div class="tw"><table><thead><tr><th>#</th><th>Company</th><th>Industry</th><th>State</th><th title="Lakh; values of ₹1 crore and above show in crore">₹ L</th><th>Contact</th><th>Stage</th><th>Assigned</th><th>Source</th><th>Opp#</th><th>Onboarded</th><th></th></tr></thead><tbody id="aTb"></tbody></table></div>
   </div>
 </div>
 
@@ -1359,7 +1359,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
       <select class="fi" id="opAsgn" onchange="rOpp()"><option value="">All Team</option></select>
       <span class="f-cnt" id="opCnt"></span>
     </div>
-    <div class="tw"><table><thead><tr><th>Opp #</th><th>Company</th><th>Industry</th><th>₹M</th><th>Vertical</th><th>Assigned</th><th>RFQ Date</th><th>PC Stage</th><th>Close Date</th><th>Notes</th><th></th></tr></thead><tbody id="opTb"></tbody></table></div>
+    <div class="tw"><table><thead><tr><th>Opp #</th><th>Company</th><th>Industry</th><th title="Lakh; values of ₹1 crore and above show in crore">₹ L</th><th>Vertical</th><th>Assigned</th><th>RFQ Date</th><th>PC Stage</th><th>Close Date</th><th>Notes</th><th></th></tr></thead><tbody id="opTb"></tbody></table></div>
   </div>
 </div>
 
@@ -1375,7 +1375,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
     <select class="fi" id="inbNewAsgn" onchange="rInbox('New','inbNew')"><option value="">All Team</option></select>
     <span class="f-cnt" id="inbNewCnt"></span>
   </div>
-  <div class="tw"><table><thead><tr><th>Company</th><th>State</th><th>Industry</th><th>₹M</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbNewTb"></tbody></table></div>
+  <div class="tw"><table><thead><tr><th>Company</th><th>State</th><th>Industry</th><th title="Lakh; values of ₹1 crore and above show in crore">₹ L</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbNewTb"></tbody></table></div>
   </div>
 </div>
 
@@ -1387,7 +1387,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
     <select class="fi" id="inbCallAsgn" onchange="rInbox('Call Done','inbCall')"><option value="">All Team</option></select>
     <span class="f-cnt" id="inbCallCnt"></span>
   </div>
-  <div class="tw"><table><thead><tr><th>Company</th><th>State</th><th>Industry</th><th>₹M</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbCallTb"></tbody></table></div></div>
+  <div class="tw"><table><thead><tr><th>Company</th><th>State</th><th>Industry</th><th title="Lakh; values of ₹1 crore and above show in crore">₹ L</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbCallTb"></tbody></table></div></div>
 </div>
 
 <div class="page" id="pg-inb-prof">
@@ -1398,7 +1398,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
     <select class="fi" id="inbProfAsgn" onchange="rInbox('Profile Sent','inbProf')"><option value="">All Team</option></select>
     <span class="f-cnt" id="inbProfCnt"></span>
   </div>
-  <div class="tw"><table><thead><tr><th>Company</th><th>State</th><th>Industry</th><th>₹M</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbProfTb"></tbody></table></div></div>
+  <div class="tw"><table><thead><tr><th>Company</th><th>State</th><th>Industry</th><th title="Lakh; values of ₹1 crore and above show in crore">₹ L</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbProfTb"></tbody></table></div></div>
 </div>
 
 <div class="page" id="pg-inb-appt">
@@ -1409,7 +1409,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
     <select class="fi" id="inbApptAsgn" onchange="rInbox('Appointment','inbAppt')"><option value="">All Team</option></select>
     <span class="f-cnt" id="inbApptCnt"></span>
   </div>
-  <div class="tw"><table><thead><tr><th>Company</th><th>State</th><th>Industry</th><th>₹M</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbApptTb"></tbody></table></div></div>
+  <div class="tw"><table><thead><tr><th>Company</th><th>State</th><th>Industry</th><th title="Lakh; values of ₹1 crore and above show in crore">₹ L</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbApptTb"></tbody></table></div></div>
 </div>
 
 <div class="page" id="pg-inb-visit">
@@ -1420,7 +1420,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
     <select class="fi" id="inbVisitAsgn" onchange="rInbox('Visit Done','inbVisit')"><option value="">All Team</option></select>
     <span class="f-cnt" id="inbVisitCnt"></span>
   </div>
-  <div class="tw"><table><thead><tr><th>Company</th><th>State</th><th>Industry</th><th>₹M</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbVisitTb"></tbody></table></div></div>
+  <div class="tw"><table><thead><tr><th>Company</th><th>State</th><th>Industry</th><th title="Lakh; values of ₹1 crore and above show in crore">₹ L</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbVisitTb"></tbody></table></div></div>
 </div>
 
 <div class="page" id="pg-inb-rfq">
@@ -1431,7 +1431,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
     <select class="fi" id="inbRfqAsgn" onchange="rInbox('RFQ Generated','inbRfq')"><option value="">All Team</option></select>
     <span class="f-cnt" id="inbRfqCnt"></span>
   </div>
-  <div class="tw"><table><thead><tr><th>Company</th><th>State</th><th>Industry</th><th>₹M</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbRfqTb"></tbody></table></div></div>
+  <div class="tw"><table><thead><tr><th>Company</th><th>State</th><th>Industry</th><th title="Lakh; values of ₹1 crore and above show in crore">₹ L</th><th>Assigned</th><th>Onboarded</th><th>Actions</th></tr></thead><tbody id="inbRfqTb"></tbody></table></div></div>
 </div>
 
 <!-- AI OUTREACH -->
@@ -1533,7 +1533,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
       <thead><tr>
         <th style="min-width:220px;">Company / Project</th>
         <th>State</th><th>Industry</th><th>Vertical</th>
-        <th style="text-align:right;">₹M</th>
+        <th style="text-align:right;" title="Lakh; values of ₹1 crore and above show in crore">₹ L</th>
         <th>PIC</th><th>Stage</th>
         <th>Follow-up</th><th>Onboarded</th>
         <th style="min-width:170px;">Actions</th>
@@ -1679,7 +1679,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
         <th>PIC</th><th>Vertical</th><th>Total</th><th>Active</th><th>Calls</th>
         <th>Profile</th><th>Appts</th><th>Visits</th><th>RFQ</th>
         <th>Won</th><th>Lost</th><th>Conv %</th>
-        <th>Pipeline ₹M</th><th>Won ₹M</th></tr></thead>
+        <th>Pipeline ₹ L</th><th>Won ₹ L</th></tr></thead>
       <tbody id="scTb"></tbody></table></div>
   </div>
 </div>
@@ -2365,7 +2365,7 @@ function dashRenderPrimaryKpis(st){
     _kpi('Opportunities',    k.opportunities,   'OPP# assigned',          null, null),
     _kpi('Won',              k.won,             k.conversion_pct + '% conv', 'stage', 'Won'),
     _kpi('Lost',             k.lost,            'Deals lost',             'stage', 'Lost'),
-    _kpi('Business Won ₹M',  fmtInr(k.won_value_m),  'Sum of won-lead value',  null, null),
+    _kpi('Business Won',  fmtValue(k.won_value_inr),  'Won leads: quote value, else opportunity value',  null, null),
   ].join('');
 }
 function dashRenderActivityKpis(st){
@@ -2376,7 +2376,7 @@ function dashRenderActivityKpis(st){
     _kpi('Appointments',  k.appointments,   'Lead.meeting_date'),
     _kpi('Visits',        k.visits,         'Visit Done+'),
     _kpi('RFQs generated',k.rfqs_generated, 'Lead.rfq_date'),
-    _kpi('Pipeline ₹M',   fmtInr(k.pipeline_value_m), 'Active-stage value'),
+    _kpi('Pipeline value',   fmtValue(k.pipeline_value_inr), 'Active stages: quote value, else opportunity value'),
     _kpi('RFQ→Won %',     k.rfq_won_pct + '%', 'Of RFQs raised'),
   ].join('');
 }
@@ -2392,6 +2392,23 @@ function dashRenderRiskKpis(st){
 }
 function pct(n, tot){ return tot ? Math.round(n/tot*100) + '%' : '—'; }
 function fmtInr(v){ return '₹' + Number(v || 0).toLocaleString('en-IN', {maximumFractionDigits: 1}); }
+/* Lead values are stored in rupees and shown in lakh — or in crore from
+   ₹1 crore up, so ₹3.5 crore never reads "350.0 L". Never millions. */
+function fmtLakhCell(v){
+  v = Number(v || 0);
+  if (!(v > 0)) return '—';
+  return v >= 1e7 ? (v / 1e7).toFixed(2) + ' Cr' : (v / 1e5).toFixed(1);
+}
+function fmtValue(v){
+  v = Number(v || 0);
+  if (!(v > 0)) return '—';
+  return '₹ ' + (v >= 1e7 ? (v / 1e7).toFixed(2) + ' Cr' : (v / 1e5).toFixed(1) + ' L');
+}
+function quoteLapsedChip(l){
+  const a = l && l.quote_ageing;
+  if (!a || !a.expired) return '';
+  return ` <span class="b sL" title="Quote validity ended ${-a.validity_days_left} day(s) ago">quote lapsed</span>`;
+}
 
 function dashRenderCharts(st){
   const GREY = ['#E5E7EB','#D1D5DB','#CBD1D9','#9CA3AF','#6B7280','#4B5563','#374151','#1F2430'];
@@ -2475,8 +2492,8 @@ function dashRenderPicBoard(st){
       <td style="color:#059669;font-weight:600;">${p.won}</td>
       <td style="color:#B91C1C;">${p.lost}</td>
       <td>${p.conversion_pct}%</td>
-      <td>₹${Number(p.pipeline_value).toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
-      <td style="font-weight:600;">₹${Number(p.won_value).toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
+      <td class="tbl-num">${fmtLakhCell(p.pipeline_value_inr)}</td>
+      <td class="tbl-num" style="font-weight:600;">${fmtLakhCell(p.won_value_inr)}</td>
     </tr>`).join('') : '<tr><td colspan="13" style="text-align:center;padding:2rem;color:#9CA3AF;">No people-in-charge in current view.</td></tr>';
 }
 
@@ -2497,7 +2514,7 @@ function dashRenderRecords(){
       <td>${sb(l.stage)}</td>
       <td class="tddate">${l.followup||'—'}</td>
       <td class="tddate">${l.onboarded_date||'—'}</td>
-      <td>₹${Number(l.cost||0).toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
+      <td class="tbl-num">${fmtLakhCell(l.value_inr)}</td>
       <td><button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();openLd(${l.id})">Open</button></td>
     </tr>`).join('') : `<tr><td colspan="10" style="text-align:center;padding:2.5rem;color:#9CA3AF;">
       No records match the current filter combination.</td></tr>`;
@@ -2595,7 +2612,7 @@ async function rDash(){
   g('dashTb').innerHTML=act.length?act.map(l=>`<tr onclick="openLd(${l.id})">
     <td><div class="td-m">${e(l.company)}</div></td>
     <td>${e(l.industry||'—')}</td><td>${e(l.state||'—')}</td>
-    <td>${sb(l.stage)}</td><td>${vb(l.procam_vertical)}</td>
+    <td>${sb(l.stage)}${quoteLapsedChip(l)}</td><td>${vb(l.procam_vertical)}</td>
     <td class="tddate">${l.followup||'—'}</td>
     <td class="tddate">${l.onboarded_date||'—'}</td>
     <td><button class="btn btn-ghost btn-xs">Edit</button></td>
@@ -2614,7 +2631,7 @@ async function rInbox(stage, prefix){
     <tr>
       <td><div class="td-m">${e(l.company)}</div><div class="td-s">${e(l.project||'')}</div></td>
       <td>${e(l.industry||'—')}</td>
-      <td class="tbl-num">${l.cost?Number(l.cost).toFixed(1):'—'}</td>
+      <td class="tbl-num">${fmtLakhCell(l.value_inr)}</td>
       <td>${e(l.assigned_name||l.assigned_to||'—')}</td>
       <td class="tddate">${e(l.onboarded_date||'—')}</td>
       <td>
@@ -2628,7 +2645,9 @@ async function rInbox(stage, prefix){
 async function advanceLead(id){
   if(!confirm('Advance to next stage?'))return;
   const r=await api(`/api/leads/${id}/advance`,{method:'POST',body:'{}'});
-  if(r.ok){toast('Advanced to '+r.stage,'ok');refreshCurrentInbox();rDash();}
+  if(r.ok){toast('Advanced to '+r.stage,'ok');refreshCurrentInbox();rDash();
+    if(r.stage==='Quoted'&&r.lead&&(!r.lead.quote_value_inr||!r.lead.quote_date)&&
+       confirm('This lead is now Quoted but has no quote value/date — add them now?'))openLd(id);}
   else{toast(r.error||'Error','err');}
 }
 
@@ -2637,7 +2656,9 @@ async function decideLead(id){
   if(!outcome)return;
   const reason=prompt('Reason (optional)')||'';
   const r=await api(`/api/leads/${id}/decision`,{method:'POST',body:JSON.stringify({outcome,reason})});
-  if(r.ok){toast('Marked '+r.stage,'ok');refreshCurrentInbox();rDash();}
+  if(r.ok){toast('Marked '+r.stage,'ok');refreshCurrentInbox();rDash();
+    if(r.stage==='Won'&&r.lead&&!r.lead.value_inr&&
+       confirm('Marked Won with no value — add the value now?'))openLd(id);}
   else{toast(r.error||'Error','err');}
 }
 
@@ -2661,9 +2682,9 @@ async function rLeads(){
     <td class="tbl-num">${i+1}</td>
     <td><div class="td-m">${e(l.company)}</div><div class="td-s">${e(l.project||'')}</div></td>
     <td>${e(l.industry||'—')}</td><td>${e(l.state||'—')}</td>
-    <td class="tbl-num">${l.cost?Number(l.cost).toLocaleString('en-IN'):'—'}</td>
+    <td class="tbl-num">${fmtLakhCell(l.value_inr)}</td>
     <td><div style="font-weight:500;color:var(--ink-2)">${e(l.pic||'—')}</div><div class="td-s">${e(l.email||'')}</div></td>
-    <td>${sb(l.stage)}</td><td>${vb(l.procam_vertical)}</td>
+    <td>${sb(l.stage)}${quoteLapsedChip(l)}</td><td>${vb(l.procam_vertical)}</td>
     <td class="tddate"${l.followup?' style="color:var(--red)"':''}>${l.followup||'—'}</td>
     <td>${l.opp_number?`<span class="b oppB">${e(l.opp_number)}</span>`:'—'}</td>
     <td class="tddate">${l.onboarded_date||'—'}</td>
@@ -2681,9 +2702,9 @@ async function rAll(){
     <td class="tbl-num">${i+1}</td>
     <td><div class="td-m">${e(l.company)}</div><div class="td-s">${e(l.project||'')}</div></td>
     <td>${e(l.industry||'—')}</td><td>${e(l.state||'—')}</td>
-    <td class="tbl-num">${l.cost?Number(l.cost).toLocaleString('en-IN'):'—'}</td>
+    <td class="tbl-num">${fmtLakhCell(l.value_inr)}</td>
     <td><div style="font-weight:500;color:var(--ink-2)">${e(l.pic||'—')}</div><div class="td-s">${e(l.email||'')}</div></td>
-    <td>${sb(l.stage)}</td><td>${e(l.assigned_name||'—')}</td>
+    <td>${sb(l.stage)}${quoteLapsedChip(l)}</td><td>${e(l.assigned_name||'—')}</td>
     <td>${srb(l.source)}</td><td>${l.opp_number?`<span class="b oppB">${e(l.opp_number)}</span>`:'—'}</td>
     <td class="tddate">${l.onboarded_date||'—'}</td>
     <td onclick="event.stopPropagation()"><button class="btn btn-ghost btn-xs" onclick="openLd(${l.id})">Edit</button></td>
@@ -2702,7 +2723,7 @@ async function rOpp(){
     <td>${l.opp_number?`<span class="b oppB">${e(l.opp_number)}</span>`:bdg('sR','Needs OPP#')}</td>
     <td><div class="td-m">${e(l.company)}</div></td>
     <td>${e(l.industry||'—')}</td>
-    <td class="tbl-num">${l.cost?Number(l.cost).toLocaleString('en-IN'):'—'}</td>
+    <td class="tbl-num">${fmtLakhCell(l.value_inr)}</td>
     <td>${vb(l.procam_vertical)}</td><td>${e(l.assigned_name||'—')}</td>
     <td class="tddate">${l.rfq_date||'—'}</td>
     <td><span class="b ${l.opp_stage==='Closed Won'?'sW':l.opp_stage==='Closed Lost'?'sL':'sA'}">${e(l.opp_stage||'Qualification')}</span></td>
@@ -2873,6 +2894,7 @@ async function openLd(id){
     ${l.products?`<div style="font-size:12.5px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);padding:10px 14px;margin-bottom:16px;color:var(--text)"><span style="font-weight:600;color:var(--ink-2)">Products &middot; </span>${e(l.products)}</div>`:''}
     <div class="fm-s">Pipeline stage</div>
     <div class="pipe" id="ldPipe">${STAGES.map(s=>`<div class="ps ${l.stage===s?'active':STAGES.indexOf(s)<STAGES.indexOf(l.stage)?'done':''}" onclick="setStg('${s}')">${s}</div>`).join('')}</div>
+    ${ldValueSection(l)}
     <div class="fm-s">Activity dates</div>
     <div class="dtrow">
       <div class="dtc ${l.phone_call_date?'ok':''}"><div class="dtc-l">Phone call</div><input type="date" class="fmc" id="lPC" value="${l.phone_call_date||''}"></div>
@@ -2880,6 +2902,7 @@ async function openLd(id){
       <div class="dtc ${l.meeting_date?'ok':''}"><div class="dtc-l">Meeting</div><input type="date" class="fmc" id="lMT" value="${l.meeting_date||''}"></div>
       <div class="dtc ${l.rfq_date?'ok':''}"><div class="dtc-l">RFQ</div><input type="date" class="fmc" id="lRQ" value="${l.rfq_date||''}"></div>
     </div>
+    ${ldQuoteBlock(l)}
     ${l.opp_number?`<div class="opp-b"><div class="opp-hd"><div><div class="opp-ttl">Opp: ${e(l.opp_number)}</div><div class="opp-sub">${e(l.opp_stage||'')} ${l.opp_close_date?'· Close: '+l.opp_close_date:''}</div></div></div></div>`:''}
     ${l.stage==='RFQ Generated'&&!l.opp_number?`<div style="background:var(--red-tint);border:1px solid var(--red);border-radius:var(--r);padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px"><div style="font-size:13px;color:var(--red);font-weight:600">RFQ received — assign an opportunity number</div><button class="btn btn-red btn-sm" onclick="closeLd();openOpp(${l.id})">Assign Opp #</button></div>`:''}
     <div class="fm-s">Contact information</div>
@@ -2925,6 +2948,7 @@ async function openLd(id){
   // screen; opening it from a list does not change the URL it reads.
   if(window.ProcamAI&&window.ProcamAI.setContext)
     window.ProcamAI.setContext({type:'lead', id:l.id, label:l.company||('Lead #'+l.id)});
+  ldValueInit(l);
   loadLeadNotes(l.id);
   loadLeadClassification(l.id);
   loadMailTrail(l.id);
@@ -3187,6 +3211,177 @@ function fmtIST(ts){
     hour:'2-digit', minute:'2-digit'}) + ' IST';
 }
 
+// ── Lead value and quote (app/services/lead_value.py) ──────────────
+const LV_QUOTE_STAGES = ['RFQ Generated','Quoted','Under Negotiation','Won','Lost'];
+const LV_OPEN_QUOTE = ['Quoted','Under Negotiation'];
+let LV_RATES = null, LV_LEAD = null;
+async function lvRates(){
+  if (LV_RATES) return LV_RATES;
+  try { const r = await api('/api/master/fx-rates'); LV_RATES = (r && r.rates) || []; }
+  catch(err){ LV_RATES = []; }
+  return LV_RATES;
+}
+function lvNum(v){ const n = parseFloat(String(v||'').replace(/[,₹\s]/g,'')); return isFinite(n) ? n : null; }
+function lvAmt(v, cur){ return v == null ? '—' : (cur||'INR') + ' ' + Number(v).toLocaleString('en-IN', {maximumFractionDigits: 2}); }
+function ldValueSection(l){
+  const cur = l.currency || 'INR';
+  const opp = l.opportunity_value != null ? l.opportunity_value
+            : (cur === 'INR' && l.opportunity_value_inr != null ? l.opportunity_value_inr : '');
+  const legacy = l.value_source === 'legacy' && l.value_inr
+    ? `Old ₹M figure: ${fmtValue(l.value_inr)} — enter it here to confirm` : '';
+  return `<div class="fm-s">Value</div>
+    <div class="fmr">
+      <div class="fmg"><label class="fml" for="lOppV">Opportunity value</label>
+        <div style="display:flex;gap:6px">
+          <select class="fmc" id="lCur" style="width:88px;flex:none" onchange="ldValueHints()" aria-label="Currency">
+            ${['INR','USD','EUR'].map(c=>`<option${c===cur?' selected':''}>${c}</option>`).join('')}</select>
+          <input class="fmc" id="lOppV" type="text" inputmode="decimal" value="${e(opp)}"
+                 placeholder="${e(legacy ? String(Math.round(l.value_inr)) : 'Whole amount, e.g. 1250000')}" oninput="ldValueHints()">
+        </div>
+        <div class="td-s" id="lOppHint" style="margin-top:4px">${e(legacy)}</div></div>
+      <div class="fmg"><label class="fml" for="lBasis">Value basis</label>
+        <select class="fmc" id="lBasis">
+          ${[['','— not set —'],['estimated','Estimated'],['client_budget','Client budget'],['firm','Firm']]
+            .map(([v,t])=>`<option value="${v}"${v===(l.value_basis||'')?' selected':''}>${t}</option>`).join('')}</select>
+        <div class="td-s" style="margin-top:4px">How much to trust the number</div></div>
+    </div>`;
+}
+function ldQuoteBlock(l){
+  const cur = l.currency || 'INR';
+  const qv = l.quote_value != null ? l.quote_value
+           : (cur === 'INR' && l.quote_value_inr != null ? l.quote_value_inr : '');
+  const hasQuote = qv !== '' || l.quote_date || l.quote_no;
+  const show = hasQuote || LV_QUOTE_STAGES.includes(l.stage);
+  const revs = l.quote_revisions || [];
+  const sug = l.quote_suggestion;
+  return `<div id="lQuoteBlk"${show ? '' : ' hidden'}>
+    <div class="fm-s" style="display:flex;align-items:center;gap:8px">Quote
+      ${l.quote_revision ? `<span class="b sN">Revision ${l.quote_revision}</span>` : ''}
+      ${revs.length ? `<button type="button" class="btn btn-ghost btn-sm" style="padding:1px 8px;font-size:11px" onclick="ldQuoteHistory()">Earlier versions (${revs.length})</button>` : ''}
+    </div>
+    ${sug && !hasQuote ? `<div id="lQSug" style="font-size:12.5px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);padding:8px 12px;margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <span>Found in a quotation email: <b>${e((sug.currency||'INR')+' '+Number(sug.amount).toLocaleString('en-IN'))}</b>${sug.quote_no?` · ${e(sug.quote_no)}`:''}${sug.quote_date?` · ${e(sug.quote_date)}`:''}. Not counted until you confirm it.</span>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="ldUseSuggestion()">Use these</button></div>` : ''}
+    <div class="fmr">
+      <div class="fmg"><label class="fml" for="lQNo">Quote no.</label>
+        <input class="fmc" id="lQNo" value="${e(l.quote_no||'')}" maxlength="40" placeholder="${e(l.opp_number||'e.g. RFQ-DLI-26-0061')}"></div>
+      <div class="fmg"><label class="fml" for="lQV">Quote value <span id="lQCurLbl" style="font-weight:400;color:var(--text-3)">(${e(cur)})</span></label>
+        <input class="fmc" id="lQV" type="text" inputmode="decimal" value="${e(qv)}" placeholder="Amount quoted to the client" oninput="ldValueHints()">
+        <div class="td-s" id="lQHint" style="margin-top:4px"></div></div>
+    </div>
+    <div class="fmr">
+      <div class="fmg"><label class="fml" for="lQD">Quote date</label>
+        <input class="fmc" id="lQD" type="date" value="${e(l.quote_date||'')}" oninput="ldValidityFromDays()"></div>
+      <div class="fmg"><label class="fml" for="lQVal">Valid until</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input class="fmc" id="lQVal" type="date" value="${e(l.quote_validity_date||'')}" oninput="ldValueHints()">
+          <span class="td-s" style="flex:none">or</span>
+          <input class="fmc" id="lQDays" type="number" min="0" max="3650" style="width:80px;flex:none" placeholder="days" oninput="ldValidityFromDays()" aria-label="Validity in days">
+        </div></div>
+    </div>
+    <div class="fmr">
+      <div class="fmg"><label class="fml" for="lQCost">Est. cost / buy rate <span style="font-weight:400;color:var(--text-3)">(optional)</span></label>
+        <input class="fmc" id="lQCost" type="text" inputmode="decimal" value="${e(l.quote_cost!=null?l.quote_cost:'')}" placeholder="From rate sourcing" oninput="ldValueHints()"></div>
+      <div class="fmg"><label class="fml">Margin</label>
+        <div id="lQMargin" style="font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink-2);padding-top:8px">—</div></div>
+    </div>
+    <div id="lQAge" class="td-s" style="margin:-4px 0 10px"></div>
+    <div id="lQHist" hidden></div>
+  </div>`;
+}
+async function ldValueInit(l){
+  LV_LEAD = l;
+  await lvRates();
+  ldValueHints();
+}
+function ldConvHint(amount, cur){
+  if (amount == null) return '';
+  if (cur === 'INR') return fmtValue(amount);
+  const r = (LV_RATES||[]).find(x => x.currency === cur);
+  if (!r || !r.inr_per_unit) return `No ${cur} rate is set — an administrator adds it in Master Data → Exchange Rates`;
+  return `≈ ${fmtValue(amount * r.inr_per_unit)} at ${r.inr_per_unit} per ${cur}`;
+}
+function ldValueHints(){
+  const cur = g('lCur')?.value || 'INR';
+  const opp = lvNum(g('lOppV')?.value), qv = lvNum(g('lQV')?.value), cost = lvNum(g('lQCost')?.value);
+  const oh = g('lOppHint');
+  if (oh && (opp != null || !oh.textContent.startsWith('Old ₹M'))) oh.textContent = ldConvHint(opp, cur);
+  if (g('lQHint')) g('lQHint').textContent = ldConvHint(qv, cur);
+  if (g('lQCurLbl')) g('lQCurLbl').textContent = '(' + cur + ')';
+  const m = g('lQMargin');
+  if (m) m.textContent = (qv > 0 && cost != null)
+    ? `${lvAmt(qv - cost, cur)} · ${((qv - cost) / qv * 100).toFixed(1)}%` : '—';
+  const age = g('lQAge'); if (!age) return;
+  const qd = g('lQD')?.value, vu = g('lQVal')?.value;
+  const stage = g('ldPipe')?.dataset.stage || (LV_LEAD && LV_LEAD.stage);
+  const today = new Date(new Date().toISOString().slice(0,10));
+  const bits = [];
+  if (qd) { const d = Math.round((today - new Date(qd)) / 864e5); bits.push(d <= 0 ? 'Quoted today' : `Quoted ${d} day${d===1?'':'s'} ago`); }
+  if (vu) {
+    const left = Math.round((new Date(vu) - today) / 864e5);
+    if (left >= 0) bits.push(`valid ${left} more day${left===1?'':'s'}`);
+    else bits.push(LV_OPEN_QUOTE.includes(stage)
+      ? `<b style="color:var(--red)">validity lapsed ${-left} day${left===-1?'':'s'} ago — follow up</b>`
+      : `validity ended ${-left} day${left===-1?'':'s'} ago`);
+  }
+  age.innerHTML = bits.join(' · ');
+}
+function ldValidityFromDays(){
+  const days = parseInt(g('lQDays')?.value, 10), qd = g('lQD')?.value;
+  if (qd && days >= 0) {
+    const d = new Date(qd); d.setDate(d.getDate() + days);
+    g('lQVal').value = d.toISOString().slice(0,10);
+  }
+  ldValueHints();
+}
+function ldUseSuggestion(){
+  const s = LV_LEAD && LV_LEAD.quote_suggestion; if (!s) return;
+  if (s.currency && ['INR','USD','EUR'].includes(s.currency)) g('lCur').value = s.currency;
+  g('lQV').value = s.amount || '';
+  if (s.quote_no) g('lQNo').value = s.quote_no;
+  if (s.quote_date && /^\d{4}-\d{2}-\d{2}/.test(s.quote_date)) g('lQD').value = s.quote_date.slice(0,10);
+  const box = g('lQSug'); if (box) box.remove();
+  ldValueHints();
+  toast('Filled from the email — check it, then Save', 'ok');
+}
+function ldQuoteHistory(){
+  const host = g('lQHist'); if (!host || !LV_LEAD) return;
+  if (!host.hidden) { host.hidden = true; return; }
+  const revs = (LV_LEAD.quote_revisions || []).slice().reverse();
+  host.innerHTML = revs.map(r => `<div style="border-left:2px solid var(--border-2);padding:4px 0 4px 10px;margin-bottom:6px;font-size:12.5px">
+      <b>Revision ${Number(r.revision) || 0}</b> · ${e(lvAmt(r.quote_value, r.currency))}${r.currency!=='INR'&&r.quote_value_inr?` (${e(fmtValue(r.quote_value_inr))})`:''}
+      ${r.quote_no?` · ${e(r.quote_no)}`:''}${r.quote_date?` · quoted ${e(r.quote_date)}`:''}${r.quote_validity_date?` · valid until ${e(r.quote_validity_date)}`:''}${r.quote_cost!=null?` · cost ${e(lvAmt(r.quote_cost, r.currency))}`:''}
+      <div class="td-s">recorded ${e(r.recorded_at||'')}${r.recorded_by?' by '+e(CRM.empName(r.recorded_by)):''}</div></div>`).join('');
+  host.hidden = false;
+}
+function ldValuePayload(){
+  if (!g('lOppV')) return {};
+  return {
+    currency: g('lCur').value, opportunity_value: g('lOppV').value.trim(),
+    value_basis: g('lBasis').value, quote_no: g('lQNo').value.trim(),
+    quote_value: g('lQV').value.trim(), quote_date: g('lQD').value,
+    quote_validity_date: g('lQVal').value, quote_cost: g('lQCost').value.trim(),
+  };
+}
+/* Soft checks before saving: ask, never block. true = go ahead. */
+function ldValuePrompts(stage, v){
+  const blk = g('lQuoteBlk');
+  if (LV_OPEN_QUOTE.includes(stage) && (!lvNum(v.quote_value) || !v.quote_date)) {
+    if (confirm(`This lead is marked ${stage} but has no quote value/date — add now?\n\nOK to add them, Cancel to save without.`)) {
+      if (blk) blk.hidden = false;
+      (!lvNum(v.quote_value) ? g('lQV') : g('lQD')).focus();
+      return false;
+    }
+  }
+  if (stage === 'Won' && !lvNum(v.quote_value) && !lvNum(v.opportunity_value) && !(LV_LEAD && LV_LEAD.value_source === 'legacy')) {
+    if (confirm('This lead is marked Won with no value — add it now?\n\nOK to add it, Cancel to save without.')) {
+      g('lOppV').focus();
+      return false;
+    }
+  }
+  return true;
+}
+
 function setStg(s){
   document.querySelectorAll('#ldPipe .ps').forEach((el,i)=>{
     el.className='ps';
@@ -3195,6 +3390,8 @@ function setStg(s){
   });
   // Store stage in hidden field
   g('ldPipe').dataset.stage=s;
+  const qb=g('lQuoteBlk'); if(qb&&LV_QUOTE_STAGES.includes(s)) qb.hidden=false;
+  if(typeof ldValueHints==='function') ldValueHints();
 }
 
 async function saveLd(){
@@ -3214,6 +3411,9 @@ async function saveLd(){
     meeting_date:g('lMT')?.value, rfq_date:g('lRQ')?.value,
   };
   if(pipeStage)data.stage=pipeStage;
+  const values=ldValuePayload();
+  if(!ldValuePrompts(pipeStage, values)) return;
+  Object.assign(data, values);
   const r=await api(`/api/leads/${activeId}`,{method:'PUT',body:JSON.stringify(data)});
   if(r.ok){closeLd();rLeads();rAll();rDash();toast('Lead saved ✓','ok');}
   else toast(r.error||'Error saving','err');
@@ -3330,7 +3530,7 @@ async function openOpp(id){
     g('opNAuto').textContent='';
     g('opSt').value=l.opp_stage||'Qualification';
     g('opDt').value=l.opp_close_date||'';
-    g('opVal').value=l.cost?Math.round(Number(l.cost)*1000000):'';
+    g('opVal').value=l.value_inr?Math.round(Number(l.value_inr)):'';
     g('opNts').value=l.opp_notes||'';
     b.style.display='none';
   } else {
@@ -3340,7 +3540,7 @@ async function openOpp(id){
     g('opNAuto').textContent='(auto)';
     g('opSt').value='Qualification';
     g('opDt').value='';
-    g('opVal').value=l.cost?Math.round(Number(l.cost)*1000000):'';
+    g('opVal').value=l.value_inr?Math.round(Number(l.value_inr)):'';
     g('opNts').value='';
     if(l.stage==='RFQ Generated'){
       b.textContent='RFQ received. Assigning this opportunity number will create a ProConnect opportunity record.';
@@ -3399,7 +3599,7 @@ async function loadOR(){
     <div class="di"><div class="dl">Company</div><div class="dv">${e(l.company)}</div></div>
     <div class="di"><div class="dl">Industry</div><div class="dv">${e(l.industry||'—')}</div></div>
     <div class="di"><div class="dl">State</div><div class="dv">${e(l.state||'—')}</div></div>
-    <div class="di"><div class="dl">Value</div><div class="dv" style="font-variant-numeric:tabular-nums">${l.cost?'&#8377; '+Number(l.cost).toLocaleString('en-IN')+' M':'—'}</div></div>
+    <div class="di"><div class="dl">Value</div><div class="dv" style="font-variant-numeric:tabular-nums">${fmtValue(l.value_inr)}</div></div>
     ${l.products?`<div class="di" style="grid-column:1/-1"><div class="dl">Products</div><div class="dv" style="font-size:12.5px;font-weight:400;color:var(--text)">${e(l.products)}</div></div>`:''}
   `;
   const vm={'Heavy Transport':'Heavy Transport / ODC Movement','Project Freight':'Project Freight Management','Warehousing':'Warehousing & 3PL','Installation':'Installation & Commissioning'};
@@ -3425,7 +3625,7 @@ Industry: ${l.industry||'N/A'}
 Location: ${l.state||l.city||'India'}
 Contact: ${pic||'Sir/Madam'}${l.designation?' ('+l.designation+')':''}
 Products/Capacity: ${l.products||'N/A'}
-Value: ₹${l.cost||'N/A'} Million
+Value: ${l.value_inr?fmtValue(l.value_inr):'N/A'}
 Service: ${vert}
 ${ctx?'Project context:\n'+ctx:''}
 
@@ -3747,9 +3947,9 @@ function pipRenderTable(){
           <td>${e(l.state||'—')}</td>
           <td>${e(l.industry||'—')}</td>
           <td>${vb(l.procam_vertical)}</td>
-          <td style="text-align:right;font-variant-numeric:tabular-nums;">${Number(l.cost||0).toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">${fmtLakhCell(l.value_inr)}</td>
           <td>${e(l.assigned_name||l.assigned_to||'—')}</td>
-          <td>${sb(l.stage)}</td>
+          <td>${sb(l.stage)}${quoteLapsedChip(l)}</td>
           <td class="tddate">${l.followup||'—'}</td>
           <td class="tddate">${l.onboarded_date||'—'}</td>
           <td onclick="event.stopPropagation()">
@@ -3814,7 +4014,7 @@ async function openDraw(lid){
     g('drBody').innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.65rem;font-size:.85rem;margin-bottom:1rem;">
         <div><div style="color:#9CA3AF;font-size:.7rem;text-transform:uppercase;">Stage</div>${sb(l.stage)}</div>
-        <div><div style="color:#9CA3AF;font-size:.7rem;text-transform:uppercase;">Value</div>₹${Number(l.cost||0).toLocaleString('en-IN')} M</div>
+        <div><div style="color:#9CA3AF;font-size:.7rem;text-transform:uppercase;">Value</div>${fmtValue(l.value_inr)}</div>
         <div><div style="color:#9CA3AF;font-size:.7rem;text-transform:uppercase;">Follow-up</div>${e(l.followup||'—')}</div>
         <div><div style="color:#9CA3AF;font-size:.7rem;text-transform:uppercase;">Onboarded</div>${e(l.onboarded_date||'—')}</div>
         <div><div style="color:#9CA3AF;font-size:.7rem;text-transform:uppercase;">Contact</div>${e(l.pic||'—')}${l.designation ? ' · '+e(l.designation) : ''}</div>
@@ -3909,11 +4109,12 @@ async function confirmAdvance(){
 }
 
 // ── Decide modal (Won/Lost/On Hold/Not Interested) ──
-let _decLid = null, _decOutcome = '';
+let _decLid = null, _decOutcome = '', _decLead = null;
 function openDec(lid){
   _decLid = lid; _decOutcome = '';
   const l = (pipelineState.rows||[]).find(x => x.id === lid) ||
             (dashState && dashState.records ? dashState.records.find(x => x.id === lid) : null);
+  _decLead = l || null;
   g('decCo').textContent = (l && l.company) || '';
   const opts = [
     {k:'Won',           bg:'#059669'},
@@ -3940,7 +4141,9 @@ function pickDec(k, bg){
   if (k === 'Won') {
     html = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;">
       <label class="fml">Won Date<input class="fmc" id="decDate" type="date" value="${today}"></label>
-      <label class="fml">Business Value (₹M)<input class="fmc" id="decVal" type="number" step="0.01" placeholder="e.g. 4.5"></label>
+      <label class="fml">Business Value (₹)<input class="fmc" id="decVal" type="text" inputmode="decimal" placeholder="e.g. 1250000"
+        value="${_decLead && _decLead.value_inr ? Math.round(_decLead.value_inr) : ''}"
+        ${_decLead && _decLead.quote_value_inr ? 'disabled title="The quote value is the won value"' : ''}></label>
     </div>
     <label class="fml">Scope / Service<input class="fmc" id="decScope" placeholder="e.g. Heavy transport, warehousing…"></label>
     <label class="fml">Remarks / Next Handover Action<textarea class="fmc" id="decNote" rows="2"></textarea></label>`;
@@ -3952,7 +4155,7 @@ function pickDec(k, bg){
       <select class="fmc" id="decReason"><option value="">-- pick --</option>${REASONS.map(r=>`<option>${e(r)}</option>`).join('')}</select></label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;">
         <label class="fml">Competitor (optional)<input class="fmc" id="decComp" placeholder="Vendor name"></label>
-        <label class="fml">Lost Value (₹M, optional)<input class="fmc" id="decVal" type="number" step="0.01"></label>
+        <label class="fml">Lost Value (₹, optional)<input class="fmc" id="decVal" type="text" inputmode="decimal"></label>
       </div>
       <label class="fml">Remarks<textarea class="fmc" id="decNote" rows="2" placeholder="Required if reason = Other"></textarea></label>`;
   } else if (k === 'On Hold') {
@@ -3981,6 +4184,10 @@ async function confirmDecide(){
     body.remarks = note;
   } else if (_decOutcome === 'Won') {
     body.reason = note;
+    const val = ((g('decVal')||{}).value || '').trim();
+    const hasValue = val || (_decLead && _decLead.value_inr);
+    if (!hasValue && !confirm('Marking Won with no business value — won-value reports will miss it. Continue?')) return;
+    if (val && !(g('decVal')||{}).disabled) body.value = val;
   }
   const r = await api(`/api/leads/${_decLid}/decision`, {method:'POST', body: JSON.stringify(body)});
   if (r && r.ok) {
@@ -4209,7 +4416,7 @@ async function rScorecard(){
     active: (a,b) => (b.active || 0)       - (a.active || 0),
     rfqs:   (a,b) => (b.rfqs || 0)         - (a.rfqs || 0),
     conv:   (a,b) => (b.conversion_pct||0) - (a.conversion_pct||0),
-    value:  (a,b) => (b.won_value||0)      - (a.won_value||0),
+    value:  (a,b) => (b.won_value_inr||0)  - (a.won_value_inr||0),
   }[sort] || ((a,b)=>0);
   rows = rows.slice().sort(cmp);
   g('scSub').textContent = `${rows.length} PIC${rows.length===1?'':'s'} · sorted by ${sort} · click row to drill down`;
@@ -4227,8 +4434,8 @@ async function rScorecard(){
       <td style="color:#059669;font-weight:600;">${p.won}</td>
       <td style="color:#B91C1C;">${p.lost}</td>
       <td>${p.conversion_pct}%</td>
-      <td>₹${Number(p.pipeline_value).toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
-      <td style="font-weight:600;">₹${Number(p.won_value).toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
+      <td class="tbl-num">${fmtLakhCell(p.pipeline_value_inr)}</td>
+      <td class="tbl-num" style="font-weight:600;">${fmtLakhCell(p.won_value_inr)}</td>
     </tr>`).join('') : '<tr><td colspan="14" style="text-align:center;padding:2rem;color:#9CA3AF;">No people-in-charge in your scope.</td></tr>';
 }
 
@@ -4551,6 +4758,7 @@ async function rMaster(){
 }
 
 function mdBody(L){
+  if (L.key === 'fx_rate') return mdFxBody();
   const rows = L.items.map(function(it){
     return `<tr${it.is_active?'':' style="opacity:.55"'}>
       <td style="cursor:default"><b>${e(it.label)}</b>
@@ -4580,6 +4788,31 @@ function mdBody(L){
       <span style="font-size:11.5px;color:var(--p-text-3)">
         Available everywhere as soon as you add it.</span>
     </div>`;
+}
+
+function mdFxBody(){
+  setTimeout(mdFxLoad, 0);
+  return `<div id="mdFx" style="padding:12px 16px">Loading…</div>`;
+}
+async function mdFxLoad(){
+  const host = g('mdFx'); if (!host) return;
+  const r = await api('/api/master/fx-rates');
+  const rows = ((r && r.rates) || []).filter(x => x.currency !== 'INR');
+  host.innerHTML = `<div style="font-size:12.5px;color:var(--p-text-2);margin-bottom:10px">
+      INR for one unit of each currency. A lead converts its value when it is saved and keeps that rate, so changing a rate here does not move values already saved.</div>
+    <div style="overflow-x:auto"><table style="min-width:520px"><thead><tr><th>Currency</th><th>INR per unit</th><th>Last set</th><th></th></tr></thead><tbody>
+    ${rows.map(x => `<tr>
+      <td style="cursor:default"><b>${e(x.currency)}</b></td>
+      <td style="cursor:default"><input class="fmc" id="mdFx_${e(x.currency)}" type="text" inputmode="decimal" style="height:32px;max-width:140px" value="${x.inr_per_unit!=null?e(x.inr_per_unit):''}" placeholder="not set" aria-label="INR per ${e(x.currency)}"></td>
+      <td style="cursor:default;color:var(--p-text-2)">${x.as_of?e(x.as_of)+(x.set_by?' · '+e(CRM.empName(x.set_by)):''):'—'}</td>
+      <td style="text-align:right;cursor:default"><button class="btn btn-red btn-sm" onclick="mdFxSave('${e(x.currency)}')">Save</button></td>
+    </tr>`).join('')}</tbody></table></div>`;
+}
+async function mdFxSave(cur){
+  const v = (g('mdFx_'+cur)||{}).value || '';
+  const r = await api('/api/master/fx-rates/'+encodeURIComponent(cur), {method:'PUT', body: JSON.stringify({inr_per_unit: v})});
+  if (r && r.ok) { LV_RATES = r.rates; toast(cur + ' rate saved ✓', 'ok'); mdFxLoad(); }
+  else toast((r && r.error) || 'Could not save the rate', 'err');
 }
 
 function mdOpen(key){ MD_OPEN = (MD_OPEN === key) ? null : key; rMaster(); }
@@ -4824,7 +5057,7 @@ async function upTab(t){
     g('upCnt').innerHTML=`<div class="card"><div style="padding:16px">
       <div class="fmr"><div class="fmg"><label class="fml">Company *</label><input class="fmc" id="mnCo"></div><div class="fmg"><label class="fml">Project</label><input class="fmc" id="mnPr"></div></div>
       <div class="fmr"><div class="fmg"><label class="fml">Industry</label><input class="fmc" id="mnIn"></div><div class="fmg"><label class="fml">State</label><input class="fmc" id="mnSt"></div></div>
-      <div class="fmr"><div class="fmg"><label class="fml">Value ₹M</label><input class="fmc" id="mnVl" type="number"></div><div class="fmg"><label class="fml">Vertical</label><select class="fmc" id="mnVt"><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option></select></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Opportunity value (₹)</label><input class="fmc" id="mnVl" type="text" inputmode="decimal" placeholder="e.g. 1250000"></div><div class="fmg"><label class="fml">Vertical</label><select class="fmc" id="mnVt"><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option></select></div></div>
       <div class="fmr"><div class="fmg"><label class="fml">Contact Person</label><input class="fmc" id="mnPic"></div><div class="fmg"><label class="fml">Email</label><input class="fmc" id="mnEm" type="email"></div></div>
       <div class="fmg"><label class="fml">Notes</label><textarea class="fmc" id="mnNo" rows="3"></textarea></div>
       <button class="btn btn-red" onclick="saveMn()">+ Add Lead</button>
@@ -4875,7 +5108,7 @@ async function procXL(file){
 async function saveMn(){
   const co=g('mnCo')?.value.trim();if(!co){toast('Company required','err');return;}
   const ind=g('mnIn')?.value.trim()||'';
-  const r=await api('/api/leads',{method:'POST',body:JSON.stringify({company:co,project:g('mnPr').value,industry:ind,cost:parseFloat(g('mnVl').value)||0,state:g('mnSt').value,pic:g('mnPic').value,email:g('mnEm').value,procam_vertical:g('mnVt').value,notes:g('mnNo').value,source:'manual',assigned_to:ME.emp_code})});
+  const r=await api('/api/leads',{method:'POST',body:JSON.stringify({company:co,project:g('mnPr').value,industry:ind,opportunity_value:g('mnVl').value||'',state:g('mnSt').value,pic:g('mnPic').value,email:g('mnEm').value,procam_vertical:g('mnVt').value,notes:g('mnNo').value,source:'manual',assigned_to:ME.emp_code})});
   if(r.ok){toast('Lead added ✓','ok');rDash();['mnCo','mnPr','mnIn','mnSt','mnVl','mnPic','mnEm','mnNo'].forEach(id=>{const el=g(id);if(el)el.value='';});}
 }
 async function saveVC(){

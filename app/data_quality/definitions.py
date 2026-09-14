@@ -304,6 +304,22 @@ CHECKS = [
        'and vertical-scoped view.',
        'Set a vertical from Master Data with a batch correction, or add '
        'the missing one under Master Data first.', '/admin/leads', ('set_vertical',)),
+    # ── commercial values ───────────────────────────────────────────
+    _c('quoted_without_quote', 'Quoted leads with no quote value or date',
+       'high', 'lead',
+       'Quote-to-win, quote ageing and pipeline value all read the quote; '
+       'a lead marked Quoted without one counts as nothing.',
+       'Open each lead and fill the Quote block — the value and the date '
+       'it went out. A quotation email on the lead may be offered as a '
+       'suggestion to confirm.', '/app'),
+    _c('won_leads_no_value', 'Won leads with no value', 'high', 'lead',
+       'Won-value, win-rate by value and average margin leave them out.',
+       'Open each lead and add the quote or opportunity value.', '/app'),
+    _c('quote_past_validity', 'Open quotes past their validity', 'medium',
+       'lead',
+       'The customer holds a price Procam no longer stands behind, and '
+       'nobody has followed up.',
+       'Follow up and re-quote, or move the lead on.', '/app'),
     _c('account_unknown_vertical',
        'Accounts with a vertical not in Master Data', 'medium', 'company',
        'Leads from the account route to a desk that does not exist.',

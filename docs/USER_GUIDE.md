@@ -47,6 +47,18 @@ contacts.
 - **Reassigning**: owners are changed by administrators, with a reason
   that is kept in the history.
 - **Email trail**: the original enquiry is never overwritten.
+- **Value**: the lead's **Opportunity value** — your best estimate of the
+  deal, in rupees (or USD/EUR), with how firm it is. Lists show it in
+  lakh (₹ L), or crore once it reaches ₹1 crore.
+- **Quote**: when a lead reaches RFQ Generated or Quoted, fill the Quote
+  block — quote number, the value quoted, the date it went out, how long
+  it is valid (a date, or a number of days), and optionally the cost, for
+  the margin. Changing a quote later keeps the earlier version under
+  **Earlier versions**. Once a quote's validity passes while the lead is
+  still Quoted or Under Negotiation, the lead shows **quote lapsed** —
+  follow up.
+- If the CRM found a quote in one of your quotation emails, it offers it
+  on the lead (**Use these**); nothing counts until you save it.
 
 ## Accounts
 

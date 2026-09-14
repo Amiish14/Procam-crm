@@ -158,6 +158,34 @@ of queued saves.
 Install the new timers (`procam-crm-ops-status`, `procam-crm-dq-snapshot`)
 from `docs/operations/deploy/`.
 
+### Release notes — lead commercial values (2026-10)
+
+**Migration** (after the backup and pull):
+
+```bash
+.venv/bin/python scripts/2026_10_05_lead_commercial_values.py --check     # also previews the backfill
+.venv/bin/python scripts/2026_10_05_lead_commercial_values.py
+.venv/bin/python scripts/2026_10_05_lead_commercial_values.py --backfill  # optional, see below
+```
+
+It adds the value, currency and quote columns to `leads` and registers
+Master Data → Exchange Rates. The boot adds the same columns.
+
+`--backfill` copies each lead's old ₹ million figure into rupees where
+no rupee value exists (`cost_million` itself is untouched) and writes
+the ids to `backups/lead_value_backfill-<time>.json`;
+`--undo-backfill <that file>` clears exactly those again. Without it the
+editor shows the old figure as "Old ₹M figure — enter it here to
+confirm", and lists still show it.
+
+**After the restart:** set the USD and EUR rates in Master Data →
+Exchange Rates before anyone enters a foreign-currency value.
+
+**Behaviour users will notice:** ₹M columns and KPIs now read ₹ L
+(crore from ₹1 crore); the lead editor has a Value section and a Quote
+block; saving a lead marked Quoted without a quote value/date, or Won
+without a value, asks first; the Won dialog's value is now saved.
+
 ## 5. Server — restart and verify
 
 ```bash

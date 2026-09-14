@@ -127,6 +127,9 @@ Definitions:
 | `dupe_po_refs` — One PO on more than one handover | critical | Two projects against one customer order. | Correct the PO on the wrong handover, or cancel it. | — |
 | `won_no_handover` — Won deals with no handover | low | Operations have nothing to act on. | Create the handover. | — |
 | `won_no_value` — Won deals with no value | medium | Count as zero in every value report. | Enter the won value. | — |
+| `won_leads_no_value` — Won leads with no value | high | Won-value, win-rate by value and margin leave them out. | Add the quote or opportunity value on the lead. | — |
+| `quoted_without_quote` — Quoted leads with no quote value or date | high | Quote-to-win, quote ageing and pipeline value read the quote. | Fill the lead's Quote block; confirm an email suggestion if one is offered. | — |
+| `quote_past_validity` — Open quotes past their validity | medium | The customer holds a price Procam no longer stands behind. | Follow up and re-quote, or move the lead on. | — |
 | `lost_no_competitor` — Lost deals with no competitor | low | No competitive learning from the loss. | Record who won on the Competitors tab. | — |
 
 For `won_no_handover`, a deal counts as won when its stage says so **or**

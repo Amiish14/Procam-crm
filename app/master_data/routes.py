@@ -22,6 +22,29 @@ def api_lists():
     return jsonify(ok=True, lists=md.all_lists())
 
 
+@bp.route('/api/master/fx-rates')
+def api_fx_rates():
+    """Exchange rates for lead values. Any signed-in user: the lead
+    editor shows the INR a foreign amount converts to."""
+    if not session.get('emp_code'):
+        return jsonify(ok=False, error='Not authenticated'), 401
+    from app.services import lead_value
+    return jsonify(ok=True, rates=lead_value.rates())
+
+
+@bp.route('/api/master/fx-rates/<currency>', methods=['PUT'])
+@require(PERM)
+def api_fx_rate_set(currency):
+    from app.services import lead_value
+    d = request.get_json(silent=True) or {}
+    try:
+        lead_value.set_rate(currency, d.get('inr_per_unit'),
+                            session.get('emp_code'))
+    except lead_value.LeadValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    return jsonify(ok=True, rates=lead_value.rates())
+
+
 @bp.route('/api/master/<list_key>')
 def api_list(list_key):
     """One vocabulary.  Any signed-in user: forms need this."""

@@ -416,7 +416,7 @@ Composite indexes: `ix_audit_events_entity` (entity_type, entity_id)
 | note | TEXT | yes |  |  |
 | created_at | DATETIME | yes | indexed |  |
 
-Composite indexes: `ix_dmq_entity` (entity_type, entity_id, field); `ix_dmq_status_reason` (status, reason)
+Composite indexes: `ix_dmq_status_reason` (status, reason); `ix_dmq_entity` (entity_type, entity_id, field)
 
 ## data_quality_snapshots
 
@@ -711,6 +711,20 @@ Composite indexes: `ix_dmq_entity` (entity_type, entity_id, field); `ix_dmq_stat
 | subsidiaries | TEXT | yes |  |  |
 | estimated_value_inr | NUMERIC(15, 2) | yes |  |  |
 | quoted_amount_inr | NUMERIC(15, 2) | yes |  |  |
+| value_currency | VARCHAR(3) | yes |  | 'INR' |
+| opportunity_value_num | NUMERIC(15, 2) | yes |  |  |
+| opportunity_fx_rate | NUMERIC(12, 4) | yes |  |  |
+| value_basis | VARCHAR(20) | yes |  |  |
+| quote_no | VARCHAR(40) | yes |  |  |
+| quote_value_num | NUMERIC(15, 2) | yes |  |  |
+| quote_fx_rate | NUMERIC(12, 4) | yes |  |  |
+| quote_date | DATE | yes | indexed |  |
+| quote_validity_date | DATE | yes |  |  |
+| quote_cost_num | NUMERIC(15, 2) | yes |  |  |
+| quote_revision | INTEGER | yes |  | 0 |
+| quote_revisions | JSON | yes |  |  |
+| quote_recorded_by | VARCHAR(20) | yes |  |  |
+| quote_recorded_at | DATETIME | yes |  |  |
 | relevance | VARCHAR(20) | yes | indexed | 'Undecided' |
 | email_message_id | VARCHAR(255) | yes | unique, indexed |  |
 | email_extracted_json | TEXT | yes |  |  |
@@ -1191,7 +1205,7 @@ Composite indexes: `ix_master_item_list_active` (list_key, is_active)
 | waiting_from_task_id | INTEGER | yes | FK → task_instances.id |  |
 | blocked_at | DATETIME | yes |  |  |
 
-Composite indexes: `ix_task_inst_entity` (entity_type, entity_id); `ix_task_inst_open` (task_key, entity_type, entity_id, owner_user_id, status); `ix_task_inst_owner_status` (owner_user_id, status); `ix_task_inst_role_status` (owner_role, status)
+Composite indexes: `ix_task_inst_owner_status` (owner_user_id, status); `ix_task_inst_entity` (entity_type, entity_id); `ix_task_inst_open` (task_key, entity_type, entity_id, owner_user_id, status); `ix_task_inst_role_status` (owner_role, status)
 
 ## training_certificates
 

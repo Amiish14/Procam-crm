@@ -425,6 +425,17 @@ class Employee(db.Model):
         }
 
 
+def _lead_value_inr(lead):
+    from app.services import lead_value
+    v = lead_value.value_inr(lead)
+    return float(v) if v is not None else None
+
+
+def _lead_value_dict(lead):
+    from app.services import lead_value
+    return lead_value.to_dict(lead)
+
+
 class Lead(db.Model):
     __tablename__ = 'leads'
     id               = db.Column(db.Integer, primary_key=True)
@@ -505,6 +516,24 @@ class Lead(db.Model):
     subsidiaries      = db.Column(db.Text, nullable=True)             # comma-separated / free-text list of SPVs, subsidiaries
     estimated_value_inr = db.Column(db.Numeric(15, 2), nullable=True) # opportunity size (₹)
     quoted_amount_inr   = db.Column(db.Numeric(15, 2), nullable=True) # actual quoted amount (₹)
+    # Commercial values — app/services/lead_value.py. Amounts as entered,
+    # in value_currency, with the rate used; the two _inr columns above
+    # are what lists and reports read. The quote's earlier versions are
+    # kept in quote_revisions, never overwritten.
+    value_currency        = db.Column(db.String(3), default='INR')
+    opportunity_value_num = db.Column(db.Numeric(15, 2), nullable=True)
+    opportunity_fx_rate   = db.Column(db.Numeric(12, 4), nullable=True)
+    value_basis           = db.Column(db.String(20), nullable=True)
+    quote_no              = db.Column(db.String(40), nullable=True)
+    quote_value_num       = db.Column(db.Numeric(15, 2), nullable=True)
+    quote_fx_rate         = db.Column(db.Numeric(12, 4), nullable=True)
+    quote_date            = db.Column(db.Date, nullable=True, index=True)
+    quote_validity_date   = db.Column(db.Date, nullable=True)
+    quote_cost_num        = db.Column(db.Numeric(15, 2), nullable=True)
+    quote_revision        = db.Column(db.Integer, default=0)
+    quote_revisions       = db.Column(db.JSON, nullable=True)
+    quote_recorded_by     = db.Column(db.String(20), nullable=True)
+    quote_recorded_at     = db.Column(db.DateTime, nullable=True)
     # relevance ∈ {'Relevant', 'Not Relevant', 'Undecided'} — lets users
     # keep an operational pipeline clean without hard-deleting records.
     relevance         = db.Column(db.String(20), nullable=True,
@@ -590,6 +619,7 @@ class Lead(db.Model):
             'subsidiaries':     self.subsidiaries or '',
             'estimated_value':  float(self.estimated_value_inr) if self.estimated_value_inr else None,
             'quoted_amount':    float(self.quoted_amount_inr) if self.quoted_amount_inr else None,
+            **_lead_value_dict(self),
             'relevance':        self.relevance or 'Undecided',
             # AI-extracted structured summary (populated only for source=email leads
             # that went through Claude Haiku). Renders as the "Lead Summary" card
@@ -1939,7 +1969,6 @@ def api_create_lead():
         company         = d.get('company','').strip(),
         project         = d.get('project',''),
         industry        = d.get('industry',''),
-        cost_million    = float(d.get('cost',0) or 0),
         products        = d.get('products',''),
         state           = d.get('state',''),
         city            = d.get('city',''),
@@ -1962,10 +1991,14 @@ def api_create_lead():
         # v2026-08 — CRM enhancement pack
         website           = (d.get('website') or '').strip() or None,
         subsidiaries      = (d.get('subsidiaries') or '').strip() or None,
-        estimated_value_inr = _to_dec(d.get('estimated_value')),
-        quoted_amount_inr   = _to_dec(d.get('quoted_amount')),
         relevance         = d.get('relevance') or 'Undecided',
     )
+    from app.services import lead_value
+    try:
+        lead_value.apply_legacy(lead, d, session.get('emp_code'))
+        lead_value.apply(lead, d, session.get('emp_code'))
+    except lead_value.LeadValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     db.session.add(lead)
     db.session.commit()
     # v2026-09-04 — Task engine: lead created
@@ -2060,9 +2093,13 @@ def api_update_lead(lid):
             lead_id=lead.id, note_text=incoming_note, note_type='general',
             author=session.get('emp_code'),
             author_name=emp_.name if emp_ else session.get('name')))
-    if 'cost' in d: lead.cost_million = float(d['cost'] or 0)
-    if 'estimated_value' in d: lead.estimated_value_inr = _to_dec(d['estimated_value'])
-    if 'quoted_amount'   in d: lead.quoted_amount_inr   = _to_dec(d['quoted_amount'])
+    from app.services import lead_value
+    try:
+        lead_value.apply_legacy(lead, d, session.get('emp_code'))
+        lead_value.apply(lead, d, session.get('emp_code'))
+    except lead_value.LeadValueError as exc:
+        db.session.rollback()
+        return jsonify({'error': str(exc)}), 400
     date_fields = {'followup':'followup_date','phone_call_date':'phone_call_date',
                    'intro_mail_date':'intro_mail_date','meeting_date':'meeting_date',
                    'rfq_date':'rfq_date','opp_close_date':'opp_close_date'}
@@ -2395,10 +2432,17 @@ def api_lead_advance(lid):
     elif nxt == 'RFQ Generated':
         lead.rfq_date = lead.rfq_date or today
     # v2026-08 — capture quoted amount when advancing INTO Quoted
-    if nxt == 'Quoted':
-        q = _to_dec(data.get('quoted_amount'))
-        if q is not None:
-            lead.quoted_amount_inr = q
+    if nxt == 'Quoted' and data.get('quoted_amount') not in (None, ''):
+        from app.services import lead_value
+        try:
+            lead_value.apply_legacy(lead, {'quoted_amount': data['quoted_amount']},
+                                    session.get('emp_code'))
+            if lead.quote_date is None:
+                lead_value.apply(lead, {'quote_date': today},
+                                 session.get('emp_code'))
+        except lead_value.LeadValueError as exc:
+            db.session.rollback()
+            return jsonify({'ok': False, 'error': str(exc)}), 400
     db.session.commit()
     # v2026-09-04 — Task engine: lead stage change
     _fire_task_hook(lead, 'Lead', _old_stage_advance, lead.stage)
@@ -2421,6 +2465,18 @@ def api_lead_decision(lid):
         return jsonify({'ok': False,
                         'error': f'Outcome must be one of {DECISION_OUTCOMES}'}), 400
     reason = (data.get('reason') or '').strip()
+    # The Won dialog's business value (₹). It was collected and never sent.
+    if outcome == 'Won' and data.get('value') not in (None, ''):
+        from app.services import lead_value
+        try:
+            if lead.quoted_amount_inr is None:
+                lead_value.apply_legacy(lead, {'estimated_value': data['value']},
+                                        session.get('emp_code'))
+                if not lead.value_basis:
+                    lead.value_basis = 'firm'
+        except lead_value.LeadValueError as exc:
+            db.session.rollback()
+            return jsonify({'ok': False, 'error': str(exc)}), 400
     # Enforce loss-reason capture for Lost / Not Interested (spec: capture
     # reason for future analysis)
     if outcome in ('Lost', 'Not Interested') and not reason:
@@ -2535,7 +2591,7 @@ def api_lead_assign_opp(lid):
         company_id=company.id if company else None,
         title=lead.project or lead.company,
         stage=stage,
-        value_inr=(data.get('value_inr') or lead.cost_million * 10 if lead.cost_million else None),
+        value_inr=(data.get('value_inr') or _lead_value_inr(lead)),
         probability=30 if stage == 'Qualification' else 50,
         expected_close_date=close_d,
         owner_emp_code=lead.assigned_to or session.get('emp_code'),
@@ -2999,7 +3055,8 @@ LOST_REASONS = [
 #: 345 ms answer in building those objects.
 _SUMMARY_COLUMNS = (
     'stage', 'intro_mail_date', 'phone_call_date', 'meeting_date', 'rfq_date',
-    'opp_number', 'cost_million', 'followup_date', 'updated_at', 'industry',
+    'opp_number', 'cost_million', 'estimated_value_inr', 'quoted_amount_inr',
+    'followup_date', 'updated_at', 'industry',
     'procam_vertical', 'state', 'source', 'lost_reason', 'assigned_to',
     'assigned_name', 'stage_entered_at', 'created_at',
 )
@@ -3021,8 +3078,9 @@ def _dashboard_summary_payload(leads, allowed_codes, today):
 
     def _cnt(pred):
         return sum(1 for l in leads if pred(l))
-    def _sum(pred, field):
-        return float(sum((getattr(l, field) or 0) for l in leads if pred(l)))
+    from app.services.lead_value import row_value_inr as _value_inr
+    def _value_sum(pred):
+        return float(sum(_value_inr(l) for l in leads if pred(l)))
 
     active_stages   = set(STAGES_PIPELINE)
     terminal_won    = 'Won'
@@ -3042,8 +3100,9 @@ def _dashboard_summary_payload(leads, allowed_codes, today):
         'opportunities':    _cnt(lambda l: bool(l.opp_number)),
         'won':              _cnt(lambda l: l.stage == terminal_won),
         'lost':             _cnt(lambda l: l.stage == terminal_lost),
-        'won_value_m':      _sum(lambda l: l.stage == terminal_won, 'cost_million'),
-        'pipeline_value_m': _sum(lambda l: l.stage in active_stages, 'cost_million'),
+        # Rupees: the quote once there is one, else the opportunity value.
+        'won_value_inr':      _value_sum(lambda l: l.stage == terminal_won),
+        'pipeline_value_inr': _value_sum(lambda l: l.stage in active_stages),
         'followup_due':     _cnt(lambda l: l.followup_date is not None and l.followup_date == today),
         'followup_overdue': _cnt(lambda l: l.followup_date is not None and l.followup_date < today
                                             and l.stage in active_stages),
@@ -3057,6 +3116,9 @@ def _dashboard_summary_payload(leads, allowed_codes, today):
                                             (today - l.updated_at.date()).days > 30
                                             and l.stage in active_stages)),
     }
+    # Kept for older readers, in millions.
+    kpis['won_value_m'] = kpis['won_value_inr'] / 1_000_000
+    kpis['pipeline_value_m'] = kpis['pipeline_value_inr'] / 1_000_000
     total = kpis['total_leads'] or 1
     kpis['conversion_pct'] = round(100 * kpis['won'] / total, 1)
     kpis['rfq_won_pct'] = round(
@@ -3089,6 +3151,7 @@ def _dashboard_summary_payload(leads, allowed_codes, today):
             'total': 0, 'active': 0, 'calls': 0, 'profile': 0,
             'appts': 0, 'visits': 0, 'rfqs': 0, 'won': 0, 'lost': 0,
             'pipeline_value': 0.0, 'won_value': 0.0,
+            'pipeline_value_inr': 0.0, 'won_value_inr': 0.0,
         })
         p['total'] += 1
         if l.stage in active_stages: p['active'] += 1
@@ -3098,10 +3161,12 @@ def _dashboard_summary_payload(leads, allowed_codes, today):
         if l.stage in ('Visit Done','RFQ Generated','Quoted','Under Negotiation','Won'):
             p['visits'] += 1
         if l.rfq_date:               p['rfqs']   += 1
-        if l.stage == terminal_won:  p['won']    += 1;  p['won_value']      += float(l.cost_million or 0)
+        if l.stage == terminal_won:  p['won']    += 1;  p['won_value_inr']      += _value_inr(l)
         if l.stage == terminal_lost: p['lost']   += 1
-        if l.stage in active_stages: p['pipeline_value'] += float(l.cost_million or 0)
+        if l.stage in active_stages: p['pipeline_value_inr'] += _value_inr(l)
     for p in pic_map.values():
+        p['won_value'] = p['won_value_inr'] / 1_000_000        # millions, older readers
+        p['pipeline_value'] = p['pipeline_value_inr'] / 1_000_000
         p['conversion_pct'] = round(100 * p['won'] / p['total'], 1) if p['total'] else 0.0
     pic_board = sorted(pic_map.values(),
                        key=lambda x: (-x['won'], -x['active']))
@@ -3295,7 +3360,9 @@ def api_dashboard_records():
     # Sort — most recent activity first by default.
     sort = (request.args.get('sort') or 'updated_desc').lower()
     if   sort == 'created_desc':  q = q.order_by(Lead.created_at.desc())
-    elif sort == 'value_desc':    q = q.order_by(Lead.cost_million.desc().nullslast())
+    elif sort == 'value_desc':
+        from app.services.lead_value import value_inr_sql
+        q = q.order_by(value_inr_sql().desc().nullslast())
     elif sort == 'ageing_desc':
         q = q.order_by(db.func.coalesce(Lead.stage_entered_at, Lead.updated_at).asc())
     else:
@@ -4423,6 +4490,21 @@ def init_db():
             # remain for --check and --down.
             ('leads',         'vertical_confidence', 'INTEGER'),
             ('leads',         'vertical_reason',     'VARCHAR(200)'),
+            # Lead commercial values — also scripts/2026_10_05_lead_commercial_values.py
+            ('leads', 'value_currency',        "VARCHAR(3) DEFAULT 'INR'"),
+            ('leads', 'opportunity_value_num', 'NUMERIC(15,2)'),
+            ('leads', 'opportunity_fx_rate',   'NUMERIC(12,4)'),
+            ('leads', 'value_basis',           'VARCHAR(20)'),
+            ('leads', 'quote_no',              'VARCHAR(40)'),
+            ('leads', 'quote_value_num',       'NUMERIC(15,2)'),
+            ('leads', 'quote_fx_rate',         'NUMERIC(12,4)'),
+            ('leads', 'quote_date',            'DATE'),
+            ('leads', 'quote_validity_date',   'DATE'),
+            ('leads', 'quote_cost_num',        'NUMERIC(15,2)'),
+            ('leads', 'quote_revision',        'INTEGER DEFAULT 0'),
+            ('leads', 'quote_revisions',       'JSON'),
+            ('leads', 'quote_recorded_by',     'VARCHAR(20)'),
+            ('leads', 'quote_recorded_at',     'TIMESTAMP'),
             ('lead_notes',    'revisions',           'TEXT'),
             ('copilot_log',   'answer',              'VARCHAR(500)'),
         ]
@@ -4655,15 +4737,19 @@ def _kpi_actual_for(kpi_key, scope_type, scope_key, period_start, period_end):
         won = q.filter(Lead.stage == 'Won').count()
         return round(100.0 * won / rfq, 2)
     if kpi_key == 'won_value':
+        from app.services.lead_value import value_inr_sql
+        # KPI targets for value are set in INR millions.
         return float(db.session.query(
-            db.func.coalesce(db.func.sum(Lead.cost_million), 0)
+            db.func.coalesce(db.func.sum(value_inr_sql()), 0) / 1000000.0
         ).filter(Lead.stage == 'Won').filter(
             Lead.onboarded_date >= period_start,
             Lead.onboarded_date <= period_end,
         ).scalar() or 0)
     if kpi_key == 'pipeline_value':
+        from app.services.lead_value import value_inr_sql
+        # KPI targets for value are set in INR millions.
         return float(db.session.query(
-            db.func.coalesce(db.func.sum(Lead.cost_million), 0)
+            db.func.coalesce(db.func.sum(value_inr_sql()), 0) / 1000000.0
         ).filter(Lead.stage.in_(STAGES_PIPELINE)).filter(
             Lead.onboarded_date >= period_start,
             Lead.onboarded_date <= period_end,

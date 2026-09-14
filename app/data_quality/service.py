@@ -553,6 +553,37 @@ def check_leads_with_unknown_vertical(sc=None):
     return q.count(), q
 
 
+def check_quoted_without_quote(sc=None):
+    from app import Lead
+    from app.access import scope
+    from app.services.lead_value import OPEN_QUOTE_STAGES
+    q = _live_leads().filter(Lead.stage.in_(OPEN_QUOTE_STAGES),
+                             or_(Lead.quoted_amount_inr.is_(None),
+                                 Lead.quote_date.is_(None)))
+    q = scope.leads(q, resolve_scope(sc))
+    return q.count(), q
+
+
+def check_won_leads_without_value(sc=None):
+    from app import Lead
+    from app.access import scope
+    from app.services.lead_value import value_inr_sql
+    q = _live_leads().filter(Lead.stage == 'Won', value_inr_sql().is_(None))
+    q = scope.leads(q, resolve_scope(sc))
+    return q.count(), q
+
+
+def check_quote_past_validity(sc=None):
+    from datetime import date as _date
+    from app import Lead
+    from app.access import scope
+    from app.services.lead_value import OPEN_QUOTE_STAGES
+    q = _live_leads().filter(Lead.stage.in_(OPEN_QUOTE_STAGES),
+                             Lead.quote_validity_date < _date.today())
+    q = scope.leads(q, resolve_scope(sc))
+    return q.count(), q
+
+
 def check_companies_with_unknown_vertical(sc=None):
     from app import Company
     from app.access import scope
@@ -713,6 +744,9 @@ _FUNCTIONS = {
     'empty_mandatory': check_empty_mandatory,
     'lead_account_mismatch': check_lead_account_mismatch,
     'lead_unknown_vertical': check_leads_with_unknown_vertical,
+    'quoted_without_quote': check_quoted_without_quote,
+    'won_leads_no_value': check_won_leads_without_value,
+    'quote_past_validity': check_quote_past_validity,
     'account_unknown_vertical': check_companies_with_unknown_vertical,
     'email_leads_non_lead': check_email_leads_classified_non_lead,
     'review_backlog': check_review_backlog,
