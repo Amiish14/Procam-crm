@@ -173,7 +173,12 @@ def opinion(msg, rule_decision=None):
         if parsed is None:
             return None
         parsed.model = model
-        parsed.injection_suspected = injection_suspected(text)
+        # Judge what the sender wrote, not the prompt: the fence this module
+        # wraps around every email matches the pattern, so checking the
+        # fenced text flagged every opinion and sent every model-promoted
+        # lead to review.
+        parsed.injection_suspected = injection_suspected(
+            f"{msg.get('subject') or ''}\n{li.body_text(msg) or ''}")
         return parsed
     except Exception as exc:
         # Silent to the caller, not to the log. The rules already have an

@@ -83,3 +83,12 @@ def test_copilot_questions_are_rate_limited_per_person():
     finally:
         app_module.limiter.reset()
         app_module.limiter.enabled = before
+
+
+def test_the_service_worker_leaves_other_origins_alone():
+    """Its fetch() runs under its own CSP (connect-src 'self'); handling
+    cross-origin requests there breaks CDN scripts, fonts and the logo."""
+    src = open(os.path.join(_ROOT, 'static', 'sw.js')).read()
+    handler = src[src.index("addEventListener('fetch'"):]
+    assert 'self.location.origin' in handler
+    assert handler.index('self.location.origin') < handler.index('respondWith')

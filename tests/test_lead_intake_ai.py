@@ -420,3 +420,21 @@ def test_ordinary_enquiries_are_not_flagged():
                  'to Vadodara. Kindly respond with your best rate.',
                  'Ignore the earlier drawing, revised dimensions attached.'):
         assert not ai_mod.injection_suspected(body), body
+
+
+def test_an_ordinary_email_is_not_flagged_through_the_prompt_fence(monkeypatch):
+    """The fence contains <<<EMAIL>>>, which the pattern matches; the check
+    must look at what the sender wrote, or every opinion is flagged."""
+    from app.services import lead_intake_ai as ai_mod
+    from app.services import lead_intake as li_mod
+    monkeypatch.setattr(ai_mod, 'is_enabled', lambda: True)
+    monkeypatch.setattr(ai_mod, '_ask', lambda text: (
+        '{"classification": "new_lead", "confidence": 90, "reason": "RFQ"}',
+        'test-model'))
+    decided = li_mod.Decision(li_mod.Klass.REVIEW, step=10, reason='marginal',
+                              needs_review=True, confidence=50)
+    msg = {'subject': 'RFQ for two cranes', 'toRecipients': [],
+           'from': {'emailAddress': {'address': 'buyer@acme.example'}},
+           'body': {'content': 'Please quote for moving a transformer.'}}
+    op = ai_mod.opinion(msg, decided)
+    assert op is not None and op.injection_suspected is False
