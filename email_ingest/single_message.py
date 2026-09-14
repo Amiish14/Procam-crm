@@ -204,15 +204,22 @@ def auto_assign_owners(lead, sender_email, *, subject='', body=''):
                       getattr(lead, 'id', '?'))
         return None, None
 
-def process_single_message(graph, mailbox: str, msg: dict) -> dict:
+def process_single_message(graph, mailbox: str, msg: dict, *,
+                           force: bool = False) -> dict:
     """Process ONE Graph message into a Lead. Idempotent — safe to call
     multiple times for the same message; only the first call creates a
     Lead. Any subsequent call returns 'skipped' with reason='already ingested'.
 
-    'already ingested' is the ONLY reason a message is ever skipped.
+    A message the classifier already decided against (internal, reply,
+    review …) is not classified again either: Graph re-delivers a
+    notification whenever the webhook answers slowly, and each pass
+    repeated the AI call, filed another review-queue row and could reach
+    a different verdict. force=True re-runs it — for an administrator's
+    explicit retry.
     """
     # Local imports keep this module import-safe under all circumstances.
     from app import app, db, Lead, LeadAttachment, EmailEvent  # type: ignore
+    from app import EmailClassification  # type: ignore
 
     imid = _internet_message_id(msg)
 
@@ -237,6 +244,20 @@ def process_single_message(graph, mailbox: str, msg: dict) -> dict:
                 return {'status': 'skipped',
                         'reason': 'previously purged as irrelevant',
                         'lead_id': None, 'internet_message_id': imid}
+
+        rfc_id = (msg.get('internetMessageId') or '')[:400]
+        if rfc_id and not force:
+            decided = (db.session.query(EmailClassification.classification,
+                                        EmailClassification.matched_lead_id)
+                       .filter(EmailClassification.message_id == rfc_id,
+                               EmailClassification.created_lead_id.is_(None))
+                       .order_by(EmailClassification.id.desc()).first())
+            if decided:
+                return {'status': 'skipped',
+                        'reason': f'{decided[0]}: already classified',
+                        'lead_id': decided[1],
+                        'classification': decided[0],
+                        'internet_message_id': imid}
 
         # ── Parse + AI-extract ────────────────────────────────────────
         # CAPTURE EVERYTHING. Every message in the leads inbox becomes a

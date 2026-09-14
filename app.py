@@ -4983,7 +4983,8 @@ def api_email_inbox_retry(evt_id):
         msg = _get_message(graph, evt.mailbox, evt.internet_message_id)
 
         if not upgrade:
-            result = process_single_message(graph, mailbox=evt.mailbox, msg=msg)
+            result = process_single_message(graph, mailbox=evt.mailbox, msg=msg,
+                                            force=True)
             evt.status = ('lead_created' if result['status'] == 'created'
                           else result['status'])
             evt.reason = result.get('reason')
@@ -4997,7 +4998,8 @@ def api_email_inbox_retry(evt_id):
                 or (Lead.query.get(evt.lead_id) if evt.lead_id else None))
         if lead is None:
             # Nothing to upgrade — fall through to normal creation.
-            result = process_single_message(graph, mailbox=evt.mailbox, msg=msg)
+            result = process_single_message(graph, mailbox=evt.mailbox, msg=msg,
+                                            force=True)
             evt.status = ('lead_created' if result['status'] == 'created'
                           else result['status'])
             evt.reason = result.get('reason')

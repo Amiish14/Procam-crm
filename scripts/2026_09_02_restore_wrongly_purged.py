@@ -97,7 +97,8 @@ def main():
             evt.reason = 'wrongly purged 2026-09-02; blocklist corrected'
             db.session.commit()
 
-            result = process_single_message(graph, mailbox=mailbox, msg=msg)
+            result = process_single_message(graph, mailbox=mailbox, msg=msg,
+                                            force=True)
             if result['status'] == 'created':
                 evt.status = 'lead_created'
                 evt.lead_id = result.get('lead_id')

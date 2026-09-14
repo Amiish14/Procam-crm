@@ -16,7 +16,7 @@ import hmac
 import os
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .graph_client import GraphClient
 from .single_message import process_single_message
@@ -226,9 +226,37 @@ def handle_notification(payload: dict) -> dict:
 
             evt.internet_message_id = msg.get('internetMessageId') or msg.get('id')
             evt.subject             = (msg.get('subject') or '')[:250]
+
+            # Graph re-sends a notification the webhook does not answer
+            # within a few seconds, and classifying with the AI step takes
+            # longer than that — so the resend usually lands while the
+            # first copy is still being processed.
+            busy = (EmailEvent.query
+                    .filter(EmailEvent.internet_message_id
+                            == evt.internet_message_id,
+                            EmailEvent.id != evt.id,
+                            EmailEvent.status == 'processing',
+                            EmailEvent.received_at
+                            >= datetime.utcnow() - timedelta(minutes=10))
+                    .first()) if evt.internet_message_id else None
+            if busy:
+                evt.status = 'skipped'
+                evt.reason = ('notification re-sent while event '
+                              f'{busy.id} is processing it')
+                stats['skipped'] += 1
+                db.session.commit()
+                continue
+            evt.status = 'processing'
             db.session.commit()
 
-            result = process_single_message(graph, mailbox=mailbox, msg=msg)
+            try:
+                result = process_single_message(graph, mailbox=mailbox,
+                                                msg=msg)
+            except Exception as e:
+                evt.status = 'failed'
+                evt.reason = f'processing: {e}'[:300]
+                db.session.commit()
+                raise
             stats['processed'] += 1
             if result['status'] == 'created':
                 stats['created'] += 1
