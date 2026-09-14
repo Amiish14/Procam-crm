@@ -45,6 +45,15 @@ from email_ingest.graph_client import GraphClient            # noqa: E402
 from email_ingest.single_message import process_single_message  # noqa: E402
 
 
+def _seen_before(reason):
+    """A message an earlier run (or the webhook) already dealt with. The
+    timer runs every few minutes over a window of hours, so logging these
+    wrote the same email into email_events once per run."""
+    reason = reason or ''
+    return (reason in ('already ingested', 'previously purged as irrelevant')
+            or reason.endswith(': already classified'))
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -78,7 +87,7 @@ def main():
             result = process_single_message(graph, mailbox=mailbox, msg=msg)
             status = result['status']
             out[status] += 1
-            if status == 'skipped' and result.get('reason') == 'already ingested':
+            if status == 'skipped' and _seen_before(result.get('reason')):
                 continue        # quiet: this is the normal case on a re-run
 
             # Mirror the webhook's audit trail so the admin Email Inbox page

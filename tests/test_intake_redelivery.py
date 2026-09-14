@@ -140,3 +140,17 @@ def test_a_crash_while_processing_does_not_leave_the_event_processing(
     with flask_app.app_context():
         evt = EmailEvent.query.filter_by(internet_message_id=mid).one()
         assert evt.status == 'failed'
+
+
+def test_the_poller_does_not_log_a_message_again_each_run():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        'poll', os.path.join(_ROOT, 'scripts', '2026_09_02_poll_leads_mailbox.py'))
+    poll = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(poll)
+    assert poll._seen_before('already ingested')
+    assert poll._seen_before('previously purged as irrelevant')
+    assert poll._seen_before('C_internal: already classified')
+    assert not poll._seen_before('C_internal: sent by a Procam address with '
+                                 'the mailbox only copied in')
+    assert not poll._seen_before(None)
