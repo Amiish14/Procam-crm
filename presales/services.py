@@ -20,22 +20,66 @@ class PreSalesError(Exception):
 
 
 # ─── Assignment ────────────────────────────────────────────────────────
+#: Leaves the secondary PIC as it is (callers that only change the PIC).
+UNCHANGED = object()
+
+
+def _active_employee(code: str, label: str) -> str:
+    from app import Employee
+    emp = Employee.query.filter_by(emp_code=code).first()
+    if emp is None or emp.is_active is False:
+        raise PreSalesError(f'{label} {code} is not an active employee')
+    return code
+
+
 def reassign_account(*, account: Company, new_pic_code: str,
                      changed_by_code: str,
-                     reason: Optional[str] = None) -> AccountAssignmentHistory:
-    """Change an Account's PIC, appending a row to account_assignments.
-    Never overwrites history."""
+                     reason: Optional[str] = None,
+                     new_secondary_code=UNCHANGED
+                     ) -> Optional[AccountAssignmentHistory]:
+    """Change an Account's PIC (and, when given, its secondary PIC),
+    appending a row to account_assignments. Never overwrites history.
+
+    The one save path for single and bulk reassignment. Returns None when
+    nothing changed, so a bulk run over accounts that already have the
+    chosen PIC does not fill their history with no-op rows.
+    """
     new_pic_code = (new_pic_code or '').strip()
     if not new_pic_code:
         raise PreSalesError('new_pic_code is required')
+    _active_employee(new_pic_code, 'PIC')
+
     prev = getattr(account, 'pic_emp_code', None)
+    prev_secondary = getattr(account, 'secondary_pic_emp_code', None)
+    secondary_changed = False
+    if new_secondary_code is not UNCHANGED:
+        secondary = (new_secondary_code or '').strip() or None
+        if secondary:
+            _active_employee(secondary, 'Secondary PIC')
+            if secondary == new_pic_code:
+                raise PreSalesError('The secondary PIC must be a different '
+                                    'person from the PIC')
+        secondary_changed = secondary != prev_secondary
+    elif prev_secondary and prev_secondary == new_pic_code:
+        raise PreSalesError(f'{new_pic_code} is already the secondary PIC; '
+                            'choose a different secondary PIC as well')
+
+    if prev == new_pic_code and not secondary_changed:
+        return None
+
     account.pic_emp_code = new_pic_code
+    note = (reason or '').strip()
+    if secondary_changed:
+        account.secondary_pic_emp_code = secondary
+        change = (f'secondary PIC {prev_secondary or "none"} → '
+                  f'{secondary or "none"}')
+        note = f'{note} · {change}' if note else change
     row = AccountAssignmentHistory(
         account_id        = account.id,
         previous_pic_code = prev,
         new_pic_code      = new_pic_code,
         assigned_by       = changed_by_code,
-        reason            = reason,
+        reason            = note or None,
     )
     db.session.add(row)
     return row

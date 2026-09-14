@@ -41,6 +41,11 @@ PERMISSION_GROUPS = [
          'The whole operations queue, not only handovers of your deals'),
         ('module.funnels',      'Funnels',       'Account and project funnels'),
     ]),
+    ('Accounts', [
+        ('accounts.assign',     'Reassign account PICs',
+         'Assign or reassign the PIC of accounts in your data scope, one '
+         'at a time or in bulk'),
+    ]),
     ('Intelligence', [
         ('module.competitors',  'Competitors',   'Competitor register and intelligence'),
         ('module.business_cards', 'Business Cards', 'Scan and file business cards'),
@@ -82,7 +87,8 @@ def default_for(emp):
     if (emp.role or '') in _ADMIN_ROLES:
         return DataScope.ALL, list(ALL_PERMS)
     if getattr(emp, 'is_vertical_head', False):
-        return DataScope.VERTICAL, REPORT_PERMS + _TEAM_BASELINE
+        return DataScope.VERTICAL, (REPORT_PERMS + _TEAM_BASELINE
+                                    + ['accounts.assign'])
     return DataScope.OWN, list(_TEAM_BASELINE)
 
 

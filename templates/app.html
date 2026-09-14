@@ -890,16 +890,36 @@ canvas { max-width: 100%; }
 /* Employees cache — map emp_code → { name, vertical, department } so any
    renderer can call CRM.empName('EMP12010') → 'Employee Name'. */
 window.CRM = window.CRM || {};
+/* This script runs in <head>, before the body script that declares
+   crmUrl(). Calling crmUrl() here threw a ReferenceError at load, which
+   stopped this whole script: CRM.Form and CRMToast were never defined
+   and every button that opens a form did nothing. Resolve the /CRM
+   prefix without it. */
+CRM._headUrl = function(path){
+  if (typeof crmUrl === 'function') return crmUrl(path);
+  return window.location.pathname.replace(/\/[^/]*$/, '') + '/' +
+         String(path).replace(/^\//, '');
+};
 CRM._empsByCode = {};
 CRM._empsPromise = null;
 CRM.ensureEmployees = function(){
   if (CRM._empsPromise) return CRM._empsPromise;
-  CRM._empsPromise = fetch(crmUrl('/api/employees')).then(r=>r.json()).then(function(list){
-    (Array.isArray(list) ? list : []).forEach(function(e){
-      CRM._empsByCode[e.emp_code] = e;
+  CRM._empsPromise = fetch(CRM._headUrl('/api/employees'), {credentials:'same-origin'})
+    .then(function(r){
+      if (!r.ok) throw new Error('employees: HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function(list){
+      (Array.isArray(list) ? list : []).forEach(function(e){
+        CRM._empsByCode[e.emp_code] = e;
+      });
+      return CRM._empsByCode;
+    })
+    .catch(function(err){
+      console.error('Employee list could not load; names show as codes.', err);
+      CRM._empsPromise = null;          /* the next caller tries again */
+      return CRM._empsByCode;
     });
-    return CRM._empsByCode;
-  }).catch(function(){ return {}; });
   return CRM._empsPromise;
 };
 CRM.empName  = function(code){ var e = CRM._empsByCode[code]; return e && e.name ? e.name : (code || '—'); };
@@ -916,7 +936,6 @@ CRM.empOptions = function(){
     .sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); })
     .map(function(e){ return {value: e.emp_code, label: e.name + '  ·  ' + e.emp_code}; });
 };
-CRM.ensureEmployees();
 
 /* ── FormModal — the single approved way to collect input from the user.
    Replaces every window.prompt() chain in the app.
@@ -1091,6 +1110,11 @@ window.CRMToast = (function(){
     show:    push,
   };
 })();
+
+/* Only now, with CRM.Form and CRMToast defined, start loading data. A
+   failure here must never take the UI helpers down with it. */
+try { CRM.ensureEmployees(); }
+catch (err) { console.error('Employee list could not start loading', err); }
 </script>
 </head>
 <body>
@@ -5335,7 +5359,12 @@ async function doChangePw(){
 PG_TITLES['accounts'] = 'Accounts';
 PG_TITLES['projects'] = 'Project Intelligence';
 
-const ACCT = { list: [], filtered: [], vocab: null, current: null };
+const ACCT = { list: [], filtered: [], vocab: null, current: null,
+               selected: new Set(), canAssign: false, bulkNote: '' };
+/* Rows the table draws. Selection and "select all" work on exactly these. */
+const ACCT_ROW_CAP = 500;
+/* Accounts per bulk request; progress is shown between batches. */
+const ACCT_BULK_BATCH = 25;
 const PRJ  = { list: [], filtered: [], vocab: null, current: null };
 
 // ── Fetch helpers ────────────────────────────────────────────────────
@@ -5351,10 +5380,23 @@ async function prjFetchVocab(){
 }
 
 // ── ACCOUNTS list + filters ─────────────────────────────────────────
+async function acctLoadAssignPermission(){
+  try {
+    const r = await fetch(crmUrl('/api/access/me'), {credentials:'same-origin'});
+    const d = r.ok ? await r.json() : null;
+    ACCT.canAssign = !!(d && d.ok && (d.perms || []).includes('accounts.assign'));
+  } catch(err){
+    console.error('Could not read permissions; bulk assignment hidden', err);
+    ACCT.canAssign = false;
+  }
+}
 async function rAccounts(){
-  const v = await acctFetchVocab();
-  await CRM.ensureEmployees();          /* so PIC codes render as names */
+  const [v] = await Promise.all([acctFetchVocab(), CRM.ensureEmployees(),
+                                 acctLoadAssignPermission()]);
   const p = g('pg-accounts'); if (!p) return;
+  const selHead = ACCT.canAssign
+    ? `<th style="width:34px;"><input type="checkbox" id="acAll" aria-label="Select all accounts shown" onchange="acctSelectAll(this.checked)"></th>`
+    : '';
   const bar = `
     <div class="pg-hd">
       <div><div class="pg-ttl">Accounts</div>
@@ -5372,19 +5414,33 @@ async function rAccounts(){
     <div class="card">
       <div class="card-hd"><div class="card-ttl">All Accounts</div><span class="f-cnt" id="acCnt">0</span></div>
       <div class="tw"><table>
-        <thead><tr><th>#</th><th>Account</th><th>Dev Stage</th><th>Tags</th><th>PIC</th>
+        <thead><tr>${selHead}<th>#</th><th>Account</th><th>Dev Stage</th><th>Tags</th><th>PIC</th>
           <th>Priority</th><th>Last Activity</th><th>Next Action</th><th></th></tr></thead>
         <tbody id="acTb"></tbody></table></div>
+    </div>
+    <div id="acBulkBar" role="region" aria-label="Bulk actions" hidden
+         style="position:sticky;bottom:72px;z-index:50;margin-top:.6rem;background:var(--p-ink);color:#fff;border-radius:var(--rd-lg);box-shadow:var(--el-4);padding:10px 14px;display:none;flex-wrap:wrap;align-items:center;gap:10px;">
+      <span id="acBulkCount" style="font-weight:600;font-size:13px;"></span>
+      <span id="acBulkHidden" style="font-size:12px;opacity:.8;"></span>
+      <span style="flex:1;"></span>
+      <button class="btn btn-red btn-sm" id="acBulkAssign" onclick="acctBulkAssign()"></button>
+      <button class="btn btn-ghost btn-sm" onclick="acctClearSelection()">Clear selection</button>
+      <div id="acBulkNote" style="flex-basis:100%;font-size:12.5px;line-height:1.5;" hidden></div>
     </div>`;
   p.innerHTML = bar;
   try {
     const r = await api('/api/accounts');
     ACCT.list = r.accounts || [];
   } catch(err){ ACCT.list = []; }
+  /* A selection only means something for accounts still in the list. */
+  const ids = new Set(ACCT.list.map(a => a.id));
+  ACCT.selected.forEach(id => { if (!ids.has(id)) ACCT.selected.delete(id); });
+  if (!ACCT.canAssign) ACCT.selected.clear();
   acctFilter();
   const nav=document.querySelector('[data-p="accounts"] .sb-cnt');
   if(nav) nav.textContent = ACCT.list.length;
 }
+function acctVisible(){ return ACCT.filtered.slice(0, ACCT_ROW_CAP); }
 function acctFilter(){
   const q=(g('acQ')?.value||'').toLowerCase();
   const st=g('acStg')?.value||'';
@@ -5395,9 +5451,10 @@ function acctFilter(){
     (!pri || a.priority === pri)
   );
   const tb=g('acTb'); if(!tb) return;
+  const cols = ACCT.canAssign ? 10 : 9;
   g('acCnt').textContent = ACCT.filtered.length + ' account(s)';
   if (!ACCT.filtered.length) {
-    tb.innerHTML = `<tr><td colspan="9" style="padding:0;">
+    tb.innerHTML = `<tr><td colspan="${cols}" style="padding:0;">
       <div class="crm-empty">
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01"/><path d="M16 6h.01"/><path d="M12 6h.01"/><path d="M12 10h.01"/><path d="M12 14h.01"/><path d="M16 10h.01"/><path d="M16 14h.01"/><path d="M8 10h.01"/><path d="M8 14h.01"/></svg></div>
         <div class="title">No accounts match your filters</div>
@@ -5405,10 +5462,12 @@ function acctFilter(){
         <button class="btn btn-ghost btn-sm" onclick="acctResetFilters()">Reset filters</button>
       </div>
     </td></tr>`;
+    acctPaintSelection();
     return;
   }
-  tb.innerHTML = ACCT.filtered.slice(0,500).map((a,i)=>`
+  tb.innerHTML = acctVisible().map((a,i)=>`
     <tr onclick="acctOpen(${a.id})" style="cursor:pointer;">
+      ${ACCT.canAssign ? `<td onclick="event.stopPropagation()"><input type="checkbox" class="acSel" data-id="${a.id}" aria-label="Select ${e(a.name)}" ${ACCT.selected.has(a.id)?'checked':''} onchange="acctToggle(${a.id}, this.checked)"></td>` : ''}
       <td>${i+1}</td>
       <td><div class="td-m">${e(a.name)}</div>${a.industry?`<div class="td-s">${e(a.industry)}</div>`:''}</td>
       <td>${a.dev_stage?`<span class="b sA">${e(a.dev_stage)}</span>`:'—'}</td>
@@ -5421,8 +5480,164 @@ function acctFilter(){
         <button class="btn btn-ghost btn-xs" onclick="acctOpen(${a.id})">Open</button>
       </td>
     </tr>`).join('');
+  acctPaintSelection();
+}
+
+// ── ACCOUNTS bulk PIC assignment ────────────────────────────────────
+function acctToggle(id, on){
+  if (!ACCT.canAssign) return;
+  if (on) ACCT.selected.add(id); else ACCT.selected.delete(id);
+  acctPaintSelection();
+}
+function acctSelectAll(on){
+  if (!ACCT.canAssign) return;
+  /* Only the rows the filters leave on screen — never hidden ones. */
+  acctVisible().forEach(a => { if (on) ACCT.selected.add(a.id); else ACCT.selected.delete(a.id); });
+  document.querySelectorAll('#acTb .acSel').forEach(cb => { cb.checked = on; });
+  acctPaintSelection();
+}
+function acctClearSelection(){
+  ACCT.selected.clear();
+  ACCT.bulkNote = '';
+  document.querySelectorAll('#acTb .acSel').forEach(cb => { cb.checked = false; });
+  acctPaintSelection();
+}
+function acctPaintSelection(){
+  const all = g('acAll');
+  if (all) {
+    const shown = acctVisible();
+    const picked = shown.filter(a => ACCT.selected.has(a.id)).length;
+    all.checked = shown.length > 0 && picked === shown.length;
+    all.indeterminate = picked > 0 && picked < shown.length;
+  }
+  const bar = g('acBulkBar'); if (!bar) return;
+  const n = ACCT.selected.size;
+  const note = g('acBulkNote');
+  if (note) { note.hidden = !ACCT.bulkNote; note.innerHTML = ACCT.bulkNote; }
+  /* style.display, not only [hidden]: the bar's inline display would
+     otherwise override the attribute. */
+  bar.hidden = !ACCT.canAssign || (n === 0 && !ACCT.bulkNote);
+  bar.style.display = bar.hidden ? 'none' : 'flex';
+  if (bar.hidden) return;
+  g('acBulkCount').textContent = n + ' account' + (n === 1 ? '' : 's') + ' selected';
+  const shownIds = new Set(acctVisible().map(a => a.id));
+  const hiddenN = [...ACCT.selected].filter(id => !shownIds.has(id)).length;
+  g('acBulkHidden').textContent = hiddenN
+    ? `(${hiddenN} not shown by the current filters)` : '';
+  const btn = g('acBulkAssign');
+  btn.textContent = `Assign ${n} account${n === 1 ? '' : 's'} to PIC`;
+  btn.disabled = n === 0;
+}
+function acctSelectedAccounts(){
+  const byId = new Map(ACCT.list.map(a => [a.id, a]));
+  return [...ACCT.selected].map(id => byId.get(id)).filter(Boolean);
+}
+async function acctBulkAssign(){
+  if (!ACCT.canAssign || !ACCT.selected.size) return;
+  if (!acctFormReady()) return;
+  await CRM.ensureEmployees();
+  const accounts = acctSelectedAccounts();
+  const n = accounts.length;
+  const names = accounts.map(a => a.name);
+  const shown = names.slice(0, 20).join(', ') +
+                (n > 20 ? ` and ${n - 20} more` : '');
+  const emps = CRM.empOptions();
+  CRM.Form.open({
+    title: `Assign ${n} account${n === 1 ? '' : 's'} to a PIC`,
+    subtitle: `${n} account${n === 1 ? '' : 's'} selected`,
+    submitLabel: 'Assign', width: 580,
+    fields: [
+      { name:'pic', label:'Primary PIC', kind:'select', required:true,
+        placeholder:'Choose the PIC…', options: emps },
+      { name:'secondary', label:'Secondary PIC (monitor / backup)', kind:'select',
+        options: [{value:'__keep__', label:"Keep each account's current secondary PIC"},
+                  {value:'', label:'No secondary PIC'}].concat(emps),
+        value:'__keep__' },
+      { name:'reason', label:'Reason', kind:'textarea', rows:3, required:true,
+        help:"Why are these being (re)assigned? — recorded in each account's history." },
+    ],
+    footerNote: 'Accounts: ' + shown,
+    onSubmit: async function(vals){
+      if (vals.secondary && vals.secondary !== '__keep__' && vals.secondary === vals.pic) {
+        CRMToast.error('The secondary PIC must be a different person from the PIC');
+        return false;
+      }
+      const who = CRM.empName(vals.pic);
+      if (!window.confirm(`Assign ${n} account${n === 1 ? '' : 's'} to ${who}?\n` +
+                          `This is recorded in each account's history.`)) return false;
+      await acctRunBulkAssign(accounts, vals);
+    },
+  });
+}
+async function acctRunBulkAssign(accounts, vals){
+  const total = accounts.length;
+  const body = {new_pic: vals.pic, reason: vals.reason};
+  if (vals.secondary !== '__keep__') body.new_secondary = vals.secondary;
+  const results = [];
+  const btn = g('crmFormSubmit');
+  for (let i = 0; i < total; i += ACCT_BULK_BATCH) {
+    const batch = accounts.slice(i, i + ACCT_BULK_BATCH);
+    const label = `Assigning ${Math.min(i + batch.length, total)} of ${total}…`;
+    if (btn) btn.textContent = label;
+    ACCT.bulkNote = e(label); acctPaintSelection();
+    let r, j = null;
+    try {
+      r = await fetch(crmUrl('/api/accounts/assign-bulk'), {method:'POST',
+        credentials:'same-origin', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({...body, account_ids: batch.map(a => a.id)})});
+      j = await r.json().catch(() => null);
+    } catch(err){ console.error('bulk assign request failed', err); }
+    if (j && j.ok) {
+      results.push(...j.results);
+    } else {
+      /* The whole batch was refused (permission, bad PIC, network): every
+         account in it failed for the same reason. */
+      const why = (j && j.error) || (r ? `HTTP ${r.status}` : 'network error');
+      batch.forEach(a => results.push({id: a.id, name: a.name, ok: false, error: why}));
+      if (r && (r.status === 400 || r.status === 403)) {
+        accounts.slice(i + batch.length).forEach(a =>
+          results.push({id: a.id, name: a.name, ok: false, error: why}));
+        break;
+      }
+    }
+  }
+  const byId = new Map(ACCT.list.map(a => [a.id, a]));
+  const failed = [];
+  let unchanged = 0;
+  results.forEach(res => {
+    if (res.ok) {
+      ACCT.selected.delete(res.id);
+      const a = byId.get(res.id);
+      if (a) { a.pic = res.pic; a.secondary_pic = res.secondary; }
+      if (res.changed === false) unchanged++;
+    } else {
+      ACCT.selected.add(res.id);         /* kept for a retry */
+      failed.push(res);
+    }
+  });
+  const okN = results.length - failed.length;
+  let note = `<strong>${okN} succeeded</strong>` +
+             (unchanged ? ` (${unchanged} already had these PICs)` : '') +
+             ` · <strong>${failed.length} failed</strong>`;
+  if (failed.length) {
+    note += '<br>Still selected so you can retry: ' + failed.map(f =>
+      `${e((byId.get(f.id) || {}).name || f.name || ('#' + f.id))} — ${e(f.error || 'failed')}`).join('; ');
+  }
+  ACCT.bulkNote = note;
+  acctFilter();
+  if (failed.length) CRMToast.error(`${failed.length} of ${total} could not be assigned`);
+  else CRMToast.success(`${okN} account${okN === 1 ? '' : 's'} assigned to ${CRM.empName(vals.pic)}`);
 }
 function acctResetFilters(){ ['acQ','acStg','acPri'].forEach(id=>{const el=g(id); if(el) el.value='';}); acctFilter(); }
+/* The four account actions open CRM.Form. If it is ever missing, say so
+   instead of throwing into the console while the button does nothing. */
+function acctFormReady(){
+  if (window.CRM && CRM.Form && typeof CRM.Form.open === 'function') return true;
+  const msg = 'This form could not load. Reload the page; if it keeps happening, tell an administrator.';
+  console.error('CRM.Form is unavailable');
+  if (window.CRMToast) CRMToast.error(msg); else alert(msg);
+  return false;
+}
 
 // ── ACCOUNT create / detail modal ────────────────────────────────────
 async function acctOpenCreate(){
@@ -5495,7 +5710,7 @@ function renderAcctDetail(a, activities, hist){
     </div></div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:.5rem;padding:.5rem;">
       <div class="k"><div class="kL">Dev Stage</div><div class="kV">${e(a.dev_stage||'—')}</div></div>
-      <div class="k"><div class="kL">PIC</div><div class="kV">${e(a.pic||'—')}</div></div>
+      <div class="k"><div class="kL">PIC</div><div class="kV">${e(a.pic ? CRM.empName(a.pic) : '—')}</div>${a.secondary_pic?`<div style="font-size:11.5px;color:var(--p-text-2);margin-top:2px;">Secondary: ${e(CRM.empName(a.secondary_pic))}</div>`:''}</div>
       <div class="k"><div class="kL">Priority</div><div class="kV">${e(a.priority||'—')}</div></div>
       <div class="k"><div class="kL">Win Rate</div><div class="kV">${(a.win_rate_pct||0).toFixed(1)}%</div></div>
       <div class="k"><div class="kL">Leads</div><div class="kV">${a.lead_count||0}</div></div>
@@ -5509,7 +5724,7 @@ function renderAcctDetail(a, activities, hist){
     <div style="display:flex;gap:6px;margin:.5rem;">
       <button class="btn btn-red btn-sm" onclick="acctLogActivity(${a.id})">+ Log Activity</button>
       <button class="btn btn-ghost btn-sm" onclick="acctChangeStage(${a.id})">Change Stage</button>
-      <button class="btn btn-ghost btn-sm" onclick="acctReassign(${a.id})">Reassign PIC</button>
+      ${a.can_assign ? `<button class="btn btn-ghost btn-sm" onclick="acctReassign(${a.id})">Reassign PIC</button>` : ''}
       <button class="btn btn-ghost btn-sm" onclick="acctConvert(${a.id})">Convert → Opportunity</button>
     </div>
     <h4 style="margin:1rem .5rem .3rem;">Activity Timeline</h4>
@@ -5528,8 +5743,10 @@ function renderAcctDetail(a, activities, hist){
         ? (hist.pic_history||[]).map(h=>`
           <div style="padding:10px 12px;border-left:2px solid var(--p-border);margin-bottom:8px;">
             <div style="font-size:13px;color:var(--p-ink-2);">
-              PIC ${h.previous_pic ? 'reassigned to' : 'assigned to'} <strong>${e(CRM.empName(h.new_pic))}</strong>
-              ${h.previous_pic ? ' from <strong>'+e(CRM.empName(h.previous_pic))+'</strong>' : ''}
+              ${h.previous_pic && h.previous_pic === h.new_pic
+                ? 'Secondary PIC changed · PIC stays <strong>'+e(CRM.empName(h.new_pic))+'</strong>'
+                : `PIC ${h.previous_pic ? 'reassigned to' : 'assigned to'} <strong>${e(CRM.empName(h.new_pic))}</strong>
+              ${h.previous_pic ? ' from <strong>'+e(CRM.empName(h.previous_pic))+'</strong>' : ''}`}
             </div>
             <div style="font-size:11.5px;color:var(--p-text-2);margin-top:2px;">
               ${e(h.at)} · by ${e(CRM.empName(h.assigned_by))}${h.reason?' · '+e(h.reason):''}
@@ -5556,6 +5773,7 @@ function renderAcctDetail(a, activities, hist){
     </div>`);
 }
 async function acctLogActivity(id){
+  if (!acctFormReady()) return;
   const v = await acctFetchVocab();
   const acct = ACCT.current || {};
   CRM.Form.open({
@@ -5582,6 +5800,7 @@ async function acctLogActivity(id){
   });
 }
 async function acctChangeStage(id){
+  if (!acctFormReady()) return;
   const v = await acctFetchVocab();
   const acct = ACCT.current || {};
   CRM.Form.open({
@@ -5603,29 +5822,41 @@ async function acctChangeStage(id){
   });
 }
 async function acctReassign(id){
+  if (!acctFormReady()) return;
   await CRM.ensureEmployees();
   const acct = ACCT.current || {};
+  const emps = CRM.empOptions();
   CRM.Form.open({
     title: 'Reassign PIC', subtitle: acct.name || 'Account',
     submitLabel: 'Reassign',
     fields: [
-      { name:'pic',    label:'New PIC', kind:'select', required:true,
-        options: CRM.empOptions(), value: acct.pic || '',
+      { name:'pic', label:'Primary PIC', kind:'select', required:true,
+        placeholder:'Choose the PIC…', options: emps, value: acct.pic || '',
         help: 'Historical activity, timeline and stage history stay with the account.' },
-      { name:'reason', label:'Reason', kind:'textarea', rows: 3 },
+      { name:'secondary', label:'Secondary PIC (monitor / backup)', kind:'select',
+        options: [{value:'', label:'No secondary PIC'}].concat(emps),
+        value: acct.secondary_pic || '' },
+      { name:'reason', label:'Reason', kind:'textarea', rows: 3, required:true,
+        help: "Recorded in the account's PIC history." },
     ],
     onSubmit: async function(vals){
+      if (vals.secondary && vals.secondary === vals.pic) {
+        CRMToast.error('The secondary PIC must be a different person from the PIC');
+        return false;
+      }
       const r = await fetch(crmUrl(`/api/accounts/${id}/assign`), {method:'POST',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({new_pic: vals.pic, reason: vals.reason})});
-      const j = await r.json();
+        body: JSON.stringify({new_pic: vals.pic, new_secondary: vals.secondary,
+                              reason: vals.reason})});
+      const j = await r.json().catch(() => ({}));
       if (!j.ok) { CRMToast.error(j.error||'Failed'); return false; }
-      CRMToast.success('PIC reassigned');
+      CRMToast.success(j.changed === false ? 'No change — the account already has these PICs' : 'PIC reassigned');
       await rAccounts(); acctOpen(id);
     },
   });
 }
 async function acctConvert(id){
+  if (!acctFormReady()) return;
   const acct = ACCT.current || {};
   CRM.Form.open({
     title: 'Convert to Opportunity', subtitle: acct.name || 'Account',

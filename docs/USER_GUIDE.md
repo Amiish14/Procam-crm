@@ -48,6 +48,22 @@ contacts.
   that is kept in the history.
 - **Email trail**: the original enquiry is never overwritten.
 
+## Accounts
+
+- **Open** an account for its activity timeline, PIC history and stage
+  history, and to log an activity, change its stage or convert it to an
+  opportunity.
+- **Reassign PIC** (if your access allows it): choose the primary PIC,
+  optionally a secondary PIC who monitors or backs up the account, and
+  give a reason. The change and the reason are kept in the account's PIC
+  history.
+- **Many accounts at once**: tick the accounts in the list — the box in
+  the header ticks every account the current search and filters show,
+  never hidden ones — then **Assign N accounts to PIC**. Leave the
+  secondary PIC on "Keep each account's current secondary PIC" to change
+  only the primary. When it finishes you see how many succeeded; any
+  that failed stay ticked, with the reason, so you can retry them.
+
 ## Notes Search
 
 Sidebar → **Notes Search**. Search the notes on leads you can see, and

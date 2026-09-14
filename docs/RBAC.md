@@ -46,6 +46,7 @@ Source: `PERMISSION_GROUPS` in `app/access/service.py`.
 | `reports.action` · `reports.competitor` · `reports.accounts` | the report families |
 | `module.rfq` · `module.quotes` · `module.handovers` · `module.funnels` · `module.competitors` · `module.business_cards` | the modules |
 | `module.handovers_all` | the whole handover queue, not only handovers of the person's deals |
+| `accounts.assign` | reassign an account's PIC and secondary PIC — one account, or many at once from the Accounts list — for accounts in the person's scope. Default: administrators and vertical heads |
 | `admin.access` | the Access Matrix screen; the audit trail and ops status |
 | `admin.employees` | create, edit, deactivate employees; reset passwords; full employee list |
 | `admin.email` | mailbox subscriptions and the ingestion inbox |
@@ -87,6 +88,7 @@ viewer, everyone in the same vertical, and anyone reporting to the viewer
 | Approve a quote | company-wide scope or `Vertical_Head` role; not the quote's own preparer (unless company-wide scope) |
 | Submit a rate | the line's sourcing owner, `Rate_Sourcing` role, or company-wide scope |
 | Reassign a lead | `admin.triage`, with a reason |
+| Reassign an account's PIC (single or bulk) | `accounts.assign` and the account in scope; the new PICs must be active employees; bulk needs a reason. Every change appends to the account's PIC history |
 | Permanent deletion | super admin, with a reason, audited before deletion |
 
 ## Adding an endpoint

@@ -87,6 +87,7 @@ def api_accounts_list():
         d.update({
             'dev_stage':     getattr(c, 'dev_stage', None),
             'pic':           getattr(c, 'pic_emp_code', None),
+            'secondary_pic': getattr(c, 'secondary_pic_emp_code', None),
             'strategic':     bool(getattr(c, 'strategic_flag', False)),
             'priority':      getattr(c, 'priority', None),
             'last_activity_at': (str(c.last_activity_at)[:16]
@@ -163,6 +164,8 @@ def api_accounts_detail(aid):
         return jsonify(ok=False, error='forbidden'), 403
     return jsonify(ok=True, account={**c.to_dict(),
                                      **svc.account_summary(c),
+                                     'secondary_pic': c.secondary_pic_emp_code,
+                                     'can_assign': _may_assign(),
                                      'tags': [t.tag for t in AccountRelationshipTag.query
                                                             .filter_by(account_id=c.id).all()]})
 
@@ -197,10 +200,23 @@ def api_accounts_update(aid):
 
 
 # ─── assign / stage / activity ─────────────────────────────────────────
+def _may_assign() -> bool:
+    """Reassigning an account's PIC is an Access Matrix permission; seeing
+    the account is not enough."""
+    from app.access.service import can
+    return can('accounts.assign')
+
+
+_NO_ASSIGN = ('You do not have permission to reassign account PICs. '
+              'Ask an administrator.')
+
+
 @bp.route('/api/accounts/<int:aid>/assign', methods=['POST'])
 def api_accounts_assign(aid):
     if not _require_login():
         return jsonify(ok=False, error='login required'), 401
+    if not _may_assign():
+        return jsonify(ok=False, error=_NO_ASSIGN, need='accounts.assign'), 403
     emp = _current_emp()
     c = Company.query.get_or_404(aid)
     ids = _visible_account_ids(emp)
@@ -208,14 +224,107 @@ def api_accounts_assign(aid):
         return jsonify(ok=False, error='forbidden'), 403
     body = request.get_json(silent=True) or {}
     try:
-        svc.reassign_account(account=c,
-                             new_pic_code=body.get('new_pic'),
-                             changed_by_code=emp.emp_code,
-                             reason=body.get('reason'))
+        row = svc.reassign_account(
+            account=c, new_pic_code=body.get('new_pic'),
+            changed_by_code=emp.emp_code, reason=body.get('reason'),
+            new_secondary_code=(body.get('new_secondary')
+                                if 'new_secondary' in body else svc.UNCHANGED))
         db.session.commit()
     except svc.PreSalesError as e:
+        db.session.rollback()
         return jsonify(ok=False, error=str(e)), 400
-    return jsonify(ok=True)
+    return jsonify(ok=True, changed=row is not None,
+                   pic=c.pic_emp_code, secondary=c.secondary_pic_emp_code)
+
+
+#: Accounts per bulk request. The page sends larger selections in batches
+#: of this size so it can show progress.
+BULK_ASSIGN_MAX = 100
+
+
+@bp.route('/api/accounts/assign-bulk', methods=['POST'])
+def api_accounts_assign_bulk():
+    """Assign many accounts to one PIC (and optional secondary PIC).
+
+    Each account goes through the same reassign_account() as the single
+    endpoint, inside its own savepoint: one account that cannot be saved
+    is reported and the others still are. The reason is required — it is
+    written into every account's PIC history.
+    """
+    if not _require_login():
+        return jsonify(ok=False, error='login required'), 401
+    if not _may_assign():
+        return jsonify(ok=False, error=_NO_ASSIGN, need='accounts.assign'), 403
+    emp = _current_emp()
+    body = request.get_json(silent=True) or {}
+
+    raw_ids = body.get('account_ids')
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return jsonify(ok=False, error='Choose at least one account'), 400
+    try:
+        account_ids = list(dict.fromkeys(int(i) for i in raw_ids))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='account_ids must be numbers'), 400
+    if len(account_ids) > BULK_ASSIGN_MAX:
+        return jsonify(ok=False, error=f'At most {BULK_ASSIGN_MAX} accounts '
+                       'per request'), 400
+    reason = (body.get('reason') or '').strip()
+    if not reason:
+        return jsonify(ok=False, error='A reason is required; it is recorded '
+                       "in each account's history"), 400
+    new_pic = (body.get('new_pic') or '').strip()
+    secondary = (body.get('new_secondary') if 'new_secondary' in body
+                 else svc.UNCHANGED)
+    # A bad PIC fails every account the same way: say so once.
+    try:
+        if not new_pic:
+            raise svc.PreSalesError('Choose the PIC')
+        svc._active_employee(new_pic, 'PIC')
+        if secondary is not svc.UNCHANGED and (secondary or '').strip():
+            svc._active_employee(secondary.strip(), 'Secondary PIC')
+            if secondary.strip() == new_pic:
+                raise svc.PreSalesError('The secondary PIC must be a '
+                                        'different person from the PIC')
+    except svc.PreSalesError as e:
+        return jsonify(ok=False, error=str(e)), 400
+
+    visible = _visible_account_ids(emp)
+    found = {c.id: c for c in Company.query.filter(
+        Company.id.in_(account_ids), Company.is_active.is_(True))}
+    results = []
+    for aid in account_ids:
+        c = found.get(aid)
+        if c is None:
+            results.append({'id': aid, 'ok': False,
+                            'error': 'account not found or inactive'})
+            continue
+        if visible is not None and aid not in visible:
+            results.append({'id': aid, 'name': c.name, 'ok': False,
+                            'error': 'outside your access'})
+            continue
+        try:
+            with db.session.begin_nested():
+                row = svc.reassign_account(
+                    account=c, new_pic_code=new_pic,
+                    changed_by_code=emp.emp_code, reason=reason,
+                    new_secondary_code=secondary)
+        except svc.PreSalesError as e:
+            results.append({'id': aid, 'name': c.name, 'ok': False,
+                            'error': str(e)})
+            continue
+        except Exception:
+            app.logger.exception('bulk assign failed for account %s', aid)
+            results.append({'id': aid, 'name': c.name, 'ok': False,
+                            'error': 'could not be saved'})
+            continue
+        results.append({'id': aid, 'name': c.name, 'ok': True,
+                        'changed': row is not None,
+                        'pic': c.pic_emp_code,
+                        'secondary': c.secondary_pic_emp_code})
+    db.session.commit()
+    ok_n = sum(1 for r in results if r['ok'])
+    return jsonify(ok=True, results=results, succeeded=ok_n,
+                   failed=len(results) - ok_n)
 
 
 @bp.route('/api/accounts/<int:aid>/stage', methods=['POST'])
