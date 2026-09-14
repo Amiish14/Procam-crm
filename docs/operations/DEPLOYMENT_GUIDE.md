@@ -126,8 +126,9 @@ never gets it; the preflight then warns "indexes N missing". Add them
 .venv/bin/python scripts/ensure_model_indexes.py
 ```
 
-On the 2026-09-14 production database this adds 24 indexes on
-`companies`, `copilot_chunk` and `copilot_log`. SQLite holds a write lock
+On the 2026-09-14 production database this added 24 indexes on
+`companies`, `contacts`, `leads`, `opportunities`, `email_events`,
+`copilot_chunk` and `copilot_log`. SQLite holds a write lock
 while each is built; run it outside office hours or accept a few seconds
 of queued saves.
 
