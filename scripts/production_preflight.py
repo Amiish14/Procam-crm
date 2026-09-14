@@ -300,7 +300,8 @@ def check_schema(rep, conn, expected):
     # Indexes are performance, not correctness.
     rep.add(area, 'indexes', WARN if missing_idx else PASS,
             (f'{len(missing_idx)} missing: ' + ', '.join(missing_idx[:12])
-             + (' …' if len(missing_idx) > 12 else '')) if missing_idx
+             + (' …' if len(missing_idx) > 12 else '')
+             + ' — add with scripts/ensure_model_indexes.py') if missing_idx
             else 'all declared indexes present')
     return missing_cols
 

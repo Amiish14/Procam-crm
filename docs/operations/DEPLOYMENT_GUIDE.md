@@ -116,6 +116,21 @@ columns on `employees`, Vendor Master columns on `vendor_domains`, and
 lead/contact/opportunity indexes. The boot creates the same, so the
 order is not critical.
 
+**Indexes on older tables.** Boot and migrations add an index only when
+they create its table, so a table older than one of its model's indexes
+never gets it; the preflight then warns "indexes N missing". Add them
+(additive; unique indexes are listed, not created):
+
+```bash
+.venv/bin/python scripts/ensure_model_indexes.py --check
+.venv/bin/python scripts/ensure_model_indexes.py
+```
+
+On the 2026-09-14 production database this adds 24 indexes on
+`companies`, `copilot_chunk` and `copilot_log`. SQLite holds a write lock
+while each is built; run it outside office hours or accept a few seconds
+of queued saves.
+
 **Behaviour users will notice**
 
 - The Content Security Policy is enforced. If a page stops loading a
