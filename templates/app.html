@@ -2404,6 +2404,15 @@ function fmtValue(v){
   if (!(v > 0)) return '—';
   return '₹ ' + (v >= 1e7 ? (v / 1e7).toFixed(2) + ' Cr' : (v / 1e5).toFixed(1) + ' L');
 }
+/* The ₹ L column: Procam's value (quote, else opportunity). Where there is
+   none, the customer's project cost from the project database is shown
+   greyed and labelled — it is context, never pipeline. */
+function valueCell(l){
+  if (l && Number(l.value_inr) > 0) return fmtLakhCell(l.value_inr);
+  if (l && Number(l.project_cost_inr) > 0)
+    return `<span style="color:var(--text-3)" title="Customer's project cost (capex) from the project database — not Procam's opportunity value">proj. ${fmtLakhCell(l.project_cost_inr)}</span>`;
+  return '—';
+}
 function quoteLapsedChip(l){
   const a = l && l.quote_ageing;
   if (!a || !a.expired) return '';
@@ -2514,7 +2523,7 @@ function dashRenderRecords(){
       <td>${sb(l.stage)}</td>
       <td class="tddate">${l.followup||'—'}</td>
       <td class="tddate">${l.onboarded_date||'—'}</td>
-      <td class="tbl-num">${fmtLakhCell(l.value_inr)}</td>
+      <td class="tbl-num">${valueCell(l)}</td>
       <td><button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();openLd(${l.id})">Open</button></td>
     </tr>`).join('') : `<tr><td colspan="10" style="text-align:center;padding:2.5rem;color:#9CA3AF;">
       No records match the current filter combination.</td></tr>`;
@@ -2631,7 +2640,7 @@ async function rInbox(stage, prefix){
     <tr>
       <td><div class="td-m">${e(l.company)}</div><div class="td-s">${e(l.project||'')}</div></td>
       <td>${e(l.industry||'—')}</td>
-      <td class="tbl-num">${fmtLakhCell(l.value_inr)}</td>
+      <td class="tbl-num">${valueCell(l)}</td>
       <td>${e(l.assigned_name||l.assigned_to||'—')}</td>
       <td class="tddate">${e(l.onboarded_date||'—')}</td>
       <td>
@@ -2682,7 +2691,7 @@ async function rLeads(){
     <td class="tbl-num">${i+1}</td>
     <td><div class="td-m">${e(l.company)}</div><div class="td-s">${e(l.project||'')}</div></td>
     <td>${e(l.industry||'—')}</td><td>${e(l.state||'—')}</td>
-    <td class="tbl-num">${fmtLakhCell(l.value_inr)}</td>
+    <td class="tbl-num">${valueCell(l)}</td>
     <td><div style="font-weight:500;color:var(--ink-2)">${e(l.pic||'—')}</div><div class="td-s">${e(l.email||'')}</div></td>
     <td>${sb(l.stage)}${quoteLapsedChip(l)}</td><td>${vb(l.procam_vertical)}</td>
     <td class="tddate"${l.followup?' style="color:var(--red)"':''}>${l.followup||'—'}</td>
@@ -2702,7 +2711,7 @@ async function rAll(){
     <td class="tbl-num">${i+1}</td>
     <td><div class="td-m">${e(l.company)}</div><div class="td-s">${e(l.project||'')}</div></td>
     <td>${e(l.industry||'—')}</td><td>${e(l.state||'—')}</td>
-    <td class="tbl-num">${fmtLakhCell(l.value_inr)}</td>
+    <td class="tbl-num">${valueCell(l)}</td>
     <td><div style="font-weight:500;color:var(--ink-2)">${e(l.pic||'—')}</div><div class="td-s">${e(l.email||'')}</div></td>
     <td>${sb(l.stage)}${quoteLapsedChip(l)}</td><td>${e(l.assigned_name||'—')}</td>
     <td>${srb(l.source)}</td><td>${l.opp_number?`<span class="b oppB">${e(l.opp_number)}</span>`:'—'}</td>
@@ -2723,7 +2732,7 @@ async function rOpp(){
     <td>${l.opp_number?`<span class="b oppB">${e(l.opp_number)}</span>`:bdg('sR','Needs OPP#')}</td>
     <td><div class="td-m">${e(l.company)}</div></td>
     <td>${e(l.industry||'—')}</td>
-    <td class="tbl-num">${fmtLakhCell(l.value_inr)}</td>
+    <td class="tbl-num">${valueCell(l)}</td>
     <td>${vb(l.procam_vertical)}</td><td>${e(l.assigned_name||'—')}</td>
     <td class="tddate">${l.rfq_date||'—'}</td>
     <td><span class="b ${l.opp_stage==='Closed Won'?'sW':l.opp_stage==='Closed Lost'?'sL':'sA'}">${e(l.opp_stage||'Qualification')}</span></td>
@@ -3227,8 +3236,8 @@ function ldValueSection(l){
   const cur = l.currency || 'INR';
   const opp = l.opportunity_value != null ? l.opportunity_value
             : (cur === 'INR' && l.opportunity_value_inr != null ? l.opportunity_value_inr : '');
-  const legacy = l.value_source === 'legacy' && l.value_inr
-    ? `Old ₹M figure: ${fmtValue(l.value_inr)} — enter it here to confirm` : '';
+  const legacy = Number(l.project_cost_inr) > 0
+    ? `Customer's project cost: ${fmtValue(l.project_cost_inr)} — context, not Procam's value` : '';
   return `<div class="fm-s">Value</div>
     <div class="fmr">
       <div class="fmg"><label class="fml" for="lOppV">Opportunity value</label>
@@ -3236,7 +3245,7 @@ function ldValueSection(l){
           <select class="fmc" id="lCur" style="width:88px;flex:none" onchange="ldValueHints()" aria-label="Currency">
             ${['INR','USD','EUR'].map(c=>`<option${c===cur?' selected':''}>${c}</option>`).join('')}</select>
           <input class="fmc" id="lOppV" type="text" inputmode="decimal" value="${e(opp)}"
-                 placeholder="${e(legacy ? String(Math.round(l.value_inr)) : 'Whole amount, e.g. 1250000')}" oninput="ldValueHints()">
+                 placeholder="Whole amount, e.g. 1250000" oninput="ldValueHints()">
         </div>
         <div class="td-s" id="lOppHint" style="margin-top:4px">${e(legacy)}</div></div>
       <div class="fmg"><label class="fml" for="lBasis">Value basis</label>
@@ -3305,7 +3314,9 @@ function ldValueHints(){
   const cur = g('lCur')?.value || 'INR';
   const opp = lvNum(g('lOppV')?.value), qv = lvNum(g('lQV')?.value), cost = lvNum(g('lQCost')?.value);
   const oh = g('lOppHint');
-  if (oh && (opp != null || !oh.textContent.startsWith('Old ₹M'))) oh.textContent = ldConvHint(opp, cur);
+  if (oh) oh.textContent = opp != null ? ldConvHint(opp, cur)
+    : (LV_LEAD && Number(LV_LEAD.project_cost_inr) > 0
+       ? `Customer's project cost: ${fmtValue(LV_LEAD.project_cost_inr)} — context, not Procam's value` : '');
   if (g('lQHint')) g('lQHint').textContent = ldConvHint(qv, cur);
   if (g('lQCurLbl')) g('lQCurLbl').textContent = '(' + cur + ')';
   const m = g('lQMargin');
@@ -3373,7 +3384,7 @@ function ldValuePrompts(stage, v){
       return false;
     }
   }
-  if (stage === 'Won' && !lvNum(v.quote_value) && !lvNum(v.opportunity_value) && !(LV_LEAD && LV_LEAD.value_source === 'legacy')) {
+  if (stage === 'Won' && !lvNum(v.quote_value) && !lvNum(v.opportunity_value)) {
     if (confirm('This lead is marked Won with no value — add it now?\n\nOK to add it, Cancel to save without.')) {
       g('lOppV').focus();
       return false;
@@ -3600,6 +3611,7 @@ async function loadOR(){
     <div class="di"><div class="dl">Industry</div><div class="dv">${e(l.industry||'—')}</div></div>
     <div class="di"><div class="dl">State</div><div class="dv">${e(l.state||'—')}</div></div>
     <div class="di"><div class="dl">Value</div><div class="dv" style="font-variant-numeric:tabular-nums">${fmtValue(l.value_inr)}</div></div>
+    ${Number(l.project_cost_inr)>0?`<div class="di"><div class="dl">Project cost</div><div class="dv" style="font-variant-numeric:tabular-nums">${fmtValue(l.project_cost_inr)}</div></div>`:''}
     ${l.products?`<div class="di" style="grid-column:1/-1"><div class="dl">Products</div><div class="dv" style="font-size:12.5px;font-weight:400;color:var(--text)">${e(l.products)}</div></div>`:''}
   `;
   const vm={'Heavy Transport':'Heavy Transport / ODC Movement','Project Freight':'Project Freight Management','Warehousing':'Warehousing & 3PL','Installation':'Installation & Commissioning'};
@@ -3625,7 +3637,7 @@ Industry: ${l.industry||'N/A'}
 Location: ${l.state||l.city||'India'}
 Contact: ${pic||'Sir/Madam'}${l.designation?' ('+l.designation+')':''}
 Products/Capacity: ${l.products||'N/A'}
-Value: ${l.value_inr?fmtValue(l.value_inr):'N/A'}
+Project cost: ${Number(l.project_cost_inr)>0?fmtValue(l.project_cost_inr):'N/A'}
 Service: ${vert}
 ${ctx?'Project context:\n'+ctx:''}
 
@@ -3947,7 +3959,7 @@ function pipRenderTable(){
           <td>${e(l.state||'—')}</td>
           <td>${e(l.industry||'—')}</td>
           <td>${vb(l.procam_vertical)}</td>
-          <td style="text-align:right;font-variant-numeric:tabular-nums;">${fmtLakhCell(l.value_inr)}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">${valueCell(l)}</td>
           <td>${e(l.assigned_name||l.assigned_to||'—')}</td>
           <td>${sb(l.stage)}${quoteLapsedChip(l)}</td>
           <td class="tddate">${l.followup||'—'}</td>

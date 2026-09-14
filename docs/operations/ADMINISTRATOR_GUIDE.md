@@ -75,6 +75,11 @@ Lead values are entered in rupees (or USD/EUR) and shown in lakh, or
 crore from ₹1 crore up — never millions. Lists and reports read the
 **quote value** once a lead has one, otherwise the **opportunity value**.
 
+The old ₹M field on imported project leads is the **customer's project
+cost** (capex), not Procam's value. It is shown as context — greyed
+"proj." in lists, "Customer's project cost" on the lead — and never
+added to pipeline or won value.
+
 **Master Data → Exchange Rates** holds INR per USD and per EUR. A lead
 converts its value when it is saved and keeps that rate, so updating a
 rate never moves values already saved. Until a rate is set, a USD/EUR

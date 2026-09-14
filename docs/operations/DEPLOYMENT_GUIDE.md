@@ -163,26 +163,24 @@ from `docs/operations/deploy/`.
 **Migration** (after the backup and pull):
 
 ```bash
-.venv/bin/python scripts/2026_10_05_lead_commercial_values.py --check     # also previews the backfill
+.venv/bin/python scripts/2026_10_05_lead_commercial_values.py --check
 .venv/bin/python scripts/2026_10_05_lead_commercial_values.py
-.venv/bin/python scripts/2026_10_05_lead_commercial_values.py --backfill  # optional, see below
 ```
 
 It adds the value, currency and quote columns to `leads` and registers
 Master Data → Exchange Rates. The boot adds the same columns.
 
-`--backfill` copies each lead's old ₹ million figure into rupees where
-no rupee value exists (`cost_million` itself is untouched) and writes
-the ids to `backups/lead_value_backfill-<time>.json`;
-`--undo-backfill <that file>` clears exactly those again. Without it the
-editor shows the old figure as "Old ₹M figure — enter it here to
-confirm", and lists still show it.
+Nothing is backfilled. `leads.cost_million` (the old ₹M column) is the
+customer's project cost from the project database — NTPC's plant, not
+Procam's deal — so it is never counted as opportunity value; lists show
+it greyed as "proj." where a lead has no value of its own.
 
 **After the restart:** set the USD and EUR rates in Master Data →
 Exchange Rates before anyone enters a foreign-currency value.
 
 **Behaviour users will notice:** ₹M columns and KPIs now read ₹ L
-(crore from ₹1 crore); the lead editor has a Value section and a Quote
+(crore from ₹1 crore), and value KPIs count only quote and opportunity
+values, so they drop sharply from the project-cost sums they showed; the lead editor has a Value section and a Quote
 block; saving a lead marked Quoted without a quote value/date, or Won
 without a value, asks first; the Won dialog's value is now saved.
 

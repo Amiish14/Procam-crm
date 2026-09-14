@@ -79,8 +79,23 @@ def test_opportunity_value_in_rupees_mirrors_the_old_field(lead_id):
     l = _lead(lead_id)
     assert l.estimated_value_inr == Decimal('1250000.00')
     assert l.opportunity_value_num == Decimal('1250000.00')
-    assert l.cost_million == pytest.approx(1.25)
     assert l.value_basis == 'client_budget'
+
+
+def test_project_cost_is_never_a_deal_value_and_is_never_overwritten(lead_id):
+    """cost_million is the customer's project capex from the project
+    database (NTPC's plant), not what Procam could earn."""
+    with flask_app.app_context():
+        l = db.session.get(Lead, lead_id)
+        l.cost_million = 204456.0
+        db.session.commit()
+    d = _client().get(f'/api/leads/{lead_id}').get_json()
+    assert d['value_inr'] is None and d['value_source'] is None
+    assert d['project_cost_inr'] == 204456000000
+    _put(lead_id, {'opportunity_value': 2500000})
+    l = _lead(lead_id)
+    assert l.cost_million == 204456.0
+    assert l.estimated_value_inr == Decimal('2500000.00')
 
 
 def test_quote_block_saves_and_the_list_value_prefers_the_quote(lead_id):
@@ -155,7 +170,7 @@ def test_foreign_currency_needs_a_rate_and_keeps_the_rate_it_was_saved_at(lead_i
     assert l.quoted_amount_inr == Decimal('835000.00')
     assert l.estimated_value_inr == Decimal('1002000.00')
 
-    r = _put(lead_id, {'cost': 2})
+    r = _put(lead_id, {'estimated_value': 2})
     assert r.status_code == 400 and 'USD' in r.get_json()['error']
 
 
@@ -191,10 +206,10 @@ def test_bad_input_is_refused_and_nothing_is_saved(lead_id, body, message):
     assert l.estimated_value_inr is None
 
 
-def test_legacy_cost_in_millions_becomes_rupees(lead_id):
+def test_the_cost_field_stays_project_cost(lead_id):
     _put(lead_id, {'cost': 4.5})
     l = _lead(lead_id)
-    assert l.estimated_value_inr == Decimal('4500000.00') and l.cost_million == 4.5
+    assert l.cost_million == 4.5 and l.estimated_value_inr is None
 
 
 def test_won_decision_records_the_business_value(lead_id):
@@ -207,7 +222,7 @@ def test_won_decision_records_the_business_value(lead_id):
     assert l.value_basis == 'firm'
 
 
-def test_dashboard_sums_rupees_from_quote_then_opportunity_then_legacy():
+def test_dashboard_sums_rupees_from_quote_then_opportunity_never_project_cost():
     with flask_app.app_context():
         db.create_all()
         rows = [Lead(company='V1', stage='Won', quoted_amount_inr=Decimal('900000'),
@@ -219,8 +234,8 @@ def test_dashboard_sums_rupees_from_quote_then_opportunity_then_legacy():
         got = _main._dashboard_summary_payload(
             [type('R', (), {c: getattr(r, c, None) for c in cols})() for r in rows],
             [], date.today())
-    assert got['kpis']['won_value_inr'] == 3400000
-    assert got['kpis']['won_value_m'] == pytest.approx(3.4)
+    assert got['kpis']['won_value_inr'] == 2900000
+    assert got['kpis']['won_value_m'] == pytest.approx(2.9)
 
 
 def test_display_is_lakh_below_a_crore_and_crore_above():
@@ -278,5 +293,6 @@ def test_data_quality_finds_quoted_without_quote_won_without_value_and_lapsed():
         db.session.commit()
         after = {k: dq._FUNCTIONS[k](None)[0] for k in before}
     assert after['quoted_without_quote'] - before['quoted_without_quote'] == 1
-    assert after['won_leads_no_value'] - before['won_leads_no_value'] == 1
+    # project cost is not a value: both won leads without one count
+    assert after['won_leads_no_value'] - before['won_leads_no_value'] == 2
     assert after['quote_past_validity'] - before['quote_past_validity'] == 1

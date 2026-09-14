@@ -1969,6 +1969,7 @@ def api_create_lead():
         company         = d.get('company','').strip(),
         project         = d.get('project',''),
         industry        = d.get('industry',''),
+        cost_million    = float(d.get('cost',0) or 0),   # customer project cost, ₹ M
         products        = d.get('products',''),
         state           = d.get('state',''),
         city            = d.get('city',''),
@@ -2093,6 +2094,7 @@ def api_update_lead(lid):
             lead_id=lead.id, note_text=incoming_note, note_type='general',
             author=session.get('emp_code'),
             author_name=emp_.name if emp_ else session.get('name')))
+    if 'cost' in d: lead.cost_million = float(d['cost'] or 0)   # project cost, ₹ M
     from app.services import lead_value
     try:
         lead_value.apply_legacy(lead, d, session.get('emp_code'))
@@ -3362,7 +3364,8 @@ def api_dashboard_records():
     if   sort == 'created_desc':  q = q.order_by(Lead.created_at.desc())
     elif sort == 'value_desc':
         from app.services.lead_value import value_inr_sql
-        q = q.order_by(value_inr_sql().desc().nullslast())
+        q = q.order_by(value_inr_sql().desc().nullslast(),
+                       Lead.cost_million.desc().nullslast())
     elif sort == 'ageing_desc':
         q = q.order_by(db.func.coalesce(Lead.stage_entered_at, Lead.updated_at).asc())
     else:

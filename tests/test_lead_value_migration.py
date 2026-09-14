@@ -1,7 +1,5 @@
 """The lead commercial-values migration adds its columns to a database
 that predates them, previews and records its backfill, and can undo it."""
-import glob
-import json
 import os
 import sqlite3
 import subprocess
@@ -54,30 +52,19 @@ def _q(path, sql):
         db.close()
 
 
-def test_check_apply_backfill_and_undo():
+def test_check_then_apply_adds_columns_and_backfills_nothing():
     path = _old_database()
     before = open(path, 'rb').read()
     out = _run(path, '--check')
     assert out.returncode == 0, out.stderr[-600:]
-    assert 'quote_date' in out.stdout and 'WOULD value 1 lead' in out.stdout
+    assert 'quote_date' in out.stdout and 'Nothing backfilled' in out.stdout
     assert open(path, 'rb').read() == before
 
     assert _run(path).returncode == 0
     cols = {r[1] for r in _q(path, 'PRAGMA table_info(leads)')}
     assert set(COLS) <= cols
     assert _q(path, "SELECT COUNT(*) FROM master_lists WHERE key='fx_rate'") == [(1,)]
-    assert _q(path, "SELECT estimated_value_inr FROM leads WHERE company='Old M'") == [(None,)]
-
-    done = _run(path, '--backfill')
-    assert done.returncode == 0, done.stderr[-600:]
-    assert _q(path, "SELECT estimated_value_inr FROM leads WHERE company='Old M'") == [(4500000,)]
-    assert _q(path, "SELECT estimated_value_inr FROM leads WHERE company='Has rupees'") == [(3000000,)]
-    record = done.stdout.split('ids in ')[1].split()[0]
-    assert json.load(open(record))['lead_ids']
-
-    assert _run(path, '--check').stdout.count('WOULD value 0 lead') == 1
-    undo = _run(path, '--undo-backfill', record)
-    assert undo.returncode == 0, undo.stderr[-600:]
-    assert _q(path, "SELECT estimated_value_inr FROM leads WHERE company='Old M'") == [(None,)]
-    assert _q(path, "SELECT cost_million FROM leads WHERE company='Old M'") == [(4.5,)]
-    os.remove(record)
+    assert _q(path, "SELECT estimated_value_inr, cost_million FROM leads "
+                    "WHERE company='Old M'") == [(None, 4.5)]
+    assert 'already there' in _run(path, '--check').stdout
+    assert _run(path, '--backfill').returncode != 0

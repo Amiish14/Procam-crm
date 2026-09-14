@@ -12,9 +12,10 @@ The quote is kept on the lead, latest version in columns. Re-quoting does
 not overwrite: the version it replaces is appended to ``quote_revisions``
 and ``quote_revision`` goes up by one.
 
-``cost_million`` is the older value field, in millions, that the ₹M
-columns used to read. It is still written, as a mirror of the opportunity
-value, so imports and any older reader keep working.
+``cost_million`` is not a deal value: it is the customer's project cost
+(capex, ₹ millions) from the project database — NTPC's ₹20,000-crore plant,
+not what Procam could earn moving it. It is shown as context, never
+summed as pipeline, and never written here.
 """
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -158,14 +159,19 @@ def _to_inr(amount, currency, label):
 # ── reading ──────────────────────────────────────────────────────────
 def value_inr(lead):
     """The single figure lists and reports use: the quote once there is
-    one, the opportunity value before that, the old ₹M field last."""
+    one, the opportunity value before that."""
     for v in (lead.quoted_amount_inr, lead.estimated_value_inr):
         if v is not None and Decimal(str(v)) > 0:
             return Decimal(str(v))
-    if lead.cost_million:
-        return (Decimal(str(lead.cost_million)) * MILLION).quantize(
-            Decimal('0.01'))
     return None
+
+
+def project_cost_inr(lead):
+    """The customer's project cost from the project database, in rupees.
+    Context for the PIC; not Procam's opportunity."""
+    if not lead.cost_million:
+        return None
+    return (Decimal(str(lead.cost_million)) * MILLION).quantize(Decimal('0.01'))
 
 
 def value_source(lead):
@@ -173,8 +179,6 @@ def value_source(lead):
         return 'quote'
     if lead.estimated_value_inr is not None and lead.estimated_value_inr > 0:
         return 'opportunity'
-    if lead.cost_million:
-        return 'legacy'
     return None
 
 
@@ -183,17 +187,16 @@ def value_inr_sql():
     from app import db, Lead
     return db.func.coalesce(
         db.func.nullif(Lead.quoted_amount_inr, 0),
-        db.func.nullif(Lead.estimated_value_inr, 0),
-        db.func.nullif(Lead.cost_million, 0) * 1000000)
+        db.func.nullif(Lead.estimated_value_inr, 0))
 
 
 def row_value_inr(row):
-    """value_inr() for a column row that carries the three fields."""
+    """value_inr() for a column row that carries the two fields."""
     for field in ('quoted_amount_inr', 'estimated_value_inr'):
         v = getattr(row, field, None)
         if v is not None and float(v) > 0:
             return float(v)
-    return float(getattr(row, 'cost_million', 0) or 0) * 1_000_000
+    return 0.0
 
 
 def margin(lead):
@@ -244,6 +247,7 @@ def to_dict(lead, today=None):
     return {
         'value_inr': _f(v),
         'value_source': value_source(lead),
+        'project_cost_inr': _f(project_cost_inr(lead)),
         'currency': lead.value_currency or 'INR',
         'opportunity_value': _f(lead.opportunity_value_num),
         'opportunity_value_inr': _f(lead.estimated_value_inr),
@@ -412,7 +416,6 @@ def apply(lead, data, actor):
         lead.opportunity_value_num = opp
         lead.estimated_value_inr = opp_inr
         lead.opportunity_fx_rate = opp_rate if opp_rate != 1 else None
-        lead.cost_million = float(opp_inr / MILLION) if opp_inr else 0
         changed.append('opportunity_value')
     if basis != lead.value_basis:
         lead.value_basis = basis
@@ -424,19 +427,13 @@ def apply(lead, data, actor):
 
 
 def apply_legacy(lead, data, actor):
-    """The fields older clients send: ``cost`` (₹ millions),
-    ``estimated_value`` and ``quoted_amount`` (both ₹). They are INR by
-    definition, so a lead kept in another currency refuses them rather
-    than mixing units."""
+    """The fields older clients send: ``estimated_value`` and
+    ``quoted_amount``, both ₹. They are INR by definition, so a lead kept
+    in another currency refuses them rather than mixing units. ``cost``
+    (project cost) is not a value and is not handled here."""
     legacy = {}
     if 'estimated_value' in data:
         legacy['opportunity_value'] = data.get('estimated_value')
-    elif 'cost' in data:
-        try:
-            m = Decimal(str(data.get('cost') or 0))
-        except (InvalidOperation, ValueError):
-            raise LeadValueError('Value must be a number')
-        legacy['opportunity_value'] = (m * MILLION) if m else None
     if 'quoted_amount' in data:
         legacy['quote_value'] = data.get('quoted_amount')
     if not legacy:
