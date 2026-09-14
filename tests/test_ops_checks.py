@@ -695,6 +695,20 @@ def test_a_failed_job_fails_and_a_missing_timer_warns(ctx, monkeypatch):
     assert 'sla-sweep overdue' in C.check_timers(ctx)['detail']
 
 
+def test_production_timers_under_older_names_count(ctx, monkeypatch):
+    names = ['procam-crm-backup.timer', 'procam-crm-copilot-index.timer',
+             'procam-crm-ops-status.timer', 'procam-crm-graph-renew.timer',
+             'procam-crm-sla.timer']
+    monkeypatch.setattr(C, '_run', _systemd(
+        names, ages={'procam-crm-graph-renew.timer': 20}))
+    r = C.check_timers(ctx)
+    assert r['status'] == OK, r['detail']
+    assert r['value']['missing'] == []
+    monkeypatch.setattr(C, '_run', _systemd(
+        names, ages={'procam-crm-graph-renew.timer': 30}))
+    assert 'graph-renew overdue' in C.check_timers(ctx)['detail']
+
+
 def test_timers_unknown_without_systemd(ctx, monkeypatch):
     monkeypatch.setattr(C, '_run', lambda cmd, timeout=None: None)
     assert C.check_timers(ctx)['status'] == UNKNOWN

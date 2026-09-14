@@ -99,6 +99,14 @@ EXPECTED_TIMERS = {
     'procam-crm-ops-status.timer': 0.5,
 }
 
+#: Timers the production VM already ran under other names before these
+#: templates existed: name -> (the job it covers, its expected gap, h).
+#: A daily subscription renewal is enough; subscriptions last ~2.9 days.
+TIMER_ALIASES = {
+    'procam-crm-graph-renew.timer': ('procam-crm-graph-subscription.timer', 26),
+    'procam-crm-sla.timer': ('procam-crm-sla-sweep.timer', 0.5),
+}
+
 _SECRET_NAME = re.compile(r'SECRET|PASSWORD|PASSWD|TOKEN|API_KEY|_KEY$|'
                           r'CREDENTIAL', re.I)
 
@@ -1101,7 +1109,7 @@ def check_timers(ctx):
             'exit_status': svc.get('ExecMainStatus'),
             'hours_since_run': _hours(now - last) if last else None,
         }
-        gap = EXPECTED_TIMERS.get(name)
+        gap = EXPECTED_TIMERS.get(name) or TIMER_ALIASES.get(name, (0, 0))[1]
         short = name[len('procam-crm-'):-len('.timer')]
         if res and res != 'success':
             statuses.append(FAIL)
@@ -1115,7 +1123,9 @@ def check_timers(ctx):
                          f'ago')
         else:
             statuses.append(OK)
-    missing = [n for n in EXPECTED_TIMERS if n not in present]
+    covered = {TIMER_ALIASES[n][0] for n in present if n in TIMER_ALIASES}
+    missing = [n for n in EXPECTED_TIMERS
+               if n not in present and n not in covered]
     if missing:
         statuses.append(WARN)
         notes.append('not installed: ' + ', '.join(

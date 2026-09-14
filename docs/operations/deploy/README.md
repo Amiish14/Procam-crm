@@ -15,6 +15,16 @@ them if `systemctl show` says otherwise. If a timer for the same job
 already exists (a subscription renewal timer is referred to in
 `scripts/subscribe_leads_mailbox.py`), keep one, not both.
 
+Production (2026-09-14) already runs, and these templates do not replace:
+
+| Existing timer | Covers |
+|---|---|
+| `procam-crm-graph-renew.timer` (daily) | `procam-crm-graph-subscription` — do not install the template |
+| `procam-crm-sla.timer` (15 min) | `procam-crm-sla-sweep` — do not install the template |
+| `procam-crm-poll.timer` (5 min) | Mailbox poll, the safety net under the webhook |
+
+The operations check counts the first two as the jobs they cover.
+
 | Files | Job | Schedule |
 |---|---|---|
 | `procam-crm-backup.{service,timer}` | Verified database backup, keep newest 14 | daily 01:30 |
