@@ -332,3 +332,23 @@ def test_the_digests_read_the_shared_rules_and_the_workbench():
     assert 'format_inr' in src and 'CRORE' not in src
     assert 'timedelta(days=30)' not in src
     assert 'notifier.send' not in src, 'a builder must not send anything'
+
+
+def test_the_daily_report_covers_every_group_not_just_the_first_page(
+        world, monkeypatch):
+    """A board bigger than one page used to be sectioned from page one,
+    so somebody with hundreds of open records was sent whatever sorted
+    to the top and never saw their stale leads or data gaps."""
+    import app.services.digests as d
+    from app.workbench import service as wb
+    with flask_app.app_context():
+        sc = d._scope(REP)
+        everything, _ageing = wb.lead_items(sc)
+        groups_everywhere = {i['group'] for i in everything}
+        assert len(groups_everywhere) > 1, 'fixture must span several groups'
+        # One item per page: now the first page cannot contain them all,
+        # which is the shape a real user with hundreds of records has.
+        monkeypatch.setattr(d, '_BOARD_PAGE', 1)
+        report = d.daily_action_report(REP)
+        sections = {s['key'] for s in report['sections']}
+    assert groups_everywhere <= sections, groups_everywhere - sections

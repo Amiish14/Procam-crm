@@ -269,7 +269,10 @@ def daily_action_report(emp_code, *, today=None):
     today = today or rules.business_today()
     sc = _scope(emp_code)
     board = _board(sc, today=today)
-    sections = _sections(board['items'])
+    # Every item, not the first page: a person with hundreds of open
+    # records would otherwise be sent whatever happened to sort onto
+    # page one, and never see their stale leads or data gaps at all.
+    sections = _sections(_all_items(sc, board, today=today))
     return _envelope(
         'daily', emp_code, today,
         summary=board['summary'],
@@ -327,7 +330,7 @@ def weekly_user(emp_code, *, today=None, days=7):
         deltas=_deltas(board['summary'], prior['summary']),
         total=board['total'],
         prior_total=prior['total'],
-        sections=_sections(board['items']),
+        sections=_sections(items),
         high_value=_section('high_value',
                             [i for i in items
                              if 'high_value' in i['conditions']]),
