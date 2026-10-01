@@ -168,6 +168,44 @@ def _print_table(chosen, skipped):
         print(f'  skipped  {account["emp_code"]:<12} {reason}')
 
 
+def _email_password(employee_email, name, password, expires_at):
+    """Send one person their own temporary password.
+
+    Returns (sent, reason). Uses the CRM's existing Graph sender, so it
+    needs the same Mail.Send grant as every other message the CRM sends;
+    without it this returns False and the caller falls back to the file.
+    """
+    from email_ingest import notifier
+    if not (employee_email or '').strip():
+        return False, 'no email address on file'
+    if not notifier.is_enabled():
+        return False, 'NOTIFY_ENABLED is off'
+    base = notifier.base_url()
+    link = f'{base}/login' if base else '/login'
+    esc = notifier._esc
+    html = (
+        f'<div style="font-family:Arial,sans-serif;font-size:14px;color:#111">'
+        f'<p>Hello {esc(name or "")},</p>'
+        f'<p>Your Procam CRM password has been reset. Sign in with this '
+        f'temporary password and choose your own:</p>'
+        f'<p style="font-size:20px;font-weight:700;letter-spacing:1px;'
+        f'font-family:monospace">{esc(password)}</p>'
+        f'<p>It stops working after <strong>{esc(str(expires_at)[:16])} '
+        f'UTC</strong>, and you will be asked to set your own password the '
+        f'first time you sign in.</p>'
+        f'<p><a href="{esc(link)}" style="background:#BC1D2F;color:#fff;'
+        f'padding:10px 18px;border-radius:6px;text-decoration:none;'
+        f'font-weight:600">Sign in</a></p>'
+        f'<p style="color:#6b7280;font-size:12.5px">If you did not expect '
+        f'this, tell your CRM administrator — somebody reset your account.'
+        f'</p></div>')
+    try:
+        sent = notifier.send(employee_email, 'Your Procam CRM password', html)
+    except Exception as exc:                            # pragma: no cover
+        return False, f'{exc.__class__.__name__}'
+    return bool(sent), ('' if sent else 'the mail server refused it')
+
+
 def _new_password_file(path, issued):
     """Write the credentials file 0600, refusing to overwrite.
 
@@ -206,8 +244,14 @@ def _fallback_password():
     return ''.join(secrets.choice(alphabet) for _ in range(14))
 
 
-def apply_resets(only, exclude, out_path, actor, force=False):
-    """Reset the chosen accounts. Returns (issued, skipped, path)."""
+def apply_resets(only, exclude, out_path, actor, force=False, email=False):
+    """Reset the chosen accounts.
+
+    Returns (issued, skipped, path). With ``email``, each person is sent
+    their own password and only those who could not be reached are
+    written to the file — the common case then leaves no credentials
+    file on disk at all.
+    """
     # Imported here and nowhere else: importing the app runs the boot
     # autoheal, which writes, and the preview promises to write nothing.
     import app as main                                      # noqa: E402
@@ -284,11 +328,24 @@ def apply_resets(only, exclude, out_path, actor, force=False):
             else:
                 session_info['audit_disabled'] = previous
 
+        to_write = issued
+        if email:
+            # Send first, then write only what could not be sent: a
+            # password that reached its owner should not also be sitting
+            # in a file somebody has to remember to destroy.
+            to_write = []
+            for row in issued:
+                sent, why = _email_password(row['email'], row['name'],
+                                            row['password'],
+                                            row['expires_at'])
+                row['emailed'], row['not_emailed_because'] = sent, why
+                if not sent:
+                    to_write.append(row)
         try:
             # The file first. If it cannot be written, nothing is
             # committed and nobody is locked out of an account whose new
             # password went nowhere.
-            path = _new_password_file(out_path, issued)
+            path = _new_password_file(out_path, to_write) if to_write else None
         except BaseException:
             db.session.rollback()
             raise
@@ -298,7 +355,8 @@ def apply_resets(only, exclude, out_path, actor, force=False):
             db.session.rollback()
             # The passwords in that file never took effect; it is only a
             # secret lying about.
-            os.unlink(path)
+            if path:
+                os.unlink(path)
             raise
         return issued, skipped, path
 
@@ -322,6 +380,10 @@ def main(argv=None):
                     help='reset the accounts named in --only even if their '
                          'password is not guessable — for a credential that '
                          'has leaked')
+    ap.add_argument('--email', action='store_true',
+                    help='send each person their own password instead of '
+                         'writing it to a file; only those who cannot be '
+                         'reached are written')
     ap.add_argument('--actor', default='system',
                     help='who is running this, for the audit trail')
     args = ap.parse_args(argv)
@@ -382,7 +444,8 @@ def main(argv=None):
         return 0
 
     issued, skipped, path = apply_resets(only, exclude, out_path,
-                                         args.actor, force=args.force)
+                                         args.actor, force=args.force,
+                                         email=args.email)
     print('')
     if not issued:
         _print_table([], skipped)
@@ -391,13 +454,32 @@ def main(argv=None):
         return 0
     _print_table([], skipped)
     print(f'  reset     {len(issued)} account(s)')
-    print(f'  file      {path}  (0600)\n')
-    print('  Hand each person their password privately — one to one, never '
-          'in a group\n'
-          '  chat or a shared sheet. It expires in '
-          f'{TEMP_PASSWORD_HOURS} hours and they must set their\n'
-          '  own password at first sign-in. Delete the file once they all '
-          'have.\n')
+    emailed = [r for r in issued if r.get('emailed')]
+    unreached = [r for r in issued if args.email and not r.get('emailed')]
+    if args.email:
+        print(f'  emailed   {len(emailed)} — their password went straight '
+              f'to them')
+        for row in unreached:
+            print(f'    not sent to {row["emp_code"]}: '
+                  f'{row.get("not_emailed_because") or "unknown"}')
+    if path:
+        print(f'  file      {path}  (0600)'
+              + ('  — only those who could not be emailed' if args.email
+                 else ''))
+    print()
+    if path:
+        print('  Hand each person their password privately — one to one, '
+              'never in a group\n'
+              '  chat or a shared sheet. It expires in '
+              f'{TEMP_PASSWORD_HOURS} hours and they must set their\n'
+              '  own password at first sign-in. Delete the file once they '
+              'all have.\n')
+    else:
+        print('  No credentials file was written: everybody was emailed '
+              'their own\n  password, so there is nothing on disk to '
+              'destroy. Each expires in\n'
+              f'  {TEMP_PASSWORD_HOURS} hours and must be changed at first '
+              'sign-in.\n')
     return 0
 
 

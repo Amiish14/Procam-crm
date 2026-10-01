@@ -330,3 +330,73 @@ def test_force_without_naming_anybody_is_refused(world, capsys):
         assert 'refused' in out and '--only' in out
         db.session.expire_all()
         assert {c: _state(c) for c, _, _, _ in _accounts()} == before
+
+
+# ── sending the password instead of writing it down ──────────────────
+def _stub_mail(monkeypatch, outcome=True):
+    """Stand in for the Graph sender; records what was sent to whom."""
+    sent = []
+    from email_ingest import notifier
+
+    def fake_send(to, subject, html, cc=None):
+        sent.append({'to': to, 'subject': subject, 'html': html})
+        return outcome
+    monkeypatch.setattr(notifier, 'send', fake_send)
+    monkeypatch.setattr(notifier, 'is_enabled', lambda: True)
+    monkeypatch.setattr(notifier, 'base_url', lambda: 'https://crm.example')
+    return sent
+
+
+def test_email_delivers_the_password_and_writes_no_file(world, tmp_path,
+                                                        monkeypatch, capsys):
+    sent = _stub_mail(monkeypatch)
+    out = str(tmp_path / 'should-not-exist.csv')
+    with flask_app.app_context():
+        assert rgp.main(['--apply', '--yes', '--email', '--only',
+                         f'{WEAK_A},{WEAK_B}', '--out', out]) == 0
+    printed = capsys.readouterr().out
+    assert not os.path.exists(out), 'nothing should be written when all sent'
+    assert 'No credentials file was written' in printed
+    assert {m['to'] for m in sent} == {f'{WEAK_A.lower()}@example.test',
+                                       f'{WEAK_B.lower()}@example.test'}
+    # the password is in the message to its owner, and nowhere else
+    for message in sent:
+        assert 'temporary password' in message['html'].lower() or \
+            'password' in message['html'].lower()
+    for message in sent:
+        assert message['to'].split('@')[0].upper() in (WEAK_A, WEAK_B)
+    assert not any(m['html'] in printed for m in sent)
+
+
+def test_a_person_the_mail_cannot_reach_still_gets_a_file(world, tmp_path,
+                                                          monkeypatch, capsys):
+    """A refused send must not lose somebody their password."""
+    _stub_mail(monkeypatch, outcome=False)
+    out = str(tmp_path / 'fallback.csv')
+    with flask_app.app_context():
+        assert rgp.main(['--apply', '--yes', '--email', '--only', WEAK_A,
+                         '--out', out]) == 0
+    printed = capsys.readouterr().out
+    assert os.path.exists(out), 'the unreachable person needs the file'
+    rows = _rows(out)
+    assert [r['emp_code'] for r in rows] == [WEAK_A]
+    assert 'not sent to ' + WEAK_A in printed
+    with flask_app.app_context():
+        emp = Employee.query.filter_by(emp_code=WEAK_A).first()
+        assert check_password_hash(emp.password_hash,
+                                   rows[0]['temporary_password'])
+
+
+def test_email_is_skipped_for_an_account_with_no_address(world, tmp_path,
+                                                         monkeypatch):
+    sent = _stub_mail(monkeypatch)
+    with flask_app.app_context():
+        emp = Employee.query.filter_by(emp_code=WEAK_A).first()
+        emp.email = ''
+        db.session.commit()
+    out = str(tmp_path / 'no-address.csv')
+    with flask_app.app_context():
+        rgp.main(['--apply', '--yes', '--email', '--only', WEAK_A,
+                  '--out', out])
+    assert sent == [], 'nothing can be sent to an account with no address'
+    assert [r['emp_code'] for r in _rows(out)] == [WEAK_A]
