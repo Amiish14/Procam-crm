@@ -108,12 +108,17 @@ def _codes(value):
     return {c.strip().upper() for c in (value or '').split(',') if c.strip()}
 
 
-def select(rows, only=(), exclude=()):
+def select(rows, only=(), exclude=(), force=False):
     """(chosen, skipped) from (emp_code, name, email, role, is_super, hash).
 
     Scope filters are applied before the hashes are checked: verifying a
     password hash is deliberately slow, and --only should not pay for the
     whole directory.
+
+    ``force`` resets the named accounts whether or not their password is
+    guessable. That is the case where a temporary password has leaked —
+    read aloud, pasted into a chat, left in a sent folder — and the
+    account needs a new one even though nothing about it looks weak.
     """
     only, exclude = set(only), set(exclude)
     chosen, skipped = [], []
@@ -122,6 +127,8 @@ def select(rows, only=(), exclude=()):
         if only and code not in only:
             continue
         why = why_guessable(emp_code, password_hash)
+        if not why and force and code in only:
+            why = 'named with --force'
         if not why:
             continue
         account = {'emp_code': emp_code, 'name': name or '',
@@ -199,7 +206,7 @@ def _fallback_password():
     return ''.join(secrets.choice(alphabet) for _ in range(14))
 
 
-def apply_resets(only, exclude, out_path, actor):
+def apply_resets(only, exclude, out_path, actor, force=False):
     """Reset the chosen accounts. Returns (issued, skipped, path)."""
     # Imported here and nowhere else: importing the app runs the boot
     # autoheal, which writes, and the preview promises to write nothing.
@@ -220,7 +227,7 @@ def apply_resets(only, exclude, out_path, actor):
                      .order_by(Employee.emp_code).all())
         rows = [(e.emp_code, e.name, e.email, e.role, bool(e.is_super_admin),
                  e.password_hash) for e in employees]
-        chosen, skipped = select(rows, only, exclude)
+        chosen, skipped = select(rows, only, exclude, force=force)
         if not chosen:
             return [], skipped, None
 
@@ -311,6 +318,10 @@ def main(argv=None):
     ap.add_argument('--out', default=None,
                     help='where the new passwords are written '
                          '(default backups/password-reset-<timestamp>.csv)')
+    ap.add_argument('--force', action='store_true',
+                    help='reset the accounts named in --only even if their '
+                         'password is not guessable — for a credential that '
+                         'has leaked')
     ap.add_argument('--actor', default='system',
                     help='who is running this, for the audit trail')
     args = ap.parse_args(argv)
@@ -319,6 +330,13 @@ def main(argv=None):
     out_path = args.out or os.path.join(
         _ROOT, 'backups',
         f'password-reset-{datetime.utcnow():%Y%m%d-%H%M%S}.csv')
+
+    if args.force and not only:
+        print('\n  refused: --force needs --only as well.\n'
+              '  Forcing without naming anybody would reset every active '
+              'account in the\n  CRM — every person signed out at once. '
+              'Name the accounts whose\n  password has leaked.\n')
+        return 2
 
     if args.apply and not args.yes:
         print('\n  refused: --apply needs --yes as well.\n'
@@ -340,7 +358,7 @@ def main(argv=None):
                   'DATABASE_URL — an empty\n  database is the wrong '
                   'database, not a clean estate.\n')
             return 2
-        chosen, skipped = select(rows, only, exclude)
+        chosen, skipped = select(rows, only, exclude, force=args.force)
         print('\n  PREVIEW — nothing is written.\n')
         print(f'  active accounts checked   {len(rows)}')
         print(f'  would be reset            {len(chosen)}')
@@ -363,7 +381,8 @@ def main(argv=None):
                   'guessable password.\n')
         return 0
 
-    issued, skipped, path = apply_resets(only, exclude, out_path, args.actor)
+    issued, skipped, path = apply_resets(only, exclude, out_path,
+                                         args.actor, force=args.force)
     print('')
     if not issued:
         _print_table([], skipped)

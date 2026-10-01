@@ -9,6 +9,7 @@ the new password reaches the file and nowhere else — not stdout, not the
 audit trail.
 """
 import csv
+from werkzeug.security import check_password_hash
 import importlib
 import os
 import stat
@@ -278,3 +279,54 @@ def test_an_empty_database_is_refused(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv('DATABASE_URL', 'sqlite:///' + path)
     assert rgp.main([]) == 2
     assert 'refused' in capsys.readouterr().out
+
+
+# ── a leaked password is not a guessable one ─────────────────────────
+def test_force_resets_a_named_account_whose_password_is_fine(
+        world, tmp_path, capsys):
+    """A temporary password that has leaked — read out, pasted into a
+    chat — needs replacing even though nothing about the account looks
+    weak. Without --force the tool correctly refuses to touch it."""
+    with flask_app.app_context():
+        before = _state(STRONG)
+        assert rgp.main(['--apply', '--yes', '--only', STRONG]) == 0
+        assert 'Nothing to do' in capsys.readouterr().out
+        db.session.expire_all()
+        assert _state(STRONG) == before, 'refused run must change nothing'
+
+        assert rgp.main(['--apply', '--yes', '--force', '--only', STRONG,
+                         '--out', str(tmp_path / 'forced.csv')]) == 0
+        db.session.expire_all()
+        after = _state(STRONG)
+    assert after != before, 'the password should have been replaced'
+    issued = _rows(str(tmp_path / 'forced.csv'))
+    assert [r['emp_code'] for r in issued] == [STRONG]
+    with flask_app.app_context():
+        emp = Employee.query.filter_by(emp_code=STRONG).first()
+        assert check_password_hash(emp.password_hash,
+                                   issued[0]['temporary_password'])
+        assert emp.must_change_pw is True
+
+
+def test_force_only_reaches_accounts_that_were_named(world, tmp_path):
+    """--force is not a licence to reset the whole directory."""
+    with flask_app.app_context():
+        others = {c: _state(c) for c, _, _, _ in _accounts() if c != STRONG}
+        rgp.main(['--apply', '--yes', '--force', '--only', STRONG,
+                  '--out', str(tmp_path / 'forced-scope.csv')])
+        db.session.expire_all()
+        for code, was in others.items():
+            if was is not None:
+                assert _state(code) == was, f'{code} should be untouched'
+
+
+def test_force_without_naming_anybody_is_refused(world, capsys):
+    """Forcing with no --only would reset every active account and sign
+    the whole company out at once."""
+    with flask_app.app_context():
+        before = {c: _state(c) for c, _, _, _ in _accounts()}
+        assert rgp.main(['--apply', '--yes', '--force']) == 2
+        out = capsys.readouterr().out
+        assert 'refused' in out and '--only' in out
+        db.session.expire_all()
+        assert {c: _state(c) for c, _, _, _ in _accounts()} == before
