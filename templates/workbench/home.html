@@ -139,7 +139,7 @@ function csrfToken(){
   return m ? decodeURIComponent(m[1]) : '';
 }
 function postJson(path, body){
-  return fetch(PREFIX + path, {method:'POST', credentials:'same-origin',
+  return fetch({{ url_prefix|tojson }} + path, {method:'POST', credentials:'same-origin',
     headers:{'Content-Type':'application/json', 'X-CSRFToken': csrfToken()},
     body: JSON.stringify(body)});
 }

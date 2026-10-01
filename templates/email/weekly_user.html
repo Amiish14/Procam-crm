@@ -1,0 +1,63 @@
+{% extends 'email/_shell.html' %}
+{% import 'email/_bits.html' as bits %}
+
+{% block title %}Your week — ending {{ r.date }}{% endblock %}
+{% block strap %}{{ r.person.name }} · compared with
+  {{ r.period['from'] }}{% endblock %}
+
+{% block body %}
+{{ bits.tiles([
+    ('Open items', r.total),
+    ('Overdue', r.summary.overdue),
+    ('Stale', r.summary.stale),
+    ('No next action', r.summary.no_next_action)]) }}
+
+{{ bits.heading('This week against last') }}
+<table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+  <tr>
+    <th align="left" style="padding:4px 10px 4px 0;color:#6B6762;font-weight:600;
+        font-size:11px;letter-spacing:.05em;text-transform:uppercase;">Measure</th>
+    <th align="right" style="padding:4px 10px 4px 0;color:#6B6762;font-weight:600;
+        font-size:11px;letter-spacing:.05em;text-transform:uppercase;">Now</th>
+    <th align="right" style="padding:4px 0;color:#6B6762;font-weight:600;
+        font-size:11px;letter-spacing:.05em;text-transform:uppercase;">A week ago</th>
+  </tr>
+  {% for key, label in [('overdue', 'Overdue'),
+                        ('followups_due', 'Follow-ups due'),
+                        ('quotes_due', 'Quotes due'),
+                        ('quotes_overdue', 'Quotes past deadline'),
+                        ('stale', 'Going cold'),
+                        ('no_next_action', 'No next action'),
+                        ('data_updates', 'Data to fix'),
+                        ('high_value', 'High-value deals')] %}
+  {% set d = r.deltas.get(key) %}
+  <tr>
+    <td style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">{{ label }}</td>
+    <td align="right" style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">
+      {{ bits.delta(d) }}</td>
+    <td align="right" style="padding:6px 0;border-top:1px solid #EFEDEB;
+               color:#6B6762;">{{ d.before if d else '—' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<div style="font-size:11.5px;color:#8A857F;margin-top:6px;">
+  "A week ago" is the same rules applied to today's records with last
+  week's date, so it shows how much of this was already late then. It is
+  not a photograph of the board as it stood on {{ r.period['from'] }}.
+</div>
+
+{% if r.high_value.count %}
+  {{ bits.section(r.high_value, base_url) }}
+{% endif %}
+
+{% for s in r.sections %}
+  {{ bits.section(s, base_url) }}
+{% endfor %}
+
+{% if r.quote_ageing.total %}
+  {{ bits.heading('Quotes the customer is waiting for') }}
+  {{ bits.ageing_table(r.quote_ageing) }}
+{% endif %}
+{% endblock %}
+
+{% block cta_label %}Plan the week{% endblock %}

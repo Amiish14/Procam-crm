@@ -265,6 +265,8 @@ def _write(action, stored, reason, actor, changes, skipped):
                     'workbench bulk %s failed for lead %s', action, change['id'])
                 failed.append({**change, 'error': str(exc)[:160] or 'could not be saved'})
         db.session.commit()
+        from app.workbench import service as wb_service
+        wb_service.hygiene_cache_clear()
     finally:
         g.audit_reason = previous_reason
     return {'applied': applied, 'failed': failed, 'skipped': skipped,

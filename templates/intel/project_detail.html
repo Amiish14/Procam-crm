@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ project.name }} — Project Intelligence</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+{% include "intel/_intel_css.html" %}
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Project intelligence</div>
+    <h1>{{ project.name }}</h1>
+    <div class="crm-sub">
+      {{ stage_label or project.stage }}
+      {% if intel.confidence %} · confidence: {{ intel.confidence }}{% endif %}
+      {% if intel.last_verified_at %} · last verified {{ intel.last_verified_at }}
+      {% else %} · never independently verified{% endif %}
+    </div>
+  </div>
+  <div class="toolbar">
+    <a class="btn" href="{{ url_prefix }}/intelligence/projects">← All projects</a>
+  </div>
+</div>
+
+<div class="card"><div class="panel">
+  <b>What is known</b>
+  <div class="meta">A blank means nobody has said — not that the answer
+    is no.</div>
+  <table class="intel-table">
+    <tbody>
+      <tr><th>Owner / group</th><td>{{ intel.owner_group or '—' }}</td>
+          <th>Industry</th><td>{{ intel.industry or project.industry or '—' }}</td></tr>
+      <tr><th>Location</th><td>{{ intel.location or project.location or '—' }}</td>
+          <th>Value</th><td>{% if intel.value_inr %}₹{{ '{:,.0f}'.format(intel.value_inr) }}{% else %}—{% endif %}</td></tr>
+      <tr><th>Announced</th><td>{{ intel.announcement_date or '—' }}</td>
+          <th>Stage</th><td>{{ stage_label or project.stage }}</td></tr>
+      <tr><th>Land</th><td>{{ intel.land_status or '—' }}</td>
+          <th>Clearances</th><td>{{ intel.clearance_status or '—' }}</td></tr>
+      <tr><th>EPC</th><td>{{ intel.epc_contractor or '—' }}</td>
+          <th>PMC</th><td>{{ intel.pmc or '—' }}</td></tr>
+      <tr><th>Technology provider</th><td>{{ intel.technology_provider or '—' }}</td>
+          <th>Equipment suppliers</th>
+          <td>{{ intel.equipment_suppliers|join(', ') if intel.equipment_suppliers else '—' }}</td></tr>
+      <tr><th>Expected logistics needs</th><td colspan="3">{{ intel.logistics_needs or '—' }}</td></tr>
+      <tr><th>Timeline</th><td colspan="3">{{ intel.timeline_note or '—' }}</td></tr>
+      <tr><th>Vertical</th><td>{{ intel.vertical or project.procam_vertical or '—' }}</td>
+          <th>Opportunity status</th><td>{{ intel.opportunity_status or 'not_started' }}
+            {% if intel.lead_id %}(lead #{{ intel.lead_id }}){% endif %}</td></tr>
+      <tr><th>BD owner</th><td>{{ intel.bd_owner or 'unassigned' }}</td>
+          <th>Followers</th><td>{{ followers|join(', ') if followers else '—' }}</td></tr>
+      <tr><th>Source</th>
+          <td colspan="3">
+            {% if intel.source_url %}
+              <a href="{{ intel.source_url }}" target="_blank" rel="noopener noreferrer">{{ intel.source_ref or intel.source_url }}</a>
+            {% else %}{{ intel.source_ref or '—' }}{% endif %}
+            <span class="intel-stamp">published {{ intel.publication_date or '—' }} ·
+              captured {{ intel.captured_at or '—' }}</span>
+          </td></tr>
+      {% if intel.extracted_entities %}
+      <tr><th>Extracted entities</th>
+          <td colspan="3" class="intel-src">{{ intel.extracted_entities }}</td></tr>
+      {% endif %}
+      {% if intel.not_relevant %}
+      <tr><th>Not relevant</th><td colspan="3">{{ intel.not_relevant_reason }}</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div></div>
+
+<div class="card"><div class="panel">
+  <b>Actions</b>
+  <div class="intel-filters">
+    <button class="btn" id="btnFollow">Follow</button>
+    <label>Assign to<input id="assignCode" size="10" placeholder="EMP CODE"></label>
+    <button class="btn" id="btnAssign">Assign</button>
+    <button class="btn" id="btnLead">Create lead</button>
+  </div>
+  <div class="intel-filters">
+    <label>Account id<input id="accId" size="8"></label>
+    <label>Role<input id="accRole" size="16" value="Project Owner"></label>
+    <button class="btn" id="btnAccount">Link account</button>
+    <label>Contact id<input id="conId" size="8"></label>
+    <button class="btn" id="btnContact">Link contact</button>
+  </div>
+  <div class="intel-filters">
+    <label>Not relevant because<input id="nrReason" size="40"></label>
+    <button class="btn" id="btnNotRelevant">Mark not relevant</button>
+  </div>
+  <div id="actNote" class="meta"></div>
+</div></div>
+
+<div class="card"><div class="panel">
+  <b>Timeline</b>
+  <div class="meta">{{ timeline|length }} update{{ '' if timeline|length == 1 else 's' }}
+    on this one project.</div>
+  {% if not timeline %}
+    <div class="intel-empty">No updates recorded yet.</div>
+  {% else %}
+  <ul class="intel-timeline">
+    {% for u in timeline %}
+    <li>
+      <div><b>{{ u.update_date }}</b> · {{ u.update_type }}
+        {% if u.confidence %}<span class="intel-stamp">confidence: {{ u.confidence }}</span>{% endif %}
+      </div>
+      <div style="white-space:pre-wrap">{{ u.summary }}</div>
+      <div class="intel-src">
+        {% if u.source_url %}<a href="{{ u.source_url }}" target="_blank" rel="noopener noreferrer">{{ u.source or u.source_url }}</a>
+        {% else %}{{ u.source or 'no source recorded' }}{% endif %}
+        <span class="intel-stamp">
+          {% if u.publication_date %}published {{ u.publication_date }} · {% endif %}
+          {% if u.captured_at %}captured {{ u.captured_at }} · {% endif %}
+          by {{ u.updated_by }}</span>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div></div>
+
+</div>
+{% include "intel/_intel_js.html" %}
+<script>
+(function(){
+  var PID = {{ project.id|tojson }};
+  var note = document.getElementById('actNote');
+  function val(id){ return (document.getElementById(id).value || '').trim(); }
+  function wire(id, path, body, done){
+    document.getElementById(id).addEventListener('click', async function(){
+      var d = await INTEL.post('/api/intel/projects/' + PID + path, body());
+      if (!d.ok){ INTEL.note(note, d.error, true); return; }
+      INTEL.note(note, done(d));
+      setTimeout(function(){ location.reload(); }, 900);
+    });
+  }
+  wire('btnFollow', '/follow', function(){ return {follow: true}; },
+       function(){ return 'You are following this project.'; });
+  wire('btnAssign', '/assign',
+       function(){ return {emp_code: val('assignCode'),
+                           reason: 'Assigned from project intelligence'}; },
+       function(d){ return 'Assigned to ' + (d.bd_owner || 'nobody') + '.'; });
+  wire('btnLead', '/create-lead', function(){ return {}; },
+       function(d){ return 'Lead #' + d.lead_id + ' created.'; });
+  wire('btnAccount', '/accounts',
+       function(){ return {account_id: val('accId'), role: val('accRole')}; },
+       function(){ return 'Account linked.'; });
+  wire('btnContact', '/contacts',
+       function(){ return {contact_id: val('conId')}; },
+       function(){ return 'Contact linked.'; });
+  wire('btnNotRelevant', '/not-relevant',
+       function(){ return {reason: val('nrReason')}; },
+       function(){ return 'Marked not relevant.'; });
+})();
+</script>
+</body>
+</html>

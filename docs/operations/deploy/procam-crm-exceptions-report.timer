@@ -1,0 +1,12 @@
+[Unit]
+Description=Procam CRM end-of-day exceptions report
+
+[Timer]
+# 19:00 IST — late enough that the day's calls are logged, early enough
+# that somebody can still clear the list.
+OnCalendar=Mon..Sat *-*-* 13:30:00
+Persistent=false
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

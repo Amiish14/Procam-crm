@@ -1,0 +1,274 @@
+{# `with context` so the macros can use crm_url() and url_prefix #}
+{% import "review/_shared.html" as rvui with context %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vertical sales review — {{ rv.vertical }} — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+{% include "review/_style.html" %}
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+  <div class="hero">
+    <div>
+      <h1>Vertical sales review</h1>
+      <div class="crm-sub">{{ rv.vertical }} ·
+        {{ rv.period.start }} to {{ rv.period.end }}</div>
+    </div>
+    <div>
+      <a class="top-back" href="{{ url_prefix }}/management">← Command view</a>
+      <a class="top-back" style="margin-left:12px"
+         href="{{ url_prefix }}/review/meeting?scope=vertical:{{ rv.vertical }}">Run the meeting →</a>
+    </div>
+  </div>
+
+  <form class="rv-bar" method="get" action="{{ url_prefix }}/review/vertical">
+    <label class="rv-l" for="vertical">Vertical</label>
+    <select id="vertical" name="vertical">
+      {% for v in verticals %}
+      <option value="{{ v }}" {{ 'selected' if v == rv.vertical }}>{{ v }}</option>
+      {% endfor %}
+    </select>
+    <label class="rv-l" for="start">From</label>
+    <input id="start" name="start" type="date" value="{{ rv.period.start }}">
+    <label class="rv-l" for="end">To</label>
+    <input id="end" name="end" type="date" value="{{ rv.period.end }}">
+    <button class="btn primary" type="submit">Show</button>
+  </form>
+
+  {# ── headline ───────────────────────────────────────────────── #}
+  <div class="kpis">
+    {{ rvui.tile('Open deals', rv.pipeline.open_count) }}
+    {{ rvui.tile('Open value', rv.pipeline.open_value_display) }}
+    {{ rvui.tile('Quotes sent', rv.quotes.sent) }}
+    {{ rvui.tile('Won', rv.results.won) }}
+    {{ rvui.tile('Lost', rv.results.lost) }}
+    {{ rvui.tile('Conversion',
+                 (rv.results.conversion_pct ~ '%') if rv.results.conversion_pct is not none else '—') }}
+    {{ rvui.tile('Quote turnaround',
+                 (rv.quotes.turnaround_days ~ ' days') if rv.quotes.turnaround_days is not none else '—',
+                 '', 'service standard ' ~ rv.quotes.sla_days ~ ' days') }}
+    {{ rvui.tile('Visits', rv.visits.total) }}
+  </div>
+
+  {# ── the drill-through starts here: vertical → person ────────── #}
+  <div class="rv-sec" id="sec-people">
+    <h3>The desk, person by person
+      <span class="rv-count">{{ rv.people|length }}</span></h3>
+    <p class="rv-note">Open a person for their own review, and their
+      accounts and opportunities from there.</p>
+    <div class="table-wrap"><table class="rv-table">
+      <thead><tr><th>Person</th><th class="num">Open</th>
+        <th class="num">Open value (₹)</th><th class="num">New</th>
+        <th class="num">Won</th><th class="num">Lost</th>
+        <th class="num">Conversion</th></tr></thead>
+      <tbody>
+      {% for p in rv.people %}
+        <tr>
+          <td>{% if p.route %}<a href="{{ crm_url(p.route) }}">{{ p.name }}</a>
+              {% else %}{{ p.name }}{% endif %}</td>
+          <td class="num">{{ p.open }}</td>
+          <td class="num">{{ '{:,.0f}'.format(p.open_value_inr) }}</td>
+          <td class="num">{{ p.new }}</td>
+          <td class="num">{{ p.won }}</td>
+          <td class="num">{{ p.lost }}</td>
+          <td class="num">{{ (p.conversion_pct ~ '%') if p.conversion_pct is not none else '—' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+
+  {# ── pipeline and its age ────────────────────────────────────── #}
+  <div class="rv-cols">
+    <div class="rv-sec">
+      <h3>Pipeline by stage</h3>
+      <div class="table-wrap"><table class="rv-table">
+        <thead><tr><th>Stage</th><th class="num">Deals</th>
+          <th class="num">Value (₹)</th></tr></thead>
+        <tbody>
+        {% for s in rv.pipeline.stages %}
+          <tr><td>{{ s.stage }}</td><td class="num">{{ s.count }}</td>
+            <td class="num">{{ '{:,.0f}'.format(s.value_inr) }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+    <div class="rv-sec">
+      <h3>Opportunity age</h3>
+      <p class="rv-note">Average
+        {{ rv.pipeline.ageing.average_days if rv.pipeline.ageing.average_days is not none else '—' }}
+        days, oldest {{ rv.pipeline.ageing.oldest_days or '—' }} days.
+        {{ rv.pipeline.ageing.over_stale_days }} older than
+        {{ rv.pipeline.ageing.stale_days }} days,
+        {{ rv.pipeline.ageing.over_quiet_days }} older than
+        {{ rv.pipeline.ageing.quiet_days }} days.</p>
+      <div class="table-wrap"><table class="rv-table">
+        <tbody>{% for r in rv.pipeline.ageing.oldest %}{{ rvui.row(r) }}{% endfor %}</tbody>
+      </table></div>
+    </div>
+  </div>
+
+  {# ── RFQs and quotes ─────────────────────────────────────────── #}
+  <div class="kpis">
+    {{ rvui.tile('RFQs received', rv.rfqs.received, '/rfqs') }}
+    {{ rvui.tile('Awaiting a quote', rv.rfqs.awaiting_quote, '/my-work?group=quotations') }}
+    {{ rvui.tile('Past the committed date', rv.rfqs.overdue, '/my-work?group=quotations') }}
+    {{ rvui.tile('Quote value', rv.quotes.value_display) }}
+  </div>
+  <div class="rv-sec">
+    <h3>Quote ageing</h3>
+    <div class="table-wrap"><table class="rv-table">
+      <thead><tr><th>How long they have waited</th><th class="num">RFQs</th></tr></thead>
+      <tbody>
+      {% for b in rv.rfqs.ageing %}
+        <tr><td>{{ b.label }}</td><td class="num">{{ b.count }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  {{ rvui.listing({'key':'rfq-rows','title':'RFQs in the period',
+                   'count':rv.rfqs.received,'rows':rv.rfqs.rows,
+                   'truncated':false,'note':''}, 'No RFQs recorded.') }}
+  {{ rvui.listing({'key':'quote-rows','title':'Quotes sent in the period',
+                   'count':rv.quotes.sent,'rows':rv.quotes.rows,
+                   'truncated':false,'note':''}, 'No quotes recorded.') }}
+
+  {# ── results ─────────────────────────────────────────────────── #}
+  {{ rvui.listing({'key':'won','title':'Won','count':rv.results.won,
+                   'rows':rv.results.won_rows,'truncated':false,'note':''},
+                  'Nothing closed in the period.') }}
+  {{ rvui.listing({'key':'lost','title':'Lost','count':rv.results.lost,
+                   'rows':rv.results.lost_rows,'truncated':false,'note':''},
+                  'Nothing lost in the period.') }}
+  {{ rvui.listing({'key':'top','title':'Top opportunities',
+                   'count':rv.top_opportunities|length,
+                   'rows':rv.top_opportunities,'truncated':false,'note':''},
+                  'No open opportunities.') }}
+
+  <div class="rv-cols">
+    <div class="rv-sec" id="sec-losses">
+      <h3>Why we lost <span class="rv-count">{{ rv.losses|length }}</span></h3>
+      {% if rv.losses %}
+      <div class="table-wrap"><table class="rv-table">
+        <thead><tr><th>Reason</th><th class="num">Deals</th>
+          <th class="num">Value (₹)</th></tr></thead>
+        <tbody>
+        {% for l in rv.losses %}
+          <tr><td>{{ l.reason }}</td><td class="num">{{ l.count }}</td>
+            <td class="num">{{ '{:,.0f}'.format(l.value_inr) }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% else %}<p class="rv-note">Nothing lost in the period.</p>{% endif %}
+    </div>
+    <div class="rv-sec" id="sec-competitors">
+      <h3>Competitors met
+        <span class="rv-count">{{ rv.competitors|length }}</span></h3>
+      {% if rv.competitors %}
+      <div class="table-wrap"><table class="rv-table">
+        <thead><tr><th>Competitor</th><th class="num">Met</th>
+          <th class="num">We won</th><th class="num">We lost</th></tr></thead>
+        <tbody>
+        {% for c in rv.competitors %}
+          <tr><td><a href="{{ crm_url(c.route) }}">{{ c.competitor }}</a></td>
+            <td class="num">{{ c.encounters }}</td>
+            <td class="num">{{ c.won }}</td><td class="num">{{ c.lost }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% else %}
+      <p class="rv-note">No competitor was recorded against these deals.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── accounts ────────────────────────────────────────────────── #}
+  <h2>Accounts</h2>
+  <div class="rv-sec" id="sec-top-accounts">
+    <h3>Top accounts <span class="rv-count">{{ rv.accounts.top|length }}</span></h3>
+    <div class="table-wrap"><table class="rv-table">
+      <thead><tr><th>Account</th><th class="num">Open</th>
+        <th class="num">Open value (₹)</th><th class="num">Won</th>
+        <th class="num">Won value (₹)</th></tr></thead>
+      <tbody>
+      {% for a in rv.accounts.top %}
+        <tr>
+          <td>{% if a.route %}<a href="{{ crm_url(a.route) }}">{{ a.name }}</a>
+              {% else %}{{ a.name }}{% endif %}</td>
+          <td class="num">{{ a.open }}</td>
+          <td class="num">{{ '{:,.0f}'.format(a.open_value_inr) }}</td>
+          <td class="num">{{ a.won }}</td>
+          <td class="num">{{ '{:,.0f}'.format(a.won_value_inr) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  {{ rvui.listing({'key':'inactive','title':'Inactive accounts',
+                   'count':rv.accounts.inactive_count,'rows':rv.accounts.inactive,
+                   'truncated':false,
+                   'note':'No activity for ' ~ rv.accounts.quiet_days_threshold ~ ' days.'},
+                  'Every account has been touched.') }}
+  {{ rvui.listing({'key':'new-accounts','title':'New accounts',
+                   'count':rv.accounts.new_count,'rows':rv.accounts.new,
+                   'truncated':false,'note':''}, 'No accounts opened.') }}
+
+  {# ── discipline and cross-sell ───────────────────────────────── #}
+  <h2>Discipline</h2>
+  <div class="kpis">
+    {{ rvui.tile('Next action set',
+                 (rv.followup_compliance.compliance_pct ~ '%') if rv.followup_compliance.compliance_pct is not none else '—',
+                 '', rv.followup_compliance.with_next_action ~ ' of ' ~ rv.followup_compliance.open_leads) }}
+    {{ rvui.tile('Overdue follow-ups', rv.followup_compliance.overdue, '/my-work?group=action_today') }}
+    {{ rvui.tile('Stale', rv.followup_compliance.stale, '/my-work?group=stale') }}
+    {{ rvui.tile('Idle', rv.followup_compliance.idle, '/my-work?group=customer_followup') }}
+    {{ rvui.tile('Data issues', rv.data_quality.total, '/data-quality') }}
+  </div>
+  {{ rvui.listing({'key':'overdue','title':'Overdue follow-ups',
+                   'count':rv.followup_compliance.overdue,
+                   'rows':rv.followup_compliance.rows,'truncated':false,'note':''},
+                  'Nothing is overdue.') }}
+
+  <div class="rv-sec" id="sec-cross-sell">
+    <h3>Cross-sell <span class="rv-count">{{ rv.cross_sell|length }}</span></h3>
+    <p class="rv-note">Accounts this desk works that another desk also
+      works — the cheapest pipeline there is.</p>
+    {% if rv.cross_sell %}
+    <div class="table-wrap"><table class="rv-table">
+      <thead><tr><th>Account</th><th>Also worked by</th></tr></thead>
+      <tbody>
+      {% for c in rv.cross_sell %}
+        <tr><td><a href="{{ crm_url(c.route) }}">{{ c.name }}</a></td>
+          <td>{{ c.verticals|join(', ') }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="rv-note">No account here is worked by another desk.</p>
+    {% endif %}
+  </div>
+
+  {% if rv.data_quality.checks %}
+  <div class="rv-sec" id="sec-data-quality">
+    <h3>Data quality
+      <span class="rv-count">{{ rv.data_quality.total }}</span></h3>
+    <div class="table-wrap"><table class="rv-table">
+      <thead><tr><th>Check</th><th class="num">Records</th></tr></thead>
+      <tbody>
+      {% for c in rv.data_quality.checks %}
+        <tr><td><a href="{{ crm_url(c.route) }}">{{ c.title }}</a></td>
+          <td class="num">{{ c.count }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  {% endif %}
+
+</div><!-- /crm-wrap -->
+</body>
+</html>

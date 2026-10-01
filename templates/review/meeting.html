@@ -1,0 +1,175 @@
+{# `with context` so the macros can use crm_url() and url_prefix #}
+{% import "review/_shared.html" as rvui with context %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Review meeting — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+{% include "review/_style.html" %}
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+  <div class="hero">
+    <div>
+      <h1>Review meeting</h1>
+      <div class="crm-sub">{{ rv.subject.kind|capitalize }}
+        {{ rv.subject.value }} · {{ rv.period.start }} to {{ rv.period.end }}</div>
+    </div>
+    <div>
+      {% if rv.subject.kind == 'emp' %}
+      <a class="top-back"
+         href="{{ url_prefix }}/review/individual?emp={{ rv.subject.value }}">← Individual review</a>
+      {% else %}
+      <a class="top-back"
+         href="{{ url_prefix }}/review/vertical?vertical={{ rv.subject.value }}">← Vertical review</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <form class="rv-bar" method="get" action="{{ url_prefix }}/review/meeting">
+    <label class="rv-l" for="scope">Review of</label>
+    <select id="scope" name="scope">
+      {% for p in people %}
+      <option value="emp:{{ p.emp_code }}"
+        {{ 'selected' if rv.review_scope == 'emp:' ~ p.emp_code }}>{{ p.name }}</option>
+      {% endfor %}
+      {% if rv.subject.kind == 'vertical' %}
+      <option value="vertical:{{ rv.subject.value }}" selected>
+        {{ rv.subject.value }} (vertical)</option>
+      {% endif %}
+    </select>
+    <label class="rv-l" for="period">Period</label>
+    <select id="period" name="period">
+      {% for p in periods %}
+      <option value="{{ p }}" {{ 'selected' if p == rv.period.name }}>{{ p|capitalize }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn primary" type="submit">Open the agenda</button>
+  </form>
+
+  <nav class="rv-bar" aria-label="Agenda">
+    {% for s in rv.agenda %}
+    <a class="btn tiny" href="#sec-{{ s.key }}">{{ s.title }}
+      <span class="rv-count">{{ s.count }}</span></a>
+    {% endfor %}
+  </nav>
+
+  {# The agenda is run in this order on purpose: a review that opens
+     with the wins and never reaches the stale list teaches nobody. #}
+  {% for s in rv.agenda %}
+    {% if s.key == 'previous_actions' or s.key == 'actions_agreed' %}
+      <div class="rv-sec" id="sec-{{ s.key }}">
+        <h3>{{ s.title }} <span class="rv-count">{{ s.count }}</span></h3>
+        {% if s.note %}<p class="rv-note">{{ s.note }}</p>{% endif %}
+        {% if s.rows %}
+        <div class="table-wrap"><table class="rv-table">
+          <thead><tr><th>Action</th><th>Owner</th><th>Due</th>
+            <th>Status</th><th></th></tr></thead>
+          <tbody>
+          {% for a in s.rows %}
+            <tr>
+              <td>{% if a.route %}<a href="{{ crm_url(a.route) }}">{{ a.description }}</a>
+                  {% else %}{{ a.description }}{% endif %}
+                {% if a.carried_from_id %}<span class="rv-chip">carried forward</span>{% endif %}</td>
+              <td>{{ a.owner_emp_code or '—' }}</td>
+              <td>{{ a.due_date or '—' }}
+                {% if a.overdue %}<span class="rv-chip bad">overdue</span>{% endif %}</td>
+              <td>{{ a.status }}</td>
+              <td>
+                {% if a.status == 'open' %}
+                <button class="btn tiny" data-close="{{ a.id }}" data-outcome="done">Done</button>
+                <button class="btn tiny" data-close="{{ a.id }}" data-outcome="carried">Carry forward</button>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+        {% else %}
+        <p class="rv-note">
+          {% if s.key == 'previous_actions' %}Nothing was left outstanding.
+          {% else %}Nothing agreed yet.{% endif %}</p>
+        {% endif %}
+
+        {% if s.key == 'actions_agreed' %}
+        <form class="rv-form" id="newAction" onsubmit="return false">
+          <input class="wide" id="actDesc" maxlength="500"
+                 placeholder="What was agreed…" aria-label="What was agreed">
+          <input id="actOwner" placeholder="Owner (emp code)"
+                 aria-label="Owner employee code"
+                 value="{{ rv.subject.value if rv.subject.kind == 'emp' }}">
+          <input id="actDue" type="date" aria-label="Due date">
+          <button class="btn primary" id="actAdd">Add the action</button>
+        </form>
+        <div class="rv-msg" id="actMsg" role="status"></div>
+        {% endif %}
+      </div>
+    {% elif s.key == 'external_intelligence' %}
+      {{ rvui.listing(s, 'No market or competitor intelligence was
+                          recorded for this period.') }}
+    {% else %}
+      {{ rvui.listing(s) }}
+    {% endif %}
+  {% endfor %}
+
+</div><!-- /crm-wrap -->
+
+<script>
+(function(){
+  // This page is served outside the single-page app, which carries its
+  // own fetch wrapper, so the token is read from the cookie here.
+  function csrfToken(){
+    var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  async function postJson(path, body){
+    try {
+      var r = await fetch('{{ url_prefix }}' + path, {
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json',
+                 'X-CSRFToken': csrfToken(),
+                 'X-Requested-With':'XMLHttpRequest'},
+        body: JSON.stringify(body)});
+      var type = r.headers.get('content-type') || '';
+      if (type.indexOf('application/json') === -1){
+        return {ok:false, error:'Your session expired — refresh the page.'};
+      }
+      return await r.json();
+    } catch (e) {
+      return {ok:false, error:'Could not reach the server. Try again.'};
+    }
+  }
+  function say(text){
+    var box = document.getElementById('actMsg');
+    if (box) box.textContent = text;
+  }
+  var add = document.getElementById('actAdd');
+  if (add) add.addEventListener('click', async function(){
+    var desc = document.getElementById('actDesc').value.trim();
+    if (!desc) { say('Say what was agreed.'); return; }
+    var out = await postJson('/api/review/actions', {
+      review_scope: {{ rv.review_scope|tojson }},
+      description: desc,
+      owner_emp_code: document.getElementById('actOwner').value.trim(),
+      due_date: document.getElementById('actDue').value});
+    if (out.ok) { say('Added. Reloading the agenda…'); location.reload(); }
+    else say(out.error || 'That action could not be saved.');
+  });
+  document.querySelectorAll('[data-close]').forEach(function(btn){
+    btn.addEventListener('click', async function(){
+      var out = await postJson('/api/review/actions/' +
+        btn.getAttribute('data-close') + '/close',
+        {outcome: btn.getAttribute('data-outcome')});
+      if (out.ok) location.reload();
+      else say(out.error || 'That action could not be closed.');
+    });
+  });
+})();
+</script>
+</body>
+</html>

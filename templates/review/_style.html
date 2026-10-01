@@ -1,0 +1,43 @@
+{# Review-only layout. Shared components (buttons, cards, pills, tables)
+   come from crm.css; nothing here redefines one. #}
+<style>
+  /* Tiles, buttons, cards and tables come from crm.css; what is left
+     here is review-specific layout only. */
+  .rv-l { font-size:11.5px; color:#6b7280; font-weight:600;
+      text-transform:uppercase; letter-spacing:.04em; }
+  .rv-n { font-size:11.5px; color:#6b7280; margin-top:2px; }
+  .rv-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+      margin-bottom:14px; }
+  .rv-bar input, .rv-bar select { height:34px; border:1px solid #e5e7eb;
+      border-radius:8px; padding:0 10px; font:inherit; }
+  .rv-sec { background:#fff; border:1px solid #e5e7eb; border-radius:10px;
+      padding:12px 14px; margin-bottom:14px; }
+  .rv-sec h3 { margin:0 0 6px; font-size:15px; }
+  .rv-count { display:inline-block; font-size:12px; font-weight:700;
+      background:#f3f4f6; border-radius:999px; padding:1px 9px;
+      margin-left:6px; color:#374151; }
+  .rv-note { font-size:12.5px; color:#6b7280; margin:4px 0 0; }
+  .rv-sub { font-size:12px; color:#6b7280; }
+  .rv-chip { display:inline-block; font-size:11px; border-radius:999px;
+      padding:1px 8px; background:#f3f4f6; color:#374151; margin-left:4px; }
+  .rv-chip.bad { background:#FEE2E2; color:#991B1B; }
+  .rv-chip.good { background:#DCFCE7; color:#166534; }
+  table.rv-table { width:100%; border-collapse:collapse; font-size:13px; }
+  table.rv-table th, table.rv-table td { padding:7px 9px;
+      border-bottom:1px solid #eef0f3; text-align:left; vertical-align:top; }
+  table.rv-table th { font-size:11px; text-transform:uppercase;
+      letter-spacing:.04em; color:#6b7280; }
+  table.rv-table td.num, table.rv-table th.num { text-align:right;
+      font-variant-numeric:tabular-nums; }
+  .rv-cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
+      gap:14px; }
+  .rv-up { color:#166534; font-weight:700; }
+  .rv-down { color:#991B1B; font-weight:700; }
+  .rv-flat { color:#6b7280; font-weight:700; }
+  .rv-form { display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+      margin-top:10px; }
+  .rv-form input, .rv-form select { height:34px; border:1px solid #e5e7eb;
+      border-radius:8px; padding:0 10px; font:inherit; }
+  .rv-form input.wide { flex:1; min-width:260px; }
+  .rv-msg { font-size:12.5px; margin-top:8px; color:#374151; }
+</style>

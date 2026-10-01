@@ -1,0 +1,51 @@
+{# Shared fetch helpers for the intelligence screens. POSTs carry the
+   CSRF token from the csrf_token cookie as X-CSRFToken, the same way
+   the Data Quality screens do. #}
+<script>
+window.INTEL = (function(){
+  var PREFIX = {{ url_prefix|tojson }};
+  function esc(v){
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  function csrfToken(){
+    var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  async function call(method, path, body){
+    try {
+      var opts = {method: method, credentials: 'same-origin',
+                  headers: {'X-Requested-With': 'XMLHttpRequest'}};
+      if (body !== undefined){
+        opts.headers['Content-Type'] = 'application/json';
+        opts.headers['X-CSRFToken'] = csrfToken();
+        opts.body = JSON.stringify(body);
+      }
+      var r = await fetch(PREFIX + path, opts);
+      var type = r.headers.get('content-type') || '';
+      if (type.indexOf('application/json') === -1){
+        return {ok:false, error: (r.status === 401 || r.status === 400)
+          ? 'Your session expired — refresh the page and try again.'
+          : 'Could not reach the server. Please try again.'};
+      }
+      var d = await r.json();
+      if (!r.ok || d.ok === false){
+        d.ok = false;
+        d.error = d.error || 'The server refused that.';
+      }
+      return d;
+    } catch (e) {
+      return {ok:false, error:'Could not reach the server. Please try again.'};
+    }
+  }
+  function note(el, message, bad){
+    if (!el) return;
+    el.textContent = message || '';
+    el.className = 'meta ' + (bad ? 'intel-bad' : 'intel-good');
+  }
+  return {esc: esc, get: function(p){ return call('GET', p); },
+          post: function(p, b){ return call('POST', p, b || {}); },
+          note: note, prefix: PREFIX};
+})();
+</script>

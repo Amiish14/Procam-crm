@@ -1,0 +1,11 @@
+[Unit]
+Description=Procam CRM monthly management report
+
+[Timer]
+# The 1st at 09:00 IST, after the month it reports on has closed.
+OnCalendar=*-*-01 03:30:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

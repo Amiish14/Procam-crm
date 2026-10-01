@@ -1,0 +1,228 @@
+{# The CRM Hygiene Score, and the arithmetic behind it.
+
+   Every deduction on this page names the check that caused it, how many
+   records it flagged out of how many it could have, and links to those
+   records. A score nobody can argue with is a score nobody acts on. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{% if factor %}{{ factor.label }} — {% endif %}CRM Hygiene — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .hy-head { display:flex; flex-wrap:wrap; gap:22px; align-items:center; margin:14px 0 20px; }
+  .hy-dial { border:1px solid #e5e7eb; border-radius:14px; padding:16px 22px; background:#fff; min-width:190px; }
+  .hy-dial .n { font-size:46px; font-weight:800; line-height:1; font-variant-numeric:tabular-nums; }
+  .hy-dial .l { font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:#6b7280; font-weight:600; }
+  .hy-dial.good .n { color:#15803D; } .hy-dial.watch .n { color:#B45309; } .hy-dial.poor .n { color:#B91C1C; }
+  .hy-band { display:inline-block; font-size:11.5px; font-weight:700; border-radius:999px; padding:2px 10px; margin-top:6px; }
+  .hy-band.good { background:#DCFCE7; color:#166534; } .hy-band.watch { background:#FEF3C7; color:#92400E; }
+  .hy-band.poor { background:#FEE2E2; color:#991B1B; }
+  .hy-bar { height:9px; border-radius:999px; background:#eef0f3; overflow:hidden; min-width:120px; }
+  .hy-bar i { display:block; height:100%; background:#B91C1C; }
+  table.hy { width:100%; border-collapse:collapse; background:#fff; font-size:13px; }
+  table.hy th, table.hy td { padding:10px; border-bottom:1px solid #eef0f3; text-align:left; vertical-align:top; }
+  table.hy th { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#6b7280; }
+  table.hy td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .hy-why { color:#4b5563; font-size:12.5px; margin-top:3px; max-width:62ch; }
+  .hy-rec { font-size:12.5px; color:#374151; margin-top:6px; }
+  .hy-rec a { margin-right:4px; }
+  .chip { display:inline-block; font-size:11px; border-radius:999px; padding:1px 8px; background:#f3f4f6; color:#374151; margin:1px 4px 1px 0; }
+  .chip.bad { background:#FEE2E2; color:#991B1B; } .chip.warn { background:#FEF3C7; color:#92400E; }
+  .hy-bar-wrap { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+  .hy-bar-wrap select, .hy-bar-wrap input { height:34px; border:1px solid #e5e7eb; border-radius:8px; padding:0 10px; font:inherit; }
+  .muted { color:#6b7280; }
+  .hy-group { border:1px solid #e5e7eb; border-radius:12px; background:#fff; margin-bottom:16px; overflow:hidden; }
+  .hy-group > h3 { margin:0; padding:12px 14px; font-size:14px; border-bottom:1px solid #eef0f3; }
+  .hy-note { font-size:12.5px; color:#4b5563; padding:10px 14px; }
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+{# The narrowing travels with every link, so "back to the score" keeps
+   showing the person or vertical you were looking at. #}
+{% set qs = ('?for=' ~ who if who else ('?vertical=' ~ vertical if vertical else '')) %}
+<div class="crm-wrap">
+
+  <div class="hero">
+    <div>
+      <h1>CRM Hygiene{% if factor %} — {{ factor.label }}{% endif %}</h1>
+      <div class="today">
+        {% if who %}One person ({{ who }}){% elif vertical %}{{ vertical }}{% else %}Everything you can see{% endif %}
+      </div>
+    </div>
+    <div>
+      {% if factor %}<a class="top-back" href="{{ url_prefix }}/hygiene{{ qs }}">← The score</a>{% endif %}
+      <a class="top-back" style="margin-left:12px" href="{{ url_prefix }}/my-work">My Work</a>
+    </div>
+  </div>
+
+  {# Levels: one person, one vertical, or everything the viewer may see.
+     Only the levels the Access Matrix allows are offered. #}
+  <form class="hy-bar-wrap" method="get"
+        action="{{ url_prefix }}{% if factor %}/hygiene/factor/{{ factor.key }}{% else %}/hygiene{% endif %}">
+    <label class="muted" for="hyWho">Person</label>
+    <input id="hyWho" name="for" value="{{ who }}" placeholder="Employee code"
+           {% if 'vertical' not in levels and not viewer %}disabled{% endif %}>
+    {% if 'vertical' in levels %}
+    <label class="muted" for="hyVert">Vertical</label>
+    <select id="hyVert" name="vertical">
+      <option value="">—</option>
+      {% for v in verticals %}
+      <option value="{{ v }}" {{ 'selected' if v == vertical }}>{{ v }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <button class="btn" type="submit">Show</button>
+    {% if who or vertical %}
+    <a class="btn" href="{{ url_prefix }}{% if factor %}/hygiene/factor/{{ factor.key }}{% else %}/hygiene{% endif %}">
+      {% if 'company' in levels %}Whole company{% else %}Everything I can see{% endif %}</a>
+    {% endif %}
+  </form>
+
+{% if data %}
+  <div class="hy-head">
+    <div class="hy-dial {{ data.band }}">
+      <div class="l">Hygiene score</div>
+      <div class="n">{{ data.score }}</div>
+      <div class="hy-band {{ data.band }}">{{ {'good':'Kept properly','watch':'Needs attention','poor':'Not being kept'}[data.band] }}</div>
+    </div>
+    <div class="hy-why" style="max-width:46ch">
+      Out of 100. Each factor below is worth a fixed number of points and
+      loses them in proportion to the records its checks flag — so the
+      arithmetic is <em>weight × (flagged ÷ could be flagged)</em>, and
+      every deduction links to exactly the records that caused it.
+      {% if not data.complete %}
+      <br><strong>One or more checks could not be measured</strong>, so they
+      cost nothing: the score is at best optimistic until they run.
+      {% endif %}
+      <br><span class="muted">{{ data.good_at }}+ is good, {{ data.watch_at }}+ needs
+      attention. Measured {{ data.generated_at }} UTC.</span>
+    </div>
+  </div>
+
+  <table class="hy">
+    <thead>
+      <tr><th>Factor</th><th class="num">Worth</th><th class="num">Flagged</th>
+          <th class="num">Of</th><th style="width:120px">Lost</th><th class="num">Points lost</th></tr>
+    </thead>
+    <tbody>
+    {% for f in data.factors %}
+      <tr>
+        <td>
+          <a href="{{ url_prefix }}{{ f.route }}"><strong>{{ f.label }}</strong></a>
+          <div class="hy-why">{{ f.why }}</div>
+          {% for c in f.checks %}
+            <span class="chip {{ 'bad' if c.count else '' }}">{{ c.label }}: {{ c.count if c.count is not none else '—' }}</span>
+          {% endfor %}
+          {% if f.records %}
+          <div class="hy-rec">Caused by, for example:
+            {% for r in f.records %}
+              {% if r.route %}<a href="{{ url_prefix }}{{ r.route }}">{{ r.name }}</a>{% else %}{{ r.name }}{% endif %}{{ "," if not loop.last }}
+            {% endfor %}
+            — <a href="{{ url_prefix }}{{ f.route }}">see all {{ f.count }}</a>
+          </div>
+          {% endif %}
+        </td>
+        <td class="num">{{ f.weight }}</td>
+        <td class="num">{{ f.count }}</td>
+        <td class="num">{{ f.population }}</td>
+        <td><div class="hy-bar"><i style="width:{{ (f.share * 100)|round(0, 'floor') }}%"></i></div></td>
+        <td class="num">{{ '−%.1f'|format(f.lost) if f.lost else '0' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr><th>Total</th><th class="num">100</th><th colspan="3"></th>
+          <th class="num">−{{ '%.1f'|format(data.lost) }}</th></tr>
+    </tfoot>
+  </table>
+
+  {% if can_nudge %}
+  <div class="hy-note" style="margin-top:14px">
+    <label class="muted" for="hyTo">Ask a colleague to bring their records up to date</label><br>
+    <input id="hyTo" placeholder="Employee code" style="height:34px;border:1px solid #e5e7eb;border-radius:8px;padding:0 10px">
+    <input id="hyMsg" placeholder="What needs doing" style="height:34px;width:320px;border:1px solid #e5e7eb;border-radius:8px;padding:0 10px">
+    <button class="btn" type="button" onclick="hyNudge()">Send</button>
+    <span id="hySaid" class="muted"></span>
+  </div>
+  {% endif %}
+
+{% elif factor %}
+  <div class="hy-head">
+    <div class="hy-dial poor">
+      <div class="l">Points lost here</div>
+      <div class="n">{{ '%.1f'|format(factor.lost) }}</div>
+      <div class="muted" style="font-size:12px">of {{ factor.weight }}</div>
+    </div>
+    <div class="hy-why" style="max-width:52ch">
+      {{ factor.why }}
+      <br><strong>{{ factor.count }}</strong> record(s) flagged out of
+      <strong>{{ factor.population }}</strong>
+      ({% for p in factor.population_parts %}{{ p.count }} {{ p.label }}{{ ", " if not loop.last }}{% endfor %}).
+    </div>
+  </div>
+
+  {% for g in factor.groups %}
+  <div class="hy-group">
+    <h3>{{ g.label }} <span class="chip {{ 'bad' if g.count else '' }}">{{ g.count if g.count is not none else 'could not be measured' }}</span></h3>
+    {% if g.why %}<div class="hy-note">{{ g.why }}{% if g.suggestion %} <strong>{{ g.suggestion }}</strong>{% endif %}</div>{% endif %}
+    {% if g.records %}
+    <table class="hy">
+      <thead><tr><th>Record</th><th>Details</th><th></th></tr></thead>
+      <tbody>
+      {% for r in g.records %}
+        <tr>
+          <td><span class="chip">{{ r.kind }}</span> {{ r.name }}</td>
+          <td class="muted">{{ r.meta }}</td>
+          <td class="num">{% if r.route %}<a href="{{ url_prefix }}{{ r.route }}">Open</a>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if g.truncated %}
+    <div class="hy-note">
+      <a href="?{% if who %}for={{ who }}&amp;{% endif %}{% if vertical %}vertical={{ vertical }}&amp;{% endif %}page={{ factor.page + 1 }}">Next page →</a>
+    </div>
+    {% endif %}
+    {% elif g.count %}
+    <div class="hy-note muted">These records are outside what this page can list.</div>
+    {% else %}
+    <div class="hy-note muted">Nothing flagged — this check costs nothing.</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% endif %}
+
+</div><!-- /crm-wrap -->
+<script>
+/* This page is served outside the main app shell, which carries its own
+   fetch wrapper, so every write here has to send the CSRF token itself. */
+const PREFIX = '{{ url_prefix }}';
+function csrfToken(){
+  const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+function postJson(path, body){
+  return fetch(PREFIX + path, {method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json', 'X-CSRFToken': csrfToken()},
+    body: JSON.stringify(body)});
+}
+async function hyNudge(){
+  const to = (document.getElementById('hyTo').value || '').trim();
+  const said = document.getElementById('hySaid');
+  if (!to){ said.textContent = 'Say who it is for.'; return; }
+  said.textContent = 'Sending…';
+  const r = await postJson('/api/hygiene/nudge',
+    {to: to, message: document.getElementById('hyMsg').value || '',
+     factor: '{{ factor.key if factor else "" }}'});
+  const d = await r.json().catch(() => null);
+  said.textContent = (d && d.ok)
+    ? (d.suppressed ? 'Already sent a moment ago.' : 'Sent.')
+    : ((d && d.error) || 'Could not send that.');
+}
+</script>
+</body>
+</html>

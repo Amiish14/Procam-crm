@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Global CRM — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  /* Only what crm.css has no class for: the results grid and the drawer. */
+  .dir-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+    gap:10px;align-items:end}
+  .dir-filters label{display:block;font-size:11px;text-transform:uppercase;
+    letter-spacing:.04em;opacity:.7;margin-bottom:4px}
+  .dir-filters input,.dir-filters select{width:100%;padding:7px 8px;
+    border:1px solid rgba(128,128,128,.35);border-radius:6px;background:transparent;
+    color:inherit;font:inherit}
+  .dir-table{width:100%;border-collapse:collapse;font-size:13px}
+  .dir-table th{text-align:left;font-size:11px;text-transform:uppercase;
+    letter-spacing:.04em;opacity:.65;padding:8px 10px;border-bottom:1px solid rgba(128,128,128,.25)}
+  .dir-table td{padding:9px 10px;border-bottom:1px solid rgba(128,128,128,.14);
+    vertical-align:top}
+  .dir-table tr:hover td{background:rgba(128,128,128,.07)}
+  .dir-name{font-weight:600;cursor:pointer;text-decoration:underline;
+    text-underline-offset:2px}
+  .dir-cold{color:#b4512a;font-weight:600}
+  .dir-drawer{position:fixed;inset:0 0 0 auto;width:min(620px,100%);
+    background:var(--card,#fff);color:inherit;box-shadow:-8px 0 30px rgba(0,0,0,.25);
+    overflow:auto;padding:18px 20px 60px;display:none;z-index:70}
+  .dir-drawer.open{display:block}
+  .dir-scrim{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;z-index:69}
+  .dir-scrim.open{display:block}
+  .dir-pager{display:flex;gap:8px;align-items:center;margin-top:12px}
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+  <div class="hero">
+    <div>
+      <h1>Global CRM</h1>
+      <div class="today">Every person Procam knows, inside your access.
+        {{ results.total }} match{{ '' if results.total == 1 else 'es' }}.</div>
+    </div>
+    <div>
+      <a class="top-back" href="{{ url_for('dashboard') }}">← Dashboard</a>
+    </div>
+  </div>
+
+  {# ── the shape of the database ─────────────────────────────────── #}
+  <div class="kpis">
+    <div class="kpi"><div class="label">Contacts</div>
+      <div class="value">{{ dash.total }}</div></div>
+    <div class="kpi success"><div class="label">Customers</div>
+      <div class="value">{{ dash.customers }}</div></div>
+    <div class="kpi info"><div class="label">Prospects</div>
+      <div class="value">{{ dash.prospects }}</div></div>
+    <div class="kpi"><div class="label">Vendors</div>
+      <div class="value">{{ dash.vendors }}</div></div>
+    <div class="kpi"><div class="label">Partners</div>
+      <div class="value">{{ dash.partners }}</div></div>
+    <div class="kpi warn"><div class="label">Competitor contacts</div>
+      <div class="value">{{ dash.competitor_contacts }}</div></div>
+  </div>
+
+  <div class="kpis">
+    <a class="kpi" href="?last_interaction_days=-{{ dash.idle_90.days }}">
+      <div class="label">No contact in {{ dash.idle_90.days }} days</div>
+      <div class="value">{{ dash.idle_90.count }}</div></a>
+    <div class="kpi danger"><div class="label">Never contacted</div>
+      <div class="value">{{ dash.never_contacted.count }}</div></div>
+    <div class="kpi"><div class="label">Added in 30 days</div>
+      <div class="value">{{ dash.recently_added.count }}</div></div>
+    <div class="kpi warn"><div class="label">Missing information</div>
+      <div class="value">{{ dash.missing_information.total }}</div></div>
+  </div>
+
+  {# ── search ─────────────────────────────────────────────────────── #}
+  <div class="card">
+    <div class="card-hd"><h3>Search</h3></div>
+    <form class="dir-filters" method="get" action="{{ url_prefix }}/global-crm">
+      <div><label for="f-q">Anything</label>
+        <input id="f-q" name="q" value="{{ filters.q }}"
+               placeholder="name, email, phone, company"></div>
+      <div><label for="f-company">Company</label>
+        <input id="f-company" name="company" value="{{ filters.company }}"></div>
+      <div><label for="f-designation">Designation</label>
+        <input id="f-designation" name="designation" value="{{ filters.designation }}"></div>
+      <div><label for="f-industry">Industry</label>
+        <input id="f-industry" name="industry" list="dl-industry"
+               value="{{ filters.industry }}"></div>
+      <div><label for="f-country">Country</label>
+        <input id="f-country" name="country" value="{{ filters.country }}"></div>
+      <div><label for="f-city">City</label>
+        <input id="f-city" name="city" value="{{ filters.city }}"></div>
+      <div><label for="f-vertical">Vertical</label>
+        <select id="f-vertical" name="vertical">
+          <option value="">Any</option>
+          {% for v in vocab.vertical %}
+            <option value="{{ v.code }}" {{ 'selected' if filters.vertical == v.code }}>{{ v.label }}</option>
+          {% endfor %}
+        </select></div>
+      <div><label for="f-relationship">Relationship</label>
+        <select id="f-relationship" name="relationship">
+          <option value="">Any</option>
+          {% for v in vocab.relationship %}
+            <option value="{{ v.code }}" {{ 'selected' if filters.relationship == v.code }}>{{ v.label }}</option>
+          {% endfor %}
+        </select></div>
+      <div><label for="f-service">Service</label>
+        <select id="f-service" name="service">
+          <option value="">Any</option>
+          {% for v in vocab.service %}
+            <option value="{{ v.code }}" {{ 'selected' if filters.service == v.code }}>{{ v.label }}</option>
+          {% endfor %}
+        </select></div>
+      <div><label for="f-pic">PIC</label>
+        <select id="f-pic" name="pic">
+          <option value="">Anyone</option>
+          {% for p in people %}
+            <option value="{{ p.code }}" {{ 'selected' if filters.pic == p.code }}>{{ p.name }}</option>
+          {% endfor %}
+        </select></div>
+      <div><label for="f-account">Account id</label>
+        <input id="f-account" name="account_id" value="{{ filters.account_id }}"></div>
+      <div><label for="f-last">Last interaction</label>
+        <select id="f-last" name="last_interaction_days">
+          <option value="">Any time</option>
+          <option value="7"   {{ 'selected' if filters.last_interaction_days == '7' }}>Within 7 days</option>
+          <option value="30"  {{ 'selected' if filters.last_interaction_days == '30' }}>Within 30 days</option>
+          <option value="-90" {{ 'selected' if filters.last_interaction_days == '-90' }}>Nothing for 90+ days</option>
+        </select></div>
+      <div><button class="btn primary" type="submit">Search</button>
+        <a class="btn tiny ghost" href="{{ url_prefix }}/global-crm">Clear</a></div>
+    </form>
+    <datalist id="dl-industry">
+      {% for v in vocab.industry %}<option value="{{ v.code }}">{{ v.label }}</option>{% endfor %}
+    </datalist>
+  </div>
+
+  {# ── who handles this account? (Group D) ────────────────────────── #}
+  <div class="card">
+    <div class="card-hd"><h3>Who handles this account?</h3></div>
+    <div class="dir-filters">
+      <div style="grid-column:span 2"><label for="wh-q">Company, group, domain, city, industry or owner</label>
+        <input id="wh-q" placeholder="e.g. bhel, @tatasteel.com, Chennai"></div>
+      <div><button class="btn" type="button" id="wh-go">Find the owner</button></div>
+    </div>
+    <div id="wh-out" class="muted" style="margin-top:10px">
+      Anyone may ask this: knowing an organisation is already a Procam
+      account, and who owns it, is what stops two people ringing the same
+      customer.
+    </div>
+  </div>
+
+  {# ── results ────────────────────────────────────────────────────── #}
+  <div class="card">
+    <div class="card-hd"><h3>People <span class="count">{{ results.total }}</span></h3></div>
+    <div class="table-wrap">
+      <table class="dir-table">
+        <thead><tr>
+          <th>Name</th><th>Designation</th><th>Company</th><th>Contact</th>
+          <th>Vertical</th><th>Relationship</th><th>PIC</th><th>Last interaction</th>
+        </tr></thead>
+        <tbody>
+        {% for c in results['items'] %}
+          <tr>
+            <td><span class="dir-name" data-contact="{{ c.id }}">{{ c.name }}</span></td>
+            <td>{{ c.designation or '—' }}</td>
+            <td>{{ c.company or '—' }}{% if c.city %}<div class="muted tiny">{{ c.city }}{% if c.country %}, {{ c.country }}{% endif %}</div>{% endif %}</td>
+            <td>{{ c.email or '—' }}{% if c.phone %}<div class="muted tiny">{{ c.phone }}</div>{% endif %}</td>
+            <td>{{ c.vertical or '—' }}</td>
+            <td>{{ c.relationship or '—' }}</td>
+            <td>{{ c.pic_name or c.pic or '—' }}</td>
+            <td>{% if c.last_interaction %}
+                  <span class="{{ 'dir-cold' if c.last_interaction_days and c.last_interaction_days >= 90 }}">
+                    {{ c.last_interaction }} ({{ c.last_interaction_days }}d)</span>
+                {% else %}<span class="dir-cold">Never</span>{% endif %}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="8" class="empty">Nobody matches that, inside your access.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if results.pages > 1 %}
+    <div class="dir-pager">
+      {% set base = request.args.to_dict() %}
+      {% if results.page > 1 %}
+        {% set _ = base.update({'page': results.page - 1}) %}
+        <a class="btn tiny" href="?{{ base|urlencode }}">← Previous</a>
+      {% endif %}
+      <span class="muted">Page {{ results.page }} of {{ results.pages }}</span>
+      {% if results.page < results.pages %}
+        {% set _ = base.update({'page': results.page + 1}) %}
+        <a class="btn tiny" href="?{{ base|urlencode }}">Next →</a>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+</div><!-- /crm-wrap -->
+
+<div class="dir-scrim" id="scrim"></div>
+<aside class="dir-drawer" id="drawer" aria-live="polite"></aside>
+
+<script>
+(function(){
+  var PREFIX = {{ url_prefix|tojson }};
+  var MAY_ASSIGN = {{ (may_assign or false)|tojson }};
+  var PEOPLE = {{ people|tojson }};
+  var VERTICALS = {{ vocab.vertical|tojson }};
+  var RELATIONSHIPS = {{ vocab.relationship|tojson }};
+  var drawer = document.getElementById('drawer');
+  var scrim  = document.getElementById('scrim');
+
+  function esc(s){
+    return String(s === null || s === undefined ? '' : s)
+      .replace(/[&<>"']/g, function(c){
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+      });
+  }
+  // The CSRF token rides in a cookie; these pages are served outside the
+  // app shell, which carries its own fetch wrapper, so every write here
+  // has to put it on the header itself.
+  function csrfToken(){
+    var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  async function getJson(path){
+    try {
+      var r = await fetch({{ url_prefix|tojson }} + path, {credentials:'same-origin',
+        headers:{'X-Requested-With':'XMLHttpRequest'}});
+      if ((r.headers.get('content-type') || '').indexOf('application/json') === -1){
+        return {ok:false, error: r.status === 404
+          ? 'Not found, or outside your access.'
+          : 'Could not reach the server. Please try again.'};
+      }
+      var d = await r.json();
+      if (!r.ok) { d.ok = false; d.error = d.error || 'Refused.'; }
+      return d;
+    } catch (e) { return {ok:false, error:'Could not reach the server.'}; }
+  }
+  async function postJson(path, body){
+    try {
+      var r = await fetch({{ url_prefix|tojson }} + path, {
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json',
+                 'X-CSRFToken': csrfToken(),
+                 'X-Requested-With':'XMLHttpRequest'},
+        body: JSON.stringify(body)});
+      if ((r.headers.get('content-type') || '').indexOf('application/json') === -1){
+        return {ok:false, error:'Your session expired — refresh and try again.'};
+      }
+      var d = await r.json();
+      if (!r.ok || d.ok === false){
+        d.ok = false; d.error = d.error || 'The server refused this change.';
+      }
+      return d;
+    } catch (e) { return {ok:false, error:'Could not reach the server.'}; }
+  }
+
+  function list(rows, render, empty){
+    if (!rows || !rows.length) return '<div class="empty">' + empty + '</div>';
+    return '<ul class="meta">' + rows.map(render).join('') + '</ul>';
+  }
+
+  function options(items, selected, codeKey, labelKey){
+    return ['<option value=""></option>'].concat(items.map(function(i){
+      var code = i[codeKey], label = i[labelKey] || code;
+      return '<option value="' + esc(code) + '"' +
+        (code === selected ? ' selected' : '') + '>' + esc(label) + '</option>';
+    })).join('');
+  }
+
+  function assignForm(d){
+    if (!MAY_ASSIGN){
+      return '<div class="muted tiny">Reassigning a contact needs the ' +
+             '“Reassign account PICs” permission.</div>';
+    }
+    var o = d.ownership || {};
+    return '' +
+      '<div class="dir-filters" style="margin-top:8px">' +
+      '<div><label>PIC</label><select id="as-pic">' +
+        options(PEOPLE, o.pic || '', 'code', 'name') + '</select></div>' +
+      '<div><label>Secondary PIC</label><select id="as-sec">' +
+        options(PEOPLE, o.secondary_pic || '', 'code', 'name') + '</select></div>' +
+      '<div><label>Vertical</label><select id="as-vert">' +
+        options(VERTICALS, o.vertical || '', 'code', 'label') + '</select></div>' +
+      '<div><label>Relationship</label><select id="as-rel">' +
+        options(RELATIONSHIPS, (d.contact || {}).relationship || '', 'code', 'label') +
+        '</select></div>' +
+      '<div style="grid-column:span 2"><label>Reason (recorded in the history)</label>' +
+        '<input id="as-reason" placeholder="Why is this changing?"></div>' +
+      '<div><button class="btn primary" type="button" id="as-go">Save</button></div>' +
+      '</div><div id="as-msg" class="muted tiny" style="margin-top:6px"></div>';
+  }
+
+  function render(d){
+    var c = d.contact || {}, a = d.account, o = d.ownership || {};
+    var na = d.next_action;
+    drawer.innerHTML =
+      '<div class="card-hd"><h3>' + esc(c.name) + '</h3>' +
+      '<button class="btn tiny ghost" type="button" id="dr-close">Close</button></div>' +
+      '<div class="muted">' + esc(c.designation || '—') + ' · ' +
+        esc(c.company || '—') + '</div>' +
+      '<div class="meta" style="margin:8px 0">' +
+        '<div>Email: ' + esc(c.email || '—') + '</div>' +
+        '<div>Phone: ' + esc(c.phone || c.mobile || '—') + '</div>' +
+        '<div>Account: ' + (a ? esc(a.name) + ' <span class="pill">' + esc(a.access) +
+            '</span>' : '—') + '</div>' +
+        '<div>PIC: ' + esc(o.pic_name || o.pic || '—') +
+          (o.secondary_pic ? ' · 2nd: ' + esc(o.secondary_pic_name || o.secondary_pic) : '') +
+          '</div>' +
+        '<div>Vertical: ' + esc(o.vertical || '—') + '</div>' +
+        '<div>Last interaction: ' + esc(d.last_interaction || 'never') +
+          (d.last_interaction_days !== null && d.last_interaction_days !== undefined
+            ? ' (' + d.last_interaction_days + 'd)' : '') + '</div>' +
+        '<div>Next action: ' + (na ? esc(na.what) + (na.when ? ' — ' + esc(na.when) : '')
+            : '<span class="dir-cold">none recorded</span>') + '</div>' +
+      '</div>' +
+      '<h4>Assignment</h4>' + assignForm(d) +
+      '<h4>Leads</h4>' + list(d.leads, function(l){
+        return '<li>' + esc(l.company) + ' — ' + esc(l.stage) + ' · ' +
+               esc(l.value) + '</li>'; }, 'No leads you can see.') +
+      '<h4>RFQs</h4>' + list(d.rfqs, function(r){
+        return '<li>' + esc(r.number) + ' — ' + esc(r.status) + '</li>'; },
+        'No RFQs you can see.') +
+      '<h4>Quotes</h4>' + list(d.quotes, function(q){
+        return '<li>' + esc(q.number) + ' — ' + esc(q.status) + ' · ' +
+               esc(q.total) + '</li>'; }, 'No quotes you can see.') +
+      '<h4>Meetings</h4>' + list(d.meetings, function(m){
+        return '<li>' + esc(m.occurred_at) + ' — ' + esc(m.subject || m.kind) +
+               '</li>'; }, 'No meetings recorded.') +
+      '<h4>Projects</h4>' + list(d.projects, function(p){
+        return '<li>' + esc(p.name) + ' — ' + esc(p.stage) + '</li>'; },
+        'No projects linked.') +
+      '<h4>Notes</h4>' + list(d.notes, function(n){
+        return '<li>' + esc(n.text.slice(0, 240)) + '</li>'; }, 'No notes.') +
+      '<h4>Interaction history</h4>' + list(d.interactions, function(i){
+        return '<li>' + esc(i.at_display) + ' · ' + esc(i.kind) + ' — ' +
+               esc(i.subject) + '</li>'; }, 'Nothing recorded yet.') +
+      '<h4>Assignment history</h4>' + list(o.history, function(h){
+        return '<li>' + esc(h.assigned_at) + ': ' + esc(h.previous_pic || '—') +
+               ' → ' + esc(h.new_pic || '—') + ' (' + esc(h.reason) + ')</li>'; },
+        'Never reassigned.');
+
+    document.getElementById('dr-close').onclick = close;
+    var go = document.getElementById('as-go');
+    if (go) go.onclick = function(){ save(c.id); };
+  }
+
+  async function save(id){
+    var msg = document.getElementById('as-msg');
+    var body = {
+      primary_pic: document.getElementById('as-pic').value,
+      secondary_pic: document.getElementById('as-sec').value,
+      vertical: document.getElementById('as-vert').value,
+      relationship_type: document.getElementById('as-rel').value,
+      reason: document.getElementById('as-reason').value
+    };
+    msg.textContent = 'Saving…';
+    var d = await postJson('/api/directory/contact/' + id + '/assign', body);
+    msg.textContent = d.ok
+      ? (d.changed ? 'Saved, and written to the history.' : 'Nothing changed.')
+      : d.error;
+    if (d.ok && d.changed) open(id);
+  }
+
+  async function open(id){
+    drawer.classList.add('open'); scrim.classList.add('open');
+    drawer.innerHTML = '<div class="spinner">Loading…</div>';
+    var d = await getJson('/api/directory/contact/' + id);
+    if (!d.ok){ drawer.innerHTML = '<div class="err">' + esc(d.error) + '</div>'; return; }
+    render(d);
+  }
+  function close(){ drawer.classList.remove('open'); scrim.classList.remove('open'); }
+
+  scrim.onclick = close;
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') close(); });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-contact]'),
+    function(el){ el.onclick = function(){ open(el.getAttribute('data-contact')); }; });
+
+  document.getElementById('wh-go').onclick = async function(){
+    var out = document.getElementById('wh-out');
+    var q = document.getElementById('wh-q').value.trim();
+    if (!q){ out.textContent = 'Type something to look up.'; return; }
+    out.textContent = 'Looking…';
+    var d = await getJson('/api/accounts/who-handles?q=' + encodeURIComponent(q));
+    if (!d.ok){ out.textContent = d.error; return; }
+    if (!d.matches.length){ out.textContent = 'No account matches that.'; return; }
+    out.innerHTML = d.matches.map(function(m){
+      var owners = m.owners.length
+        ? m.owners.map(function(o){
+            return esc(o.name) + ' (' + esc(o.role) +
+                   (o.email ? ', ' + esc(o.email) : '') + ')'; }).join(' · ')
+        : '<span class="dir-cold">nobody — this account is unowned</span>';
+      return '<div class="intel-item"><strong>' + esc(m.name) + '</strong>' +
+        (m.group ? ' <span class="muted">(' + esc(m.group) + ')</span>' : '') +
+        '<div>' + owners + '</div>' +
+        '<div class="muted tiny">' + esc(m.vertical || '—') + ' · ' +
+        esc(m.city || '—') + ' · ' + m.active_opportunities +
+        ' active opportunit' + (m.active_opportunities === 1 ? 'y' : 'ies') +
+        ' · last interaction ' + esc(m.last_interaction || 'never') + '</div></div>';
+    }).join('');
+  };
+})();
+</script>
+</body>
+</html>

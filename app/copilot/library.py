@@ -435,6 +435,95 @@ QUESTIONS = [
     (SALES, 'what should I do next on this lead', 'next_best_action'),
     (SALES, 'who should I call today', 'next_best_action'),
 
+    # ── Release 6 · the Workbench, the sales rules, the review ───────
+    # Written against the intents in app/copilot/workbench_intents.py.
+    # Several of these sit a hair away from an older intent on purpose:
+    # "accounts we have not contacted" is the management report
+    # (accounts_inactive) and "accounts I have not contacted" is the
+    # viewer's own book, "who handles JSW" is routing by name
+    # (account_owner) and "who handles this account" is the record in
+    # hand. The pairs are kept adjacent in the library so that a future
+    # rule that blurs them fails this file rather than production.
+    (SALES, 'what do I need to update today', 'what_to_update_today'),
+    (SALES, 'what needs updating today', 'what_to_update_today'),
+    (SALES, 'what should I update today', 'what_to_update_today'),
+    (SALES, 'what is on my workbench', 'what_to_update_today'),
+    (SALES, 'show my workbench', 'what_to_update_today'),
+    (HEAD, 'what do we need to update today', 'what_to_update_today'),
+    (SALES, 'anything I need to update', 'what_to_update_today'),
+    (SALES, 'daily workbench', 'what_to_update_today'),
+
+    (SALES, 'show overdue quotations', 'quotes_overdue'),
+    (SALES, 'overdue quotations', 'quotes_overdue'),
+    (SALES, 'overdue quotes', 'quotes_overdue'),
+    (HEAD, 'which quotations are overdue', 'quotes_overdue'),
+    (HEAD, 'quotes past their deadline', 'quotes_overdue'),
+    (SALES, 'late quotations', 'quotes_overdue'),
+    (MGMT, 'quotations past the deadline', 'quotes_overdue'),
+
+    (SALES, 'which RFQs are more than 5 days old', 'rfqs_older_than'),
+    (SALES, 'RFQs older than 7 days', 'rfqs_older_than'),
+    (SALES, 'rfqs more than 10 days old', 'rfqs_older_than'),
+    (HEAD, 'RFQ ageing', 'rfqs_older_than'),
+    (HEAD, 'ageing of RFQs', 'rfqs_older_than'),
+    (SALES, 'how old are my RFQs', 'rfqs_older_than'),
+
+    (SALES, 'which accounts have I not contacted in 90 days',
+     'accounts_not_contacted'),
+    (SALES, 'accounts I have not contacted', 'accounts_not_contacted'),
+    (ACCT, 'which accounts have I not contacted', 'accounts_not_contacted'),
+    (SALES, 'my accounts with no contact', 'accounts_not_contacted'),
+    (ACCT, 'which of my accounts have had no contact',
+     'accounts_not_contacted'),
+    (SALES, 'accounts I have not called in 60 days',
+     'accounts_not_contacted'),
+
+    (SALES, 'who handles this account', 'who_handles_account'),
+    (OPS, 'who owns this customer', 'who_handles_account'),
+    (SALES, 'who looks after this client', 'who_handles_account'),
+    (HEAD, 'who in our team handles this', 'who_handles_account'),
+    (OPS, 'who is in charge of this account', 'who_handles_account'),
+    (SALES, 'which PIC handles this', 'who_handles_account'),
+
+    (SALES, 'prepare my weekly sales review', 'my_weekly_review'),
+    (SALES, 'weekly sales review', 'my_weekly_review'),
+    (SALES, 'my weekly review', 'my_weekly_review'),
+    (HEAD, 'prepare the weekly review', 'my_weekly_review'),
+    (HEAD, 'sales review pack', 'my_weekly_review'),
+    (SALES, 'review my week', 'my_weekly_review'),
+
+    # ── Release 6 · market intelligence ──────────────────────────────
+    (MGMT, 'which tracked projects appointed an EPC', 'projects_with_epc'),
+    (HEAD, 'projects with an EPC contractor', 'projects_with_epc'),
+    (PROJ, 'which projects have an EPC', 'projects_with_epc'),
+    (MGMT, 'EPC appointments', 'projects_with_epc'),
+    (PROJ, 'which projects awarded an EPC', 'projects_with_epc'),
+
+    (MGMT, 'which competitors recently executed warehouse projects',
+     'competitors_recent_projects'),
+    (HEAD, 'recent competitor projects', 'competitors_recent_projects'),
+    (MGMT, 'latest competitor activity', 'competitors_recent_projects'),
+    (HEAD, 'what have competitors been winning',
+     'competitors_recent_projects'),
+    (MGMT, 'which competitors executed projects this year',
+     'competitors_recent_projects'),
+
+    (OPS, 'which MPV operators call Chennai', 'vessel_operators_calling'),
+    (OPS, 'MPV operators', 'vessel_operators_calling'),
+    (PROJ, 'heavy lift operators calling Mundra',
+     'vessel_operators_calling'),
+    (OPS, 'breakbulk operators', 'vessel_operators_calling'),
+    (OPS, 'which vessel operators call at Kandla',
+     'vessel_operators_calling'),
+    (PROJ, 'which carriers call Nhava Sheva', 'vessel_operators_calling'),
+
+    (SALES, 'which contacts do we know at this company',
+     'contacts_at_company'),
+    (ACCT, 'who do we know at this company', 'contacts_at_company'),
+    (SALES, 'which contacts do we know there', 'contacts_at_company'),
+    (ACCT, 'contacts that we know', 'contacts_at_company'),
+    (SALES, 'known contacts', 'contacts_at_company'),
+
     # ── Questions the catalogue does NOT answer ──────────────────────
     #
     # As important as the rest. §3.4 forbids inventing an answer, and a

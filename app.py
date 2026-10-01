@@ -4456,12 +4456,30 @@ def init_db():
     with app.app_context():
         # Models that live in app/models are otherwise imported lazily, so
         # create_all would not know about them on a fresh database.
-        for _m in ('app.models.audit', 'app.models.data_quality'):
+        # Order matters: a table's foreign keys must find the tables
+        # they point at already on the metadata, so the long-standing
+        # modules load before the newer ones that reference them.
+        for _m in ('app.models.audit', 'app.models.data_quality',
+                   'presales.models', 'presales.models_projects',
+                   'app.models.rfq', 'app.models.quote',
+                   'app.models.tms_handover', 'app.models.competitor',
+                   'app.models.public_source', 'app.models.task_engine',
+                   'app.models.notification', 'app.models.review',
+                   'app.models.escalation', 'app.models.intel',
+                   'app.directory.models'):
             try:
                 __import__(_m)
             except Exception as _exc:              # pragma: no cover
                 app.logger.warning('model import %s failed: %s', _m, _exc)
-        db.create_all()
+        try:
+            db.create_all()
+        except Exception as _exc:
+            # A model whose foreign key cannot be resolved must not stop
+            # the CRM booting: the tables that do resolve are created,
+            # and the missing one is named in the log and by the
+            # preflight's schema drift check.
+            db.session.rollback()
+            app.logger.error('create_all stopped early: %s', _exc)
         # Additive column autoheal — safe to run every boot (Postgres
         # ADD COLUMN IF NOT EXISTS + SQLite's ALTER TABLE won't error if
         # column exists thanks to the try/except).
@@ -5209,6 +5227,13 @@ for _mod_path, _bp_name in [
     ('app.intake.routes',        'intake_bp'),
     ('app.copilot.routes',       'copilot_bp'),
     ('app.ops.routes',           'ops_bp'),
+    # The daily operating system (Workbench is registered above, before
+    # my_work, because it owns /my-work).
+    ('app.review.routes',        'review_bp'),
+    ('app.management.routes',    'management_bp'),
+    ('app.directory.routes',     'directory_bp'),
+    ('app.hygiene.routes',       'hygiene_bp'),
+    ('app.intel.routes',         'intel_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])

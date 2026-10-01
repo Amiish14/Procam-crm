@@ -216,6 +216,26 @@ email is reported as refused.
   clock used to vanish from the bucket list while still counting in the
   headline. It is now counted in the first bucket.
 
+### Release notes — the daily operating system (2026-10)
+
+Five migrations, five new timers, eight new screens and no new required
+configuration. The full manifest, in order, with rollback:
+**[Release — the daily operating system](RELEASE_2026_10_DAILY_OS.md)**.
+
+Short version:
+
+```bash
+for m in 2026_10_06_workbench 2026_10_07_review_actions \
+         2026_10_08_contact_relationships 2026_10_09_intelligence \
+         2026_10_10_escalation; do
+  .venv/bin/python scripts/$m.py --check && .venv/bin/python scripts/$m.py
+done
+```
+
+Then restart, and before enabling the report and escalation timers run
+`scripts/send_reports.py --daily --dry-run` and
+`scripts/escalation_sweep.py --dry-run` so nobody is mailed a backlog.
+
 ## 5. Server — restart and verify
 
 ```bash

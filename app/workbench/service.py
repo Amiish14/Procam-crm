@@ -55,8 +55,38 @@ def _lead_rows(sc):
     return q.all()
 
 
+#: The hygiene checks are ten scoped queries over the whole lead table —
+#: two thirds of the board's cost for a manager, and re-run on every
+#: filter, sort and page change of the same board. One minute of memory
+#: makes paging free; a correction shows up on the next minute, and a
+#: bulk update clears it at once (see bulk._write).
+_HYGIENE_TTL_SECONDS = 60
+_hygiene_cache = {}
+
+
+def hygiene_cache_clear():
+    """Called after anything that fixes records, so the board does not
+    keep showing an issue somebody has just resolved."""
+    _hygiene_cache.clear()
+
+
+def _scope_key(sc):
+    return (sc.emp_code, None if sc.unrestricted else tuple(sorted(sc.codes or ())))
+
+
 def _hygiene_ids(sc):
     """{lead_id: [check title, ...]} for the lead-level checks."""
+    import time as _time
+    key = (_scope_key(sc), _today().isoformat())
+    hit = _hygiene_cache.get(key)
+    if hit and (_time.monotonic() - hit[0]) < _HYGIENE_TTL_SECONDS:
+        return hit[1]
+    out = _hygiene_ids_uncached(sc)
+    _hygiene_cache[key] = (_time.monotonic(), out)
+    return out
+
+
+def _hygiene_ids_uncached(sc):
     from app.data_quality import service as dq
     out = {}
     for key in LEAD_HYGIENE_CHECKS:

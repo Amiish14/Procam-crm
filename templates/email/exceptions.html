@@ -1,0 +1,32 @@
+{% extends 'email/_shell.html' %}
+{% import 'email/_bits.html' as bits %}
+
+{% block title %}Still open at the end of {{ r.date }}{% endblock %}
+{% block strap %}{{ r.person.name }} · deadlines missed or about to be
+  missed, where nobody has been in touch today{% endblock %}
+
+{% block body %}
+{% if r.empty %}
+  {{ bits.nothing('Nothing was left open today. Every follow-up and quote
+     that fell due has either been actioned or has a contact logged
+     against it.') }}
+{% else %}
+  {{ bits.tiles([
+      ('Still open', r.count),
+      ('Overdue', r.summary.overdue),
+      ('Quotes past deadline', r.quote_ageing.overdue)]) }}
+
+  {% for s in r.sections %}
+    {{ bits.section(s, base_url) }}
+  {% endfor %}
+
+  <div style="font-size:12px;color:#8A857F;margin-top:18px;">
+    An item disappears from this report as soon as a call, meeting or
+    email is logged against it, or its next action is moved to a new
+    date. It is not a performance measure; it is the list to clear
+    before tomorrow.
+  </div>
+{% endif %}
+{% endblock %}
+
+{% block cta_label %}Clear these now{% endblock %}

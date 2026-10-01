@@ -139,11 +139,21 @@ def test_the_lead_payload_exposes_both(client):
 # ─── notifications ───────────────────────────────────────────────────────
 def test_both_assignees_are_notified(client):
     lid = _lead(client, company='Notify Ltd')
+    with flask_app.app_context():
+        # Only rows this assignment writes: the suite shares one
+        # database and another module's lead can carry the same id.
+        high_water = db.session.query(db.func.max(Notification.id)).scalar() or 0
     client.put(f'/api/leads/{lid}', json={'reassignment_reason': REASON, 'assigned_to': 'PIC001',
                                           'secondary_owner': 'PIC002'})
     with flask_app.app_context():
-        notes = Notification.query.filter_by(entity_type='Lead',
-                                             entity_id=lid).all()
+        # kind as well as id: the suite shares one database, and another
+        # module's notification about its own lead can carry the same
+        # numeric entity_id.
+        notes = (Notification.query
+                 .filter(Notification.id > high_water,
+                         Notification.entity_type == 'Lead',
+                         Notification.entity_id == str(lid),
+                         Notification.kind == 'lead_assigned').all())
         who = {n.user_id for n in notes}
         assert who == {'PIC001', 'PIC002'}, who
 

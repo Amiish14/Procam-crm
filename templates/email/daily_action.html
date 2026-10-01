@@ -1,0 +1,30 @@
+{% extends 'email/_shell.html' %}
+{% import 'email/_bits.html' as bits %}
+
+{% block title %}Your actions for {{ r.date }}{% endblock %}
+{% block strap %}{{ r.person.name }}
+  {%- if r.person.vertical %} · {{ r.person.vertical }}{% endif %}{% endblock %}
+
+{% block body %}
+{% if r.empty %}
+  {{ bits.nothing('Nothing on your board needs attention today. Anything
+     that falls due will appear here tomorrow morning.') }}
+{% else %}
+  {{ bits.tiles([
+      ('Overdue', r.summary.overdue),
+      ('Due today', r.summary.due_today),
+      ('Quotes due', r.summary.quotes_due),
+      ('Open items', r.total)]) }}
+
+  {% for s in r.sections %}
+    {{ bits.section(s, base_url) }}
+  {% endfor %}
+
+  {% if r.quote_ageing.total %}
+    {{ bits.heading('Quotes the customer is waiting for') }}
+    {{ bits.ageing_table(r.quote_ageing) }}
+  {% endif %}
+{% endif %}
+{% endblock %}
+
+{% block cta_label %}Open my work{% endblock %}

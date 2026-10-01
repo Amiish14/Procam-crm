@@ -1,0 +1,17 @@
+[Unit]
+Description=Procam CRM — the end-of-day exceptions report
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+# Only deadlines missed or about to be missed, and only where nobody
+# has been in touch today, so an item actioned during the day does not
+# come back as a reproach in the evening.
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/send_reports.py --exceptions
+SuccessExitStatus=1
+TimeoutStartSec=1800
+Nice=10
+IOSchedulingClass=idle

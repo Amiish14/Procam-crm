@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Competitor Intelligence</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+{% include "intel/_intel_css.html" %}
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Intelligence</div>
+    <h1>Competitor activity</h1>
+    <div class="crm-sub">Who is doing what, by vertical, service,
+      geography and industry. Every entry carries its source and how far
+      it can be trusted.</div>
+  </div>
+  <div class="toolbar">
+    <a class="btn" href="{{ url_prefix }}/intelligence/projects">Projects</a>
+    <a class="btn" href="{{ url_prefix }}/intelligence/vendors">Vendors &amp; vessels</a>
+  </div>
+</div>
+
+{% macro picker(name, options, label) %}
+  <label>{{ label }}
+    <select id="{{ name }}"><option value="">Any</option>
+      {% for o in options %}<option value="{{ o.code }}">{{ o.label }}</option>{% endfor %}
+    </select>
+    {% if not options %}<span class="intel-bad" style="font-size:11px">not configured in Master Data</span>{% endif %}
+  </label>
+{% endmacro %}
+
+<div class="card"><div class="panel">
+  <b>Record what was seen</b>
+  <div class="meta">The vocabularies come from Master Data. A value that
+    is missing is added there, not typed here.</div>
+  <div class="intel-filters">
+    <label>Competitor<input id="cName" size="22"></label>
+    {{ picker('cVertical', vocab.vertical, 'Vertical') }}
+    {{ picker('cService', vocab.service, 'Service') }}
+    {{ picker('cIndustry', vocab.industry, 'Industry') }}
+    <label>Geography<input id="cGeo" size="14"></label>
+    {{ picker('cType', vocab.activity_type, 'Activity') }}
+    {{ picker('cConf', vocab.confidence, 'Confidence') }}
+    <label>Event date<input id="cDate" type="date"></label>
+  </div>
+  <div class="intel-filters">
+    <label style="flex:1">What happened<input id="cSummary" style="width:100%"></label>
+    <label>Source<input id="cSource" size="18"></label>
+    <label>Source link<input id="cSourceUrl" size="24" placeholder="https://"></label>
+    <button class="btn" id="cSave">Record</button>
+  </div>
+  <div id="cNote" class="meta"></div>
+</div></div>
+
+<div class="intel-filters">
+  <label>Competitor<input id="fName" size="18"></label>
+  {{ picker('fVertical', vocab.vertical, 'Vertical') }}
+  {{ picker('fService', vocab.service, 'Service') }}
+  <label>Geography<input id="fGeo" size="14"></label>
+  <button class="btn" id="fGo">Apply</button>
+</div>
+
+<div class="card"><div class="panel">
+  <div id="count" class="meta"></div>
+  <table class="intel-table">
+    <thead><tr><th>Date</th><th>Competitor</th><th>Vertical</th>
+      <th>Service</th><th>Geography</th><th>Activity</th><th>What</th>
+      <th>Confidence</th><th>Source</th><th>Last verified</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="empty" class="intel-empty" hidden>Nothing recorded against
+    these filters.</div>
+</div></div>
+
+</div>
+{% include "intel/_intel_js.html" %}
+<script>
+(function(){
+  var E = INTEL.esc;
+  function val(id){ return (document.getElementById(id).value || '').trim(); }
+
+  async function load(){
+    var qs = new URLSearchParams({competitor: val('fName'),
+      vertical: val('fVertical'), service: val('fService'),
+      geography: val('fGeo'), per_page: 100});
+    var d = await INTEL.get('/api/intel/competitor-activity?' + qs.toString());
+    var body = document.getElementById('rows');
+    if (!d.ok){ body.innerHTML = ''; INTEL.note(document.getElementById('count'), d.error, true); return; }
+    document.getElementById('count').textContent =
+      d.total + ' entr' + (d.total === 1 ? 'y' : 'ies');
+    document.getElementById('empty').hidden = d.total > 0;
+    body.innerHTML = d.items.map(function(a){
+      return '<tr><td>' + E(a.event_date) + '</td><td>' + E(a.competitor_name) +
+        '</td><td>' + E(a.vertical) + '</td><td>' + E(a.service) +
+        '</td><td>' + E(a.geography) + '</td><td>' + E(a.activity_type) +
+        '</td><td>' + E(a.summary) + '</td><td>' + E(a.confidence) +
+        '</td><td class="intel-src">' + (a.source_url
+          ? '<a href="' + E(a.source_url) + '" target="_blank" rel="noopener noreferrer">' + E(a.source || 'source') + '</a>'
+          : E(a.source)) +
+        '</td><td class="intel-stamp">' + E(a.last_verified_at || 'never') +
+        '</td></tr>';
+    }).join('');
+  }
+
+  document.getElementById('fGo').addEventListener('click', load);
+  document.getElementById('cSave').addEventListener('click', async function(){
+    var d = await INTEL.post('/api/intel/competitor-activity', {
+      competitor_name: val('cName'), summary: val('cSummary'),
+      vertical: val('cVertical'), service: val('cService'),
+      industry: val('cIndustry'), geography: val('cGeo'),
+      activity_type: val('cType'), confidence: val('cConf') || 'reported',
+      event_date: val('cDate'), source: val('cSource'),
+      source_url: val('cSourceUrl')});
+    var note = document.getElementById('cNote');
+    if (!d.ok){ INTEL.note(note, d.error, true); return; }
+    INTEL.note(note, 'Recorded.');
+    document.getElementById('cSummary').value = '';
+    load();
+  });
+  load();
+})();
+</script>
+</body>
+</html>

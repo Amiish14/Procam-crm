@@ -34,6 +34,10 @@ The operations check counts the first two as the jobs they cover.
 | `procam-crm-ops-status.{service,timer}` | Read-only operations checks; writes `instance/ops_status.json` for /CRM/admin/ops ([Monitoring Guide](../MONITORING_GUIDE.md)) | every 10 min |
 | `procam-crm-dq-snapshot.{service,timer}` | Data Quality counts for the dashboard trends (needs the `data_quality_snapshots` table) | daily 03:00 |
 | `logrotate-procam-crm` | Rotate gunicorn logs in `/var/log/procam-crm/` | daily, 30 kept |
+| `procam-crm-daily-report.{service,timer}` | Morning action report, one email per person who owns work ([Notifications](../NOTIFICATIONS.md)) | Mon–Sat 08:00 IST (02:30 UTC) |
+| `procam-crm-exceptions-report.{service,timer}` | End-of-day report of what is still open | Mon–Sat 19:00 IST (13:30 UTC) |
+| `procam-crm-weekly-report.{service,timer}` | Everyone's own week, then the vertical heads' team review | Mon 08:30 IST (03:00 UTC) |
+| `procam-crm-monthly-report.{service,timer}` | Company-wide management report | 1st, 09:00 IST (03:30 UTC) |
 
 Install a pair:
 

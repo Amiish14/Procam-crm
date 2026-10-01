@@ -1,0 +1,37 @@
+{#
+  The outer frame every report email shares: the masthead, the body,
+  the button back into the CRM, and the footer that says nobody is
+  reading replies.
+
+  Children fill `title`, `strap`, `body` and `cta_label`. A child that
+  wants a different destination sets `r.link`, which is always an
+  internal path so that `base_url` can be empty in development.
+#}
+<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+            color:#1a1917;font-size:14px;line-height:1.6;max-width:680px;">
+  <div style="border-left:3px solid #CC1E2E;padding-left:14px;margin-bottom:20px;">
+    <div style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+                color:#8A857F;font-weight:600;">Procam CRM</div>
+    <div style="font-size:19px;font-weight:600;margin-top:2px;">
+      {% block title %}{% endblock %}</div>
+    <div style="font-size:12.5px;color:#6B6762;margin-top:2px;">
+      {% block strap %}{% endblock %}</div>
+  </div>
+
+  {% block body %}{% endblock %}
+
+  <div style="margin-top:26px;">
+    <a href="{{ base_url }}{{ r.link }}"
+       style="display:inline-block;background:#CC1E2E;color:#ffffff;
+              text-decoration:none;padding:11px 22px;border-radius:6px;
+              font-weight:600;font-size:13.5px;">{% block cta_label %}Open my
+      work{% endblock %}</a>
+  </div>
+
+  <div style="margin-top:26px;padding-top:14px;border-top:1px solid #E0DDDA;
+              font-size:11.5px;color:#8A857F;">
+    Automated report from the Procam CRM. Replies are not monitored.
+    Every figure is worked out from the same rules as the Workbench
+    screen, for the records you are allowed to see.
+  </div>
+</div>

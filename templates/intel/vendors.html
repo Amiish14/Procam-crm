@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vendors, Vessels &amp; Port Calls</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+{% include "intel/_intel_css.html" %}
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Intelligence</div>
+    <h1>Vendors, vessels and port calls</h1>
+    <div class="crm-sub">Who can carry it, what the ship can lift, and
+      when it is alongside. Categories, vessel types and ports are
+      Master Data — add one there and it appears here.</div>
+  </div>
+  <div class="toolbar">
+    <a class="btn" href="{{ url_prefix }}/intelligence/projects">Projects</a>
+    <a class="btn" href="{{ url_prefix }}/intelligence/competitors">Competitors</a>
+  </div>
+</div>
+
+<div class="card"><div class="panel">
+  <b>What these registers hold</b>
+  <div class="meta">
+    {{ coverage.vendors }} vendor{{ '' if coverage.vendors == 1 else 's' }} ·
+    {{ coverage.vessels }} vessel{{ '' if coverage.vessels == 1 else 's' }} ·
+    {{ coverage.port_calls }} port call{{ '' if coverage.port_calls == 1 else 's' }} ·
+    {{ coverage.categories_configured }} categories and
+    {{ coverage.ports_configured }} ports configured.
+  </div>
+  <table class="intel-table">
+    <thead><tr><th>Automated source</th><th>Status</th><th>What it needs</th></tr></thead>
+    <tbody>
+      {% for row in report %}
+      <tr><td>{{ row.label }}</td>
+        <td class="intel-status {{ 'intel-bad' if not row.available_unconfigured }}">{{ row.status }}</td>
+        <td class="intel-dep">{{ row.dependency }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="meta">Until a subscription exists, every row below is one
+    a colleague entered, with the source they entered it from.</div>
+</div></div>
+
+{% macro picker(name, options, label, blank='Any') %}
+  <label>{{ label }}
+    <select id="{{ name }}"><option value="">{{ blank }}</option>
+      {% for o in options %}<option value="{{ o.code }}">{{ o.label }}</option>{% endfor %}
+    </select>
+    {% if not options %}<span class="intel-bad" style="font-size:11px">not configured in Master Data</span>{% endif %}
+  </label>
+{% endmacro %}
+
+<div class="card"><div class="panel">
+  <b>Vendors</b>
+  <div class="intel-filters">
+    <label>Search<input id="vq" size="18"></label>
+    {{ picker('vcat', vocab.vendor_category, 'Category') }}
+    {{ picker('vport', vocab.india_port, 'Port served') }}
+    <button class="btn" id="vGo">Apply</button>
+  </div>
+  <table class="intel-table">
+    <thead><tr><th>Name</th><th>Category</th><th>Country</th><th>Ports</th>
+      <th>Contact</th><th>Source</th><th>Last verified</th></tr></thead>
+    <tbody id="vrows"></tbody>
+  </table>
+  <div id="vempty" class="intel-empty" hidden>No vendors recorded yet.</div>
+</div></div>
+
+<div class="card"><div class="panel">
+  <b>Vessel capability</b>
+  <div class="intel-filters">
+    <label>Search<input id="sq" size="16"></label>
+    {{ picker('stype', vocab.vessel_type, 'Type') }}
+    <label>Min lift (t)<input id="slift" size="7" inputmode="numeric"></label>
+    <label>Self-geared
+      <select id="sgear"><option value="">Any</option><option value="1">Yes</option><option value="0">No</option></select></label>
+    <label>Calls India
+      <select id="sindia"><option value="">Any</option><option value="1">Yes</option><option value="0">No</option></select></label>
+    <button class="btn" id="sGo">Apply</button>
+  </div>
+  <table class="intel-table">
+    <thead><tr><th>Vessel</th><th>Owner / operator</th><th>Type</th>
+      <th>DWT</th><th>Deck m²</th><th>Cranes</th><th>Max lift</th>
+      <th>Gear</th><th>Trading area</th><th>Local agent</th>
+      <th>Source</th></tr></thead>
+    <tbody id="srows"></tbody>
+  </table>
+  <div id="sempty" class="intel-empty" hidden>No vessels recorded yet.
+    A vessel register is a licensed product; see the source status
+    above.</div>
+</div></div>
+
+<div class="card"><div class="panel">
+  <b>India port calls</b>
+  <div class="intel-filters">
+    {{ picker('pport', vocab.india_port, 'Port') }}
+    <label>Vessel<input id="pves" size="16"></label>
+    <label>Next (days)<input id="pdays" size="5" inputmode="numeric"></label>
+    <button class="btn" id="pGo">Apply</button>
+  </div>
+  <table class="intel-table">
+    <thead><tr><th>Vessel</th><th>Port</th><th>Operator</th><th>ETA</th>
+      <th>ETD</th><th>Previous</th><th>Next</th><th>Cargo</th>
+      <th>Agent</th><th>Source</th><th>Last verified</th></tr></thead>
+    <tbody id="prows"></tbody>
+  </table>
+  <div id="pempty" class="intel-empty" hidden>No port calls recorded.
+    An empty list here means no data source, not an empty berth.</div>
+</div></div>
+
+</div>
+{% include "intel/_intel_js.html" %}
+<script>
+(function(){
+  var E = INTEL.esc;
+  function val(id){ return (document.getElementById(id).value || '').trim(); }
+  function cell(v){ return '<td>' + E(v) + '</td>'; }
+  function src(row){
+    return '<td class="intel-src">' + (row.source_url
+      ? '<a href="' + E(row.source_url) + '" target="_blank" rel="noopener noreferrer">' + E(row.source || 'source') + '</a>'
+      : E(row.source || '—')) + ' <span class="intel-stamp">' + E(row.confidence) + '</span></td>';
+  }
+
+  async function vendors(){
+    var qs = new URLSearchParams({q: val('vq'), category: val('vcat'),
+                                  port: val('vport'), per_page: 100});
+    var d = await INTEL.get('/api/intel/vendors?' + qs.toString());
+    if (!d.ok) return;
+    document.getElementById('vempty').hidden = d.total > 0;
+    document.getElementById('vrows').innerHTML = d.items.map(function(v){
+      return '<tr>' + cell(v.name) + cell(v.category) + cell(v.country) +
+        cell((v.ports_served || []).join(', ')) +
+        cell([v.contact_name, v.contact_email, v.contact_phone].filter(Boolean).join(' · ')) +
+        src(v) + '<td class="intel-stamp">' + E(v.last_verified_at || 'never') + '</td></tr>';
+    }).join('');
+  }
+
+  async function vessels(){
+    var qs = new URLSearchParams({q: val('sq'), vessel_type: val('stype'),
+      min_lift: val('slift'), self_geared: val('sgear'),
+      calls_india: val('sindia'), per_page: 100});
+    var d = await INTEL.get('/api/intel/vessels?' + qs.toString());
+    if (!d.ok) return;
+    document.getElementById('sempty').hidden = d.total > 0;
+    document.getElementById('srows').innerHTML = d.items.map(function(v){
+      var gear = [v.self_geared ? 'self-geared' : '', v.heavy_lift ? 'heavy-lift' : '',
+                  v.roro ? 'RoRo' : ''].filter(Boolean).join(', ');
+      return '<tr>' + cell(v.name) + cell(v.owner_operator) + cell(v.vessel_type) +
+        cell(v.dwt == null ? '—' : v.dwt) +
+        cell(v.deck_capacity_sqm == null ? '—' : v.deck_capacity_sqm) +
+        cell(v.cranes) +
+        cell(v.max_lift_tonnes == null ? 'not recorded' : v.max_lift_tonnes + ' t') +
+        cell(gear) + cell(v.trading_area) + cell(v.local_agent) + src(v) + '</tr>';
+    }).join('');
+  }
+
+  async function calls(){
+    var qs = new URLSearchParams({port: val('pport'), vessel: val('pves'),
+      days_ahead: val('pdays'), per_page: 100});
+    var d = await INTEL.get('/api/intel/port-calls?' + qs.toString());
+    if (!d.ok) return;
+    document.getElementById('pempty').hidden = d.total > 0;
+    document.getElementById('prows').innerHTML = d.items.map(function(c){
+      return '<tr>' + cell(c.vessel_name) + cell(c.port_name || c.port_code) +
+        cell(c.operator) + cell(c.eta) + cell(c.etd) + cell(c.previous_port) +
+        cell(c.next_port) + cell(c.cargo) + cell(c.agent) + src(c) +
+        '<td class="intel-stamp">' + E(c.last_verified_at || 'never') + '</td></tr>';
+    }).join('');
+  }
+
+  document.getElementById('vGo').addEventListener('click', vendors);
+  document.getElementById('sGo').addEventListener('click', vessels);
+  document.getElementById('pGo').addEventListener('click', calls);
+  vendors(); vessels(); calls();
+})();
+</script>
+</body>
+</html>

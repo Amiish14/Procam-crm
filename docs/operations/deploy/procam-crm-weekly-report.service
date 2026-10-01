@@ -1,0 +1,20 @@
+[Unit]
+Description=Procam CRM — the weekly reports
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+# Two runs, in this order: everyone gets their own week first, so that
+# a head opening the team review has already seen their own numbers.
+# A failed first run does not stop the second — the reports are
+# independent and a head should not lose the review because one
+# salesperson's board would not build.
+ExecStart=-/var/www/procam-crm/.venv/bin/python scripts/send_reports.py --weekly-user
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/send_reports.py --weekly-head
+SuccessExitStatus=1
+TimeoutStartSec=3600
+Nice=10
+IOSchedulingClass=idle

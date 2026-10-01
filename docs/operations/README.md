@@ -6,6 +6,7 @@ For the people who deploy, run and support the CRM on the production VM.
 |---|---|
 | [Production Runbook](PRODUCTION_RUNBOOK.md) | Daily and weekly checks; the first page to open |
 | [Monitoring Guide](MONITORING_GUIDE.md) | What /CRM/admin/ops and `ops_status.py` check, thresholds, what to do on WARN/FAIL, wiring alerts |
+| [Release — the daily operating system](RELEASE_2026_10_DAILY_OS.md) | Migrations, timers, screens, external dependencies and rollback for the 2026-10 release |
 | [Deployment Guide](DEPLOYMENT_GUIDE.md) | Shipping a new version to the server |
 | [Backup Guide](BACKUP_GUIDE.md) | Taking, checking and keeping backups |
 | [Rollback Guide](ROLLBACK_GUIDE.md) | A deploy went wrong |
@@ -16,6 +17,7 @@ For the people who deploy, run and support the CRM on the production VM.
 | [Classification Guide](CLASSIFICATION_GUIDE.md) | Why an email did or did not become a lead; duplicates, Vendor Master, review actions |
 | [Graph Setup Guide](GRAPH_SETUP_GUIDE.md) | Microsoft 365 permissions for the leads mailbox (for IT) |
 | [AI Configuration Guide](AI_CONFIGURATION_GUIDE.md) | Procam AI Copilot, intake AI, external providers |
+| [Intelligence Guide](INTELLIGENCE_GUIDE.md) | External intelligence: what each source adapter needs, its exact status label, configuring a source, and how project de-duplication works |
 | [Copilot Guide](COPILOT_GUIDE.md) | What the Copilot answers, how it ranks, remembers and stays inside each user's access |
 | [Production Readiness Report](PRODUCTION_READINESS_REPORT.md) | Sign-off: what is done, what is open, risks |
 

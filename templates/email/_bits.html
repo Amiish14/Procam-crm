@@ -1,0 +1,177 @@
+{#
+  The pieces every report email is made of.
+
+  Email clients drop <style> blocks and block remote images, so
+  everything here is an inline style on a table and nothing is fetched
+  from anywhere. The palette is the one email_ingest/notifier.py already
+  sends from, so a report and an assignment email look like the same
+  system.
+#}
+
+{% macro btn(href, label) -%}
+<a href="{{ href }}" style="display:inline-block;background:#CC1E2E;color:#ffffff;
+   text-decoration:none;padding:11px 22px;border-radius:6px;font-weight:600;
+   font-size:13.5px;">{{ label }}</a>
+{%- endmacro %}
+
+{% macro tiles(items) -%}
+<table role="presentation" style="border-collapse:separate;border-spacing:0 0;
+       width:100%;margin:0 0 20px 0;">
+  <tr>
+    {% for label, value in items %}
+    <td style="padding:10px 12px;border:1px solid #E0DDDA;border-radius:8px;
+               background:#FAFAFA;vertical-align:top;">
+      <div style="font-size:21px;font-weight:700;color:#1a1917;">{{ value }}</div>
+      <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+                  color:#8A857F;font-weight:600;margin-top:2px;">{{ label }}</div>
+    </td>
+    {% if not loop.last %}<td style="width:8px;">&nbsp;</td>{% endif %}
+    {% endfor %}
+  </tr>
+</table>
+{%- endmacro %}
+
+{#  A change against the previous period, worded so the direction is
+    unmistakable without colour — some clients strip it. #}
+{% macro delta(d) -%}
+{%- if d is none -%}—
+{%- elif d.change > 0 -%}<span style="color:#A8321F;font-weight:600;">{{ d.now }} (+{{ d.change }})</span>
+{%- elif d.change < 0 -%}<span style="color:#1F7A4D;font-weight:600;">{{ d.now }} ({{ d.change }})</span>
+{%- else -%}{{ d.now }} (no change)
+{%- endif -%}
+{%- endmacro %}
+
+{% macro heading(text) -%}
+<div style="font-size:13px;font-weight:700;color:#1a1917;margin:24px 0 8px 0;
+            padding-bottom:5px;border-bottom:1px solid #E0DDDA;">{{ text }}</div>
+{%- endmacro %}
+
+{#  The heading is the link to the same group on the Workbench, so a
+    reader who wants the full list never has to hunt for the button. #}
+{% macro section(s, base_url, show_owner=False) -%}
+<div style="font-size:13px;font-weight:700;margin:24px 0 8px 0;
+            padding-bottom:5px;border-bottom:1px solid #E0DDDA;">
+  <a href="{{ base_url }}{{ s.link }}"
+     style="color:#1a1917;text-decoration:none;">{{ s.label }}
+    ({{ s.count }}){% if s.value %} · {{ s.value }}{% endif %}</a>
+</div>
+<table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+  <tr>
+    <th align="left" style="padding:4px 10px 4px 0;color:#6B6762;font-weight:600;
+        font-size:11px;letter-spacing:.05em;text-transform:uppercase;">What</th>
+    {% if show_owner %}
+    <th align="left" style="padding:4px 10px 4px 0;color:#6B6762;font-weight:600;
+        font-size:11px;letter-spacing:.05em;text-transform:uppercase;">Owner</th>
+    {% endif %}
+    <th align="left" style="padding:4px 10px 4px 0;color:#6B6762;font-weight:600;
+        font-size:11px;letter-spacing:.05em;text-transform:uppercase;">Due</th>
+    <th align="right" style="padding:4px 0;color:#6B6762;font-weight:600;
+        font-size:11px;letter-spacing:.05em;text-transform:uppercase;">Value</th>
+  </tr>
+  {% for it in s['items'] %}
+  <tr>
+    <td style="padding:7px 10px 7px 0;border-top:1px solid #EFEDEB;vertical-align:top;">
+      <a href="{{ base_url }}{{ it.route }}"
+         style="color:#1a1917;font-weight:600;text-decoration:none;">{{ it.title }}</a>
+      {% if it.account and it.account != it.title %}
+      <div style="color:#6B6762;font-size:12px;">{{ it.account }}</div>
+      {% endif %}
+      <div style="color:#8A857F;font-size:11.5px;margin-top:2px;">
+        {{ it.reasons|join(' · ') }}</div>
+    </td>
+    {% if show_owner %}
+    <td style="padding:7px 10px 7px 0;border-top:1px solid #EFEDEB;
+               vertical-align:top;color:#6B6762;">{{ it.owner }}</td>
+    {% endif %}
+    <td style="padding:7px 10px 7px 0;border-top:1px solid #EFEDEB;
+               vertical-align:top;white-space:nowrap;">{{ it.due or '—' }}</td>
+    <td align="right" style="padding:7px 0;border-top:1px solid #EFEDEB;
+               vertical-align:top;white-space:nowrap;">{{ it.value or '—' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% if s.more %}
+<div style="font-size:12px;color:#6B6762;margin-top:6px;">
+  … and {{ s.more }} more.
+  <a href="{{ base_url }}{{ s.link }}" style="color:#CC1E2E;">See them all</a>.
+</div>
+{% endif %}
+{%- endmacro %}
+
+{% macro people_table(rows, base_url) -%}
+<table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+  <tr>
+    {% for h in ['Person', 'Open', 'Overdue', 'Due today', 'Stale',
+                 'No next action', 'High value'] %}
+    <th align="{{ 'left' if loop.first else 'right' }}"
+        style="padding:4px 10px 4px 0;color:#6B6762;font-weight:600;font-size:11px;
+               letter-spacing:.05em;text-transform:uppercase;">{{ h }}</th>
+    {% endfor %}
+  </tr>
+  {% for p in rows %}
+  <tr>
+    <td style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">
+      <a href="{{ base_url }}/team-workbench?owner={{ p.owner_code }}"
+         style="color:#1a1917;font-weight:600;text-decoration:none;">{{ p.owner }}</a>
+    </td>
+    {% for v in [p.total, p.overdue, p.due_today, p.stale,
+                 p.no_next_action, p.high_value] %}
+    <td align="right" style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">
+      {{ v }}</td>
+    {% endfor %}
+  </tr>
+  {% endfor %}
+</table>
+{%- endmacro %}
+
+{% macro vertical_table(rows) -%}
+<table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+  <tr>
+    {% for h in ['Vertical', 'Open', 'Overdue', 'High value', 'Value'] %}
+    <th align="{{ 'left' if loop.first else 'right' }}"
+        style="padding:4px 10px 4px 0;color:#6B6762;font-weight:600;font-size:11px;
+               letter-spacing:.05em;text-transform:uppercase;">{{ h }}</th>
+    {% endfor %}
+  </tr>
+  {% for v in rows %}
+  <tr>
+    <td style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;
+               font-weight:600;">{{ v.vertical }}</td>
+    <td align="right" style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">{{ v.total }}</td>
+    <td align="right" style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">{{ v.overdue }}</td>
+    <td align="right" style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">{{ v.high_value }}</td>
+    <td align="right" style="padding:6px 0;border-top:1px solid #EFEDEB;">{{ v.value or '—' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{%- endmacro %}
+
+{% macro ageing_table(a) -%}
+<table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+  <tr>
+    <th align="left" style="padding:4px 10px 4px 0;color:#6B6762;font-weight:600;
+        font-size:11px;letter-spacing:.05em;text-transform:uppercase;">Waiting for a quote</th>
+    {% for b in a.buckets %}
+    <th align="right" style="padding:4px 10px 4px 0;color:#6B6762;font-weight:600;
+        font-size:11px;letter-spacing:.05em;text-transform:uppercase;">{{ b.label }}</th>
+    {% endfor %}
+    <th align="right" style="padding:4px 0;color:#A8321F;font-weight:600;font-size:11px;
+        letter-spacing:.05em;text-transform:uppercase;">Past deadline</th>
+  </tr>
+  <tr>
+    <td style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;
+               color:#6B6762;">{{ a.total }} open</td>
+    {% for b in a.buckets %}
+    <td align="right" style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">{{ b.count }}</td>
+    {% endfor %}
+    <td align="right" style="padding:6px 0;border-top:1px solid #EFEDEB;
+               font-weight:700;color:{{ '#A8321F' if a.overdue else '#1a1917' }};">
+      {{ a.overdue }}</td>
+  </tr>
+</table>
+{%- endmacro %}
+
+{% macro nothing(text) -%}
+<div style="background:#F4F8F5;border:1px solid #CFE3D7;border-radius:8px;
+            padding:16px;font-size:13.5px;color:#1F5A3C;">{{ text }}</div>
+{%- endmacro %}

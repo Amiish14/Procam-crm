@@ -38,6 +38,7 @@ from app.models.quote import Quote, QuoteLine, QuoteRevisionLog
 from app.models.rfq import RFQ, RateSourcingLine
 from app.services.task_engine import on_state_change
 from app.services.assignment import add_member, is_member
+from app.services import notification_rules as nrules
 
 
 bp = Blueprint('quote', __name__)
@@ -471,6 +472,9 @@ def api_submit_for_approval(qid):
         db.session.commit()
     except Exception:
         db.session.rollback()
+    nrules.dispatch('quote.submitted_for_approval', q,
+                    actor=session.get('emp_code'),
+                    detail=f'Quote {q.quote_number} is waiting for approval.')
     return jsonify(ok=True, quote=q.to_dict())
 
 
@@ -505,6 +509,8 @@ def api_approve(qid):
         db.session.commit()
     except Exception:
         db.session.rollback()
+    nrules.dispatch('quote.approved', q, actor=session.get('emp_code'),
+                    detail=f'Quote {q.quote_number} was approved.')
     return jsonify(ok=True, quote=q.to_dict())
 
 
@@ -539,6 +545,8 @@ def api_reject(qid):
         db.session.commit()
     except Exception:
         db.session.rollback()
+    nrules.dispatch('quote.rejected', q, actor=session.get('emp_code'),
+                    detail=reason or 'Returned for rework.')
     return jsonify(ok=True, quote=q.to_dict())
 
 
@@ -563,6 +571,9 @@ def api_submit_to_client(qid):
         db.session.commit()
     except Exception:
         db.session.rollback()
+    nrules.dispatch('quote.submitted_to_client', q,
+                    actor=session.get('emp_code'),
+                    detail=f'Quote {q.quote_number} went to the customer.')
     return jsonify(ok=True, quote=q.to_dict())
 
 
@@ -668,6 +679,8 @@ def api_won(qid):
         db.session.commit()
     except Exception:
         db.session.rollback()
+    nrules.dispatch('quote.won', q, actor=session.get('emp_code'),
+                    detail=f'Quote {q.quote_number} was won.')
     return jsonify(ok=True, quote=q.to_dict())
 
 
@@ -693,6 +706,8 @@ def api_lost(qid):
         db.session.commit()
     except Exception:
         db.session.rollback()
+    nrules.dispatch('quote.lost', q, actor=session.get('emp_code'),
+                    detail=f'Quote {q.quote_number} was lost.')
     return jsonify(ok=True, quote=q.to_dict())
 
 

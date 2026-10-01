@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the Procam CRM quote/RFQ escalation sweep every 15 minutes
+
+[Timer]
+OnBootSec=7min
+OnUnitActiveSec=15min
+
+[Install]
+WantedBy=timers.target

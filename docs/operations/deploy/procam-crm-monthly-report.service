@@ -1,0 +1,18 @@
+[Unit]
+Description=Procam CRM — the monthly management report
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+# Company-wide figures, built once and sent to everybody on the list,
+# so two recipients can never disagree about the same month. Set
+# REPORT_MANAGEMENT_CODES in the environment file if the readers are
+# not the CRM administrators.
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/send_reports.py --monthly
+SuccessExitStatus=1
+TimeoutStartSec=3600
+Nice=10
+IOSchedulingClass=idle

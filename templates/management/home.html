@@ -1,0 +1,126 @@
+{# `with context` so the macros can use crm_url() and url_prefix #}
+{% import "review/_shared.html" as rvui with context %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Management command view — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+{% include "review/_style.html" %}
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+  <div class="hero">
+    <div>
+      <h1>Command view</h1>
+      <div class="crm-sub">Everything you are answerable for, with the
+        records behind it · {{ cv.period.start }} to {{ cv.period.end }}</div>
+    </div>
+    <div>
+      <a class="top-back" href="{{ url_prefix }}/my-work">← My Work</a>
+      <a class="top-back" style="margin-left:12px"
+         href="{{ url_prefix }}/review/vertical">Vertical review →</a>
+    </div>
+  </div>
+
+  {# Every tile is a link to the list of records behind it, further down
+     this page. A figure a manager cannot open is a scoreboard. #}
+  <div class="kpis">
+    {{ rvui.tile('Actions due today', cv.tiles.actions_today.count, '#sec-actions_today') }}
+    {{ rvui.tile('Delayed quotes', cv.tiles.delayed_quotes.count, '#sec-delayed_quotes') }}
+    {{ rvui.tile('Stuck large opportunities', cv.tiles.stuck_large.count, '#sec-stuck_large') }}
+    {{ rvui.tile('Ageing pipeline', cv.ageing_pipeline|length, '#sec-ageing_pipeline',
+                 'verticals carrying open deals') }}
+    {{ rvui.tile('Inactive customers', cv.tiles.inactive_customers.count, '#sec-inactive_customers') }}
+    {{ rvui.tile('Overdue CRM actions', cv.tiles.overdue_actions.count, '#sec-overdue_actions') }}
+    {{ rvui.tile('Loss reasons', cv.loss_reasons|length, '#sec-loss_reasons') }}
+    {{ rvui.tile('Expected closures', cv.tiles.expected_closures.count, '#sec-expected_closures') }}
+    {{ rvui.tile('New funnel entries', cv.tiles.new_entries.count, '#sec-new_entries') }}
+  </div>
+
+  {{ rvui.listing(cv.tiles.actions_today, 'Nothing is due today.') }}
+  {{ rvui.listing(cv.tiles.delayed_quotes, 'No customer is waiting past a date we committed to.') }}
+  {{ rvui.listing(cv.tiles.stuck_large, 'No large deal has gone quiet.') }}
+
+  <div class="rv-sec" id="sec-ageing_pipeline">
+    <h3>Ageing pipeline by vertical
+      <span class="rv-count">{{ cv.ageing_pipeline|length }}</span></h3>
+    <p class="rv-note">Open the vertical for its own review, then the
+      person, the account and the opportunity.</p>
+    {% if cv.ageing_pipeline %}
+    <div class="table-wrap"><table class="rv-table">
+      <thead><tr><th>Vertical</th><th class="num">Open deals</th>
+        <th class="num">Value (₹)</th><th class="num">Average age</th>
+        <th class="num">Older than {{ rules.STALE_DAYS }} days</th></tr></thead>
+      <tbody>
+      {% for v in cv.ageing_pipeline %}
+        <tr>
+          <td><a href="{{ crm_url(v.route) }}">{{ v.vertical }}</a></td>
+          <td class="num">{{ v.count }}</td>
+          <td class="num">{{ '{:,.0f}'.format(v.value_inr) }}</td>
+          <td class="num">{{ v.average_age_days }}</td>
+          <td class="num">{{ v.over_stale }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="rv-note">No open pipeline.</p>{% endif %}
+  </div>
+
+  {{ rvui.listing(cv.tiles.inactive_customers, 'Every account has been touched.') }}
+  {{ rvui.listing(cv.tiles.overdue_actions, 'Nothing is overdue.') }}
+
+  <div class="rv-sec" id="sec-loss_reasons">
+    <h3>Loss reasons <span class="rv-count">{{ cv.loss_reasons|length }}</span></h3>
+    {% if cv.loss_reasons %}
+      {% for l in cv.loss_reasons %}
+      <h4>{{ l.reason }} — {{ l.count }} deals,
+        ₹{{ '{:,.0f}'.format(l.value_inr) }}</h4>
+      <div class="table-wrap"><table class="rv-table">
+        <tbody>{% for r in l.rows %}{{ rvui.row(r) }}{% endfor %}</tbody>
+      </table></div>
+      {% endfor %}
+    {% else %}<p class="rv-note">Nothing was lost in the period.</p>{% endif %}
+  </div>
+
+  {{ rvui.listing(cv.tiles.expected_closures, 'Nothing is dated to close yet.') }}
+  {{ rvui.listing(cv.tiles.new_entries, 'No new leads in the period.') }}
+
+  <div class="rv-sec" id="sec-review_actions">
+    <h3>Review actions outstanding
+      <span class="rv-count">{{ cv.review_actions.open|length }}</span></h3>
+    <p class="rv-note">Agreed at a sales review and not yet resolved. They
+      stay on the next meeting's agenda until they are.</p>
+    {% if cv.review_actions.open %}
+    <div class="table-wrap"><table class="rv-table">
+      <thead><tr><th>Action</th><th>Owner</th><th>Due</th>
+        <th>Review</th></tr></thead>
+      <tbody>
+      {% for a in cv.review_actions.open %}
+        <tr>
+          <td>{% if a.route %}<a href="{{ crm_url(a.route) }}">{{ a.description }}</a>
+              {% else %}{{ a.description }}{% endif %}</td>
+          <td>{{ a.owner_emp_code or '—' }}</td>
+          <td>{{ a.due_date or '—' }}
+            {% if a.overdue %}<span class="rv-chip bad">overdue</span>{% endif %}</td>
+          <td><a href="{{ url_prefix }}/review/meeting?scope={{ a.review_scope }}">
+            {{ a.review_scope }}</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="rv-note">Nothing outstanding.</p>{% endif %}
+  </div>
+
+  <p class="rv-note">You are seeing
+    {% if scope == 'company' %}the whole company{% elif scope == 'vertical' %}your
+    vertical{% else %}your own records{% endif %} — the same boundary as
+    every other screen.</p>
+
+</div><!-- /crm-wrap -->
+</body>
+</html>

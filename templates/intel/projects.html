@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Project Intelligence</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+{% include "intel/_intel_css.html" %}
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Intelligence</div>
+    <h1>Project intelligence</h1>
+    <div class="crm-sub">Projects in the world that may become work.
+      Each one has a single timeline: a second article about the same
+      project is added to it, never filed as a second project.</div>
+  </div>
+  <div class="toolbar">
+    <a class="btn" href="{{ url_prefix }}/intelligence/competitors">Competitors</a>
+    <a class="btn" href="{{ url_prefix }}/intelligence/vendors">Vendors &amp; vessels</a>
+    {% if can('admin.master') %}
+    <a class="btn" href="{{ url_prefix }}/admin/intelligence/sources">Sources</a>
+    {% endif %}
+  </div>
+</div>
+
+{# What is actually feeding this list. Shown above the list, not hidden
+   on an admin page, so an empty list is never mistaken for "no
+   projects". #}
+<div class="card"><div class="panel">
+  <b>Where this comes from</b>
+  <table class="intel-table">
+    <thead><tr><th>Source type</th><th>Status</th><th>Enabled</th></tr></thead>
+    <tbody>
+    {% for row in report if 'project' in row.purposes %}
+      <tr>
+        <td>{{ row.label }}</td>
+        <td class="intel-status {{ 'intel-bad' if not row.available_unconfigured }}">{{ row.status }}</td>
+        <td>{{ row.sources_enabled }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div></div>
+
+<div class="card"><div class="panel">
+  <b>Record what you found</b>
+  <div class="meta">Paste the link and the headline. It is matched
+    against the projects already held, on name, owner and location.</div>
+  <div class="intel-filters">
+    <label>Headline<input id="capTitle" size="40"></label>
+    <label>Source link<input id="capUrl" size="30" placeholder="https://"></label>
+    <label>Owner / group<input id="capOwner" size="20"></label>
+    <label>Location<input id="capLoc" size="18"></label>
+    <label>Published<input id="capDate" type="date"></label>
+    <label>Confidence
+      <select id="capConf">
+        {% for c in confidences %}<option value="{{ c.code }}">{{ c.label }}</option>{% endfor %}
+        {% if not confidences %}<option value="reported">reported</option>{% endif %}
+      </select>
+    </label>
+    <button class="btn" id="capSave">Capture</button>
+  </div>
+  <textarea id="capBody" placeholder="What the source says, in its own words"
+            style="width:100%;min-height:60px"></textarea>
+  <div id="capNote" class="meta"></div>
+</div></div>
+
+<div class="intel-filters">
+  <label>Search<input id="fq" size="24"></label>
+  <label>Stage
+    <select id="fstage"><option value="">Any</option>
+      {% for s in stages %}<option value="{{ s.code }}">{{ s.label }}</option>{% endfor %}
+    </select></label>
+  <label>Confidence
+    <select id="fconf"><option value="">Any</option>
+      {% for c in confidences %}<option value="{{ c.code }}">{{ c.label }}</option>{% endfor %}
+    </select></label>
+  <button class="btn" id="freload">Apply</button>
+</div>
+
+<div class="card"><div class="panel">
+  <div id="count" class="meta"></div>
+  <table class="intel-table">
+    <thead><tr>
+      <th>Project</th><th>Owner / group</th><th>Location</th>
+      <th>Stage</th><th>Confidence</th><th>Source</th>
+      <th>Updates</th><th>BD owner</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="empty" class="intel-empty" hidden>Nothing has been captured
+    yet. Record an item above, or ask an administrator which sources
+    are configured.</div>
+</div></div>
+
+</div>
+{% include "intel/_intel_js.html" %}
+<script>
+(function(){
+  var E = INTEL.esc;
+  function val(id){ return (document.getElementById(id).value || '').trim(); }
+
+  async function load(){
+    var qs = new URLSearchParams({q: val('fq'), stage: val('fstage'),
+                                 confidence: val('fconf'), per_page: 100});
+    var d = await INTEL.get('/api/intel/projects?' + qs.toString());
+    var body = document.getElementById('rows');
+    if (!d.ok){ body.innerHTML = ''; INTEL.note(document.getElementById('count'), d.error, true); return; }
+    document.getElementById('count').textContent =
+      d.total + ' project' + (d.total === 1 ? '' : 's');
+    document.getElementById('empty').hidden = d.total > 0;
+    body.innerHTML = d.items.map(function(p){
+      var i = p.intel || {};
+      return '<tr>' +
+        '<td><a href="' + INTEL.prefix + '/intelligence/projects/' + p.id + '">' + E(p.name) + '</a></td>' +
+        '<td>' + E(i.owner_group) + '</td>' +
+        '<td>' + E(i.location || p.location) + '</td>' +
+        '<td>' + E(p.stage_label || p.stage) + '</td>' +
+        '<td>' + E(i.confidence) + '</td>' +
+        '<td class="intel-src">' + (i.source_url
+            ? '<a href="' + E(i.source_url) + '" rel="noopener noreferrer" target="_blank">' + E(i.source_ref || 'source') + '</a>'
+            : E(i.source_ref)) + '</td>' +
+        '<td>' + E(i.update_count || 0) + '</td>' +
+        '<td>' + E(i.bd_owner) + '</td></tr>';
+    }).join('');
+  }
+
+  document.getElementById('freload').addEventListener('click', load);
+  document.getElementById('capSave').addEventListener('click', async function(){
+    var payload = {};
+    if (val('capOwner')) payload.owner_group = val('capOwner');
+    if (val('capLoc')) payload.location = val('capLoc');
+    var d = await INTEL.post('/api/intel/capture', {
+      title: val('capTitle'), url: val('capUrl'), body: val('capBody'),
+      publication_date: val('capDate'), confidence: val('capConf'),
+      payload: payload});
+    var note = document.getElementById('capNote');
+    if (!d.ok){ INTEL.note(note, d.error, true); return; }
+    INTEL.note(note, d.action === 'created'
+      ? 'Captured as a new project.'
+      : d.action === 'appended'
+        ? 'Added to the timeline of project #' + d.project_id + '.'
+        : 'That item was already captured.');
+    document.getElementById('capTitle').value = '';
+    document.getElementById('capBody').value = '';
+    load();
+  });
+  load();
+})();
+</script>
+</body>
+</html>

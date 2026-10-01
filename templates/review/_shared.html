@@ -1,0 +1,76 @@
+{# Pieces the three review pages share, so the sales review looks like
+   one thing from the individual to the meeting. Class names are
+   prefixed rv- because the shared components live in crm.css. #}
+
+{# The shared .kpi component, so a review tile looks and behaves like
+   every other figure in the portal — including the cue that says it
+   opens something. #}
+{% macro tile(label, value, href='', note='') %}
+  {% if href %}<a class="kpi" href="{{ crm_url(href) }}">{% else %}<div class="kpi">{% endif %}
+    <div class="label">{{ label }}</div>
+    <div class="value">{{ value if value is not none else '—' }}</div>
+    {% if note %}<div class="rv-n">{{ note }}</div>{% endif %}
+  {% if href %}</a>{% else %}</div>{% endif %}
+{% endmacro %}
+
+{# One row of a list, whatever kind of record it is. The review shows
+   leads, RFQs, accounts, actions and news side by side, and every one
+   of them has to be openable. #}
+{% macro row(r) %}
+  <tr>
+    {% if r.description is defined %}
+      <td>
+        {% if r.route %}<a href="{{ crm_url(r.route) }}">{{ r.description }}</a>
+        {% else %}{{ r.description }}{% endif %}
+        {% if r.carried_from_id %}<span class="rv-chip">carried forward</span>{% endif %}
+      </td>
+      <td>{{ r.owner_emp_code or '—' }}</td>
+      <td>{{ r.due_date or '—' }}
+        {% if r.overdue %}<span class="rv-chip bad">overdue</span>{% endif %}</td>
+      <td>{{ r.status }}</td>
+    {% elif r.rfq_number is defined %}
+      <td><a href="{{ crm_url(r.route or '/rfqs') }}">{{ r.rfq_number }}</a>
+        <div class="rv-sub">{{ r.subject }}</div></td>
+      <td>{{ r.owner or '—' }}</td>
+      <td>{{ r.received_date or r.quote_due or '—' }}</td>
+      <td>{{ r.status or '' }}{% if r.days_late %}
+        <span class="rv-chip bad">{{ r.days_late }} days late</span>{% endif %}</td>
+    {% elif r.kind is defined and r.kind in ('news', 'competitor') %}
+      <td><a href="{{ crm_url(r.route) }}">{{ r.title }}</a>
+        <div class="rv-sub">{{ r.detail }}</div></td>
+      <td>{{ r.source or '—' }}</td>
+      <td>{{ r.date }}</td>
+      <td>{{ r.kind }}</td>
+    {% elif r.title is defined %}
+      <td><a href="{{ crm_url(r.route) }}">{{ r.title }}</a>
+        <div class="rv-sub">{{ r.account }}</div></td>
+      <td>{{ r.owner_name or r.owner or '—' }}</td>
+      <td>{{ r.stage or '—' }}</td>
+      <td class="num">{{ r.value_display or '—' }}</td>
+    {% else %}
+      <td><a href="{{ crm_url(r.route) }}">{{ r.name }}</a></td>
+      <td>{{ r.pic or r.vertical or '—' }}</td>
+      <td>{{ r.last_activity or r.next_action_at or '—' }}</td>
+      <td>{{ r.stage or '' }}{% if r.quiet_days %}
+        <span class="rv-chip">quiet {{ r.quiet_days }} days</span>{% endif %}</td>
+    {% endif %}
+  </tr>
+{% endmacro %}
+
+{% macro listing(section, empty='Nothing in this section.') %}
+  <div class="rv-sec" id="sec-{{ section.key }}">
+    <h3>{{ section.title }} <span class="rv-count">{{ section.count }}</span></h3>
+    {% if section.note %}<p class="rv-note">{{ section.note }}</p>{% endif %}
+    {% if section.rows %}
+      <div class="table-wrap"><table class="rv-table">
+        <tbody>{% for r in section.rows %}{{ row(r) }}{% endfor %}</tbody>
+      </table></div>
+      {% if section.truncated %}
+        <p class="rv-note">Showing the first {{ section.rows|length }} of
+          {{ section.count }}.</p>
+      {% endif %}
+    {% else %}
+      <p class="rv-note">{{ empty }}</p>
+    {% endif %}
+  </div>
+{% endmacro %}

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Intelligence Sources</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+{% include "intel/_intel_css.html" %}
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+<div class="hero">
+  <div>
+    <div class="cat">Administration</div>
+    <h1>Intelligence sources</h1>
+    <div class="crm-sub">What each adapter needs before it can collect
+      anything, and what it has. A source that cannot run collects
+      nothing and says why — it never produces an example.</div>
+  </div>
+  <div class="toolbar">
+    <a class="btn" href="{{ url_prefix }}/intelligence/projects">Project intelligence</a>
+  </div>
+</div>
+
+<div class="card"><div class="panel">
+  <b>Adapters</b>
+  <table class="intel-table">
+    <thead><tr><th>Adapter</th><th>Status</th><th>Needs</th>
+      <th>External dependency</th><th>Feeds</th>
+      <th>Sources</th></tr></thead>
+    <tbody>
+      {% for row in report %}
+      <tr>
+        <td><b>{{ row.label }}</b><div class="intel-src">{{ row.key }}</div></td>
+        <td class="intel-status {{ 'intel-bad' if not row.available_unconfigured }}">{{ row.status }}</td>
+        <td class="intel-src">{{ row.requires|join(', ') or 'nothing' }}</td>
+        <td class="intel-dep">{{ row.dependency }}</td>
+        <td class="intel-src">{{ row.purposes|join(', ') }}</td>
+        <td>{{ row.sources_enabled }} of {{ row.sources_configured }} enabled</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div></div>
+
+<div class="card"><div class="panel">
+  <b>Add or change a source</b>
+  <div class="meta">Never paste a key here. Put it in an environment
+    variable on the server and give the variable's NAME as
+    <code>api_key_env</code>.</div>
+  <div class="intel-filters">
+    <label>Name<input id="sName" size="22"></label>
+    <label>URL<input id="sUrl" size="30" placeholder="https://"></label>
+    <label>Adapter
+      <select id="sAdapter">
+        {% for key in adapter_keys %}<option value="{{ key }}">{{ key }}</option>{% endfor %}
+      </select></label>
+    <label>Feeds
+      <select id="sPurpose">
+        <option value="project">project</option>
+        <option value="competitor">competitor</option>
+        <option value="vendor">vendor</option>
+        <option value="port_call">port_call</option>
+      </select></label>
+    <label>Enabled<input id="sEnabled" type="checkbox"></label>
+  </div>
+  <label class="meta">Config (JSON)
+    <textarea id="sConfig" style="width:100%;min-height:70px"
+      placeholder='{"feed_url": "https://example.invalid/feed.xml"}'></textarea>
+  </label>
+  <div class="intel-filters">
+    <button class="btn" id="sSave">Save source</button>
+    <span id="sNote" class="meta"></span>
+  </div>
+</div></div>
+
+<div class="card"><div class="panel">
+  <b>Configured sources</b>
+  <table class="intel-table">
+    <thead><tr><th>Source</th><th>Adapter</th><th>Feeds</th><th>Enabled</th>
+      <th>Status</th><th>Why not</th><th></th></tr></thead>
+    <tbody id="srcRows"></tbody>
+  </table>
+  <div id="srcEmpty" class="intel-empty" hidden>No sources configured.
+    Only manual entry and the CRM news inbox are collecting.</div>
+</div></div>
+
+<div class="card"><div class="panel">
+  <b>Recent runs</b>
+  <table class="intel-table">
+    <thead><tr><th>Started</th><th>Adapter</th><th>Status</th>
+      <th>Fetched</th><th>New</th><th>Added to a timeline</th>
+      <th>Reason</th></tr></thead>
+    <tbody id="runRows"></tbody>
+  </table>
+  <div id="runEmpty" class="intel-empty" hidden>No collection has been
+    attempted yet.</div>
+</div></div>
+
+</div>
+{% include "intel/_intel_js.html" %}
+<script>
+(function(){
+  var E = INTEL.esc;
+  function val(id){ return (document.getElementById(id).value || '').trim(); }
+
+  async function load(){
+    var d = await INTEL.get('/api/intel/sources');
+    if (!d.ok) return;
+    document.getElementById('srcEmpty').hidden = d.sources.length > 0;
+    document.getElementById('srcRows').innerHTML = d.sources.map(function(s){
+      return '<tr><td>' + E(s.source_name) + '<div class="intel-src">' +
+        E(s.source_url) + '</div></td><td>' + E(s.adapter_key) +
+        '</td><td>' + E(s.purpose) + '</td><td>' + (s.is_enabled ? 'yes' : 'no') +
+        '</td><td class="intel-status ' + (s.available ? '' : 'intel-bad') + '">' +
+        E(s.status) + '</td><td class="intel-dep">' + E(s.reason) +
+        '</td><td><button class="btn tiny" data-run="' + s.id + '">Run now</button></td></tr>';
+    }).join('');
+    document.getElementById('runEmpty').hidden = d.runs.length > 0;
+    document.getElementById('runRows').innerHTML = d.runs.map(function(r){
+      return '<tr><td class="intel-stamp">' + E(r.started_at) + '</td><td>' +
+        E(r.adapter_key) + '</td><td class="' + (r.status === 'ok' ? '' : 'intel-bad') +
+        '">' + E(r.status) + '</td><td>' + E(r.items_fetched) + '</td><td>' +
+        E(r.items_new) + '</td><td>' + E(r.items_matched) + '</td>' +
+        '<td class="intel-dep">' + E(r.reason) + '</td></tr>';
+    }).join('');
+    Array.prototype.forEach.call(
+      document.querySelectorAll('[data-run]'), function(b){
+        b.addEventListener('click', async function(){
+          var d2 = await INTEL.post('/api/intel/sources/' +
+            b.getAttribute('data-run') + '/run', {});
+          INTEL.note(document.getElementById('sNote'),
+            d2.ok ? (d2.run.status + ': ' + d2.run.reason) : d2.error, !d2.ok);
+          load();
+        });
+      });
+  }
+
+  document.getElementById('sSave').addEventListener('click', async function(){
+    var config = {};
+    var raw = val('sConfig');
+    if (raw){
+      try { config = JSON.parse(raw); }
+      catch (e){
+        INTEL.note(document.getElementById('sNote'),
+                   'The config is not valid JSON.', true);
+        return;
+      }
+    }
+    var d = await INTEL.post('/api/intel/sources', {
+      name: val('sName'), url: val('sUrl'),
+      adapter_key: val('sAdapter'), purpose: val('sPurpose'),
+      is_enabled: document.getElementById('sEnabled').checked,
+      config: config});
+    INTEL.note(document.getElementById('sNote'),
+               d.ok ? (d.status + (d.reason ? ' — ' + d.reason : '')) : d.error,
+               !d.ok);
+    if (d.ok) load();
+  });
+  load();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+[Unit]
+Description=Procam CRM — the morning action report
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+# One email per person who owns work, built from their own Workbench
+# board, so nobody is sent a record they may not open. People with an
+# empty board are skipped — an empty daily report teaches people to
+# filter the sender.
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/send_reports.py --daily
+# Exit 1 means at least one recipient failed and the rest were still
+# served; the per-recipient lines in the journal say who. Only 2 (bad
+# arguments) should mark the unit failed.
+SuccessExitStatus=1
+TimeoutStartSec=1800
+Nice=10
+IOSchedulingClass=idle

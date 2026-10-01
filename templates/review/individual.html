@@ -1,0 +1,175 @@
+{# `with context` so the macros can use crm_url() and url_prefix #}
+{% import "review/_shared.html" as rvui with context %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sales review — {{ rv.subject.name }} — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+{% include "review/_style.html" %}
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+  <div class="hero">
+    <div>
+      <h1>Individual sales review</h1>
+      <div class="crm-sub">
+        <a href="{{ crm_url(rv.subject.route) }}">{{ rv.subject.name }}</a>
+        {% if rv.subject.designation %} · {{ rv.subject.designation }}{% endif %}
+        {% if rv.subject.vertical %} · {{ rv.subject.vertical }}{% endif %}
+        · {{ rv.period.start }} to {{ rv.period.end }}
+      </div>
+    </div>
+    <div>
+      <a class="top-back" href="{{ url_prefix }}/my-work">← My Work</a>
+      <a class="top-back" style="margin-left:12px"
+         href="{{ url_prefix }}/review/meeting?scope=emp:{{ rv.subject.emp_code }}">Run the meeting →</a>
+    </div>
+  </div>
+
+  <form class="rv-bar" method="get" action="{{ url_prefix }}/review/individual">
+    <label class="rv-l" for="emp">Person</label>
+    <select id="emp" name="emp">
+      {% for p in people %}
+        <option value="{{ p.emp_code }}"
+          {{ 'selected' if p.emp_code == rv.subject.emp_code }}>
+          {{ p.name }}{% if p.vertical %} — {{ p.vertical }}{% endif %}</option>
+      {% endfor %}
+    </select>
+    <label class="rv-l" for="start">From</label>
+    <input id="start" name="start" type="date" value="{{ rv.period.start }}">
+    <label class="rv-l" for="end">To</label>
+    <input id="end" name="end" type="date" value="{{ rv.period.end }}">
+    <button class="btn primary" type="submit">Show</button>
+  </form>
+
+  {# ── 1. Activity ─────────────────────────────────────────────── #}
+  <h2>Activity</h2>
+  <div class="kpis">
+    {{ rvui.tile('Touches', rv.activity.total, '', 'calls, meetings, notes and emails') }}
+    {{ rvui.tile('Visits and meetings', rv.activity.visits) }}
+    {{ rvui.tile('Emails', rv.activity.emails) }}
+    {{ rvui.tile('Leads touched', rv.activity.leads_touched) }}
+    {{ rvui.tile('Accounts active', rv.accounts.active_count) }}
+  </div>
+
+  {# ── 2. Funnel ───────────────────────────────────────────────── #}
+  <h2>Funnel</h2>
+  <div class="kpis">
+    {{ rvui.tile('Open deals', rv.funnel.open_count, '/my-work') }}
+    {{ rvui.tile('Open value', rv.funnel.open_value_display) }}
+    {{ rvui.tile('New in period', rv.funnel.added_count) }}
+    {{ rvui.tile('Won', rv.funnel.won_count) }}
+    {{ rvui.tile('Lost', rv.funnel.lost_count) }}
+    {{ rvui.tile('Conversion', (rv.funnel.conversion_pct ~ '%') if rv.funnel.conversion_pct is not none else '—',
+                 '', 'won of decided in the period') }}
+  </div>
+  <div class="rv-sec">
+    <h3>Open pipeline by stage</h3>
+    <div class="table-wrap"><table class="rv-table">
+      <thead><tr><th>Stage</th><th class="num">Deals</th>
+        <th class="num">Value (₹)</th></tr></thead>
+      <tbody>
+        {% for s in rv.funnel.stages %}
+        <tr><td>{{ s.stage }}</td><td class="num">{{ s.count }}</td>
+          <td class="num">{{ '{:,.0f}'.format(s.value_inr) }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+
+  {# ── 3. Commercial ───────────────────────────────────────────── #}
+  <h2>Commercial</h2>
+  <div class="kpis">
+    {{ rvui.tile('RFQs received', rv.commercial.rfqs_received, '/rfqs') }}
+    {{ rvui.tile('Quotes sent', rv.commercial.quotes_sent) }}
+    {{ rvui.tile('Quote value', rv.commercial.quote_value_display) }}
+    {{ rvui.tile('Quote turnaround',
+                 (rv.commercial.quote_turnaround_days ~ ' days') if rv.commercial.quote_turnaround_days is not none else '—',
+                 '', 'service standard ' ~ rv.commercial.quote_sla_days ~ ' days') }}
+    {{ rvui.tile('Awaiting a quote', rv.commercial.rfqs_awaiting_quote, '/my-work?group=quotations') }}
+    {{ rvui.tile('Past the committed date', rv.commercial.rfqs_overdue, '/my-work?group=quotations') }}
+  </div>
+
+  {# ── 4. Discipline ───────────────────────────────────────────── #}
+  <h2>Discipline</h2>
+  <div class="kpis">
+    {{ rvui.tile('Next action set',
+                 (rv.discipline.followup_compliance_pct ~ '%') if rv.discipline.followup_compliance_pct is not none else '—',
+                 '', rv.discipline.with_next_action ~ ' of ' ~ rv.discipline.open_leads ~ ' open deals') }}
+    {{ rvui.tile('Overdue follow-ups', rv.discipline.overdue_followups, '/my-work?group=action_today') }}
+    {{ rvui.tile('No next action', rv.discipline.no_next_action, '/my-work?group=data_update') }}
+    {{ rvui.tile('Stale', rv.discipline.stale_leads, '/my-work?group=stale',
+                 'no contact for ' ~ rv.discipline.stale_days ~ ' days') }}
+    {{ rvui.tile('Idle', rv.discipline.idle_leads, '/my-work?group=customer_followup',
+                 rv.discipline.idle_days ~ ' days or more') }}
+    {{ rvui.tile('Data issues', rv.data_quality.total, '/data-quality') }}
+  </div>
+  {{ rvui.listing({'key':'stale','title':'Stale deals','count':rv.discipline.stale_leads,
+                   'rows':rv.discipline.stale_rows[:25],'truncated':false,
+                   'note':'No contact for ' ~ rv.discipline.stale_days ~ ' days or more.'},
+                  'Nothing has gone cold.') }}
+  {{ rvui.listing({'key':'no-next','title':'No next action','count':rv.discipline.no_next_action,
+                   'rows':rv.discipline.no_next_action_rows[:25],'truncated':false,
+                   'note':'Nothing scheduled, so nothing will remind anyone.'},
+                  'Every open deal has a next action.') }}
+
+  {# ── 5. Accounts ─────────────────────────────────────────────── #}
+  <h2>Accounts</h2>
+  <div class="kpis">
+    {{ rvui.tile('Accounts held', rv.accounts.total) }}
+    {{ rvui.tile('Active in period', rv.accounts.active_count) }}
+    {{ rvui.tile('Quiet', rv.accounts.quiet_count, '/my-work?group=account_development',
+                 rv.accounts.quiet_days_threshold ~ ' days with no activity') }}
+    {{ rvui.tile('Opened in period', rv.accounts.new_count) }}
+    {{ rvui.tile('Action due', rv.accounts.action_due_count, '/my-work?group=account_development') }}
+  </div>
+  {{ rvui.listing({'key':'quiet-accounts','title':'Accounts gone quiet',
+                   'count':rv.accounts.quiet_count,'rows':rv.accounts.quiet[:25],
+                   'truncated':false,'note':''}, 'Every account has been touched.') }}
+
+  {# ── 6. Top opportunities ────────────────────────────────────── #}
+  {{ rvui.listing({'key':'top','title':'Largest open opportunities',
+                   'count':rv.top_opportunities|length,'rows':rv.top_opportunities,
+                   'truncated':false,'note':''}, 'No open opportunities.') }}
+
+  {# ── 7. Trends ───────────────────────────────────────────────── #}
+  <h2>Trends</h2>
+  <div class="rv-cols">
+    {% for key, label in [('wow','Week on week'), ('mom','Month on month')] %}
+    {% set t = rv.trends[key] %}
+    <div class="rv-sec">
+      <h3>{{ label }}</h3>
+      <p class="rv-note">{{ t.current_period[0] }} to {{ t.current_period[1] }}
+        against {{ t.previous_period[0] }} to {{ t.previous_period[1] }}.</p>
+      <div class="table-wrap"><table class="rv-table">
+        <thead><tr><th>Measure</th><th class="num">Now</th>
+          <th class="num">Before</th><th class="num">Change</th></tr></thead>
+        <tbody>
+        {% for name, m in t.measures.items() %}
+          <tr><td>{{ name.replace('_', ' ')|capitalize }}</td>
+            <td class="num">{{ '{:,.0f}'.format(m.current) }}</td>
+            <td class="num">{{ '{:,.0f}'.format(m.previous) }}</td>
+            <td class="num rv-{{ m.direction }}">
+              {{ '{:+,.0f}'.format(m.change) }}
+              {% if m.change_pct is not none %} ({{ m.change_pct }}%){% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {# ── 8. Open review actions ──────────────────────────────────── #}
+  {{ rvui.listing({'key':'actions','title':'Open review actions',
+                   'count':rv.actions|length,'rows':rv.actions,'truncated':false,
+                   'note':'Agreed at an earlier review and not yet resolved.'},
+                  'Nothing outstanding from earlier reviews.') }}
+
+</div><!-- /crm-wrap -->
+</body>
+</html>

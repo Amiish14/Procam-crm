@@ -1,0 +1,56 @@
+{% extends 'email/_shell.html' %}
+{% import 'email/_bits.html' as bits %}
+
+{% block title %}Management report — {{ r.date }}{% endblock %}
+{% block strap %}The whole company · compared with
+  {{ r.period['from'] }}{% endblock %}
+
+{% block body %}
+{{ bits.tiles([
+    ('Open items', r.total),
+    ('Overdue', r.summary.overdue),
+    ('Quotes past deadline', r.summary.quotes_overdue),
+    ('High value', r.summary.high_value)]) }}
+
+{{ bits.heading('This month against last') }}
+<table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+  {% for key, label in [('overdue', 'Overdue'),
+                        ('rfqs_awaiting_quote', 'RFQs awaiting a quote'),
+                        ('quotes_overdue', 'Quotes past deadline'),
+                        ('stale', 'Going cold'),
+                        ('no_next_action', 'No next action'),
+                        ('data_updates', 'Records needing a data fix'),
+                        ('high_value', 'High-value deals')] %}
+  {% set d = r.deltas.get(key) %}
+  <tr>
+    <td style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">{{ label }}</td>
+    <td align="right" style="padding:6px 0;border-top:1px solid #EFEDEB;">
+      {{ bits.delta(d) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<div style="font-size:11.5px;color:#8A857F;margin-top:6px;">
+  The comparison re-runs today's records against the date
+  {{ r.period.days }} days ago, so it measures how much of the backlog
+  was already late then. It is not a snapshot of how the board looked
+  that day.
+</div>
+
+{{ bits.heading('By vertical') }}
+{{ bits.vertical_table(r.verticals) }}
+
+{{ bits.heading('Where the load sits') }}
+{{ bits.people_table(r.people, base_url) }}
+<div style="font-size:11.5px;color:#8A857F;margin-top:6px;">
+  The twenty people with the most to clear, most overdue first.
+</div>
+
+{% if r.high_value.count %}
+  {{ bits.section(r.high_value, base_url, show_owner=True) }}
+{% endif %}
+
+{{ bits.heading('Quotes the customer is waiting for') }}
+{{ bits.ageing_table(r.quote_ageing) }}
+{% endblock %}
+
+{% block cta_label %}Open the company board{% endblock %}

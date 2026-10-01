@@ -432,3 +432,18 @@ def test_a_write_without_the_token_is_refused(world):
         assert r.status_code in (400, 403)
     finally:
         flask_app.config['WTF_CSRF_ENABLED'] = app_csrf
+
+
+def test_fixing_records_clears_the_hygiene_cache(world):
+    """The board caches the ten hygiene queries for a minute so paging
+    is free. A bulk update must drop that, or the user fixes something
+    and the board keeps telling them it is broken."""
+    from app.workbench import service as wb_service
+    board = _board(REP, per_page=200)
+    assert wb_service._hygiene_cache, 'the cache should be warm after a board'
+    c = _client(REP)
+    when = str(TODAY + timedelta(days=11))
+    p = _preview(c, [world['overdue']], 'set_followup', when).get_json()
+    _apply(c, [world['overdue']], 'set_followup', when, 'Clearing the cache',
+           p['preview_token'])
+    assert not wb_service._hygiene_cache, 'a bulk update must clear it'

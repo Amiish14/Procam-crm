@@ -49,11 +49,19 @@ def _recent_duplicate(user_id, kind, entity_type, entity_id, since):
 
 def send(user_code, *, kind, title, body='', url=None, entity_type=None,
          entity_id=None, email=False, email_html=None, actor=None,
-         audit_action=None, reason=None, commit=True, dedupe=True):
+         audit_action=None, reason=None, commit=True, dedupe=True,
+         in_app=True):
     """Notify one person. Returns what actually happened.
 
     {'notified': bool, 'emailed': bool, 'suppressed': bool,
      'error': str|None}
+
+    `in_app=False` sends the email without leaving a bell notification.
+    It exists for the scheduled reports: a digest is a summary of
+    things that already have their own notifications, and adding a
+    daily "your report was sent" row would bury them. With no row
+    written there is nothing to dedupe against, so the caller owns
+    repetition — for the reports, the timer does.
     """
     from app import db, Employee
     from app.models.notification import Notification
@@ -66,18 +74,19 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
         out['error'] = 'no recipient'
         return out
     try:
-        if dedupe:
+        if dedupe and in_app:
             since = datetime.utcnow() - timedelta(minutes=DEDUPE_MINUTES)
             if _recent_duplicate(user_code, kind, entity_type, entity_id, since):
                 out['suppressed'] = True
                 return out
-        row = Notification(
-            user_id=user_code, kind=kind, title=title[:200],
-            body=(body or '')[:2000], entity_type=entity_type,
-            entity_id=(str(entity_id) if entity_id is not None else None),
-            action_url=url)
-        db.session.add(row)
-        out['notified'] = True
+        if in_app:
+            row = Notification(
+                user_id=user_code, kind=kind, title=title[:200],
+                body=(body or '')[:2000], entity_type=entity_type,
+                entity_id=(str(entity_id) if entity_id is not None else None),
+                action_url=url)
+            db.session.add(row)
+            out['notified'] = True
         if audit_action:
             audit.record(audit_action, entity_type or 'notification',
                          entity_id, new={'to': user_code, 'kind': kind,
