@@ -116,6 +116,11 @@ def buckets(now=None):
         if age is None:
             undated += 1
             continue
+        # An arrival stamped ahead of now — a clock skew between the
+        # mail server and this one, or a hand-edited row — used to match
+        # no bucket at all and silently vanish from the dashboard while
+        # still counting in the headline. It has only just arrived.
+        age = max(age, 0.0)
         for i, (lo, hi) in enumerate(AGE_BUCKETS):
             if age >= lo and (hi is None or age < hi):
                 out[i]['count'] += 1

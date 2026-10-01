@@ -36,6 +36,7 @@ from app.access.service import set_profile                       # noqa: E402
 from app.copilot import intents as catalogue                     # noqa: E402
 from app.copilot import service as svc                           # noqa: E402
 from app.models.access import DataScope                          # noqa: E402
+from app.services.sales_rules import business_today  # noqa: E402
 
 ALL_PERMS = ['module.rfq', 'module.quotes', 'module.handovers',
              'module.funnels', 'reports.action', 'reports.accounts',
@@ -79,7 +80,7 @@ def world():
             e.department = None
         db.session.commit()
 
-        today = date.today()
+        today = business_today()
         now = datetime.utcnow()
         mine = Company(name='Insight Mine Co', is_active=True,
                        pic_emp_code='CIREP', vertical='Heavy Transport')
@@ -389,7 +390,7 @@ def test_account_health_drops_by_exactly_the_missing_factor(world):
             assert r.figures['score'] == 85
             assert 'next action' in r.headline.lower()
         finally:
-            lead.followup_date = date.today() + timedelta(days=3)
+            lead.followup_date = business_today() + timedelta(days=3)
             db.session.commit()
 
 
@@ -495,7 +496,7 @@ def test_overdue_rfqs_are_the_unquoted_list_cut_to_late_ones(world):
     from app.models.rfq import RFQ
     with flask_app.app_context():
         rfq = RFQ.query.filter_by(rfq_number='R-CI-1').first()
-        rfq.quote_by_date = date.today() - timedelta(days=2)
+        rfq.quote_by_date = business_today() - timedelta(days=2)
         db.session.commit()
         try:
             sc = _scope('CIREP', DataScope.OWN)
@@ -581,8 +582,8 @@ def test_follow_ups_and_closing_take_the_service_filter_too(world):
         lead = db.session.get(Lead, world['lead_mine'])
         opp = db.session.get(Opportunity, world['opp_mine'])
         saved = (lead.followup_date, opp.expected_close_date)
-        lead.followup_date = date.today()
-        opp.expected_close_date = date.today()
+        lead.followup_date = business_today()
+        opp.expected_close_date = business_today()
         db.session.commit()
         try:
             sc = _scope('CIREP', DataScope.OWN)
@@ -665,7 +666,7 @@ def test_next_best_action_puts_a_waiting_customer_first(world):
         rival = Lead(company='Insight Rival Co', source='manual',
                      assigned_to='CIREP', stage='Visit Done',
                      estimated_value_inr=0,
-                     followup_date=date.today() - timedelta(days=2),
+                     followup_date=business_today() - timedelta(days=2),
                      created_at=datetime.utcnow() - timedelta(days=6))
         db.session.add(rival)
         db.session.commit()

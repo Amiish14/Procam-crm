@@ -89,6 +89,10 @@ viewer, everyone in the same vertical, and anyone reporting to the viewer
 | Submit a rate | the line's sourcing owner, `Rate_Sourcing` role, or company-wide scope |
 | Reassign a lead | `admin.triage`, with a reason |
 | Reassign an account's PIC (single or bulk) | `accounts.assign` and the account in scope; the new PICs must be active employees; bulk needs a reason. Every change appends to the account's PIC history |
+| Open the Daily Workbench | signed in; it shows only records the viewer's scope reaches |
+| Open the Team Workbench, or ask for `?for=<code>` | the person must be inside the viewer's scope, otherwise 403 — never silently empty |
+| Bulk update from the Workbench | every id re-checked against scope; one id outside it refuses the batch; a reason of 5+ characters; a signed preview that still matches |
+| Send a Workbench reminder | the recipient must be inside the sender's scope |
 | Permanent deletion | super admin, with a reason, audited before deletion |
 
 ## Adding an endpoint

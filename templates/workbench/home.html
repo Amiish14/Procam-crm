@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{% if team %}Team Workbench{% else %}Daily Workbench{% endif %} — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .wb-sum { display:flex; flex-wrap:wrap; gap:10px; margin:14px 0 18px; }
+  .wb-sum button { background:#fff; border:1px solid #e5e7eb; border-radius:10px;
+      padding:10px 14px; min-width:132px; text-align:left; cursor:pointer; font:inherit; }
+  .wb-sum button:hover { border-color:#BC1D2F; }
+  .wb-sum button[aria-pressed="true"] { border-color:#BC1D2F; box-shadow:0 0 0 2px rgba(188,29,47,.12); }
+  .wb-sum .l { font-size:11.5px; color:#6b7280; font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+  .wb-sum .v { font-size:22px; font-weight:800; color:#111827; font-variant-numeric:tabular-nums; }
+  .wb-sum .danger .v { color:#B91C1C; } .wb-sum .warn .v { color:#B45309; }
+  .wb-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px; }
+  .wb-bar input, .wb-bar select { height:34px; border:1px solid #e5e7eb; border-radius:8px; padding:0 10px; font:inherit; }
+  .wb-tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+  .wb-tabs button { border:1px solid #e5e7eb; background:#fff; border-radius:999px; padding:6px 13px; cursor:pointer; font:inherit; font-size:12.5px; }
+  .wb-tabs button[aria-pressed="true"] { background:#111827; color:#fff; border-color:#111827; }
+  .wb-tabs .n { opacity:.65; margin-left:5px; }
+  table.wb { width:100%; border-collapse:collapse; background:#fff; font-size:13px; }
+  table.wb th, table.wb td { padding:9px 10px; border-bottom:1px solid #eef0f3; text-align:left; vertical-align:top; }
+  table.wb th { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#6b7280; position:sticky; top:0; background:#fff; }
+  table.wb td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .pri1 { border-left:3px solid #B91C1C; } .pri2 { border-left:3px solid #B45309; }
+  .pri3 { border-left:3px solid #2563EB; } .pri4 { border-left:3px solid transparent; }
+  .chip { display:inline-block; font-size:11px; border-radius:999px; padding:1px 8px; background:#f3f4f6; color:#374151; margin:1px 3px 1px 0; }
+  .chip.bad { background:#FEE2E2; color:#991B1B; } .chip.warn { background:#FEF3C7; color:#92400E; }
+  .wb-wrap { overflow:auto; max-height:62vh; border:1px solid #e5e7eb; border-radius:10px; }
+  .wb-actions { position:sticky; bottom:0; background:#111827; color:#fff; border-radius:10px;
+      padding:10px 14px; display:none; gap:10px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+  .wb-actions select, .wb-actions input { height:32px; border-radius:7px; border:1px solid #374151; padding:0 8px; font:inherit; }
+  .wb-note { font-size:12.5px; color:#374151; margin-top:10px; }
+  .wb-ageing { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 16px; }
+  .wb-ageing button { border:1px solid #e5e7eb; background:#fff; border-radius:8px; padding:8px 12px; cursor:pointer; font:inherit; }
+  .muted { color:#6b7280; }
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+  <div class="hero">
+    <div>
+      <h1>{% if team %}Team Workbench{% else %}Daily Workbench{% endif %}</h1>
+      <div class="today" id="today-line"></div>
+    </div>
+    <div>
+      <a class="top-back" href="{{ url_for('dashboard') }}">← Dashboard</a>
+      {% if not team %}<a class="top-back" style="margin-left:12px" href="{{ url_prefix }}/team-workbench">Team →</a>{% endif %}
+      <a class="top-back" style="margin-left:12px" href="{{ url_prefix }}/my-work/tasks">Task list</a>
+    </div>
+  </div>
+
+  <div class="wb-sum" id="wbSum" role="group" aria-label="What needs attention"></div>
+
+  <div class="wb-bar">
+    {% if team %}
+    <label class="muted" for="wbWho">Person</label>
+    <select id="wbWho" onchange="wbLoad(1)"><option value="">Everyone in my scope</option></select>
+    {% endif %}
+    <input id="wbQ" placeholder="Search account or project…" oninput="wbDebounce()" style="min-width:220px;flex:1">
+    <select id="wbVertical" onchange="wbLoad(1)"><option value="">All verticals</option></select>
+    <select id="wbStage" onchange="wbLoad(1)"><option value="">All stages</option></select>
+    <select id="wbSort" onchange="wbLoad(1)">
+      <option value="priority">Most urgent first</option>
+      <option value="due">By due date</option>
+      <option value="value">By value</option>
+      <option value="ageing">By ageing</option>
+    </select>
+    <button class="btn" onclick="wbLoad(1)">Refresh</button>
+  </div>
+
+  <div class="wb-tabs" id="wbTabs" role="group" aria-label="Work groups"></div>
+
+  <details style="margin-bottom:12px">
+    <summary style="cursor:pointer;font-weight:600">Quote ageing — how long customers have been waiting</summary>
+    <div class="wb-ageing" id="wbAgeing"></div>
+  </details>
+
+  <div class="wb-wrap">
+    <table class="wb">
+      <thead><tr>
+        <th style="width:28px"><input type="checkbox" id="wbAll" onchange="wbSelectAll(this.checked)" aria-label="Select everything shown"></th>
+        <th>Priority</th><th>Due</th><th>Account</th><th>Record</th><th>Vertical</th>
+        <th>Stage</th><th class="num">Value</th><th class="num">Last contact</th>
+        <th>Next action</th><th>Quote due</th><th class="num">Ageing</th>
+        <th>Owner</th><th>Why</th><th></th>
+      </tr></thead>
+      <tbody id="wbRows"><tr><td colspan="15" class="muted" style="padding:22px">Loading…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="wb-note" id="wbPager"></div>
+
+  <div class="wb-actions" id="wbBulk">
+    <strong id="wbCount">0 selected</strong>
+    <select id="wbAction" onchange="wbActionChanged()">
+      <option value="set_followup">Set the next follow-up date</option>
+      <option value="set_next_action">Set the next action</option>
+      <option value="complete_followup">Mark the follow-up done</option>
+      <option value="assign_owner">Assign an owner</option>
+      <option value="set_stage">Change the stage</option>
+      <option value="set_vertical">Set the vertical</option>
+      <option value="log_activity">Log the same activity</option>
+      <option value="archive">Archive (reversible)</option>
+    </select>
+    <span id="wbValueWrap"><input id="wbValue" type="date" aria-label="New value"></span>
+    <button class="btn primary" onclick="wbPreview()">Preview change</button>
+    <button class="btn" onclick="wbClear()">Clear</button>
+    {% if team %}<button class="btn" onclick="wbRemind()">Send a reminder</button>{% endif %}
+  </div>
+  <div class="wb-note" id="wbResult"></div>
+
+</div>
+
+<script>
+const PREFIX = {{ url_prefix|tojson }};
+const TEAM = {{ 'true' if team else 'false' }};
+const SUM_TILES = [
+  ['due_today','Due today',''], ['overdue','Overdue','danger'],
+  ['rfqs_awaiting_quote','RFQs awaiting quote',''], ['quotes_due','Quotes due','warn'],
+  ['followups_due','Follow-ups due',''], ['stale','Stale leads',''],
+  ['no_next_action','No next action',''], ['new_assignments','New assignments',''],
+  ['data_updates','Data updates required',''], ['high_value','High-value priorities','']
+];
+const TILE_GROUP = {due_today:'action_today', overdue:'action_today',
+  rfqs_awaiting_quote:'quotations', quotes_due:'quotations', followups_due:'customer_followup',
+  stale:'stale', no_next_action:'data_update', new_assignments:'newly_assigned',
+  data_updates:'data_update', high_value:'high_value'};
+let STATE = {group:'', page:1, sel:new Set(), rows:[], token:null};
+const $ = id => document.getElementById(id);
+/* This page is served outside the main app shell, which carries its own
+   fetch wrapper, so every write here has to send the CSRF token itself. */
+function csrfToken(){
+  const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+function postJson(path, body){
+  return fetch(PREFIX + path, {method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json', 'X-CSRFToken': csrfToken()},
+    body: JSON.stringify(body)});
+}
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const money = v => { v = Number(v||0); if(!(v>0)) return '—';
+  return v >= 1e7 ? '₹ '+(v/1e7).toFixed(2)+' Cr' : '₹ '+(v/1e5).toFixed(1)+' L'; };
+
+function params(page){
+  const p = new URLSearchParams();
+  if (STATE.group) p.set('group', STATE.group);
+  if ($('wbQ').value.trim()) p.set('q', $('wbQ').value.trim());
+  if ($('wbVertical').value) p.set('vertical', $('wbVertical').value);
+  if ($('wbStage').value) p.set('stage', $('wbStage').value);
+  p.set('sort', $('wbSort').value);
+  p.set('page', page || 1);
+  const who = $('wbWho');
+  if (who && who.value) p.set('for', who.value);
+  return p;
+}
+let _t = null;
+function wbDebounce(){ clearTimeout(_t); _t = setTimeout(() => wbLoad(1), 350); }
+
+async function wbLoad(page){
+  STATE.page = page || STATE.page;
+  const r = await fetch(PREFIX + '/api/workbench?' + params(STATE.page), {credentials:'same-origin'});
+  const d = await r.json().catch(() => null);
+  if (!d || !d.ok) { $('wbRows').innerHTML = '<tr><td colspan="15">Could not load the Workbench.</td></tr>'; return; }
+  paintSummary(d.summary); paintTabs(d.groups); paintAgeing(d.quote_ageing); paintRows(d);
+  if (!$('wbVertical').dataset.filled) fillFilters(d);
+}
+function paintSummary(s){
+  $('wbSum').innerHTML = SUM_TILES.map(([k,label,cls]) =>
+    `<button class="${cls}" aria-pressed="${STATE.group===TILE_GROUP[k]}" onclick="wbGroup('${TILE_GROUP[k]}')">
+       <div class="l">${esc(label)}</div><div class="v">${s[k]||0}</div></button>`).join('');
+}
+function paintTabs(groups){
+  $('wbTabs').innerHTML = `<button aria-pressed="${!STATE.group}" onclick="wbGroup('')">Everything<span class="n">${
+      groups.reduce((a,g)=>a+g.count,0)}</span></button>` +
+    groups.map(g => `<button aria-pressed="${STATE.group===g.key}" onclick="wbGroup('${g.key}')">${esc(g.label)}<span class="n">${g.count}</span></button>`).join('');
+}
+function paintAgeing(a){
+  $('wbAgeing').innerHTML = a.buckets.map(b =>
+      `<button onclick="wbGroup('quotations')"><div class="l">${esc(b.label)}</div><div class="v">${b.count}</div></button>`).join('')
+    + `<button onclick="wbGroup('quotations')"><div class="l">Overdue</div><div class="v" style="color:#B91C1C">${a.overdue_count}</div></button>`;
+}
+function fillFilters(d){
+  const verts = [...new Set(d.items.map(i => i.vertical).filter(Boolean))].sort();
+  const stages = [...new Set(d.items.map(i => i.stage).filter(Boolean))].sort();
+  $('wbVertical').innerHTML = '<option value="">All verticals</option>' + verts.map(v=>`<option>${esc(v)}</option>`).join('');
+  $('wbStage').innerHTML = '<option value="">All stages</option>' + stages.map(v=>`<option>${esc(v)}</option>`).join('');
+  $('wbVertical').dataset.filled = '1';
+  if (TEAM && $('wbWho') && !$('wbWho').dataset.filled) {
+    fetch(PREFIX + '/api/workbench/people', {credentials:'same-origin'})
+      .then(r => r.json()).then(p => {
+        if (!p || !p.ok) return;
+        $('wbWho').innerHTML = '<option value="">Everyone in my scope</option>' +
+          p.people.map(x => `<option value="${esc(x.emp_code)}">${esc(x.name)}</option>`).join('');
+        $('wbWho').dataset.filled = '1';
+      }).catch(()=>{});
+  }
+}
+/* The reasons a record is here, worst first. A lead can trip seven
+   conditions; showing all seven makes the row unreadable, so the top
+   three show and the rest are on the chip. */
+function whyChips(i){
+  const seen = new Set(), all = [];
+  [...i.reasons, ...i.data_issues].forEach(r => {
+    const k = String(r).toLowerCase();
+    if (!seen.has(k)) { seen.add(k); all.push(r); }
+  });
+  const cls = i.priority === 1 ? 'bad' : i.priority === 2 ? 'warn' : '';
+  const shown = all.slice(0, 3).map(r => `<span class="chip ${cls}">${esc(r)}</span>`).join('');
+  const rest = all.length - 3;
+  return shown + (rest > 0
+    ? `<span class="chip" title="${esc(all.slice(3).join(' · '))}">+${rest} more</span>` : '');
+}
+function paintRows(d){
+  STATE.rows = d.items;
+  $('wbRows').innerHTML = d.items.length ? d.items.map(i => `
+    <tr class="pri${i.priority}">
+      <td>${i.kind==='lead' ? `<input type="checkbox" class="wbSel" data-id="${i.id}" ${STATE.sel.has(i.id)?'checked':''}
+            onchange="wbToggle(${i.id}, this.checked)" aria-label="Select ${esc(i.account)}">` : ''}</td>
+      <td>${['','Overdue','Today','Soon','Routine'][i.priority]||''}</td>
+      <td>${esc(i.due||'—')}</td>
+      <td>${esc(i.account||'—')}</td>
+      <td><a href="${PREFIX}${esc(i.route)}">${esc(i.title === i.account ? (i.stage || i.kind) : i.title)}</a>
+          <div class="muted" style="font-size:11.5px">${esc(i.kind)}</div></td>
+      <td>${esc(i.vertical||'—')}</td>
+      <td>${esc(i.stage||'—')}</td>
+      <td class="num">${money(i.value_inr)}</td>
+      <td class="num">${i.last_activity_days==null?'never':i.last_activity_days+'d'}</td>
+      <td>${esc(i.next_action||'—')}<div class="muted" style="font-size:11.5px">${esc(i.next_action_date||'')}</div></td>
+      <td>${esc(i.quote_due||'—')}</td>
+      <td class="num">${i.ageing_days==null?'—':i.ageing_days+'d'}</td>
+      <td>${esc(i.assigned_name||'—')}</td>
+      <td>${whyChips(i)}</td>
+      <td><a class="btn" href="${PREFIX}${esc(i.route)}">Open</a></td>
+    </tr>`).join('') : '<tr><td colspan="15" style="padding:26px" class="muted">Nothing needs your attention here. </td></tr>';
+  $('wbPager').innerHTML = `${d.total} item(s) · page ${d.page} of ${d.pages} ` +
+    (d.page > 1 ? `<button class="btn" onclick="wbLoad(${d.page-1})">Previous</button> ` : '') +
+    (d.page < d.pages ? `<button class="btn" onclick="wbLoad(${d.page+1})">Next</button>` : '');
+  wbPaintSelection();
+}
+function wbGroup(g){ STATE.group = (STATE.group === g) ? '' : g; wbLoad(1); }
+function wbToggle(id, on){ on ? STATE.sel.add(id) : STATE.sel.delete(id); wbPaintSelection(); }
+function wbSelectAll(on){
+  STATE.rows.filter(r => r.kind === 'lead').forEach(r => on ? STATE.sel.add(r.id) : STATE.sel.delete(r.id));
+  document.querySelectorAll('.wbSel').forEach(c => { c.checked = on; });
+  wbPaintSelection();
+}
+function wbClear(){ STATE.sel.clear(); document.querySelectorAll('.wbSel').forEach(c => c.checked = false); wbPaintSelection(); }
+function wbPaintSelection(){
+  const n = STATE.sel.size;
+  $('wbBulk').style.display = n ? 'flex' : 'none';
+  $('wbCount').textContent = n + ' selected';
+}
+function wbActionChanged(){
+  const a = $('wbAction').value, wrap = $('wbValueWrap');
+  if (a === 'complete_followup' || a === 'archive') { wrap.innerHTML = ''; return; }
+  if (a === 'set_followup') { wrap.innerHTML = '<input id="wbValue" type="date" aria-label="New date">'; return; }
+  if (a === 'assign_owner') {
+    wrap.innerHTML = '<select id="wbValue" aria-label="New owner"><option value="">Choose…</option></select>';
+    fetch(PREFIX + '/api/workbench/people', {credentials:'same-origin'}).then(r=>r.json()).then(p => {
+      if (p && p.ok) $('wbValue').innerHTML = '<option value="">Choose…</option>' +
+        p.people.map(x => `<option value="${esc(x.emp_code)}">${esc(x.name)}</option>`).join('');
+    }).catch(()=>{});
+    return;
+  }
+  wrap.innerHTML = '<input id="wbValue" type="text" placeholder="Value" aria-label="New value" style="min-width:200px">';
+}
+async function wbPreview(){
+  const ids = [...STATE.sel], action = $('wbAction').value;
+  const value = $('wbValue') ? $('wbValue').value : '';
+  const r = await postJson('/api/workbench/bulk/preview', {ids, action, value});
+  const d = await r.json().catch(()=>null);
+  if (!d || !d.ok) { $('wbResult').textContent = (d && d.error) || 'Could not preview that.'; return; }
+  if (!d.count) { $('wbResult').textContent = 'Nothing would change. ' +
+      d.skipped.map(s => `${s.name}: ${s.reason}`).join('; '); return; }
+  const lines = d.changes.slice(0, 8).map(c => `${c.name}: ${c.before || '—'} → ${c.after_label}`).join('\n');
+  const more = d.count > 8 ? `\n…and ${d.count - 8} more` : '';
+  const reason = window.prompt(`${d.action_label} on ${d.count} record(s)?\n\n${lines}${more}\n\nWhy? (recorded against every record)`, '');
+  if (reason === null) return;
+  const a = await postJson('/api/workbench/bulk/apply',
+      {ids, action, value, reason, preview_token: d.preview_token});
+  const res = await a.json().catch(()=>null);
+  if (!res || !res.ok) { $('wbResult').textContent = (res && res.error) || 'Could not apply that.'; return; }
+  res.applied.forEach(c => STATE.sel.delete(c.id));
+  $('wbResult').innerHTML = `<strong>${res.applied_count} updated</strong>` +
+    (res.failed_count ? ` · <strong>${res.failed_count} failed</strong>: ` +
+      res.failed.map(f => `${esc(f.name)} — ${esc(f.error)}`).join('; ') + ' (still selected)' : '') +
+    (res.skipped.length ? ` · ${res.skipped.length} skipped` : '');
+  wbLoad(STATE.page);
+}
+async function wbRemind(){
+  const who = $('wbWho') && $('wbWho').value;
+  if (!who) { $('wbResult').textContent = 'Choose the person first.'; return; }
+  const message = window.prompt('What should the reminder say?', 'Please bring your Workbench up to date.');
+  if (message === null) return;
+  const r = await postJson('/api/workbench/remind',
+      {to: who, message, group: STATE.group, email: true});
+  const d = await r.json().catch(()=>null);
+  $('wbResult').textContent = (d && d.ok)
+    ? `Reminder sent to ${who}${d.emailed ? ' (in-app and email)' : ' (in-app)'}${d.suppressed ? ' — already sent recently' : ''}.`
+    : ((d && d.error) || 'Could not send that reminder.');
+}
+$('today-line').textContent = new Date().toLocaleDateString('en-IN',
+  {weekday:'long', day:'numeric', month:'long', year:'numeric'});
+wbActionChanged();
+wbLoad(1);
+</script>
+</body>
+</html>

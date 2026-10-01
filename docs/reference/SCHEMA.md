@@ -725,6 +725,7 @@ Composite indexes: `ix_dmq_status_reason` (status, reason); `ix_dmq_entity` (ent
 | quote_revisions | JSON | yes |  |  |
 | quote_recorded_by | VARCHAR(20) | yes |  |  |
 | quote_recorded_at | DATETIME | yes |  |  |
+| next_action | VARCHAR(200) | yes |  |  |
 | relevance | VARCHAR(20) | yes | indexed | 'Undecided' |
 | email_message_id | VARCHAR(255) | yes | unique, indexed |  |
 | email_extracted_json | TEXT | yes |  |  |
@@ -1205,7 +1206,7 @@ Composite indexes: `ix_master_item_list_active` (list_key, is_active)
 | waiting_from_task_id | INTEGER | yes | FK → task_instances.id |  |
 | blocked_at | DATETIME | yes |  |  |
 
-Composite indexes: `ix_task_inst_owner_status` (owner_user_id, status); `ix_task_inst_entity` (entity_type, entity_id); `ix_task_inst_open` (task_key, entity_type, entity_id, owner_user_id, status); `ix_task_inst_role_status` (owner_role, status)
+Composite indexes: `ix_task_inst_owner_status` (owner_user_id, status); `ix_task_inst_open` (task_key, entity_type, entity_id, owner_user_id, status); `ix_task_inst_role_status` (owner_role, status); `ix_task_inst_entity` (entity_type, entity_id)
 
 ## training_certificates
 

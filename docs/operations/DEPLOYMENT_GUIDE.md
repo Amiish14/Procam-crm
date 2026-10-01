@@ -184,6 +184,38 @@ values, so they drop sharply from the project-cost sums they showed; the lead ed
 block; saving a lead marked Quoted without a quote value/date, or Won
 without a value, asks first; the Won dialog's value is now saved.
 
+### Release notes — Daily Workbench (2026-10)
+
+**Migration** (after the backup and pull):
+
+```bash
+.venv/bin/python scripts/2026_10_06_workbench.py --check
+.venv/bin/python scripts/2026_10_06_workbench.py
+```
+
+It adds `leads.next_action` (what the owner plans to do next; the date
+is the existing `followup_date`). The boot adds it too. Nothing is
+backfilled.
+
+**New screens:** `/CRM/my-work` is now the Daily Workbench; the previous
+task list moved to `/CRM/my-work/tasks`; `/CRM/team-workbench` is new
+for anyone whose scope reaches more than themselves. See
+[Workbench](WORKBENCH.md).
+
+**No new configuration, no new scheduled job.** Reminder emails use the
+existing Graph sender, so they need the same `Mail.Send` grant as
+assignment emails; without it the in-app reminder still arrives and the
+email is reported as refused.
+
+**Behaviour users will notice**
+
+- Dates are now judged on the Indian business day rather than the
+  server's UTC day. "Due today", quote "days left" and quote expiry
+  were a day early every evening after 18:30 IST.
+- Triage: an unassigned lead whose arrival time is ahead of the server
+  clock used to vanish from the bucket list while still counting in the
+  headline. It is now counted in the first bucket.
+
 ## 5. Server — restart and verify
 
 ```bash

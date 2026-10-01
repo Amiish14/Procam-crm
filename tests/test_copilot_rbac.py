@@ -30,6 +30,7 @@ os.environ.pop('PROCAM_AI_BASE_URL', None)
 from app import (app as flask_app, db, Employee, Lead, Company,   # noqa: E402
                  Opportunity)
 from app.access import scope as scope_mod                         # noqa: E402
+from app.services.sales_rules import business_today  # noqa: E402
 from app.access.service import set_profile                        # noqa: E402
 from app.copilot import intents as catalogue                      # noqa: E402
 from app.copilot import service as svc                            # noqa: E402
@@ -800,7 +801,7 @@ def test_closing_this_month_means_this_month(world):
     from app import Opportunity
 
     with flask_app.app_context():
-        today = date.today()
+        today = business_today()
         start = date(today.year, today.month, 1)
         made = []
         for tag, when in (('ancient', start - timedelta(days=800)),
@@ -1095,7 +1096,7 @@ def test_followups_lists_what_my_day_counts(world):
     from app import Lead
     with flask_app.app_context():
         lead = db.session.get(Lead, world['mine']['lead'])
-        lead.followup_date = date.today() - timedelta(days=3)
+        lead.followup_date = business_today() - timedelta(days=3)
         db.session.commit()
         try:
             sc = _scope_for('CPREP', DataScope.OWN)
@@ -1116,7 +1117,7 @@ def test_followups_never_include_another_owners_lead(world):
     from app import Lead
     with flask_app.app_context():
         theirs = db.session.get(Lead, world['theirs']['lead'])
-        theirs.followup_date = date.today() - timedelta(days=1)
+        theirs.followup_date = business_today() - timedelta(days=1)
         db.session.commit()
         try:
             sc = _scope_for('CPREP', DataScope.OWN)
@@ -1133,7 +1134,7 @@ def test_a_future_followup_only_appears_inside_the_window(world):
     from app import Lead
     with flask_app.app_context():
         lead = db.session.get(Lead, world['mine']['lead'])
-        lead.followup_date = date.today() + timedelta(days=5)
+        lead.followup_date = business_today() + timedelta(days=5)
         db.session.commit()
         try:
             sc = _scope_for('CPREP', DataScope.OWN)

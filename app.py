@@ -534,6 +534,9 @@ class Lead(db.Model):
     quote_revisions       = db.Column(db.JSON, nullable=True)
     quote_recorded_by     = db.Column(db.String(20), nullable=True)
     quote_recorded_at     = db.Column(db.DateTime, nullable=True)
+    # What the owner has decided to do next, in their words. The date it
+    # is due is followup_date, which the CRM already had.
+    next_action           = db.Column(db.String(200), nullable=True)
     # relevance ∈ {'Relevant', 'Not Relevant', 'Undecided'} — lets users
     # keep an operational pipeline clean without hard-deleting records.
     relevance         = db.Column(db.String(20), nullable=True,
@@ -611,6 +614,7 @@ class Lead(db.Model):
             'opp_stage': self.opp_stage or '',
             'opp_close_date': sd(self.opp_close_date),
             'opp_notes': self.opp_notes or '',
+            'next_action': self.next_action or '',
             'onboarded_date': sd(self.onboarded_date),
             'week_tag': self.week_tag or '',
             'created_at': str(self.created_at)[:10] if self.created_at else '',
@@ -2078,6 +2082,7 @@ def api_update_lead(lid):
         'opp_number':'opp_number','opp_stage':'opp_stage','opp_notes':'opp_notes',
         # v2026-08 — CRM enhancement pack
         'website':'website', 'subsidiaries':'subsidiaries', 'relevance':'relevance',
+        'next_action':'next_action',
     }
     for k, v in fields_map.items():
         if k in d:
@@ -4508,6 +4513,7 @@ def init_db():
             ('leads', 'quote_revisions',       'JSON'),
             ('leads', 'quote_recorded_by',     'VARCHAR(20)'),
             ('leads', 'quote_recorded_at',     'TIMESTAMP'),
+            ('leads', 'next_action',           'VARCHAR(200)'),
             ('lead_notes',    'revisions',           'TEXT'),
             ('copilot_log',   'answer',              'VARCHAR(500)'),
         ]
@@ -5156,6 +5162,13 @@ csrf.exempt(api_email_webhook)
 #   * app/notifications  — in-app bell dropdown + /notifications inbox.
 # Register additively; failures are logged but never block boot.
 # ═════════════════════════════════════════════════════════════════════
+try:
+    from app.workbench.routes import bp as workbench_bp
+    app.register_blueprint(workbench_bp)
+    app.logger.info('CRM Foundation: workbench blueprint registered.')
+except Exception as _e:
+    app.logger.warning('workbench blueprint failed to load: %s', _e)
+
 try:
     from app.my_work.routes import bp as my_work_bp
     app.register_blueprint(my_work_bp)

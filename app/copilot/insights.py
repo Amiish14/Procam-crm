@@ -177,7 +177,8 @@ def quotes_expiring(scope, params):
         return _nothing_recorded('quotes',
                                  'The Quotes module has no records yet.')
     days = _int(params.get('days'), 7)
-    today = _now().date()
+    from app.services.sales_rules import business_today
+    today = business_today()
     base = visible.filter(Quote.status.in_(_LIVE_QUOTE),
                           Quote.validity_until.isnot(None),
                           Quote.validity_until <= today + timedelta(days=days))

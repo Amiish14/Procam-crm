@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, or_
 
 from app.access import scope as sc_mod
+from app.services.sales_rules import business_today
 from app.copilot.intents import Result, intent
 
 
@@ -2277,7 +2278,7 @@ def closing_this_month(scope, params):
 
     from app import Opportunity
 
-    today = date.today()
+    today = business_today()
     start = date(today.year, today.month, 1)
     if today.month == 12:
         end = date(today.year + 1, 1, 1)
@@ -2476,7 +2477,7 @@ def _text_filters(params):
         term = (term[:m.start()] + term[m.end():]).strip(' ,-')
     if days and not out.get('date_from'):
         try:
-            out['date_from'] = (date.today() - _td(days=int(days))).isoformat()
+            out['date_from'] = (business_today() - _td(days=int(days))).isoformat()
         except (TypeError, ValueError):
             pass
     term = _re.sub(r'\s{2,}', ' ', term).strip()
@@ -2510,7 +2511,7 @@ def followups_due(scope, params):
     from app import Lead
 
     ahead = max(int(params.get('days') or 0), 0)
-    today = date.today()
+    today = business_today()
     horizon = today + _td(days=ahead)
 
     base = (sc_mod.leads(sc=scope)

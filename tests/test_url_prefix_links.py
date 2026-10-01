@@ -149,7 +149,7 @@ def test_my_work_task_links_are_prefixed(client):
                 status='Pending', priority=2, action_route='/app?lead=7'))
             db.session.commit()
 
-    html = client.get('/my-work',
+    html = client.get('/my-work/tasks',
                       environ_overrides={'SCRIPT_NAME': _PREFIX}
                       ).get_data(as_text=True)
     links = re.findall(r'class="task-row" href="([^"]+)"', html)

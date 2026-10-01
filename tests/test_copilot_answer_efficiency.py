@@ -26,6 +26,7 @@ os.environ.pop('PROCAM_AI_BASE_URL', None)
 from app import (app as flask_app, db, Company, Lead, LeadEmail,  # noqa: E402
                  LeadActivity)
 from app.access import scope as scope_mod                        # noqa: E402
+from app.services.sales_rules import business_today  # noqa: E402
 from app.copilot import intents as catalogue                     # noqa: E402
 from app.copilot import queries as Q                             # noqa: E402
 from app.services import contact                                 # noqa: E402
@@ -39,7 +40,7 @@ def seeded():
     """More rows than ROW_CAP, with ties in every ordering column."""
     with flask_app.app_context():
         db.create_all()
-        today = date.today()
+        today = business_today()
         base = datetime.utcnow().replace(microsecond=0) - timedelta(days=3)
         leads = []
         for i in range(130):
@@ -140,7 +141,7 @@ def test_no_next_action_matches_the_full_load(seeded):
 
 def test_followups_match_the_full_load(seeded):
     with flask_app.app_context():
-        today = date.today()
+        today = business_today()
         found = sorted([l for l in _lead_rows() if l.stage not in TERMINAL
                         and l.followup_date is not None
                         and l.followup_date <= today],

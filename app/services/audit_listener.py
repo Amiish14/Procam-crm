@@ -51,6 +51,7 @@ WATCH = {
         'quote_date': 'lead.quote_change',
         'quote_validity_date': 'lead.quote_change',
         'quote_cost_num': 'lead.quote_change',
+        'next_action': 'lead.update',
         'lost_reason': 'lead.update',
         'classification': 'lead.update',
     }),

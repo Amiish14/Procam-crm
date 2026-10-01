@@ -29,8 +29,17 @@ contacts.
 
 ## Your day
 
-- **My Work** — open leads, follow-ups due today and overdue, leads with
-  no contact for a while.
+- **Daily Workbench** (My Work) — everything needing attention on one
+  screen: due today, overdue, quotes due, follow-ups, leads going quiet,
+  records missing information, new assignments and high-value deals.
+  Each row says why it is there. Tick several rows to set a follow-up
+  date, next action, owner, stage or vertical in one go — you see
+  exactly what will change before it happens, and give a reason that is
+  kept with every record. The old task list is still at
+  **My Work → Task list**.
+- **Team Workbench** — if you look after a team, the same board across
+  your people, filtered to one person when you want, with a reminder you
+  can send (it reaches them in the CRM and by email, and is logged).
 - **Sales Pipeline** — leads by stage; drag or edit to move them on.
 - **Lead screen** — details, owners, the email trail with the customer,
   rate-sourcing emails, notes, history.

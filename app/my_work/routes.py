@@ -39,7 +39,7 @@ def _serialize_bucket(rows):
     return out
 
 
-@bp.route('/my-work')
+@bp.route('/my-work/tasks')
 def my_work_home():
     emp = _current_emp()
     if not emp:

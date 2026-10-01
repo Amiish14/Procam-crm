@@ -50,6 +50,8 @@ _GATES = (
     (re.compile(r"@_require_manager\b"), 'manager (reports)'),
     (re.compile(r"_current_emp\(\)[\s\S]{0,90}(redirect\(url_for\('login'|, 401)"),
      'signed in (checked inline)'),
+    # the Workbench: a session, then per-record Access Matrix scope
+    (re.compile(r"@_signed_in\b"), 'signed in; records by scope'),
     (re.compile(r"session\.get\('emp_code'\)|_current_emp_code\(\)|"
                 r"'emp_code' not in session"), 'signed in (checked inline)'),
     (re.compile(r"require_auth|_login_required|_require_login|_authed\(\)"),
