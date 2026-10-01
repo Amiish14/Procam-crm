@@ -14,6 +14,9 @@ commands in §6 and §7) runs after IT confirms §1–§5.
 | `Mail.Read` | Real-time lead ingest from the leads mailbox; reading back the 17 damaged enquiries | New enquiries are not ingested in real time; recovery fails with HTTP 403 |
 | `Mail.Send` | "A lead was assigned to you" notification emails, sent **from** leads@procamgroup.in | Each notification fails with 403 (logged; nothing else breaks) |
 
+`Mail.Send` alone, as a self-contained runbook you can hand to an
+administrator who has never seen this CRM: [GRAPH_MAIL_SEND.md](GRAPH_MAIL_SEND.md).
+
 Not needed: `Mail.ReadWrite` (the CRM never moves, deletes or flags
 mail; the legacy "mark as read" option is off), any delegated permission,
 any access to other mailboxes.

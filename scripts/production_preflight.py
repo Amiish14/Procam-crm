@@ -26,6 +26,7 @@ not against the real file). The production database is only ever opened
 with SQLite mode=ro.
 """
 import argparse
+import base64
 import ipaddress
 import json
 import os
@@ -36,6 +37,9 @@ import stat
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -231,6 +235,160 @@ def check_config(rep, env_path):
     rep.add(area, 'LOG_LEVEL', INFO, _env('LOG_LEVEL') or 'INFO (default)')
 
 
+# ── Microsoft Graph application permissions ──────────────────────────
+# A client-credentials access token lists the application permissions it
+# was granted in its `roles` claim. Reading that claim answers "has IT
+# granted Mail.Send yet?" without sending a single message — which is the
+# only way to ask the question that cannot itself land in somebody's
+# inbox. The helpers below are pure and are reused by app/ops/checks.py
+# and by scripts/check_mail_send.py, so the verdict is worded once.
+
+#: The one permission the whole outbound side of the CRM rests on.
+MAIL_SEND = 'Mail.Send'
+
+#: What stops working while it is missing. Kept here so the preflight,
+#: the ops check and the CLI cannot drift apart on the consequences.
+MAIL_SEND_BREAKS = ('assignment emails', 'Workbench reminders',
+                    'the five scheduled reports')
+
+MAIL_SEND_RUNBOOK = 'docs/operations/GRAPH_MAIL_SEND.md'
+
+GRAPH_TOKEN_TIMEOUT = 10        # seconds — a preflight must not hang
+
+
+def decode_jwt_claims(token):
+    """The claims inside a JWT, without verifying its signature.
+
+    No signature check is needed or wanted here: this is *our own* token,
+    just fetched from login.microsoftonline.com over TLS, and we are
+    reading it to report what Microsoft granted us. Nothing downstream
+    trusts these claims to authenticate or authorise anybody — a forged
+    token could only make this report wrong, not let anyone in. The real
+    authority is still Graph, which rejects a call the roles do not cover.
+
+    Returns {} for anything that is not a readable JWT payload, so a
+    caller never has to guard against a malformed token.
+    """
+    parts = str(token or '').split('.')
+    if len(parts) < 2 or not parts[1]:
+        return {}
+    # JWTs use base64url and strip the '=' padding; put it back, or the
+    # decoder raises on perfectly valid tokens.
+    payload = parts[1] + '=' * (-len(parts[1]) % 4)
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(payload.encode()))
+    except Exception:                                    # noqa: BLE001
+        return {}
+    return claims if isinstance(claims, dict) else {}
+
+
+def token_roles(token):
+    """The application permissions the token carries, sorted.
+
+    [] means either a token with no application permission at all or
+    something that was not a readable JWT — callers that need to tell
+    those apart use decode_jwt_claims directly.
+    """
+    roles = decode_jwt_claims(token).get('roles')
+    if not isinstance(roles, (list, tuple)):
+        return []
+    return sorted({str(r) for r in roles if r})
+
+
+def mail_send_verdict(roles):
+    """(granted, detail) for a list of granted application permissions.
+
+    Pure: the same sentence for the preflight, the ops page and the CLI.
+    """
+    roles = list(roles or [])
+    carried = ', '.join(roles) if roles else 'no application permission'
+    if MAIL_SEND in roles:
+        return True, (f'granted — the CRM can send mail as the leads '
+                      f'mailbox (token carries: {carried})')
+    return False, (f'NOT granted (token carries: {carried}) — '
+                   + ', '.join(MAIL_SEND_BREAKS[:-1])
+                   + f' and {MAIL_SEND_BREAKS[-1]} all fail with HTTP 403 '
+                     f'ErrorAccessDenied until an administrator grants and '
+                     f'admin-consents the Mail.Send APPLICATION permission; '
+                     f'the runbook is {MAIL_SEND_RUNBOOK}')
+
+
+def graph_access_token(timeout=GRAPH_TOKEN_TIMEOUT):
+    """('ok', token) | ('missing', names) | ('unreachable'|'refused', why).
+
+    The token is returned to the caller and never printed, logged or put
+    in a report row.
+    """
+    names = ('MS_TENANT_ID', 'MS_CLIENT_ID', 'MS_CLIENT_SECRET')
+    vals = {n: _env(n) for n in names}
+    missing = [n for n in names if not vals[n]]
+    if missing:
+        return 'missing', ', '.join(missing)
+    url = ('https://login.microsoftonline.com/'
+           f'{urllib.parse.quote(vals["MS_TENANT_ID"])}/oauth2/v2.0/token')
+    form = urllib.parse.urlencode({
+        'client_id': vals['MS_CLIENT_ID'],
+        'client_secret': vals['MS_CLIENT_SECRET'],
+        'scope': 'https://graph.microsoft.com/.default',
+        'grant_type': 'client_credentials'}).encode()
+    req = urllib.request.Request(url, data=form, headers={
+        'Content-Type': 'application/x-www-form-urlencoded'})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status, body = resp.status, resp.read(65536)
+    except urllib.error.HTTPError as exc:
+        status, body = exc.code, exc.read(65536)
+    except (OSError, ValueError) as exc:
+        return 'unreachable', f'{type(exc).__name__}: {str(exc)[:120]}'
+    try:
+        data = json.loads(body or b'{}')
+    except ValueError:
+        data = {}
+    if status == 200 and data.get('access_token'):
+        return 'ok', data['access_token']
+    # Only the AADSTS number: the description carries trace ids and
+    # nothing an administrator acts on that the number does not say.
+    code = re.search(r'AADSTS\d+', str(data.get('error_description') or ''))
+    return 'refused', (f'HTTP {status} {data.get("error") or ""} '
+                       f'{code.group(0) if code else ""}').strip()
+
+
+def check_graph_permissions(rep, *, network=True):
+    """Report, in the CONFIG section, which Graph roles the token carries.
+
+    Called straight after check_config so its rows print under the same
+    heading; kept a separate function because check_config is pure and is
+    reused by the ops page, which must be able to run with no network.
+    """
+    area = 'config'
+    name = 'Mail.Send permission'
+    if not network:
+        rep.add(area, name, INFO, 'not checked (--no-network)')
+        return
+    state, info = graph_access_token()
+    if state == 'missing':
+        rep.add(area, name, INFO, f'not checked: {info} not set')
+        return
+    if state == 'unreachable':
+        rep.add(area, name, INFO, f'not checked: login.microsoftonline.com '
+                                  f'did not answer ({info})')
+        return
+    if state == 'refused':
+        rep.add(area, name, WARN, f'no token, so the grant cannot be read '
+                                  f'({info}) — fix the Graph credentials first')
+        return
+    roles = token_roles(info)
+    if not roles:
+        rep.add(area, name, WARN, 'the access token carries no readable '
+                                  'roles claim — no application permission '
+                                  'has been admin-consented; see '
+                                  + MAIL_SEND_RUNBOOK)
+        return
+    granted, detail = mail_send_verdict(roles)
+    rep.add(area, name, PASS if granted else WARN, detail)
+    rep.add(area, 'Graph application permissions', INFO, ', '.join(roles))
+
+
 # ── schema ───────────────────────────────────────────────────────────
 _EXPECTED = r'''
 import json, os, sys
@@ -412,10 +570,12 @@ def check_ops(rep, conn, db_path):
                 f'decision')
 
 
-def run(env_path=None, db_url=None, *, schema=True):
+def run(env_path=None, db_url=None, *, schema=True, network=True):
     env_path = env_path or os.path.join(_ROOT, '.env')
     rep = Report()
     check_config(rep, env_path)
+    # Same CONFIG section: one token fetch, no mail sent.
+    check_graph_permissions(rep, network=network)
     url = db_url or _env('DATABASE_URL') or (
         'sqlite:///' + os.path.join(_ROOT, 'procam_crm.db'))
     db_path = url[len('sqlite:///'):] if url.startswith('sqlite:///') else ''
@@ -439,8 +599,11 @@ def main():
     ap.add_argument('--no-schema', action='store_true',
                     help='skip the schema comparison (it imports the app '
                          'in a child process against an in-memory database)')
+    ap.add_argument('--no-network', action='store_true',
+                    help='skip the Graph token fetch that reads which '
+                         'application permissions are granted')
     args = ap.parse_args()
-    rep = run(schema=not args.no_schema)
+    rep = run(schema=not args.no_schema, network=not args.no_network)
     if args.json:
         print(json.dumps(rep.rows, indent=1))
     else:

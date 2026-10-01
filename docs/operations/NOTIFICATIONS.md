@@ -205,6 +205,11 @@ registration. That is a separate grant from Mail.Read, and without it
 Graph answers 403 and every recipient is reported as `failed`. See the
 [Graph setup guide](GRAPH_SETUP_GUIDE.md).
 
+To check the grant without sending anything, run
+`.venv/bin/python scripts/check_mail_send.py`; the runbook for the
+administrator who has to make the grant is
+[GRAPH_MAIL_SEND.md](GRAPH_MAIL_SEND.md).
+
 ## Troubleshooting
 
 | What you see | What it means |

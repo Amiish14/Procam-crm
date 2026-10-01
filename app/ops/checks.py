@@ -523,6 +523,35 @@ def check_graph_token(ctx):
     return result(key, label, FAIL, f'token refused ({info}) — {hint}')
 
 
+def check_mail_send(ctx):
+    """Is the Mail.Send application permission granted?
+
+    Answered from the `roles` claim of the token the run already has, so
+    it costs no extra network call and — the point of it — sends no mail
+    to find out. The JWT is decoded, not verified: see
+    production_preflight.decode_jwt_claims for why that is safe here.
+    """
+    key, label = 'graph_mail_send', 'Graph Mail.Send permission'
+    state, info = graph_token(ctx)
+    if state != 'ok':
+        # No token, no answer. The credential failure is already worded
+        # once, by check_graph_token; repeat it rather than invent a
+        # second wording for the same fault.
+        base = check_graph_token(ctx)
+        return result(key, label, base['status'], base['detail'])
+    pf = preflight()
+    roles = pf.token_roles(info)
+    if not roles:
+        return result(key, label, UNKNOWN, 'the access token carries no '
+                      'readable roles claim — no application permission '
+                      'has been admin-consented, or the token is not the '
+                      'JWT Graph normally issues; '
+                      + pf.MAIL_SEND_RUNBOOK)
+    granted, detail = pf.mail_send_verdict(roles)
+    return result(key, label, OK if granted else WARN, detail,
+                  {'roles': roles, 'mail_send': granted})
+
+
 def check_graph_secret_expiry(ctx):
     key, label = 'graph_secret_expiry', 'Graph client secret expiry'
     raw = _env('GRAPH_CLIENT_SECRET_EXPIRES', ctx.environ)
@@ -1307,6 +1336,7 @@ CHECKS = [
     ('review_queue', check_review_queue),
     ('graph_subscription', check_subscription),
     ('graph_token', check_graph_token),
+    ('graph_mail_send', check_mail_send),
     ('graph_secret_expiry', check_graph_secret_expiry),
     ('tls_certificate', check_certificate),
     ('copilot_index', check_copilot_index),

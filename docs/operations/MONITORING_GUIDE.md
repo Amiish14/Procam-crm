@@ -308,6 +308,23 @@ subscription check and never shown.
 FAIL for an expired or wrong secret: Graph Setup Guide §5 (new secret),
 update `.env`, restart the service and the subscription job.
 
+### graph_mail_send — Graph Mail.Send permission
+
+Which application permissions the app registration actually holds, read
+from the `roles` claim of the token the run already fetched. No extra
+network call, and **no mail is sent** to find out.
+
+| Result | When |
+|---|---|
+| OK | `Mail.Send` is on the token |
+| WARN | it is not — assignment emails, Workbench reminders and the five scheduled reports all fail with 403 `ErrorAccessDenied` |
+| UNKNOWN | no token (same reasons as `graph_token`), or the token carries no readable `roles` claim |
+
+WARN: the grant is an administrator's job, not a code change. Hand them
+[GRAPH_MAIL_SEND.md](GRAPH_MAIL_SEND.md), then verify with
+`.venv/bin/python scripts/check_mail_send.py`. Consent can take up to an
+hour to appear in a freshly issued token.
+
 ### graph_secret_expiry — Graph client secret expiry
 
 The CRM app registration cannot read its own secret's expiry without an
