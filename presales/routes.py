@@ -233,8 +233,26 @@ def api_accounts_assign(aid):
     except svc.PreSalesError as e:
         db.session.rollback()
         return jsonify(ok=False, error=str(e)), 400
+    if row is not None:
+        _announce_pic_change(c, emp.emp_code)
     return jsonify(ok=True, changed=row is not None,
                    pic=c.pic_emp_code, secondary=c.secondary_pic_emp_code)
+
+
+def _announce_pic_change(account, actor, batch_key=None):
+    """Tell the new PIC the account is theirs. After the commit, and
+    never able to undo it: an account that has been reassigned stays
+    reassigned whether or not the email goes."""
+    try:
+        from app.services import notification_rules as nrules
+        nrules.dispatch('account.pic_changed', account, actor=actor,
+                        batch_key=batch_key,
+                        detail='You are now the PIC for this account.')
+    except Exception:
+        from flask import current_app
+        current_app.logger.exception(
+            'could not announce the PIC change on account %s',
+            getattr(account, 'id', '?'))
 
 
 #: Accounts per bulk request. The page sends larger selections in batches
@@ -291,6 +309,13 @@ def api_accounts_assign_bulk():
     visible = _visible_account_ids(emp)
     found = {c.id: c for c in Company.query.filter(
         Company.id.in_(account_ids), Company.is_active.is_(True))}
+    # One key for the whole batch, so the people on the receiving end
+    # get one email listing their new accounts rather than one per
+    # account. uuid rather than a timestamp: two bulk runs in the same
+    # second must not merge into each other's email.
+    import uuid as _uuid
+    batch_key = 'account.pic_changed:' + _uuid.uuid4().hex[:12]
+    changed_accounts = []
     results = []
     for aid in account_ids:
         c = found.get(aid)
@@ -321,7 +346,13 @@ def api_accounts_assign_bulk():
                         'changed': row is not None,
                         'pic': c.pic_emp_code,
                         'secondary': c.secondary_pic_emp_code})
+        if row is not None:
+            changed_accounts.append(c)
     db.session.commit()
+    # After the commit, and batched: forty accounts moved to one person
+    # in one action should reach them as one email, not forty.
+    for account in changed_accounts:
+        _announce_pic_change(account, emp.emp_code, batch_key=batch_key)
     ok_n = sum(1 for r in results if r['ok'])
     return jsonify(ok=True, results=results, succeeded=ok_n,
                    failed=len(results) - ok_n)

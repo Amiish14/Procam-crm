@@ -1,0 +1,10 @@
+[Unit]
+Description=Procam CRM Friday freeze — write the week down, then send it
+After=network.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/send_reports.py --freeze
+SuccessExitStatus=1

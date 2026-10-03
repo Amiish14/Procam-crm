@@ -1,0 +1,12 @@
+[Unit]
+Description=Procam CRM outbound email — send whatever is queued
+After=network.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/outbox_worker.py
+# A refused send is reported as 1. That is a mail problem, not a broken
+# timer, and the Email Health screen is where it is dealt with.
+SuccessExitStatus=1

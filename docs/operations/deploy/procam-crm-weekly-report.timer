@@ -4,7 +4,7 @@ Description=Procam CRM weekly reports
 [Timer]
 # Monday 08:30 IST, half an hour after the daily report, so the two do
 # not compete for the database or arrive in the same minute.
-OnCalendar=Mon *-*-* 03:00:00
+OnCalendar=Mon *-*-* 03:40:00
 Persistent=true
 RandomizedDelaySec=600
 

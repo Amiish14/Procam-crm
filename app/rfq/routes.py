@@ -297,6 +297,11 @@ def api_create_rfq():
     except Exception:
         db.session.rollback()
 
+    # After the commit, so nothing is announced that was not saved.
+    from app.services import notification_rules as nrules
+    nrules.dispatch('rfq.created', rfq, actor=actor,
+                    detail=(rfq.subject or '')[:160])
+
     return jsonify(ok=True, rfq=rfq.to_dict(deep=True))
 
 
@@ -312,6 +317,9 @@ def api_get_rfq(rid):
 def api_patch_rfq(rid):
     rfq = _rfq_or_404(rid)
     d = request.get_json(silent=True) or {}
+    # The RFQ's owner is `lead_driver`. Read it before the loop below
+    # overwrites it, so the notification can tell whether it moved.
+    was_owner = rfq.lead_driver
     for field in ('subject', 'description', 'origin', 'destination',
                   'cargo', 'scope', 'currency', 'lead_driver'):
         if field in d:
@@ -327,6 +335,11 @@ def api_patch_rfq(rid):
     except Exception:
         db.session.rollback()
         return jsonify(ok=False, error='commit failed'), 500
+    if rfq.lead_driver and rfq.lead_driver != was_owner:
+        from app.services import notification_rules as nrules
+        nrules.dispatch('rfq.owner_changed', rfq,
+                        actor=session.get('emp_code'),
+                        detail='This RFQ is now yours to quote.')
     return jsonify(ok=True, rfq=rfq.to_dict())
 
 
@@ -481,6 +494,14 @@ def api_submit_rate(rid, line_id):
         return jsonify(ok=False, error='commit failed'), 500
 
     _fire(line, 'RateSourcingLine', old_status, 'Completed')
+    try:
+        from app.services import notification_rules as nrules
+        _rfq = RFQ.query.get(rid)
+        nrules.dispatch('rfq.rate_submitted', _rfq, actor=actor,
+                        detail=f'{line.rate_currency or "INR"} '
+                               f'{line.rate_amount:,.0f} is in.')
+    except Exception:
+        pass
     try:
         db.session.commit()
     except Exception:

@@ -243,3 +243,57 @@ definition of "my records" to keep in step.
 `dispatch` swallow every exception. A notification that cannot be
 delivered is a nuisance; a lead assignment rolled back because the mail
 server hiccupped is a lost enquiry.
+
+---
+
+# Addendum — the 2026-10 email release
+
+The matrix above is still the description of who hears what. Four
+things changed around it.
+
+## 1. Delivery is a queue
+
+With `FEATURE_EMAIL_NOTIFY` on, `notify.send` writes a row to
+`email_outbox` inside the caller's transaction instead of calling
+Graph. `scripts/outbox_worker.py`, on a two-minute timer, claims the
+due rows, sends them, and records what happened.
+
+What that buys: a slow mail server no longer makes the CRM slow; a
+failed send is retried with a back-off rather than lost; a send cannot
+succeed for a transaction that then rolls back; and
+`/admin/email/health` can answer "did it go?".
+
+Idempotency is `email_outbox.dedupe_key`, unique in the database — the
+same message to the same person about the same record inside ten
+minutes is one message, enforced by the index and not by a query.
+
+With the flag off, `notify.send` behaves exactly as it did before.
+
+## 2. The assignment email carries the request
+
+`lead.assigned` and `lead.assigned_secondary` are the only two rules
+that attach anything (`attach_original=True`, checked by a test). They
+carry the client's original `.eml` and the lead's attachments, inside a
+3 MB inline budget; anything over it is left out and the body still
+links to the lead. A file that is no longer on disk loses the
+attachment, not the email.
+
+## 3. Nothing is emailed outside Procam
+
+`app/services/mail_policy.py`, enforced inside the one transport. See
+§6 of the runbook.
+
+## 4. Each person can turn it down
+
+`notification_prefs` holds channels, batching, quiet hours and muted
+events, edited at `/me/notifications`. A person with no row behaves
+exactly as before the table existed.
+
+## Three new screens
+
+| Screen | Who | What it answers |
+|---|---|---|
+| `/me/notifications` | everyone | what the CRM tells me |
+| `/admin/email/rules` | `admin.email` | who hears what, and what fires it |
+| `/admin/email/schedules` | `admin.email` | what runs when, and under which flag |
+| `/admin/email/health` | `admin.email` | what is queued, what failed, what was refused |

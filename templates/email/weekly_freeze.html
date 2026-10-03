@@ -1,0 +1,56 @@
+{% extends 'email/_shell.html' %}
+{% import 'email/_bits.html' as bits %}
+
+{% block title %}Week {{ r.week }} is frozen{% endblock %}
+{% block strap %}Taken {{ r.taken_at }} · these are the figures the
+  review works from{% endblock %}
+
+{% block body %}
+{% if r.empty %}
+  {{ bits.nothing('Nothing was frozen for this week — the job found no
+                   scopes to record.') }}
+{% else %}
+<p style="margin:0 0 14px;font-size:13.5px;">
+  The pipeline as it stood this morning. Numbers here do not move: a
+  lead edited this afternoon changes the board and not this table, so
+  the meeting and the minutes agree.
+</p>
+
+<table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+  <tr>
+    <th align="left" style="padding:6px 10px 6px 0;border-bottom:1px solid #E0DDDA;
+        font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8A857F;">Scope</th>
+    <th align="right" style="padding:6px;border-bottom:1px solid #E0DDDA;
+        font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8A857F;">Open</th>
+    <th align="right" style="padding:6px;border-bottom:1px solid #E0DDDA;
+        font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8A857F;">Value</th>
+    <th align="right" style="padding:6px;border-bottom:1px solid #E0DDDA;
+        font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8A857F;">Won</th>
+    <th align="right" style="padding:6px;border-bottom:1px solid #E0DDDA;
+        font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8A857F;">Lost</th>
+    <th align="right" style="padding:6px 0 6px 6px;border-bottom:1px solid #E0DDDA;
+        font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8A857F;">Late</th>
+  </tr>
+  {% for row in r.rows %}
+  <tr>
+    <td style="padding:7px 10px 7px 0;border-top:1px solid #EFEDEB;">
+      {{ row.label }}
+      {%- if row.delta_open %}
+        <span style="color:#8A857F;font-size:11.5px;">
+          ({{ '+' if row.delta_open > 0 else '' }}{{ row.delta_open }} on last week)
+        </span>
+      {%- endif %}
+    </td>
+    <td align="right" style="padding:7px 6px;border-top:1px solid #EFEDEB;">{{ row.open_count }}</td>
+    <td align="right" style="padding:7px 6px;border-top:1px solid #EFEDEB;">
+      {{ '{:,.0f}'.format(row.open_value|float) }}</td>
+    <td align="right" style="padding:7px 6px;border-top:1px solid #EFEDEB;">{{ row.won_count }}</td>
+    <td align="right" style="padding:7px 6px;border-top:1px solid #EFEDEB;">{{ row.lost_count }}</td>
+    <td align="right" style="padding:7px 0 7px 6px;border-top:1px solid #EFEDEB;">{{ row.overdue_count }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}
+
+{% block cta_label %}Open the management view{% endblock %}

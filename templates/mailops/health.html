@@ -1,0 +1,109 @@
+{% extends 'mailops/_shell.html' %}
+{% block title %}Email health — Procam CRM{% endblock %}
+{% block heading %}Email health{% endblock %}
+{% block strap %}The queue, the failures, and what the CRM is allowed to
+  write to{% endblock %}
+
+{% block tabs %}
+<div class="mo-tabs">
+  <a href="{{ url_prefix }}/admin/email/rules">Rules</a>
+  <a href="{{ url_prefix }}/admin/email/schedules">Schedules</a>
+  <a class="on" href="{{ url_prefix }}/admin/email/health">Health</a>
+</div>
+{% endblock %}
+
+{% block body %}
+{% if h.error %}
+<div class="mo-card" style="border-color:#FECACA;background:#FEF2F2">
+  The queue could not be read: {{ h.error }}.
+  If the migration has not been run yet, that is the reason.
+</div>
+{% endif %}
+
+<div class="mo-tiles">
+  <div class="mo-tile {{ 'warn' if h.queued else '' }}">
+    <div class="n">{{ h.queued }}</div><div class="l">Waiting</div></div>
+  <div class="mo-tile {{ 'bad' if h.failed else 'good' }}">
+    <div class="n">{{ h.failed }}</div><div class="l">Failed</div></div>
+  <div class="mo-tile">
+    <div class="n">{{ h.totals.get('sent', 0) }}</div><div class="l">Sent</div></div>
+  <div class="mo-tile {{ 'warn' if h.oldest_queued_minutes > 15 else '' }}">
+    <div class="n">{{ h.oldest_queued_minutes }}</div>
+    <div class="l">Oldest, minutes</div></div>
+</div>
+
+<div class="mo-card">
+  <h3>Who the CRM may email</h3>
+  <p class="mo-note">{{ policy }}</p>
+  <p class="mo-note">
+    An address outside this list is refused before anything is queued and
+    the refusal is written to the journal. Nothing the CRM sends is meant
+    for a customer, and some of it carries a client's own documents.
+  </p>
+</div>
+
+<div class="mo-card">
+  <h3>Flags</h3>
+  <table class="mo">
+    {% for name, note, state in flags %}
+    <tr><td style="width:230px"><code>{{ name }}</code></td><td>{{ note }}</td>
+      <td style="width:70px"><span class="mo-pill {{ 'on' if state else 'off' }}">
+        {{ 'on' if state else 'off' }}</span></td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="mo-card">
+  <h3>Job leases</h3>
+  {% if leases %}
+  <table class="mo">
+    <tr><th>Job</th><th>State</th><th>Holder</th><th>Expires</th></tr>
+    {% for l in leases %}
+    <tr><td><code>{{ l.name }}</code></td>
+      <td><span class="mo-pill {{ 'on' if l.held else 'off' }}">
+        {{ 'held' if l.held else 'free' }}</span></td>
+      <td style="font-size:12px;color:#6b7280">{{ l.holder }}</td>
+      <td style="font-size:12px;color:#6b7280">{{ l.expires_at }}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="mo-note">No job has needed a lease yet.</p>
+  {% endif %}
+</div>
+
+{% if h.failures %}
+<form method="post" action="{{ url_prefix }}/admin/email/health/retry">
+  <div class="mo-card">
+    <h3>Failed — the last {{ h.failures|length }}</h3>
+    <table class="mo">
+      <tr><th style="width:34px"></th><th>To</th><th>Subject</th>
+        <th>Tries</th><th>Why it failed</th><th>Raised</th></tr>
+      {% for f in h.failures %}
+      <tr>
+        <td><input type="checkbox" name="id" value="{{ f.id }}"></td>
+        <td style="font-size:12.5px">{{ f.to }}</td>
+        <td style="font-size:12.5px">{{ f.subject }}
+          <div style="font-size:11px;color:#6b7280">{{ f.event_key }}</div></td>
+        <td class="num">{{ f.attempts }}</td>
+        <td style="font-size:12px;color:#B91C1C">{{ f.error }}</td>
+        <td style="font-size:12px;color:#6b7280">{{ f.created_at }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <div style="margin-top:12px">
+      <button class="btn" type="submit">Try these again</button>
+      <button class="btn" type="submit" style="background:#6b7280"
+              formaction="{{ url_prefix }}/admin/email/health/cancel">
+        Stop trying</button>
+    </div>
+    <p class="mo-note">
+      Trying again resets the attempt count and sends on the next worker
+      pass. Stopping marks them cancelled; nothing will send them after
+      that.
+    </p>
+  </div>
+</form>
+{% else %}
+<div class="mo-card"><p class="mo-note">Nothing has failed.</p></div>
+{% endif %}
+{% endblock %}

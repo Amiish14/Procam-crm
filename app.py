@@ -651,7 +651,23 @@ class Lead(db.Model):
             'attachments': [a.to_dict() for a in
                             (LeadAttachment.query.filter_by(lead_id=self.id)
                              .order_by(LeadAttachment.uploaded_at.desc()).all())],
+            # The client's original message, when it was captured. The
+            # id is all the drawer needs to offer the download; the
+            # whole row is a separate call for the few screens that
+            # want it. Guarded because the table arrives in a migration
+            # and a reader older than it must not break.
+            'original_email_id': self._original_email_id(),
         }
+
+    def _original_email_id(self):
+        try:
+            from app.models.mailops import LeadRawEmail
+            row = (LeadRawEmail.query
+                   .filter_by(lead_id=self.id, status='stored')
+                   .order_by(LeadRawEmail.id.desc()).first())
+            return row.id if row else None
+        except Exception:
+            return None
 
 
 class LeadAttachment(db.Model):
@@ -2066,6 +2082,10 @@ def api_opportunity_by_id(oid):
 def api_update_lead(lid):
     lead = _require_lead_access(lid)
     d = request.get_json()
+    # Read before the write, so the notifications below can say what
+    # actually changed rather than what was submitted.
+    _was_stage = lead.stage
+    _was_value = _lead_value_now(lead)
     fields_map = {
         'company':'company','project':'project','industry':'industry',
         'products':'products','state':'state','city':'city','country':'country',
@@ -2138,7 +2158,51 @@ def api_update_lead(lid):
     db.session.commit()
     # Auto-create/update contact
     _auto_save_contact(lead)
+    _announce_lead_change(lead, _was_stage, _was_value)
     return jsonify({'ok': True})
+
+
+def _lead_value_now(lead):
+    """The one figure the CRM treats as this lead's worth."""
+    for attr in ('quote_value_num', 'opportunity_value_num',
+                 'estimated_value_inr'):
+        val = getattr(lead, attr, None)
+        if val:
+            try:
+                from decimal import Decimal
+                return Decimal(str(val))
+            except Exception:
+                return None
+    return None
+
+
+def _announce_lead_change(lead, was_stage, was_value):
+    """Tell the people the matrix says should hear about this.
+
+    Two events, both deliberately after the commit: a notification that
+    fires before the save can describe a change that never happened.
+    Neither can raise — dispatch swallows its own failures and this
+    adds a belt around the comparison itself.
+    """
+    try:
+        from app.services import notification_rules as nrules, sales_rules
+        actor = session.get('emp_code')
+
+        if was_stage and lead.stage and lead.stage != was_stage:
+            nrules.dispatch('lead.stage_changed', lead, actor=actor,
+                            detail=f'{was_stage} \u2192 {lead.stage}.')
+
+        now_value = _lead_value_now(lead)
+        threshold = sales_rules.HIGH_VALUE_INR
+        if now_value and now_value >= threshold \
+                and (was_value is None or was_value < threshold):
+            # Only on the crossing. A high-value lead edited twice a day
+            # must not tell the vertical head twice a day.
+            nrules.dispatch('lead.high_value', lead, actor=actor,
+                            detail=f'Recorded at {now_value:,.0f} INR.')
+    except Exception:
+        app.logger.exception('could not announce the change to lead %s',
+                             getattr(lead, 'id', '?'))
 
 def _to_dec(v):
     """Best-effort parse of a numeric string / number to Decimal — returns
@@ -2277,6 +2341,44 @@ def api_lead_attachment_download(lid, aid):
     resp.headers['X-Content-Type-Options'] = 'nosniff'
     resp.headers['Cache-Control'] = 'no-store'
     return resp
+
+@app.route('/api/leads/<int:lid>/original-email', methods=['GET'])
+@require_auth
+def api_lead_original_email(lid):
+    """What was captured from the client's message — files and original."""
+    _require_lead_access(lid)
+    from app.services import rfq_capture
+    return jsonify(rfq_capture.summary_for_lead(lid))
+
+
+@app.route('/api/leads/<int:lid>/original-email/<int:rid>/download',
+           methods=['GET'])
+@require_auth
+def api_lead_original_email_download(lid, rid):
+    """The original message as a .eml — opens and forwards in Outlook.
+
+    Same access rule as the attachments, and the same headers: this is
+    a client's document, served to a signed-in colleague who can
+    already see the lead, and never cached.
+    """
+    from flask import send_file
+    from app.models.mailops import LeadRawEmail
+
+    _require_lead_access(lid)
+    row = LeadRawEmail.query.filter_by(id=rid, lead_id=lid).first_or_404()
+    if not row.storage_path or not os.path.exists(row.storage_path):
+        app.logger.warning('original email %s missing on disk: %s',
+                           row.id, row.storage_path)
+        abort(404, description='The original message is no longer on disk.')
+    safe = ''.join(c for c in (row.subject or 'original')[:80]
+                   if c.isalnum() or c in ' -_()').strip() or 'original'
+    resp = send_file(row.storage_path, as_attachment=True,
+                     download_name=f'{safe}.eml',
+                     mimetype='message/rfc822')
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
+
 
 @app.route('/api/leads/bulk-assign', methods=['POST'])
 @require_auth
@@ -4465,6 +4567,7 @@ def init_db():
                    'app.models.tms_handover', 'app.models.competitor',
                    'app.models.public_source', 'app.models.task_engine',
                    'app.models.notification', 'app.models.review',
+                   'app.models.mailops',
                    'app.models.escalation', 'app.models.intel',
                    'app.directory.models'):
             try:
@@ -5234,6 +5337,7 @@ for _mod_path, _bp_name in [
     ('app.directory.routes',     'directory_bp'),
     ('app.hygiene.routes',       'hygiene_bp'),
     ('app.intel.routes',         'intel_bp'),
+    ('app.mailops.routes',       'mailops_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])

@@ -57,7 +57,8 @@ REQUIRED = ('event', 'kind', 'title', 'to', 'in_app', 'email', 'source',
 
 def _rule(event, kind, title, *, body='', to=(), in_app=True, email=False,
           escalate_to=None, escalate_days=None, entity_type=None, url=None,
-          source=S_EVENT, implemented=False, call_site='', note=''):
+          source=S_EVENT, implemented=False, call_site='', note='',
+          attach_original=False):
     """One row of the matrix. A function only so that the defaults are
     written once and every row reads as data."""
     return {
@@ -76,6 +77,12 @@ def _rule(event, kind, title, *, body='', to=(), in_app=True, email=False,
         'implemented': implemented,
         'call_site': call_site,
         'note': note,
+        #: Carry the client's original message and its files on the
+        #: email. Only on the rows where the recipient's next action is
+        #: to read the request — being handed a lead, or an RFQ raised
+        #: against one. Everywhere else it is a client's document sent
+        #: for no reason.
+        'attach_original': attach_original,
     }
 
 
@@ -88,7 +95,7 @@ MATRIX = (
     _rule('lead.assigned', 'lead_assigned',
           'Lead assigned to you — {what}',
           body='This lead is yours to progress. {actor}',
-          to=(R_OWNER,), email=True,
+          to=(R_OWNER,), email=True, attach_original=True,
           entity_type='Lead', url='/app?lead={id}',
           implemented=True,
           call_site='app/services/lead_assignment.py::_notify',
@@ -99,7 +106,7 @@ MATRIX = (
           'You are monitoring a lead — {what}',
           body='You are the secondary PIC. The primary owns this lead; '
                'you are here to pick it up if it stalls.',
-          to=(R_SECONDARY,), email=True,
+          to=(R_SECONDARY,), email=True, attach_original=True,
           entity_type='Lead', url='/app?lead={id}',
           implemented=True,
           call_site='app/services/lead_assignment.py::_notify'),
@@ -108,15 +115,18 @@ MATRIX = (
           body='{detail} {actor}',
           to=(R_OWNER, R_SECONDARY), email=False,
           entity_type='Lead', url='/app?lead={id}',
-          call_site='app.py, the lead update route, after the commit'),
+          call_site='app.py::_announce_lead_change',
+          implemented=True),
     _rule('lead.high_value', 'lead_high_value',
           'High-value deal — {what}',
           body='{detail} A deal at this size is reported to the vertical '
                'head as soon as it is recorded.',
           to=(R_OWNER, R_HEAD), email=True,
           entity_type='Lead', url='/app?lead={id}',
-          call_site='app.py, wherever a lead value is first recorded or '
-                    'raised past the high-value threshold'),
+          call_site='app.py::_announce_lead_change'
+                    'raised past the high-value threshold',
+          implemented=True,
+          note='Fires only when the value crosses the threshold, not on every edit of a lead that is already large.'),
     _rule('lead.followup_overdue', 'lead_followup_overdue',
           'Follow-up overdue — {what}',
           body='{detail}',
@@ -143,20 +153,24 @@ MATRIX = (
           body='{detail} A quote is expected by the date on the RFQ.',
           to=(R_OWNER,), email=True,
           entity_type='RFQ', url='/rfqs/{id}',
-          call_site='app/rfq/routes.py::api_create_rfq, after the commit'),
+          call_site='app/rfq/routes.py::api_create_rfq',
+          implemented=True),
     _rule('rfq.owner_changed', 'rfq_owner_changed',
           'RFQ is now yours — {what}',
           body='{detail} {actor}',
           to=(R_OWNER,), email=True,
           entity_type='RFQ', url='/rfqs/{id}',
-          call_site='app/rfq/routes.py::api_patch_rfq, when lead_driver '
-                    'changes'),
+          call_site='app/rfq/routes.py::api_patch_rfq'
+                    'changes',
+          implemented=True,
+          note="The RFQ's owner is its lead_driver."),
     _rule('rfq.rate_submitted', 'rfq_rate_submitted',
           'A rate came back — {what}',
           body='{detail}',
           to=(R_OWNER,), email=False,
           entity_type='RFQ', url='/rfqs/{id}',
-          call_site='app/rfq/routes.py::api_submit_rate, after the commit'),
+          call_site='app/rfq/routes.py::api_submit_rate',
+          implemented=True),
     _rule('rfq.quote_due_soon', 'rfq_quote_due_soon',
           'Quote due — {what}',
           body='{detail}',
@@ -181,39 +195,45 @@ MATRIX = (
           to=(R_HEAD,), email=True,
           escalate_to=R_ADMIN, escalate_days=2,
           entity_type='Quote', url='/quotes/{id}',
-          call_site='app/quote/routes.py::api_submit_for_approval, after '
-                    'the commit'),
+          call_site='app/quote/routes.py::api_submit_for_approval'
+                    'the commit',
+          implemented=True),
     _rule('quote.approved', 'quote_approved',
           'Quote approved — {what}',
           body='{detail} It may now go to the customer.',
           to=(R_PREPARER, R_OWNER), email=True,
           entity_type='Quote', url='/quotes/{id}',
-          call_site='app/quote/routes.py::api_approve, after the commit'),
+          call_site='app/quote/routes.py, the approve route',
+          implemented=True),
     _rule('quote.rejected', 'quote_rejected',
           'Quote returned for rework — {what}',
           body='{detail}',
           to=(R_PREPARER,), email=True,
           entity_type='Quote', url='/quotes/{id}',
-          call_site='app/quote/routes.py::api_reject, after the commit'),
+          call_site='app/quote/routes.py, the reject route',
+          implemented=True),
     _rule('quote.submitted_to_client', 'quote_submitted',
           'Quote sent to the customer — {what}',
           body='{detail}',
           to=(R_OWNER, R_SECONDARY), email=False,
           entity_type='Quote', url='/quotes/{id}',
-          call_site='app/quote/routes.py::api_submit_to_client, after the '
-                    'commit'),
+          call_site='app/quote/routes.py, the submit-to-client route'
+                    'commit',
+          implemented=True),
     _rule('quote.won', 'quote_won',
           'Won — {what}',
           body='{detail}',
           to=(R_OWNER, R_HEAD, R_MANAGEMENT), email=True,
           entity_type='Quote', url='/quotes/{id}',
-          call_site='app/quote/routes.py::api_won, after the commit'),
+          call_site='app/quote/routes.py, the won route',
+          implemented=True),
     _rule('quote.lost', 'quote_lost',
           'Lost — {what}',
           body='{detail}',
           to=(R_OWNER, R_HEAD), email=True,
           entity_type='Quote', url='/quotes/{id}',
-          call_site='app/quote/routes.py::api_lost, after the commit'),
+          call_site='app/quote/routes.py, the lost route',
+          implemented=True),
     _rule('quote.validity_lapsed', 'quote_validity_lapsed',
           'Quote validity has passed — {what}',
           body='{detail} The customer is holding a price we no longer '
@@ -230,9 +250,11 @@ MATRIX = (
           body='{detail} {actor}',
           to=(R_OWNER,), email=True,
           entity_type='Company', url='/companies/{id}',
-          call_site='app/company routes, where the PIC is set or changed '
+          call_site='presales/routes.py::_announce_pic_change'
                     '(the bulk assign already audits; add the dispatch '
-                    'beside it)'),
+                    'beside it)',
+          implemented=True,
+          note='Single and bulk both go through it; a bulk run shares one batch key so forty accounts arrive as one email.'),
     _rule('account.next_action_due', 'account_next_action_due',
           'Account action due — {what}',
           body='{detail}',
@@ -248,8 +270,9 @@ MATRIX = (
           to=(R_ADMIN,), email=True,
           entity_type='data_quality', url='/data-quality',
           source=S_SCHEDULED,
-          call_site='scripts/data_quality_snapshot.py, once a threshold '
-                    'for "a check got worse" is agreed'),
+          call_site='scripts/data_quality_snapshot.py::_tell_the_administrators'
+                    'for "a check got worse" is agreed',
+          implemented=True),
     _rule('report.daily', 'report_daily',
           'Your CRM actions for today',
           to=(R_OWNER,), in_app=False, email=True,
@@ -459,6 +482,28 @@ def describe(record):
     return f'{type(record).__name__} #{rid}' if rid else ''
 
 
+def _original_of(record):
+    """The client's message and its files, as outbox attachment refs.
+
+    Returns None when there is nothing to attach, which is the normal
+    case for a lead that did not arrive by email.
+    """
+    lead_id = getattr(record, 'id', None)
+    if lead_id is None or record.__class__.__name__ != 'Lead':
+        return None
+    try:
+        from app.services import rfq_capture
+        found = rfq_capture.summary_for_lead(lead_id)
+    except Exception:
+        return None
+    out = []
+    if found.get('original_id'):
+        out.append({'kind': 'raw_email', 'id': found['original_id']})
+    for att in found.get('attachments') or []:
+        out.append({'kind': 'lead_attachment', 'id': att['id']})
+    return out or None
+
+
 def _fill(pattern, *, what, detail, actor):
     try:
         return (pattern or '').format(what=what, detail=detail, actor=actor)
@@ -471,7 +516,8 @@ def _fill(pattern, *, what, detail, actor):
 # ── dispatch ─────────────────────────────────────────────────────────
 def dispatch(event, record=None, *, actor=None, detail='', escalate=False,
              roles=None, url=None, title=None, body=None, email=None,
-             entity_id=None, dedupe=True, email_html=None, **ctx):
+             entity_id=None, dedupe=True, email_html=None, attachments=None,
+             batch_key=None, **ctx):
     """Tell everyone the matrix says should hear about this.
 
     Returns {emp_code: notify.send result}. Never raises: a caller's
@@ -500,6 +546,9 @@ def dispatch(event, record=None, *, actor=None, detail='', escalate=False,
         if escalate and row['escalate_to']:
             subject = f'Escalation: {subject}'
 
+        if attachments is None and row.get('attach_original'):
+            attachments = _original_of(record)
+
         people = recipients_for(event, record, actor=actor,
                                 escalate=escalate, roles=roles)
         out = {}
@@ -516,7 +565,10 @@ def dispatch(event, record=None, *, actor=None, detail='', escalate=False,
                 email_html=email_html,
                 actor=actor,
                 in_app=row['in_app'],
-                dedupe=dedupe)
+                dedupe=dedupe,
+                event_key=event,
+                attachments=attachments,
+                batch_key=batch_key)
         return out
     except Exception:
         _logger().exception('notification dispatch failed for %r', event)

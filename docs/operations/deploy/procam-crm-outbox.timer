@@ -1,0 +1,11 @@
+[Unit]
+Description=Send the Procam CRM email queue every two minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+# No Persistent: a pass missed while the machine was off is made up by
+# the next one in two minutes, and the queue is what remembers.
+
+[Install]
+WantedBy=timers.target

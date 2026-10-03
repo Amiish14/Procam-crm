@@ -50,7 +50,8 @@ def _recent_duplicate(user_id, kind, entity_type, entity_id, since):
 def send(user_code, *, kind, title, body='', url=None, entity_type=None,
          entity_id=None, email=False, email_html=None, actor=None,
          audit_action=None, reason=None, commit=True, dedupe=True,
-         in_app=True):
+         in_app=True, event_key=None, attachments=None, batch_key=None,
+         urgent=None):
     """Notify one person. Returns what actually happened.
 
     {'notified': bool, 'emailed': bool, 'suppressed': bool,
@@ -68,7 +69,7 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
     from app.services import audit
 
     out = {'notified': False, 'emailed': False, 'suppressed': False,
-           'error': None}
+           'queued': False, 'error': None}
     user_code = (user_code or '').strip().upper()
     if not user_code:
         out['error'] = 'no recipient'
@@ -110,15 +111,59 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
             if not address:
                 out['error'] = 'no email address on file'
             else:
-                from email_ingest import notifier
-                out['emailed'] = bool(notifier.send(
-                    address, title, email_html or _plain_html(title, body, url)))
-                if not out['emailed']:
-                    out['error'] = 'the mail server refused it'
+                html = email_html or _plain_html(title, body, url)
+                from app.services import flags
+                if flags.on('FEATURE_EMAIL_NOTIFY'):
+                    # Queued, not sent. The worker owns delivery, the
+                    # retry and the record of what happened; the caller
+                    # owns none of it and waits for none of it.
+                    from app.services import outbox
+                    row = outbox.enqueue(
+                        to=address, subject=title, html=html,
+                        text=body or None,
+                        dedupe_key=_dedupe_key(user_code, event_key or kind,
+                                               entity_type, entity_id),
+                        event_key=event_key or kind, user_code=user_code,
+                        attachments=attachments, entity_type=entity_type,
+                        entity_id=entity_id, batch_key=batch_key,
+                        urgent=urgent)
+                    out['queued'] = row is not None
+                    out['emailed'] = row is not None
+                    if row is None:
+                        out['error'] = ('already queued, muted, or not an '
+                                        'internal address')
+                else:
+                    from email_ingest import notifier
+                    files = None
+                    if attachments:
+                        from app.services import outbox
+                        files = outbox.resolve_attachments(attachments) or None
+                    # Only pass `attachments` when there are some: the
+                    # direct path is the one that existed before this
+                    # release, and callers that wrap the transport
+                    # should not have to learn a new signature to keep
+                    # working.
+                    extra = {'attachments': files} if files else {}
+                    out['emailed'] = bool(notifier.send(
+                        address, title, html, **extra))
+                    if not out['emailed']:
+                        out['error'] = 'the mail server refused it'
         except Exception as exc:
             _logger().exception('could not email %s', user_code)
             out['error'] = str(exc)[:200]
     return out
+
+
+def _dedupe_key(user_code, event_key, entity_type, entity_id):
+    """The same message, to the same person, about the same record,
+    inside the same ten-minute window, is one message.
+
+    The window is the same one the in-app dedupe uses, so the bell and
+    the inbox agree about what counts as a repeat.
+    """
+    bucket = int(datetime.utcnow().timestamp() // (DEDUPE_MINUTES * 60))
+    return f'{event_key}:{user_code}:{entity_type or "-"}:' \
+           f'{entity_id if entity_id is not None else "-"}:{bucket}'
 
 
 def send_many(user_codes, **kwargs):

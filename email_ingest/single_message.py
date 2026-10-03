@@ -80,7 +80,8 @@ def _thread_keys(msg):
         return {}
 
 
-def _file_against_lead(db, decision, msg, extracted, log):
+def _file_against_lead(db, decision, msg, extracted, log,
+                       graph=None, mailbox=None):
     """File an email that is not a new lead against the lead it belongs to.
 
     This is the difference between a classifier and a shredder. A reply,
@@ -127,6 +128,31 @@ def _file_against_lead(db, decision, msg, extracted, log):
             intake_class=decision.klass,
         )
         db.session.add(row)
+        db.session.flush()
+
+        # A reply can carry the thing that matters — a revised BOQ, the
+        # drawings that were missing, the client's answer to a query —
+        # and until now only its text was kept. Behind
+        # FEATURE_REPLY_CAPTURE the reply's own attachments are recorded
+        # against the lead and the message itself is kept, the same way
+        # the first email in the thread is.
+        try:
+            from app.services import flags
+            if flags.on('FEATURE_REPLY_CAPTURE') and decision.lead_id \
+                    and graph is not None and mailbox:
+                from app.services import rfq_capture
+                _lead = db.session.get(Lead, decision.lead_id)
+                if _lead is not None:
+                    _cap = rfq_capture.capture_for_lead(
+                        _lead, graph=graph, mailbox=mailbox, msg=msg,
+                        lead_email_id=row.id)
+                    if _cap['attachments'] or _cap['raw'] == 'stored':
+                        log.info('reply on lead %s kept %s file(s), '
+                                 'original: %s', decision.lead_id,
+                                 _cap['attachments'], _cap['raw'])
+        except Exception:
+            log.exception('could not capture the reply on lead %s',
+                          decision.lead_id)
 
         # A quotation going out moves the enquiry on. Nothing else here
         # changes a stage: an inbound reply is information, not progress,
@@ -374,7 +400,8 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
         if decision is not None and not decision.creates_lead:
             try:
                 _lidb.record(decision, msg)
-                _file_against_lead(db, decision, msg, extracted, log)
+                _file_against_lead(db, decision, msg, extracted, log,
+                                   graph=graph, mailbox=mailbox)
                 db.session.commit()
             except Exception:
                 db.session.rollback()
@@ -475,12 +502,20 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
             except Exception:
                 log.exception('email trail seed failed for lead %s', lead.id)
 
-            # ── Attachments ─────────────────────────────────────────────
+            # ── Attachments and the original message ────────────────────
+            # This used to call save_attachments_for_lead and throw the
+            # result away, so the files landed on disk with no row — and
+            # with no row there is no download route, so nobody could
+            # reach them. The poll path recorded them; this, the path
+            # production actually runs, did not. capture_for_lead writes
+            # the rows and, behind FEATURE_RFQ_CAPTURE, keeps the .eml
+            # so the original can be forwarded as the client sent it.
             try:
-                attachments_mod.save_attachments_for_lead(
-                    graph, mailbox=mailbox,
-                    message_id=msg.get('id'), lead_id=lead.id,
-                )
+                from app.services import rfq_capture
+                _cap = rfq_capture.capture_for_lead(
+                    lead, graph=graph, mailbox=mailbox, msg=msg)
+                log.info('lead %s captured %s attachment(s), original: %s',
+                         lead.id, _cap['attachments'], _cap['raw'])
             except Exception:
                 log.exception('attachments save failed for lead %s', lead.id)
 

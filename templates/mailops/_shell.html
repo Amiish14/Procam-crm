@@ -1,0 +1,59 @@
+{# Shared chrome for the outbound-email screens. Nothing clever: the
+   same head, topbar and wrapper every other CRM page uses, so these
+   arrive looking like part of the product rather than like a tool. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{% block title %}Email — Procam CRM{% endblock %}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  table.mo { width:100%; border-collapse:collapse; background:#fff; font-size:13px; }
+  table.mo th, table.mo td { padding:9px 10px; border-bottom:1px solid #eef0f3;
+                             text-align:left; vertical-align:top; }
+  table.mo th { font-size:11px; text-transform:uppercase; letter-spacing:.04em;
+                color:#6b7280; }
+  table.mo td.num { text-align:right; font-variant-numeric:tabular-nums;
+                    white-space:nowrap; }
+  .mo-tiles { display:flex; flex-wrap:wrap; gap:14px; margin:14px 0 20px; }
+  .mo-tile { border:1px solid #e5e7eb; border-radius:14px; padding:14px 20px;
+             background:#fff; min-width:140px; }
+  .mo-tile .n { font-size:32px; font-weight:800; line-height:1;
+                font-variant-numeric:tabular-nums; }
+  .mo-tile .l { font-size:11.5px; text-transform:uppercase; letter-spacing:.05em;
+                color:#6b7280; font-weight:600; margin-top:4px; }
+  .mo-tile.bad .n { color:#B91C1C; } .mo-tile.warn .n { color:#B45309; }
+  .mo-tile.good .n { color:#15803D; }
+  .mo-pill { display:inline-block; font-size:11px; font-weight:700;
+             border-radius:999px; padding:2px 9px; }
+  .mo-pill.on { background:#DCFCE7; color:#166534; }
+  .mo-pill.off { background:#F3F4F6; color:#4B5563; }
+  .mo-note { font-size:12.5px; color:#4b5563; max-width:70ch; margin:8px 0 0; }
+  .mo-card { background:#fff; border:1px solid #e5e7eb; border-radius:14px;
+             padding:16px 18px; margin-bottom:18px; }
+  .mo-card h3 { margin:0 0 10px; font-size:14px; }
+  .mo-row { display:flex; flex-wrap:wrap; gap:18px; align-items:center;
+            margin-bottom:10px; }
+  .mo-row label { font-size:13px; }
+  .mo-tabs a { font-size:12.5px; margin-right:14px; color:#6b7280;
+               text-decoration:none; }
+  .mo-tabs a.on { color:#BC1D2F; font-weight:700; }
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+  <div class="hero">
+    <div>
+      <h1>{% block heading %}Email{% endblock %}</h1>
+      <div class="today">{% block strap %}{% endblock %}</div>
+    </div>
+    <div><a class="top-back" href="{{ url_prefix }}/my-work">My Work</a></div>
+  </div>
+  {% block tabs %}{% endblock %}
+  {% block body %}{% endblock %}
+</div>
+</body>
+</html>

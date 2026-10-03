@@ -17,6 +17,11 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
 os.environ['URL_PREFIX'] = ''
+# These people live on a domain that cannot receive mail, on purpose.
+# The CRM now refuses any recipient outside the internal allow-list, so
+# the fake domain is declared internal for this module — which also
+# exercises the fact that the list is configurable.
+os.environ['CRM_INTERNAL_EMAIL_DOMAINS'] = 'notify.invalid'
 os.environ['SESSION_COOKIE_SECURE'] = 'false'
 os.environ.setdefault('SECRET_KEY', 'notify-rules-test-secret')
 os.environ.setdefault('ADMIN_INITIAL_PASSWORD', 'NotifyRulesTest12345')

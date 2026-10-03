@@ -1,0 +1,70 @@
+{% extends 'mailops/_shell.html' %}
+{% block title %}Notification rules — Procam CRM{% endblock %}
+{% block heading %}Who hears about what{% endblock %}
+{% block strap %}{{ implemented }} of {{ rows|length }} rules have something
+  that fires them{% endblock %}
+
+{% block tabs %}
+<div class="mo-tabs">
+  <a class="on" href="{{ url_prefix }}/admin/email/rules">Rules</a>
+  <a href="{{ url_prefix }}/admin/email/schedules">Schedules</a>
+  <a href="{{ url_prefix }}/admin/email/health">Health</a>
+</div>
+{% endblock %}
+
+{% block body %}
+<div class="mo-card">
+  <h3>Feature flags</h3>
+  <table class="mo">
+    {% for name, note, state in flags %}
+    <tr>
+      <td style="width:230px"><code>{{ name }}</code></td>
+      <td>{{ note }}</td>
+      <td style="width:70px"><span class="mo-pill {{ 'on' if state else 'off' }}">
+        {{ 'on' if state else 'off' }}</span></td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="mo-note">
+    Flags are read from the environment at each use, so changing one in
+    <code>.env</code> takes effect on the next restart. No deploy, no
+    migration, nothing to undo.
+  </p>
+</div>
+
+<p class="mo-note" style="margin-bottom:12px">
+  This is the table the software reads, not a description of it. A rule
+  marked <em>no call site</em> is agreed and written down but nothing
+  fires it yet — it will never send anything, and that is the honest
+  state rather than a silent gap.
+</p>
+
+<table class="mo">
+  <tr>
+    <th>Event</th><th>Who is told</th><th>Channels</th><th>When</th>
+    <th>Fired by</th>
+  </tr>
+  {% for row in rows %}
+  <tr>
+    <td>
+      <strong>{{ row.event }}</strong>
+      <div style="font-size:12px;color:#6b7280">{{ row.title }}</div>
+    </td>
+    <td style="font-size:12.5px">{{ row.to|join(', ') or '—' }}</td>
+    <td style="font-size:12px">
+      {% if row.in_app %}<span class="mo-pill on">bell</span>{% endif %}
+      {% if row.email %}<span class="mo-pill on">email</span>{% endif %}
+      {% if row.attach_original %}
+        <span class="mo-pill on" title="carries the client's original message
+          and its files">+ original</span>{% endif %}
+    </td>
+    <td style="font-size:12.5px">
+      {{ 'as it happens' if row.source == 'event' else 'on a timer' }}</td>
+    <td style="font-size:12px;color:#6b7280">
+      {% if row.implemented %}{{ row.call_site or 'yes' }}
+      {% else %}<em>no call site</em>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

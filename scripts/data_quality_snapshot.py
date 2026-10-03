@@ -35,6 +35,39 @@ def _table_exists():
     return inspect(db.engine).has_table(DataQualitySnapshot.__tablename__)
 
 
+#: A check that trips this many records is worth telling somebody
+#: about. Below it the daily report already carries the work, and a
+#: nightly email about nine missing phone numbers teaches people to
+#: filter the sender.
+BREACH_AT = 50
+
+
+def _breaches(rows):
+    return [r for r in rows
+            if r.get('count') is not None and r['count'] >= BREACH_AT]
+
+
+def _tell_the_administrators(day, breached):
+    """One notification naming the worst checks, not one per check."""
+    try:
+        from app.services import notification_rules as nrules
+        worst = sorted(breached, key=lambda r: -r['count'])[:5]
+        detail = '; '.join(f'{r["key"]} — {r["count"]:,} record(s)'
+                           for r in worst)
+        if len(breached) > len(worst):
+            detail += f'; and {len(breached) - len(worst)} more check(s)'
+        nrules.dispatch('data.quality_breach', None,
+                        actor='system', detail=detail,
+                        entity_id=str(day),
+                        title=f'Data quality: {len(breached)} check(s) '
+                              f'over {BREACH_AT} records')
+    except Exception:
+        # The snapshot is the job. Failing to tell anyone about it must
+        # not lose the numbers that were just written.
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[1])
     ap.add_argument('--date', help='snapshot date, YYYY-MM-DD (default today)')
@@ -55,6 +88,9 @@ def main(argv=None):
                   'migration first. Nothing was written.', file=sys.stderr)
             return 2
         rows = dq.snapshot_all(today=day)
+        breached = _breaches(rows)
+        if breached:
+            _tell_the_administrators(day, breached)
 
     failed = [r['key'] for r in rows if r['count'] is None]
     if not args.quiet:

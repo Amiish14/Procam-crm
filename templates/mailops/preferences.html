@@ -1,0 +1,99 @@
+{% extends 'mailops/_shell.html' %}
+{% block title %}Email preferences — Procam CRM{% endblock %}
+{% block heading %}What the CRM tells you{% endblock %}
+{% block strap %}These settings are yours alone — {{ me }}{% endblock %}
+
+{% block body %}
+{% if saved %}
+<div class="mo-card" style="border-color:#BBF7D0;background:#F0FDF4">
+  Saved. The next notification follows these settings.
+</div>
+{% endif %}
+
+<form method="post" action="{{ url_prefix }}/me/notifications">
+  <div class="mo-card">
+    <h3>Email</h3>
+    <div class="mo-row">
+      <label><input type="checkbox" name="email_enabled"
+        {% if prefs.email_enabled %}checked{% endif %}> Send me email as well
+        as the in-app bell</label>
+    </div>
+    <p class="mo-note">
+      Turning this off does not turn off the CRM. Everything still arrives
+      on the bell; you simply stop being emailed about it.
+    </p>
+  </div>
+
+  <div class="mo-card">
+    <h3>How often</h3>
+    <div class="mo-row">
+      <label><input type="radio" name="mode" value="immediate"
+        {% if prefs.mode != 'batched' %}checked{% endif %}> As it happens</label>
+      <label><input type="radio" name="mode" value="batched"
+        {% if prefs.mode == 'batched' %}checked{% endif %}> Together, every</label>
+      <input type="number" name="batch_minutes" min="1" max="120" style="width:70px"
+             value="{{ prefs.batch_minutes }}"> minutes
+    </div>
+    <p class="mo-note">
+      Batched is for a day when forty leads are assigned at once: they
+      arrive as one email instead of forty. Nothing is dropped — it is
+      held and then sent together.
+    </p>
+  </div>
+
+  <div class="mo-card">
+    <h3>Quiet hours</h3>
+    <div class="mo-row">
+      <label><input type="checkbox" name="quiet_enabled"
+        {% if prefs.quiet_enabled %}checked{% endif %}> Hold email between</label>
+      <input type="number" name="quiet_start_hour" min="0" max="23" style="width:60px"
+             value="{{ prefs.quiet_start_hour }}">:00 and
+      <input type="number" name="quiet_end_hour" min="0" max="23" style="width:60px"
+             value="{{ prefs.quiet_end_hour }}">:00 IST
+    </div>
+    <p class="mo-note">
+      Held, not cancelled — an email raised at 23:40 arrives at the hour
+      you set. A few things ignore the window because they are already
+      late when they are sent:
+      {% for e in urgent %}<code>{{ e }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
+    </p>
+  </div>
+
+  <div class="mo-card">
+    <h3>Reports</h3>
+    <div class="mo-row">
+      <label><input type="checkbox" name="daily_brief"
+        {% if prefs.daily_brief %}checked{% endif %}> The daily action brief
+        and the end-of-day list</label>
+    </div>
+    <div class="mo-row">
+      <label><input type="checkbox" name="weekly_pack"
+        {% if prefs.weekly_pack %}checked{% endif %}> The weekly reports and
+        the review pack</label>
+    </div>
+  </div>
+
+  <div class="mo-card">
+    <h3>Turn off individual notifications</h3>
+    <p class="mo-note" style="margin-bottom:12px">
+      Everything is on unless you tick it here. A notification you mute
+      still appears on the bell.
+    </p>
+    <table class="mo">
+      <tr><th style="width:34px">Mute</th><th>What happens</th><th>When</th></tr>
+      {% for row in events %}
+      <tr>
+        <td><input type="checkbox" name="muted" value="{{ row.event }}"
+            {% if row.event in prefs.muted_events %}checked{% endif %}></td>
+        <td>{{ row.title.replace('{what}', 'a record') }}
+          <div style="font-size:11.5px;color:#6b7280">{{ row.event }}</div></td>
+        <td style="font-size:12px;color:#6b7280">
+          {{ 'as it happens' if row.source == 'event' else 'on a timer' }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <button class="btn" type="submit">Save</button>
+</form>
+{% endblock %}

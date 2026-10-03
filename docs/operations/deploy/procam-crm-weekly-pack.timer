@@ -1,0 +1,11 @@
+[Unit]
+Description=Procam CRM review pack — Thursday 14:00 IST
+
+[Timer]
+# 08:30 UTC = 14:00 IST
+OnCalendar=Thu *-*-* 08:30:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

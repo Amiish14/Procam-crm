@@ -405,7 +405,10 @@ def test_a_non_lead_is_filed_rather_than_dropped():
     src = open(os.path.join(_ROOT, 'email_ingest',
                             'single_message.py')).read()
     assert 'def _file_against_lead(' in src
-    body = src.split('def _file_against_lead(')[1][:3000]
+    # Read to the next top-level definition rather than a fixed number
+    # of characters — the function grew when reply capture was added,
+    # and a character count silently stopped covering the end of it.
+    body = src.split('def _file_against_lead(')[1].split('\ndef ')[0]
     assert 'LeadEmail(' in body, 'the email must land on the lead trail'
     assert "lead.stage = 'Quoted'" in body, \
         'a quotation should move the enquiry on'

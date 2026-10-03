@@ -1,0 +1,54 @@
+{% extends 'email/_shell.html' %}
+{% import 'email/_bits.html' as bits %}
+
+{% block title %}Review pack — {{ r.week }}{% endblock %}
+{% block strap %}{{ r.person.name }}
+  {%- if r.person.vertical %} · {{ r.person.vertical }}{% endif %}
+  · prepared {{ r.date }}, before the review{% endblock %}
+
+{% block body %}
+{{ bits.tiles([
+    ('Open pipeline', r.figures.open_count),
+    ('Needs attention', r.figures.needs_attention),
+    ('Won this week', r.figures.won_count),
+    ('Lost this week', r.figures.lost_count)]) }}
+
+<div style="font-size:12px;color:#6B6762;margin:14px 0 2px;">
+  Open pipeline value: <strong>{{ '{:,.0f}'.format(r.figures.open_value|float) }}</strong>
+  · past their follow-up date: <strong>{{ r.figures.overdue_count }}</strong>
+  · quotes the customer is waiting for: <strong>{{ r.figures.quotes_pending }}</strong>
+  · high value: <strong>{{ r.figures.high_value }}</strong>
+</div>
+
+<div style="font-size:11.5px;color:#8A857F;margin:2px 0 10px;">
+  "Open pipeline" is every live lead you can see. "Needs attention" is
+  the subset the board is raising today — a healthy lead is in the first
+  and not the second.
+</div>
+
+{% if r.empty %}
+  {{ bits.nothing('Nothing inside your access needs raising at this review.') }}
+{% else %}
+  {% for s in r.sections %}
+    {{ bits.section(s, base_url, show_owner=True) }}
+  {% endfor %}
+
+  {% if r.people|length > 1 %}
+    {{ bits.heading('Who is carrying what') }}
+    {{ bits.people_table(r.people, base_url) }}
+  {% endif %}
+
+  {% if r.verticals|length > 1 %}
+    {{ bits.heading('By vertical') }}
+    {{ bits.vertical_table(r.verticals) }}
+  {% endif %}
+{% endif %}
+
+<div style="font-size:11.5px;color:#8A857F;margin-top:18px;">
+  These are live figures, read when this was sent. Friday morning's
+  freeze writes them down; the review reads the frozen set, so a number
+  cannot change while it is being discussed.
+</div>
+{% endblock %}
+
+{% block cta_label %}Open the team board{% endblock %}

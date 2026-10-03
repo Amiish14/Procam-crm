@@ -2757,7 +2757,7 @@ function renderEmailSummaryCard(l){
   const hasX = x && typeof x === 'object';
   // Render the card if EITHER we have an AI extract OR we have attachments —
   // a lead with attachments but no AI card should still show its files.
-  if(!hasX && !atts.length) return '';
+  if(!hasX && !atts.length && !(l && l.original_email_id)) return '';
 
   const cell = (label, val) => val ? `<div><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin-bottom:2px">${label}</div><div style="font-size:13px;color:var(--ink-2);font-weight:500">${e(String(val))}</div></div>` : '';
 
@@ -2831,6 +2831,24 @@ function renderEmailSummaryCard(l){
       </div>
     </div>` : '';
 
+  /* The client's own message, kept as a .eml. This is the thing people
+     used to ask a colleague to forward: it opens in Outlook with its
+     headers, its formatting and its attachments intact, so it can be
+     forwarded or replied to as if it had come to you directly. */
+  const origId = l && l.original_email_id;
+  const origHtml = origId ? `
+    <div style="margin-top:12px">
+      <a href="${crmUrl('/api/leads/'+l.id+'/original-email/'+origId+'/download')}"
+         target="_blank"
+         style="display:inline-flex;align-items:center;gap:8px;padding:7px 12px;background:rgba(188,29,47,.06);border:1px solid rgba(188,29,47,.22);border-radius:var(--r);text-decoration:none;color:var(--red);font-size:12.5px;font-weight:600">
+        <span style="font-size:15px">\u2709\uFE0F</span>
+        <span>Original email (.eml)</span>
+      </a>
+      <div style="font-size:11px;color:var(--text-3);margin-top:5px">
+        The message exactly as the client sent it \u2014 open it in Outlook to forward or reply.
+      </div>
+    </div>` : '';
+
   /* The original enquiry, from the column that only the ingest writes.
      It used to read l.notes — the same field the Notes box saved over,
      which is how the customer's email got destroyed by the first note
@@ -2873,6 +2891,7 @@ function renderEmailSummaryCard(l){
     <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r-lg);padding:20px 22px;margin-bottom:20px;box-shadow:var(--sh-1)">
       ${body}
       ${attsHtml}
+      ${origHtml}
       ${rawHtml}
     </div>`;
 }

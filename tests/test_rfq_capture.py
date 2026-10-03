@@ -1,0 +1,203 @@
+"""Capturing the client's request: the files, and the original message.
+
+The regression this file exists for: the webhook path — the one
+production runs — saved attachment files to disk and never wrote the
+`LeadAttachment` rows, so nothing could serve them. The first test is
+that bug, stated as a property.
+"""
+import os
+import sys
+import tempfile
+
+import pytest
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+
+os.environ['URL_PREFIX'] = ''
+os.environ['SESSION_COOKIE_SECURE'] = 'false'
+os.environ.setdefault('SECRET_KEY', 'capture-test-secret')
+os.environ.setdefault('ADMIN_INITIAL_PASSWORD', 'CaptureTest12345')
+os.environ.setdefault(
+    'DATABASE_URL',
+    'sqlite:///' + os.path.join(tempfile.mkdtemp(), 'capture.db'))
+
+import importlib                                          # noqa: E402
+_main = importlib.import_module('app')
+importlib.import_module('app.models')
+flask_app, db = _main.app, _main.db
+Lead, LeadAttachment = _main.Lead, _main.LeadAttachment
+
+from app.models.mailops import LeadRawEmail               # noqa: E402
+from app.services import rfq_capture                      # noqa: E402
+
+TAG = 'CAP-'
+RAW = (b'Message-ID: <cap-1@customer.test>\r\n'
+       b'Subject: Shipment of 3 transformers\r\n'
+       b'From: buyer@customer.test\r\n\r\nPlease quote.\r\n')
+
+
+class FakeGraph:
+    """Enough of GraphClient for the capture path."""
+
+    def __init__(self, attachments=None, raw=RAW, missing=False):
+        self._atts = attachments or []
+        self._raw = raw
+        self._missing = missing
+        self.calls = []
+
+    def list_attachments(self, mailbox, message_id):
+        self.calls.append(('attachments', message_id))
+        return self._atts
+
+    def _request(self, method, path, **kw):
+        self.calls.append((method, path))
+
+        class R:
+            text = ''
+        r = R()
+        r.status_code = 404 if self._missing else 200
+        r.content = b'' if self._missing else self._raw
+        return r
+
+
+def _att(name, data=b'%PDF-1.4 fake', aid='AAA'):
+    import base64
+    return {'@odata.type': '#microsoft.graph.fileAttachment', 'id': aid,
+            'name': name, 'contentType': 'application/pdf',
+            'size': len(data), 'isInline': False,
+            'contentBytes': base64.b64encode(data).decode()}
+
+
+def _wipe():
+    ids = [l.id for l in Lead.query.filter(Lead.company.like(TAG + '%')).all()]
+    if ids:
+        LeadAttachment.query.filter(LeadAttachment.lead_id.in_(ids)).delete(
+            synchronize_session=False)
+        LeadRawEmail.query.filter(LeadRawEmail.lead_id.in_(ids)).delete(
+            synchronize_session=False)
+        Lead.query.filter(Lead.id.in_(ids)).delete(synchronize_session=False)
+    db.session.commit()
+
+
+@pytest.fixture()
+def lead(tmp_path, monkeypatch):
+    from email_ingest import attachments as att_mod
+    monkeypatch.setattr(att_mod, 'STORAGE_ROOT', str(tmp_path))
+    with flask_app.app_context():
+        db.create_all()
+        _wipe()
+        row = Lead(company=TAG + 'Customer Ltd', stage='New Opportunity',
+                   source='email', email_message_id='<cap-1@customer.test>')
+        db.session.add(row)
+        db.session.commit()
+        yield row
+        _wipe()
+
+
+def _msg(**kw):
+    base = {'id': 'GRAPH-ID-1',
+            'internetMessageId': '<cap-1@customer.test>',
+            'subject': 'Shipment of 3 transformers',
+            'from': {'emailAddress': {'address': 'buyer@customer.test'}},
+            'hasAttachments': True}
+    base.update(kw)
+    return base
+
+
+# ── the regression ───────────────────────────────────────────────────
+def test_a_saved_file_gets_a_row_so_it_can_be_downloaded(lead, monkeypatch):
+    monkeypatch.delenv('FEATURE_RFQ_CAPTURE', raising=False)
+    graph = FakeGraph(attachments=[_att('BOQ.pdf')])
+    out = rfq_capture.capture_for_lead(lead, graph=graph,
+                                       mailbox='leads@procamgroup.in',
+                                       msg=_msg(), commit=True)
+    assert out['attachments'] == 1
+    rows = LeadAttachment.query.filter_by(lead_id=lead.id).all()
+    assert [r.filename for r in rows] == ['BOQ.pdf']
+    assert os.path.exists(rows[0].storage_path)
+
+
+def test_capturing_the_same_message_twice_adds_nothing(lead, monkeypatch):
+    graph = FakeGraph(attachments=[_att('BOQ.pdf')])
+    for _ in range(2):
+        rfq_capture.capture_for_lead(lead, graph=graph,
+                                     mailbox='leads@procamgroup.in',
+                                     msg=_msg(), commit=True)
+    assert LeadAttachment.query.filter_by(lead_id=lead.id).count() == 1
+
+
+def test_a_message_with_no_attachments_fetches_nothing(lead):
+    graph = FakeGraph(attachments=[_att('BOQ.pdf')])
+    rfq_capture.capture_for_lead(lead, graph=graph,
+                                 mailbox='leads@procamgroup.in',
+                                 msg=_msg(hasAttachments=False), commit=True)
+    assert graph.calls == [] or all(c[0] != 'attachments'
+                                    for c in graph.calls)
+
+
+# ── the original message ─────────────────────────────────────────────
+def test_the_original_is_not_kept_unless_the_flag_is_on(lead, monkeypatch):
+    monkeypatch.delenv('FEATURE_RFQ_CAPTURE', raising=False)
+    graph = FakeGraph()
+    out = rfq_capture.capture_for_lead(lead, graph=graph,
+                                       mailbox='leads@procamgroup.in',
+                                       msg=_msg(), commit=True)
+    assert out['raw'] == 'off'
+    assert LeadRawEmail.query.filter_by(lead_id=lead.id).count() == 0
+
+
+def test_the_original_is_written_as_an_eml(lead, monkeypatch):
+    monkeypatch.setenv('FEATURE_RFQ_CAPTURE', 'true')
+    graph = FakeGraph()
+    out = rfq_capture.capture_for_lead(lead, graph=graph,
+                                       mailbox='leads@procamgroup.in',
+                                       msg=_msg(), commit=True)
+    assert out['raw'] == 'stored'
+    row = LeadRawEmail.query.filter_by(lead_id=lead.id).one()
+    assert row.storage_path.endswith('.eml')
+    with open(row.storage_path, 'rb') as fh:
+        assert fh.read() == RAW
+    assert row.size_bytes == len(RAW)
+    assert len(row.sha256) == 64
+
+
+def test_capturing_the_original_twice_keeps_one_row(lead, monkeypatch):
+    monkeypatch.setenv('FEATURE_RFQ_CAPTURE', 'true')
+    graph = FakeGraph()
+    for _ in range(2):
+        rfq_capture.capture_for_lead(lead, graph=graph,
+                                     mailbox='leads@procamgroup.in',
+                                     msg=_msg(), commit=True)
+    assert LeadRawEmail.query.filter_by(lead_id=lead.id).count() == 1
+
+
+def test_a_message_the_mailbox_no_longer_has_is_recorded_not_retried(
+        lead, monkeypatch):
+    monkeypatch.setenv('FEATURE_RFQ_CAPTURE', 'true')
+    graph = FakeGraph(missing=True)
+    out = rfq_capture.capture_for_lead(lead, graph=graph,
+                                       mailbox='leads@procamgroup.in',
+                                       msg=_msg(), commit=True)
+    assert out['raw'] == 'missing'
+    row = LeadRawEmail.query.filter_by(lead_id=lead.id).one()
+    assert row.status == 'missing' and row.error
+
+
+def test_the_summary_is_what_the_drawer_and_the_email_both_read(
+        lead, monkeypatch):
+    monkeypatch.setenv('FEATURE_RFQ_CAPTURE', 'true')
+    graph = FakeGraph(attachments=[_att('BOQ.pdf'), _att('Drawing.pdf',
+                                                         aid='BBB')])
+    rfq_capture.capture_for_lead(lead, graph=graph,
+                                 mailbox='leads@procamgroup.in',
+                                 msg=_msg(), commit=True)
+    found = rfq_capture.summary_for_lead(lead.id)
+    assert found['attachment_count'] == 2
+    assert found['original_id'] is not None
+    assert found['original']['status'] == 'stored'
+
+
+def test_nothing_is_claimed_when_nothing_was_captured(lead):
+    found = rfq_capture.summary_for_lead(lead.id)
+    assert found['attachment_count'] == 0 and found['original'] is None

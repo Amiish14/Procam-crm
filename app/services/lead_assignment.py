@@ -192,11 +192,39 @@ def _notify(lead, employee, emp_code, is_primary, actor=None):
 
     # The CRM already emails the primary on assignment; the secondary
     # gets the same courtesy, with the monitor wording above.
+    #
+    # The email carries the client's original message and its files
+    # when they were captured, which is the whole point of the capture:
+    # the person being handed the lead gets the request itself, not a
+    # summary of it and a colleague to chase.
     if employee is not None:
         try:
+            from app.services import notify, rfq_capture
+            files = None
+            try:
+                found = rfq_capture.summary_for_lead(lead.id)
+                files = ([{'kind': 'raw_email', 'id': found['original_id']}]
+                         if found.get('original_id') else [])
+                files += [{'kind': 'lead_attachment', 'id': a['id']}
+                          for a in (found.get('attachments') or [])]
+                files = files or None
+            except Exception:
+                files = None
             from email_ingest import notifier
-            notifier.notify_lead_assigned(lead, employee,
-                                          assigned_by=actor or '')
+            notify.send(
+                emp_code,
+                kind='lead_assigned',
+                event_key=('lead.assigned' if is_primary
+                           else 'lead.assigned_secondary'),
+                title=title, body=body,
+                url=f'/app?lead={lead.id}',
+                entity_type='Lead', entity_id=lead.id,
+                email=True,
+                email_html=notifier.lead_assigned_html(
+                    lead, assigned_by=actor or '', attachments=files),
+                attachments=files,
+                in_app=False,      # the bell row is written above
+                dedupe=False)
         except Exception:
             try:
                 flask_app.logger.exception(

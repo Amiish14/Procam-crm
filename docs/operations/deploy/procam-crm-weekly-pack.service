@@ -1,0 +1,10 @@
+[Unit]
+Description=Procam CRM weekly review pack (Thursday, before the review)
+After=network.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/send_reports.py --weekly-pack
+SuccessExitStatus=1
