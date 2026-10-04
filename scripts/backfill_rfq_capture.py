@@ -55,11 +55,20 @@ def main():
         if args.since:
             query = query.filter(
                 Lead.created_at >= datetime.strptime(args.since, '%Y-%m-%d'))
+        # Every message already settled — stored, missing or failed.
+        # A lead is only a candidate if nothing has been written about
+        # it yet, so a run can never be filled by leads a previous run
+        # already answered.
         done = {r.internet_message_id for r in
-                db.session.query(LeadRawEmail.internet_message_id).all()}
-        candidates = [l for l in
-                      query.order_by(Lead.id.desc()).limit(args.limit * 4).all()
-                      if l.email_message_id not in done][:args.limit]
+                db.session.query(LeadRawEmail.internet_message_id).all()
+                if r.internet_message_id}
+        candidates = []
+        for lead in query.order_by(Lead.id.desc()).yield_per(500):
+            if lead.email_message_id in done:
+                continue
+            candidates.append(lead)
+            if len(candidates) >= args.limit:
+                break
 
         print(f'mailbox: {mailbox}')
         print(f'{len(candidates)} lead(s) to try '
@@ -90,6 +99,18 @@ def main():
                 gid = raw_mime.graph_id_for(graph, mailbox,
                                             lead.email_message_id)
                 if not gid:
+                    # Write it down. A message the mailbox no longer
+                    # has is a fact, not a failure, and recording it is
+                    # what stops this lead being re-tried on every run
+                    # for ever — which is exactly what happened to
+                    # three hundred of them before this line existed.
+                    raw_mime.capture(
+                        lead.id, graph=graph, mailbox=mailbox,
+                        internet_message_id=lead.email_message_id,
+                        subject=lead.original_email_subject or '',
+                        from_addr=lead.original_email_from or '',
+                        received_at=lead.created_at,
+                        known_missing=True, commit=True)
                     tally['missing'] += 1
                     print(f'  lead {lead.id}: not in the mailbox any more')
                     continue

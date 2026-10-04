@@ -228,6 +228,41 @@ def test_a_message_the_mailbox_no_longer_has_is_recorded_not_retried(
     assert row.status == 'missing' and row.error
 
 
+def test_a_lookup_that_raises_is_a_missing_message_not_a_failure(
+        lead, monkeypatch):
+    """`_get_message_by_internet_id` raises when the message has left
+    the Inbox. For the back-fill that is the ordinary outcome for an
+    old lead, and letting it raise meant three hundred leads were
+    scored as failed, recorded nowhere, and re-tried on every run."""
+    from email_ingest import raw_mime, webhook
+
+    def _boom(*a, **kw):
+        raise RuntimeError('Graph could not find message with '
+                           'internetMessageId ... it may have been deleted')
+
+    monkeypatch.setattr(webhook, '_get_message_by_internet_id', _boom)
+    assert raw_mime.graph_id_for(FakeGraph(), 'leads@procamgroup.in',
+                                 '<gone@customer.test>') is None
+
+
+def test_a_message_known_to_be_gone_is_recorded_without_asking_graph(
+        lead, monkeypatch):
+    """So the next run skips it instead of asking again."""
+    monkeypatch.setenv('FEATURE_RFQ_CAPTURE', 'true')
+    from email_ingest import raw_mime
+
+    graph = FakeGraph()
+    row = raw_mime.capture(
+        lead.id, graph=graph, mailbox='leads@procamgroup.in',
+        internet_message_id='<gone@customer.test>',
+        subject='An old enquiry', known_missing=True, commit=True)
+    assert row.status == 'missing' and row.error
+    assert graph.calls == [], 'it asked Graph about a message it knew was gone'
+    # And it is now settled, so a later pass has something to skip on.
+    assert LeadRawEmail.query.filter_by(
+        internet_message_id='<gone@customer.test>').count() == 1
+
+
 def test_the_summary_is_what_the_drawer_and_the_email_both_read(
         lead, monkeypatch):
     monkeypatch.setenv('FEATURE_RFQ_CAPTURE', 'true')

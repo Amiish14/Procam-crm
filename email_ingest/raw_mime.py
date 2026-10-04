@@ -73,15 +73,32 @@ def fetch_mime(graph, mailbox, graph_message_id):
 
 
 def graph_id_for(graph, mailbox, internet_message_id):
-    """Graph's id for a stored RFC-5322 Message-Id, or None."""
+    """Graph's id for a stored RFC-5322 Message-Id, or None.
+
+    `_get_message_by_internet_id` raises when the message is not in the
+    Inbox, because for the webhook that is an error worth shouting
+    about — it was told the message exists. Here it is the ordinary
+    outcome for anything older than the mailbox's retention, so it is
+    turned into None and the caller records it as missing. Letting it
+    raise meant the back-fill scored those leads as *failed*, wrote
+    nothing, and re-tried the same three hundred of them on every run
+    for ever.
+    """
     from .webhook import _get_message_by_internet_id
-    msg = _get_message_by_internet_id(graph, mailbox, internet_message_id)
+    try:
+        msg = _get_message_by_internet_id(graph, mailbox,
+                                          internet_message_id)
+    except Exception as exc:                                # noqa: BLE001
+        log.info('no message for %s in %s: %s',
+                 internet_message_id, mailbox, str(exc)[:120])
+        return None
     return (msg or {}).get('id')
 
 
 def capture(lead_id, *, graph, mailbox, graph_message_id=None,
             internet_message_id=None, subject='', from_addr='',
-            received_at=None, lead_email_id=None, commit=True):
+            received_at=None, lead_email_id=None, commit=True,
+            known_missing=False):
     """Store one original message against a lead. Returns the row or None.
 
     Idempotent on `internet_message_id`: capturing the same message
@@ -112,8 +129,9 @@ def capture(lead_id, *, graph, mailbox, graph_message_id=None,
     row.captured_at = datetime.utcnow()
 
     try:
-        gid = graph_message_id or row.graph_message_id
-        if not gid and internet_message_id:
+        gid = None if known_missing else (graph_message_id
+                                          or row.graph_message_id)
+        if not gid and internet_message_id and not known_missing:
             gid = graph_id_for(graph, mailbox, internet_message_id)
         if not gid:
             row.status, row.error = 'missing', 'not found in the mailbox'

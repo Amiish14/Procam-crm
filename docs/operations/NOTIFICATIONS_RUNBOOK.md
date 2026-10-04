@@ -124,7 +124,20 @@ Watch the first run.
 
 `missing` is the expected answer for older leads: the message has been
 moved out of the Inbox or is past the mailbox's retention. It is
-recorded once and not retried.
+recorded once and not retried, so each run makes progress and the loop
+below terminates:
+
+```bash
+# repeat until it reports "0 lead(s) to try"
+for i in $(seq 1 20); do
+  .venv/bin/python scripts/backfill_rfq_capture.py --limit 500 2>&1 | tail -2
+done
+```
+
+A run that reports `failed` rather than `missing` is a different
+thing: something went wrong that is worth reading in the output. A run
+that reports the same `failed` count twice over has stalled, and the
+leads causing it are in the output by id.
 
 ### The files already on disk
 
