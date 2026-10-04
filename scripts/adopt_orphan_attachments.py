@@ -33,6 +33,7 @@ What it will not do
 import argparse
 import mimetypes
 import os
+import re
 import sys
 from collections import Counter
 
@@ -44,6 +45,17 @@ from app import Lead, LeadAttachment, app, db             # noqa: E402
 #: Written by raw_mime.py and tracked by lead_raw_emails, not here.
 ORIGINALS_DIR = 'original'
 
+#: What Outlook calls an image embedded in the message body — a
+#: signature logo, a pasted screenshot, a tracking pixel. On production
+#: these are 772 of the 1,267 adoptable files, and nine of them on a
+#: lead whose real attachment is one gate pass is worse than none.
+#:
+#: Matched on the name rather than the extension on purpose: .jpg is
+#: also what a photograph of the cargo is, and in this business the
+#: photograph often is the document. image001.jpg is Outlook's;
+#: IMG_0362.jpeg is somebody's camera.
+INLINE_IMAGE = re.compile(r'^image\d{3,4}\.(png|jpe?g|gif|bmp)$', re.I)
+
 
 def _human(n):
     for unit in ('B', 'KB', 'MB', 'GB'):
@@ -52,7 +64,7 @@ def _human(n):
         n /= 1024
 
 
-def _scan(root, exclude_ext, min_bytes):
+def _scan(root, exclude_ext, min_bytes, skip_inline=False):
     """(adoptable, skipped) — walk the storage root once."""
     adoptable, skipped = [], Counter()
 
@@ -87,6 +99,9 @@ def _scan(root, exclude_ext, min_bytes):
             except OSError:
                 skipped['unreadable'] += 1
                 continue
+            if skip_inline and INLINE_IMAGE.match(name):
+                skipped['an image embedded in the message body'] += 1
+                continue
             ext = os.path.splitext(name)[1].lower()
             if ext in exclude_ext:
                 skipped[f'excluded extension ({ext})'] += 1
@@ -116,6 +131,10 @@ def main():
     ap.add_argument('--exclude-ext', default='',
                     help='comma-separated, e.g. .gif,.png')
     ap.add_argument('--min-bytes', type=int, default=0)
+    ap.add_argument('--skip-inline-images', action='store_true',
+                    help="leave out Outlook's image001.png and friends — "
+                         'signature logos and pasted screenshots, not '
+                         'documents. Keeps real photographs.')
     ap.add_argument('--show', type=int, default=15)
     args = ap.parse_args()
 
@@ -130,7 +149,8 @@ def main():
             print('  nothing there.')
             return 0
 
-        adoptable, skipped = _scan(root, exclude, args.min_bytes)
+        adoptable, skipped = _scan(root, exclude, args.min_bytes,
+                                   skip_inline=args.skip_inline_images)
         total = sum(s for _l, _p, _n, s in adoptable)
         by_ext = Counter(os.path.splitext(n)[1].lower() or '(none)'
                          for _l, _p, n, _s in adoptable)
@@ -144,6 +164,15 @@ def main():
             print('\nnot adopted:')
             for why, count in skipped.most_common():
                 print(f'  {count:,}  {why}')
+
+        if not args.apply and not args.skip_inline_images:
+            inline = sum(1 for _l, _p, n, _s in adoptable
+                         if INLINE_IMAGE.match(n))
+            if inline:
+                print(f'\n  {inline:,} of these are images embedded in the '
+                      f'message body (image001.png and friends).\n'
+                      f'  --skip-inline-images leaves them out and keeps '
+                      f'real photographs.')
 
         if not args.apply:
             print('\nfirst few:')

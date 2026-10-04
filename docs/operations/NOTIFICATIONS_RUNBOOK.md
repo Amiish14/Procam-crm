@@ -146,14 +146,22 @@ network:
 Run the back-fill **first** wherever it can reach, because it also
 recovers the original `.eml`, which adoption cannot.
 
-Inline images from signature blocks are in there too — the ingest's
-20 KB floor only applies to ones Graph flags as inline. If the
-extension breakdown shows a lot of `.gif` or `.png`, exclude them:
+Images embedded in the message body are in there too, and on
+production they are most of it: 772 of the first 1,267 adoptable files
+were `image001.png` and friends — signature logos and pasted
+screenshots. Nine of those on a lead whose real attachment is one gate
+pass is worse than none, so leave them out:
 
 ```bash
 .venv/bin/python scripts/adopt_orphan_attachments.py --apply --yes \
-    --exclude-ext .gif,.png --min-bytes 20480
+    --skip-inline-images
 ```
+
+That filters on the **name**, not the extension, which matters here: a
+photograph of the cargo often is the document, and `.jpg` is what both
+a signature logo and a camera produce. `image001.jpg` is Outlook's;
+`IMG_0362.jpeg` is somebody's phone. `--exclude-ext` and `--min-bytes`
+are still there for a case this does not cover.
 
 Adoption never invents a lead: a directory whose lead has been deleted
 is reported and left, which is what `find_orphan_attachments.py
