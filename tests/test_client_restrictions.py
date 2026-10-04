@@ -459,6 +459,108 @@ def test_the_history_is_append_only(world):
     assert ClientRestriction.query.get(row.id) is not None
 
 
+# ── the paths added after the first pass ────────────────────────────
+def test_an_opportunity_for_a_blocked_client_is_refused(world):
+    _block()
+    resp = _client().post('/api/opportunities',
+                          json={'company': 'Walchandnagar Industries Ltd',
+                                'title': 'Anything'})
+    assert resp.status_code == 403
+
+
+def test_a_handover_for_a_blocked_client_is_refused(world):
+    """The last gate before operations start work."""
+    _block()
+    resp = _client().post('/api/handovers',
+                          json={'account_name': 'Walchandnagar Industries Ltd',
+                                'won_value': 100000})
+    assert resp.status_code == 403
+
+
+def test_a_closed_record_cannot_be_put_back_into_play(world):
+    """§5.3 — read-only. Closing a lead takes it off every list, but a
+    deep link still reaches the form, and reopening one would make the
+    whole register advisory."""
+    lead = Lead(company='Walchandnagar Industries Ltd', stage='Quoted',
+                assigned_to=SALES)
+    db.session.add(lead)
+    db.session.commit()
+    row = _block()
+    _client(ADMIN).post(f'/admin/restrictions/{row.id}/approve', json={})
+    db.session.expire_all()
+
+    client = _client(SALES)
+    back = client.put(f'/api/leads/{lead.id}', json={'stage': 'Quoted'})
+    assert back.status_code == 403
+    assert 'cannot be put back into play' in back.get_json()['error']
+
+    # A correction that does not restart the work is still allowed —
+    # an administrator has to be able to fix a typo on a closed record.
+    fix = client.put(f'/api/leads/{lead.id}', json={'city': 'Pune'})
+    assert fix.status_code == 200
+    assert db.session.get(Lead, lead.id).stage == 'Not Interested'
+
+
+def test_the_badge_rides_on_the_lead_the_account_and_the_contact(world):
+    """§5 — the badge has to appear wherever the company does, which
+    means it travels on the payload rather than being asked for."""
+    _block()
+    lead = Lead(company='Walchandnagar Industries Ltd', stage='New',
+                assigned_to=SALES)
+    company = Company(name='Walchandnagar Industries Ltd')
+    contact = _main.Contact(name='Anil', company='WIL')
+    db.session.add_all([lead, company, contact])
+    db.session.commit()
+
+    assert lead.to_dict()['restriction'] == 'blocked'
+    assert company.to_dict()['restriction'] == 'blocked'
+    assert contact.to_dict()['restriction'] == 'blocked'
+
+    clear = Lead(company=TAG + 'Ordinary Customer', stage='New')
+    db.session.add(clear)
+    db.session.commit()
+    assert clear.to_dict()['restriction'] == ''
+
+
+def test_the_menu_shows_how_many_decisions_are_waiting(world):
+    register.create({
+        'company_name': TAG + 'Waiting Co',
+        'reason_category': 'Commercial dispute',
+        'reason_detail': 'They have disputed every invoice this year.',
+        'status': CAUTION}, actor=SALES)
+    assert _client(ADMIN).get('/api/me').get_json()['restrictions_pending'] == 1
+    # Somebody who cannot approve is not shown a count they cannot act on.
+    assert _client(SALES).get('/api/me').get_json()['restrictions_pending'] == 0
+
+
+def test_the_detail_page_lists_the_records_the_entry_reaches(world):
+    db.session.add(Lead(company='Walchandnagar Industries Ltd',
+                        stage='Quotation', assigned_to=SALES))
+    db.session.commit()
+    row = _block(status=RECOMMENDED)
+    row.status = RECOMMENDED
+    db.session.commit()
+    restrictions.cache_clear()
+    page = _client(ADMIN).get(f'/admin/restrictions/{row.id}')
+    assert page.status_code == 200
+    assert b'Records for this client' in page.data
+
+
+def test_finding_the_records_does_not_walk_the_whole_lead_table(world):
+    """The preview is on a page somebody opens to read, so it narrows
+    in SQL before scoring anything."""
+    for i in range(60):
+        db.session.add(Lead(company=f'{TAG}Unrelated {i}', stage='New'))
+    db.session.add(Lead(company='Walchandnagar Industries Ltd',
+                        stage='Quotation'))
+    db.session.commit()
+    row = _block()
+    candidates = register._candidate_leads(row)
+    assert len(candidates) == 1, (
+        f'{len(candidates)} leads were examined; the SQL narrowing is '
+        f'not doing its job')
+
+
 # ── the TMS endpoint ─────────────────────────────────────────────────
 def test_the_tms_can_ask_and_gets_a_plain_answer(world):
     _block()

@@ -5301,7 +5301,8 @@ async function doChangePw(){
            new colleague learns about a client before dealing with them,
            and a page only administrators can see cannot do that. What
            it shows them is narrowed server-side. */
-        { href: '/admin/restrictions', label: 'Client Block Register', ic: 'shield' },
+        { href: '/admin/restrictions', label: 'Client Block Register', ic: 'shield',
+          badge: function () { return (ME && ME.restrictions_pending) || 0; } },
         { page: 'mapping',   label: 'Data Mapping',          ic: 'layers',        perm: 'admin.master' },
         { href: '/admin/data-quality', label: 'Data Quality', ic: 'trending_up',  perm: 'admin.master' },
         { href: '/admin/import',       label: 'Import / Export', ic: 'upload',    perm: 'admin.master' },
@@ -5336,6 +5337,17 @@ async function doChangePw(){
 
   function itemHTML(it){
     var cnt = it.countId ? ' <span class="sb-cnt" id="tn_'+it.countId+'">0</span>' : '';
+    /* A live count on the item itself — used by the block register so a
+       recommendation waiting for a decision is visible in the menu and
+       not only in an email somebody has already scrolled past. */
+    if (it.badge) {
+      var n = 0;
+      try { n = it.badge() | 0; } catch (err) { n = 0; }
+      if (n > 0) {
+        cnt += ' <span class="sb-cnt" style="background:#BC1D2F;color:#fff">'
+             + n + '</span>';
+      }
+    }
     var admin = (it.adminOnly ? ' admin-only' : '') +
                 (it.managerOnly ? ' manager-only' : '');
     if (it.href) {

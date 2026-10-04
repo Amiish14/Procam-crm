@@ -42,6 +42,31 @@
   <div class="c360-id">
     <div class="cat">Company 360</div>
     <div class="c360-name">{{ h.name }}</div>
+    {# The block register, said where somebody is about to act on the
+       account rather than only on the register's own page. #}
+    {% set _restriction = restriction_level(h.name) %}
+    {% if _restriction == 'blocked' %}
+    <div style="margin:8px 0;padding:10px 14px;border-radius:8px;font-size:13px;
+                font-weight:600;background:#FEF2F2;border:1px solid #FECACA;
+                color:#991B1B">
+      BLOCKED — management has stopped business with this client.
+      <a href="{{ url_prefix }}/admin/restrictions" style="color:inherit">Why?</a>
+    </div>
+    {% elif _restriction == 'caution' %}
+    <div style="margin:8px 0;padding:10px 14px;border-radius:8px;font-size:13px;
+                font-weight:600;background:#FFFBEB;border:1px solid #FDE68A;
+                color:#92400E">
+      CAUTION — on the watchlist. You will be asked to acknowledge the
+      reason before going ahead.
+      <a href="{{ url_prefix }}/admin/restrictions" style="color:inherit">Why?</a>
+    </div>
+    {% else %}
+    <div style="margin:4px 0 0;font-size:11.5px">
+      <a href="{{ url_prefix }}/admin/restrictions/new?company={{ h.name|urlencode }}"
+         style="color:var(--p-text-3, #6b7280)">
+        Recommend a block or caution for this client</a>
+    </div>
+    {% endif %}
     <div class="c360-tags">
       {% for t in h.classifications %}<span class="pill info">{{ t }}</span>
       {% else %}<span class="pill muted">No relationship type set</span>{% endfor %}

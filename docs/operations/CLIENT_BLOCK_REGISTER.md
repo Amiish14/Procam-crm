@@ -121,6 +121,8 @@ Server-side, in every path. Hiding a button is not enforcement.
 | Contact, Account | 403 | acknowledge |
 | RFQ create, and every status advance | 403 | acknowledge |
 | Quote submitted for approval | 403 | acknowledge; approval already routes to the vertical head |
+| Opportunity | 403 | acknowledge |
+| Handover | 403 | acknowledge |
 | Business card scan | 403 | acknowledge |
 | Excel / bulk import | that row refused, the rest imported, refused rows named back | imported |
 | Email intake | **no lead is created** — logged as `blocked_client` | lead created, badge shown |
@@ -151,6 +153,14 @@ before anything happens. On confirming:
 They leave My Work, the follow-up lists, the digests and the
 escalation timers by virtue of being closed — the board reads only
 open stages. There is no separate "frozen" flag to go stale.
+
+**Read-only** means narrower than it sounds, deliberately. A closed
+record refuses the edits that would restart work on it — the stage,
+the follow-up date, the next action, the values. Everything else is
+still editable, because an administrator has to be able to fix a wrong
+owner or a typo on a record that is now part of the history. Reopening
+one is the hole that would make the whole register advisory, so that
+is the part that is shut.
 
 **Won and in-execution work is never auto-closed.** A job on the road
 has cargo, a vendor and an obligation. It is listed for management

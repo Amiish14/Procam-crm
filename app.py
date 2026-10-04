@@ -665,11 +665,7 @@ class Lead(db.Model):
         }
 
     def _restriction_level(self):
-        try:
-            from app.services import restriction_gate as gate
-            return gate.badge(company_name=self.company, email=self.email)
-        except Exception:
-            return ''
+        return _restriction_level(self.company, self.email)
 
     def _original_email_id(self):
         try:
@@ -742,6 +738,7 @@ class Contact(db.Model):
     def to_dict(self):
         return {
             'id': self.id, 'type': self.contact_type, 'name': self.name,
+            'restriction': _restriction_level(self.company, self.email),
             'company': self.company or '', 'designation': self.designation or '',
             'industry': self.industry or '', 'email': self.email or '',
             'phone': self.phone or '', 'mobile': self.mobile or '',
@@ -785,6 +782,25 @@ class NewsItem(db.Model):
 # v3.1 additions — Company · OverseasAgent · Opportunity · LeadActivity ·
 #                 LeadStageHistory · OutreachDraft · ImportBatch
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+@app.template_global('restriction_level')
+def _restriction_level(company_name, email=None, account_id=None):
+    """'' | 'caution' | 'blocked' for anything that names a client.
+
+    Called from several `to_dict`s, including on list endpoints, so it
+    has to be cheap: the register is a handful of rows held in memory
+    and most names fail on a dictionary lookup before any scoring
+    happens. It never raises — a register that cannot be read must not
+    stop a list rendering.
+    """
+    try:
+        from app.services import restriction_gate as gate
+        return gate.badge(company_name=company_name, email=email,
+                          account_id=account_id)
+    except Exception:
+        return ''
+
 
 class Company(db.Model):
     """Global CRM — companies. Leads/Opportunities reference this instead of
@@ -836,6 +852,11 @@ class Company(db.Model):
     def to_dict(self):
         return {
             'id': self.id, 'name': self.name, 'industry': self.industry or '',
+            # '' | 'caution' | 'blocked' — carried on the account so the
+            # badge appears on the account page, in search results and
+            # in Global CRM without any of them asking separately.
+            'restriction': _restriction_level(self.name, self.email,
+                                              account_id=self.id),
             'website': self.website or '', 'country': self.country or '',
             'state': self.state or '', 'city': self.city or '',
             'address': self.address or '',
@@ -1719,7 +1740,19 @@ def _require_lead_access(lid):
 @require_auth
 def api_me():
     emp = Employee.query.filter_by(emp_code=session['emp_code']).first()
-    return jsonify(emp.to_dict() if emp else {})
+    out = emp.to_dict() if emp else {}
+    # How many block recommendations are waiting on this person. The
+    # menu shows it as a count, so an approval does not sit unnoticed
+    # between the email arriving and somebody remembering it.
+    try:
+        from app.models.restriction import ClientRestriction, RECOMMENDED
+        from app.services import restriction_register as _register
+        out['restrictions_pending'] = (
+            ClientRestriction.query.filter_by(status=RECOMMENDED).count()
+            if _register.can_approve() else 0)
+    except Exception:
+        out['restrictions_pending'] = 0
+    return jsonify(out)
 
 @app.route('/api/employees', methods=['GET'])
 @require_auth
@@ -2108,6 +2141,13 @@ def api_update_lead(lid):
     # Changing the company on a lead, or pushing it further down the
     # funnel, is starting business just as much as creating one is.
     from app.services import restriction_gate as _gate
+    # A record closed because its client is blocked stays closed. Only
+    # the changes that would restart work on it are refused — an
+    # administrator may still fix an owner or a typo.
+    if _gate.reopening(d):
+        _frozen = _gate.frozen_refusal(lead, what='lead edit')
+        if _frozen:
+            return _frozen
     _advancing = (d.get('stage') or '') in ('RFQ Generated', 'Quoted', 'Won')
     if d.get('company') or _advancing:
         _refusal = _gate.guard(
@@ -3793,6 +3833,12 @@ def api_opportunities():
 @require_auth
 def api_create_opportunity():
     d = request.get_json(force=True) or {}
+    from app.services import restriction_gate as _gate
+    _refusal = _gate.guard(d, what='new opportunity',
+                           company_name=(d.get('company')
+                                         or d.get('account_name')))
+    if _refusal:
+        return _refusal
     with _opp_lock:
         opp_no = (d.get('opp_number') or '').strip()
         if not opp_no:

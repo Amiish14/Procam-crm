@@ -111,6 +111,47 @@
 </div>
 {% endif %}
 
+{% if linked %}
+<div class="rg-card">
+  <h3>Records for this client</h3>
+  {% if linked.counts.leads or linked.counts.rfqs or linked.counts.quotes %}
+  <table class="rg">
+    <tr><th>What</th><th>Stage</th><th>Owner</th></tr>
+    {% for entry in (linked.leads + linked.rfqs + linked.quotes)[:40] %}
+    <tr>
+      <td>{{ entry.get('company') or entry.get('ref') or entry.type }}
+        <span style="color:#6b7280;font-size:11.5px">({{ entry.type }})</span></td>
+      <td style="font-size:12.5px">{{ entry.stage }}</td>
+      <td style="font-size:12.5px">{{ entry.owner or '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% if r.status in ('recommended',) %}
+  <p class="rg-note">
+    Still open. Approving this closes them.
+  </p>
+  {% endif %}
+  {% else %}
+  <p class="rg-note">No open records for this client.</p>
+  {% endif %}
+
+  {% if linked.counts.won %}
+  <div class="rg-warn" style="margin-top:12px">
+    <strong>{{ linked.counts.won }}</strong> won or in-execution
+    record(s) are not touched by a block. Work already on the road has
+    cargo, a vendor and an obligation behind it — that is management's
+    decision, not the CRM's.
+    <ul style="margin:8px 0 0;padding-left:18px">
+      {% for w in linked.won[:10] %}
+      <li>{{ w.company }} — {{ w.stage }}
+        {% if w.owner %}({{ w.owner }}){% endif %}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
 {% if attempts %}
 <div class="rg-card">
   <h3>Attempts ({{ attempts|length }})</h3>

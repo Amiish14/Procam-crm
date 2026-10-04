@@ -212,9 +212,18 @@ def detail(rid):
     files = (RestrictionAttachment.query.filter_by(restriction_id=rid).all()
              if sensitive else [])
     attempts = [e for e in events if e.action == 'attempt_blocked']
+    # The records this entry reaches. Narrowed in SQL before anything
+    # is scored, so opening the page costs a query and not a walk of
+    # the lead table.
+    linked = None
+    if register.can_approve() or register.can_see_sensitive():
+        try:
+            linked = register.impact(row)
+        except Exception:
+            linked = None
     return render_template(
         'restrictions/detail.html', r=row, events=events, files=files,
-        attempts=attempts, sensitive=sensitive,
+        attempts=attempts, sensitive=sensitive, linked=linked,
         can_approve=register.can_approve(), can_lift=register.can_lift())
 
 

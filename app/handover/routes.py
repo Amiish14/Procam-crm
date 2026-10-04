@@ -123,6 +123,21 @@ def api_create():
     if d.get('opportunity_id') and not _scope.may_view(
             Opportunity.query.get(d.get('opportunity_id'))):
         return jsonify(ok=False, error='Opportunity not found'), 404
+
+    # The block register. A handover is the last thing that happens
+    # before operations start work, so refusing here is the last chance
+    # to stop a blocked client's job reaching the road.
+    from app.services import restriction_gate as _gate
+    _name = (d.get('account_name') or '').strip()
+    if not _name and d.get('account_id'):
+        from app import Company
+        _acct = Company.query.get(d.get('account_id'))
+        _name = _acct.name if _acct is not None else ''
+    _refusal = _gate.guard(d, what='handover', company_name=_name,
+                           account_id=d.get('account_id'))
+    if _refusal:
+        return _refusal
+
     row = WonHandover(
         opportunity_id=d.get('opportunity_id') or None,
         quote_id=d.get('quote_id') or None,

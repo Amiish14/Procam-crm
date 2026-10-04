@@ -249,6 +249,48 @@ def _matches(row, record_name, record_email=None, account_id=None):
     return bool(matched_on) and matched_on != 'name-possible'
 
 
+def _candidate_leads(row):
+    """Leads worth examining closely for this entry.
+
+    Narrowed in SQL first. Walking every lead and scoring it works, and
+    took a second and a half on ten thousand of them — fine once on
+    approval, not fine on a page somebody opens to read. The LIKE is
+    deliberately loose: it only has to be a superset of what
+    `matches_row` will accept, and that does the real deciding.
+    """
+    from app import Lead
+
+    terms = set()
+    for name in [row.company_name] + list(row.aliases):
+        key = restrictions.normalise(name)
+        if not key:
+            continue
+        # The longest word is the distinctive one: "walchandnagar",
+        # not "industries".
+        longest = max(key.split(), key=len, default='')
+        if len(longest) >= 4:
+            terms.add(longest)
+    clauses = []
+    query = Lead.query.filter(Lead.is_archived.isnot(True))
+    try:
+        from app import db
+        for term in terms:
+            clauses.append(db.func.lower(Lead.company).like(f'%{term}%'))
+        for domain in row.domains:
+            clauses.append(db.func.lower(Lead.email).like(f'%@{domain}'))
+        for email in row.emails:
+            clauses.append(db.func.lower(Lead.email) == email)
+        if row.linked_account_id:
+            clauses.append(Lead.company_id == row.linked_account_id)
+        if not clauses:
+            return []
+        return query.filter(db.or_(*clauses)).all()
+    except Exception:
+        # If the narrowing cannot be built, fall back to correctness
+        # over speed rather than to missing records.
+        return query.filter(Lead.company.isnot(None)).all()
+
+
 def impact(row):
     """What would close if this were approved, and what would not.
 
@@ -256,13 +298,9 @@ def impact(row):
     and the records `approve()` touches come from the same walk, so the
     list cannot say one thing and the action do another.
     """
-    from app import Lead
-
     open_leads, won_leads = [], []
     try:
-        candidates = (Lead.query
-                      .filter(Lead.is_archived.isnot(True))
-                      .filter(Lead.company.isnot(None)).all())
+        candidates = _candidate_leads(row)
     except Exception:
         candidates = []
     for lead in candidates:

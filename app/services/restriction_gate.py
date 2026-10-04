@@ -137,3 +137,50 @@ def badges_for(names):
         if level:
             out[name] = level
     return out
+
+
+def frozen_refusal(lead, what='record'):
+    """Refuse an edit to a record closed because its client is blocked.
+
+    §5.3 asks for those records to be read-only. Closing them takes
+    them off every list, but a deep link or an old browser tab can
+    still reach the form, and letting somebody reopen a lead the
+    company has decided not to work is the one hole that makes the
+    whole register advisory.
+
+    Deliberately not a blanket freeze on everything the client touches:
+    an administrator still needs to correct a wrong owner or a typo on
+    a closed record, so this refuses the *stage and value* changes that
+    would put it back into play, and nothing else.
+    """
+    from flask import jsonify
+
+    from app.services import restriction_register as register
+
+    if lead is None or not register.is_frozen(lead):
+        return None
+    verdict = restrictions.check(company_name=getattr(lead, 'company', None),
+                                 email=getattr(lead, 'email', None))
+    restrictions.record_attempt(verdict, what=f'{what} (closed record)',
+                                user_id=_actor(),
+                                detail={'entity_id': getattr(lead, 'id', None)})
+    return jsonify({
+        'error': ('This record was closed because the client is blocked by '
+                  'management. It is kept for the record and cannot be '
+                  'put back into play. Contact Admin if the block is '
+                  'wrong.'),
+        'blocked': True,
+        'restriction': verdict.to_dict(),
+    }), 403
+
+
+#: Fields whose change would put a closed record back into play.
+REOPENING_FIELDS = ('stage', 'followup', 'followup_date', 'next_action',
+                    'quoted_amount_inr', 'quote_value_num',
+                    'opportunity_value_num', 'estimated_value_inr')
+
+
+def reopening(payload):
+    """Is this edit trying to restart work on the record?"""
+    data = payload if isinstance(payload, dict) else {}
+    return any(field in data for field in REOPENING_FIELDS)
