@@ -180,6 +180,23 @@ instead.
 
 ---
 
+## 6a. One thing to know about timing
+
+The register is held in memory and re-read every 30 seconds per
+worker. Production runs two gunicorn workers, and clearing the cache
+only reaches the one handling the request — so a block approved on one
+worker takes up to half a minute to be enforced by the other.
+
+That window is deliberate and bounded. Without it the other worker
+would never re-read at all, and a blocked client would be refused
+about half the time until the next restart, which is worse than not
+having the feature: people stop believing the half that works.
+
+If a block is urgent to the second, `sudo systemctl restart
+procam-crm` makes it immediate.
+
+---
+
 ## 7. The TMS
 
 ```

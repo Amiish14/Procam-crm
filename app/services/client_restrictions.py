@@ -57,14 +57,32 @@ _SUFFIXES = {
     'fzc', 'wll', 'pjsc', 'jsc', 'and', '&',
 }
 
-#: Cache of the live rows, rebuilt when the register changes. The check
-#: runs on every lead, every import row and every inbound email, and
-#: the register is a handful of rows that change a few times a year.
-_CACHE = {'rows': None}
+#: Cache of the live rows. The check runs on every lead, every import
+#: row, every inbound email and every row of a list endpoint, and the
+#: register is a handful of rows that change a few times a year, so
+#: reading it once is worth it.
+#:
+#: But it expires, and that is the important part. Production runs two
+#: gunicorn workers and `cache_clear()` only reaches the one handling
+#: the request — so without a TTL, an administrator approving a block
+#: on worker A leaves worker B enforcing nothing, for ever, and a
+#: blocked client is refused about half the time. A security control
+#: that works intermittently is worse than one that does not exist,
+#: because people stop believing the half that works.
+#:
+#: Thirty seconds: short enough that a block is in force across the
+#: machine before the person who approved it has finished reading the
+#: confirmation, long enough that a five-hundred-row list costs one
+#: query rather than five hundred.
+_CACHE_TTL_SECONDS = 30
+_CACHE = {'rows': None, 'at': 0.0}
 
 
 def cache_clear():
+    """Forget the register. Only affects this process — the TTL is
+    what makes the other workers agree."""
     _CACHE['rows'] = None
+    _CACHE['at'] = 0.0
 
 
 # ── normalising ──────────────────────────────────────────────────────
@@ -232,20 +250,32 @@ def _summary(row):
 
 
 # ── loading ──────────────────────────────────────────────────────────
-def live_rows():
-    """Every decision currently in force. Cached."""
-    if _CACHE['rows'] is not None:
+def _load_rows():
+    """The register, straight from the database. Separate so a test can
+    make it fail the way a missing table does."""
+    from app.models.restriction import ClientRestriction, LIVE_STATUSES
+    return (ClientRestriction.query
+            .filter(ClientRestriction.status.in_(LIVE_STATUSES))
+            .all())
+
+
+def live_rows(now=None):
+    """Every decision currently in force. Cached for _CACHE_TTL_SECONDS."""
+    import time
+
+    now = now if now is not None else time.monotonic()
+    if _CACHE['rows'] is not None and (now - _CACHE['at']) < _CACHE_TTL_SECONDS:
         return _CACHE['rows']
     try:
-        from app.models.restriction import ClientRestriction, LIVE_STATUSES
-        rows = (ClientRestriction.query
-                .filter(ClientRestriction.status.in_(LIVE_STATUSES))
-                .all())
+        rows = _load_rows()
     except Exception:
         # The table arrives in a migration; until then nothing is
-        # restricted, which is the behaviour that existed before.
-        rows = []
+        # restricted, which is the behaviour that existed before. Not
+        # cached as an answer: a missing table is a state to re-check,
+        # not one to remember.
+        return []
     _CACHE['rows'] = rows
+    _CACHE['at'] = now
     return rows
 
 

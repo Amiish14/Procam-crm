@@ -561,6 +561,51 @@ def test_finding_the_records_does_not_walk_the_whole_lead_table(world):
         f'not doing its job')
 
 
+# ── the cache, which is per worker ───────────────────────────────────
+def test_a_block_reaches_a_worker_that_did_not_approve_it(world):
+    """Production runs two gunicorn workers. `cache_clear()` only
+    reaches the one that handled the approval, so without an expiry
+    the other enforces nothing for ever and a blocked client is
+    refused about half the time.
+
+    Simulated by clearing nothing — exactly what the second worker
+    does — and letting the clock move past the TTL.
+    """
+    # The second worker has already answered something, so its cache
+    # holds "nothing is restricted".
+    assert restrictions.live_rows(now=1000.0) == []
+
+    # Meanwhile the first worker approves a block. Straight to the
+    # database, with no cache_clear, because the other process cannot
+    # see that call.
+    _block()
+    restrictions._CACHE['rows'] = []
+    restrictions._CACHE['at'] = 1000.0
+
+    # Inside the window the stale answer stands — that is the trade.
+    assert restrictions.live_rows(now=1000.0 + 5) == []
+
+    # Past it, the worker re-reads and the block is in force.
+    fresh = restrictions.live_rows(
+        now=1000.0 + restrictions._CACHE_TTL_SECONDS + 1)
+    assert len(fresh) == 1 and fresh[0].company_name == WIL
+
+
+def test_a_missing_table_is_not_remembered_as_an_answer(world, monkeypatch):
+    """Before the migration the check must say "nothing restricted" —
+    and must not cache that, or the first request after the migration
+    would pin it for the life of the process."""
+    restrictions.cache_clear()
+
+    def _boom():
+        raise RuntimeError('no such table: client_restrictions')
+
+    monkeypatch.setattr(restrictions, '_load_rows', _boom)
+    assert restrictions.live_rows(now=1.0) == []
+    assert restrictions._CACHE['rows'] is None, (
+        'a failure was cached as if it were an answer')
+
+
 # ── CSRF ─────────────────────────────────────────────────────────────
 def test_every_form_on_the_register_carries_a_csrf_token(world):
     """CSRFProtect is on app-wide and rejects a POST before the handler
