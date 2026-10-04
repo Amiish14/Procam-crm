@@ -159,22 +159,27 @@ def test_outlook_inline_images_can_be_left_out(world):
     # Distinct stems: this repository is developed on a filesystem that
     # does not distinguish IMAGE001.PNG from image001.png, so a pair
     # differing only in case would silently be one file.
+    # Both namings seen on production: Outlook's image001.png and the
+    # hyphenated image-3.png that other clients write. Matching only
+    # the first left forty-two 399-byte spacers behind.
     for name in ('image001.png', 'image002.jpg', 'image0034.gif',
-                 'IMAGE555.PNG'):
+                 'IMAGE555.PNG', 'image-3.png', 'image_12.jpeg',
+                 'image-10.PNG'):
         _put(root, lead.id, name)
     _put(root, lead.id, 'BOQ.pdf')
     adoptable, skipped = _load()._scan(str(root), set(), 0, skip_inline=True)
     assert [n for _l, _p, n, _s in adoptable] == ['BOQ.pdf']
-    assert skipped['an image embedded in the message body'] == 4
+    assert skipped['an image embedded in the message body'] == 7
 
 
 def test_a_real_photograph_is_not_mistaken_for_a_signature(world):
     """In this business a photograph of the cargo is a document. The
     filter is on the name, not the extension, for exactly this."""
     lead, root = world
-    for name in ('IMG_0362.jpeg', 'cargo-on-trailer.jpg',
-                 'DSC00912.JPG', 'image1.png'):
+    for name in ('IMG_0362.jpeg', 'cargo-on-trailer.jpg', 'DSC00912.JPG',
+                 'image-of-the-skid.png', 'imaging-report.pdf'):
         _put(root, lead.id, name)
     adoptable, _skipped = _load()._scan(str(root), set(), 0, skip_inline=True)
     assert sorted(n for _l, _p, n, _s in adoptable) == [
-        'DSC00912.JPG', 'IMG_0362.jpeg', 'cargo-on-trailer.jpg', 'image1.png']
+        'DSC00912.JPG', 'IMG_0362.jpeg', 'cargo-on-trailer.jpg',
+        'image-of-the-skid.png', 'imaging-report.pdf']

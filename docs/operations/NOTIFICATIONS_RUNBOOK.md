@@ -139,6 +139,19 @@ thing: something went wrong that is worth reading in the output. A run
 that reports the same `failed` count twice over has stalled, and the
 leads causing it are in the output by id.
 
+`failed` is not retried either, until asked:
+
+```bash
+sqlite3 procam_crm.db "SELECT status, COUNT(*), substr(error,1,80)
+  FROM lead_raw_emails GROUP BY status, substr(error,1,80);"
+.venv/bin/python scripts/backfill_rfq_capture.py --retry-failed --limit 50
+```
+
+A message over `CRM_MAX_RAW_EMAIL_BYTES` (40 MB) is recorded as failed
+with its size in the error. Its attachments are stored regardless —
+only the `.eml` is skipped — so raising the cap recovers the envelope,
+not the documents.
+
 ### The files already on disk
 
 The webhook saved every attachment and recorded none of them, so on

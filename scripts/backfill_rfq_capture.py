@@ -40,6 +40,10 @@ def main():
                     help='say what would be fetched and write nothing')
     ap.add_argument('--attachments-only', action='store_true',
                     help='record missing attachment rows; skip the .eml')
+    ap.add_argument('--retry-failed', action='store_true',
+                    help='try again on the ones recorded as failed. '
+                         '`missing` is never retried — the mailbox does '
+                         'not have it and asking again will not help.')
     args = ap.parse_args()
 
     with app.app_context():
@@ -59,9 +63,10 @@ def main():
         # A lead is only a candidate if nothing has been written about
         # it yet, so a run can never be filled by leads a previous run
         # already answered.
-        done = {r.internet_message_id for r in
-                db.session.query(LeadRawEmail.internet_message_id).all()
-                if r.internet_message_id}
+        settled = db.session.query(LeadRawEmail.internet_message_id,
+                                   LeadRawEmail.status).all()
+        done = {imid for imid, status in settled if imid
+                and not (args.retry_failed and status == 'failed')}
         candidates = []
         for lead in query.order_by(Lead.id.desc()).yield_per(500):
             if lead.email_message_id in done:

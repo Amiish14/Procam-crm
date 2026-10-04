@@ -45,16 +45,17 @@ from app import Lead, LeadAttachment, app, db             # noqa: E402
 #: Written by raw_mime.py and tracked by lead_raw_emails, not here.
 ORIGINALS_DIR = 'original'
 
-#: What Outlook calls an image embedded in the message body — a
-#: signature logo, a pasted screenshot, a tracking pixel. On production
-#: these are 772 of the 1,267 adoptable files, and nine of them on a
-#: lead whose real attachment is one gate pass is worse than none.
+#: An image embedded in the message body — a signature logo, a pasted
+#: screenshot, a spacer. Mail clients name these predictably and
+#: differently from one another: Outlook writes image001.png, others
+#: write image-3.png or image_12.jpg. Production had both, and matching
+#: only the first form left forty-two 399-byte spacers behind.
 #:
 #: Matched on the name rather than the extension on purpose: .jpg is
 #: also what a photograph of the cargo is, and in this business the
-#: photograph often is the document. image001.jpg is Outlook's;
+#: photograph often is the document. image001.jpg is a mail client's;
 #: IMG_0362.jpeg is somebody's camera.
-INLINE_IMAGE = re.compile(r'^image\d{3,4}\.(png|jpe?g|gif|bmp)$', re.I)
+INLINE_IMAGE = re.compile(r'^image[-_]?\d{1,4}\.(png|jpe?g|gif|bmp)$', re.I)
 
 
 def _human(n):

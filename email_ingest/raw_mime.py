@@ -29,9 +29,16 @@ from datetime import datetime
 log = logging.getLogger(__name__)
 
 #: A raw message bigger than this is not kept. The cap is about disk,
-#: not about Graph: a 40 MB mail with a drawings pack would be stored
-#: twice, once as the .eml and once as its extracted attachments.
-MAX_RAW_BYTES = 25 * 1024 * 1024
+#: not about Graph: a big mail with a drawings pack is stored twice,
+#: once as the .eml and once as its extracted attachments.
+#:
+#: 25 MB was a guess and it was slightly too tight — on production
+#: exactly five enquiries fell between 26 and 29 MB, which is one
+#: drawings pack each and precisely the kind of enquiry somebody needs
+#: the original of. Overridable because the right number depends on
+#: the disk, not on the code.
+MAX_RAW_BYTES = int(os.environ.get('CRM_MAX_RAW_EMAIL_BYTES')
+                    or 40 * 1024 * 1024)
 
 
 def storage_root():
