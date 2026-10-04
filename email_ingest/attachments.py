@@ -102,18 +102,37 @@ def save_attachments_for_lead(graph, mailbox: str, message_id: str, lead_id: int
                             lead_id, name, e)
                 continue
 
-            # Dedup within lead dir — if a file with the same name already
-            # exists, suffix with -1, -2, etc. Keeps a second ingest of the
-            # same email from clobbering the original bytes on disk.
+            # Dedup within lead dir. Two different cases hide behind one
+            # name clash:
+            #
+            #   * the same file again — the webhook saved it and wrote no
+            #     row, and the back-fill is now re-fetching it. Writing a
+            #     second copy would orphan the first and double the
+            #     directory across ten thousand leads. Same name and same
+            #     size: reuse what is there.
+            #   * a genuinely different file that happens to share a name.
+            #     Suffix with -1, -2, so a second ingest cannot clobber
+            #     the original bytes.
             target = os.path.join(lead_dir, name)
             base, ext = os.path.splitext(name)
+            reused = False
             i = 1
             while os.path.exists(target):
+                try:
+                    if os.path.getsize(target) == len(content):
+                        reused = True
+                        break
+                except OSError:
+                    pass
                 target = os.path.join(lead_dir, f"{base}-{i}{ext}")
                 i += 1
 
-            with open(target, "wb") as f:
-                f.write(content)
+            if not reused:
+                with open(target, "wb") as f:
+                    f.write(content)
+            else:
+                log.info("attachment already on disk, reusing lead=%s name=%s",
+                         lead_id, os.path.basename(target))
 
             saved.append({
                 "filename": os.path.basename(target),

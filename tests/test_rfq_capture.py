@@ -127,6 +127,50 @@ def test_capturing_the_same_message_twice_adds_nothing(lead, monkeypatch):
     assert LeadAttachment.query.filter_by(lead_id=lead.id).count() == 1
 
 
+def test_a_file_already_on_disk_is_reused_not_copied(lead, monkeypatch, tmp_path):
+    """The back-fill case. The webhook saved the file and wrote no row;
+    re-fetching must adopt the file that is there, not write a second
+    copy beside it and orphan the first — across ten thousand leads
+    that is the attachment directory twice over."""
+    import os as _os
+    from email_ingest import attachments as att_mod
+
+    lead_dir = _os.path.join(str(tmp_path), str(lead.id))
+    _os.makedirs(lead_dir, exist_ok=True)
+    data = b'%PDF-1.4 fake'
+    already = _os.path.join(lead_dir, 'BOQ.pdf')
+    with open(already, 'wb') as fh:
+        fh.write(data)
+
+    graph = FakeGraph(attachments=[_att('BOQ.pdf', data)])
+    out = rfq_capture.capture_for_lead(lead, graph=graph,
+                                       mailbox='leads@procamgroup.in',
+                                       msg=_msg(), commit=True)
+    assert out['attachments'] == 1
+    assert sorted(_os.listdir(lead_dir)) == ['BOQ.pdf'], \
+        'a second copy of the same file was written'
+    row = LeadAttachment.query.filter_by(lead_id=lead.id).one()
+    assert row.storage_path == already
+
+
+def test_a_different_file_with_the_same_name_still_gets_its_own_copy(
+        lead, tmp_path):
+    """The other half: same name, different bytes, is a different file
+    and must not be swallowed by the reuse."""
+    import os as _os
+
+    lead_dir = _os.path.join(str(tmp_path), str(lead.id))
+    _os.makedirs(lead_dir, exist_ok=True)
+    with open(_os.path.join(lead_dir, 'BOQ.pdf'), 'wb') as fh:
+        fh.write(b'an entirely different document')
+
+    graph = FakeGraph(attachments=[_att('BOQ.pdf', b'%PDF-1.4 fake')])
+    rfq_capture.capture_for_lead(lead, graph=graph,
+                                 mailbox='leads@procamgroup.in',
+                                 msg=_msg(), commit=True)
+    assert sorted(_os.listdir(lead_dir)) == ['BOQ-1.pdf', 'BOQ.pdf']
+
+
 def test_a_message_with_no_attachments_fetches_nothing(lead):
     graph = FakeGraph(attachments=[_att('BOQ.pdf')])
     rfq_capture.capture_for_lead(lead, graph=graph,
