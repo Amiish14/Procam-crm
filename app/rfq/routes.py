@@ -201,6 +201,40 @@ def _create_lines_from_payload(rfq, lines_payload, actor_id):
 
 
 # ─── HTML views ────────────────────────────────────────────────────────────
+
+def _client_of(payload=None, rfq=None):
+    """(company name, email, account id) for whatever this RFQ is about.
+
+    An RFQ has no company name of its own: it points at an account, or
+    at a lead that does. Resolving it here means the block check sees
+    the same client the person does.
+    """
+    data = payload or {}
+    account_id = data.get('account_id') or getattr(rfq, 'account_id', None)
+    lead_id = data.get('lead_id') or getattr(rfq, 'lead_id', None)
+    name, email = None, None
+    if account_id:
+        from app import Company
+        company = Company.query.get(account_id)
+        if company is not None:
+            name = company.name
+    if not name and lead_id:
+        from app import Lead
+        lead = Lead.query.get(lead_id)
+        if lead is not None:
+            name, email = lead.company, lead.email
+    return name, email, account_id
+
+
+def _restriction_refusal(payload, what, rfq=None, entity_id=None):
+    from app.services import restriction_gate as gate
+    name, email, account_id = _client_of(payload, rfq)
+    if not (name or account_id):
+        return None
+    return gate.guard(payload, what=what, entity_id=entity_id,
+                      company_name=name, email=email, account_id=account_id)
+
+
 @bp.route('/rfqs')
 @_require_auth
 def rfq_list_page():
@@ -255,6 +289,12 @@ def api_create_rfq():
     subject = (d.get('subject') or '').strip()
     if not subject:
         return jsonify(ok=False, error='subject required'), 400
+
+    # The block register. The client is whichever of the account or the
+    # lead this RFQ hangs off — an RFQ never carries the name itself.
+    _refusal = _restriction_refusal(d, 'new RFQ')
+    if _refusal:
+        return _refusal
 
     actor = session.get('emp_code')
     driver = (d.get('lead_driver') or actor) or None
@@ -528,6 +568,13 @@ def api_advance(rid):
     old = rfq.status
     if target == old:
         return jsonify(ok=True, rfq=rfq.to_dict(), noop=True)
+    # Moving an RFQ on is progressing business with the client, so the
+    # register is checked here too — not only when the RFQ was raised.
+    # A client can be blocked after the RFQ exists.
+    _refusal = _restriction_refusal(d, f'RFQ advance to {target}', rfq=rfq,
+                                    entity_id=rfq.id)
+    if _refusal:
+        return _refusal
     rfq.status = target
     try:
         db.session.commit()

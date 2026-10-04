@@ -1,0 +1,193 @@
+{% extends 'restrictions/_shell.html' %}
+{% block heading %}{{ r.company_name }}{% endblock %}
+{% block strap %}<span class="rg-badge {{ r.status }}">{{ r.status }}</span>
+  {% if r.scope == 'group' %} · whole group{% endif %}{% endblock %}
+
+{% block body %}
+{% if r.status == 'blocked' %}
+<div class="rg-stop">
+  <strong>This client is blocked by management.</strong>
+  Reason: {{ r.reason_category }}.
+  {% if r.approved_at %}Blocked on {{ r.approved_at|string|truncate(10, True, '') }}
+  by {{ r.approved_by }}.{% endif %}
+  Nobody can create or progress business with this client.
+</div>
+{% elif r.status == 'caution' %}
+<div class="rg-warn">
+  <strong>On the caution register.</strong> Business is allowed. Everyone
+  is shown this warning and has to acknowledge it before going ahead.
+</div>
+{% elif r.status == 'recommended' %}
+<div class="rg-warn">
+  <strong>Waiting for a decision.</strong> Recommended by
+  {{ r.recommended_by }}. Nothing is enforced until it is approved.
+</div>
+{% endif %}
+
+<div class="rg-card">
+  <h3>Why</h3>
+  <p style="margin:0 0 8px"><strong>{{ r.reason_category }}</strong></p>
+  <p style="margin:0;white-space:pre-wrap">{{ r.reason_detail }}</p>
+  {% if r.legal_status and r.legal_status != 'None' %}
+  <p class="rg-note">Legal status: <strong>{{ r.legal_status }}</strong></p>
+  {% endif %}
+  {% if sensitive and (r.dispute_amount or r.dispute_refs) %}
+  <p class="rg-note">
+    {% if r.dispute_amount %}Amount in dispute:
+      <strong>{{ r.currency }} {{ '{:,.2f}'.format(r.dispute_amount|float) }}</strong>.
+    {% endif %}
+    {% if r.dispute_refs %}References: {{ r.dispute_refs }}{% endif %}
+  </p>
+  {% endif %}
+</div>
+
+<div class="rg-card">
+  <h3>What it matches</h3>
+  <table class="rg">
+    <tr><td style="width:170px">Name</td><td>{{ r.company_name }}</td></tr>
+    {% if r.aliases %}<tr><td>Aliases</td><td>{{ r.aliases|join(', ') }}</td></tr>{% endif %}
+    {% if r.domains %}<tr><td>Domains</td><td>{{ r.domains|join(', ') }}
+      {% if r.scope != 'group' %}<span style="color:#6b7280">
+        (not matched — scope is this company only)</span>{% endif %}</td></tr>{% endif %}
+    {% if sensitive and r.emails %}<tr><td>Contacts</td><td>{{ r.emails|join(', ') }}</td></tr>{% endif %}
+    {% if sensitive and r.gstin %}<tr><td>GSTIN</td><td>{{ r.gstin }}</td></tr>{% endif %}
+    <tr><td>Business units</td><td>{{ r.business_units|join(', ') }}</td></tr>
+    {% if r.review_date %}<tr><td>Review on</td><td>{{ r.review_date }}</td></tr>{% endif %}
+  </table>
+  <p class="rg-note">
+    A name is matched after Ltd, Limited, Pvt and punctuation are
+    stripped, so spelling variants are caught without being listed. A
+    close-but-not-exact name is treated as a caution, never a block.
+  </p>
+</div>
+
+{% if can_approve and r.status in ('recommended', 'caution') %}
+<div class="rg-card">
+  <h3>Decide</h3>
+  <p class="rg-note" style="margin-bottom:12px">
+    Blocking closes the live business for this client. See what that
+    would be before you confirm.
+  </p>
+  <button class="btn" type="button" id="seeImpact">What would this close?</button>
+  <div id="impact"></div>
+  <form method="post" style="display:inline"
+        action="{{ url_prefix }}/admin/restrictions/{{ r.id }}/approve">
+    <button class="btn" type="submit" style="margin-top:12px">Approve</button>
+  </form>
+  {% if r.status == 'recommended' %}
+  <form method="post" style="display:inline-block;margin-left:10px"
+        action="{{ url_prefix }}/admin/restrictions/{{ r.id }}/reject">
+    <input type="text" name="reason" placeholder="Why not?" required
+           style="padding:7px 9px;border:1px solid #d1d5db;border-radius:6px">
+    <button class="btn" type="submit" style="background:#6b7280">Reject</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if can_lift and r.status in ('blocked', 'caution') %}
+<div class="rg-card">
+  <h3>Lift</h3>
+  <form method="post"
+        action="{{ url_prefix }}/admin/restrictions/{{ r.id }}/lift">
+    <div class="rg-field">
+      <label for="liftReason">Why is it being lifted?</label>
+      <textarea id="liftReason" name="reason" required
+                style="min-height:70px"></textarea>
+      <div class="rg-hint">
+        Required, and kept. The history stays visible after the block
+        has gone — the next person to ask "have we had trouble with
+        these people?" needs the answer.
+      </div>
+    </div>
+    {% if r.status == 'blocked' %}
+    <label style="font-size:13px"><input type="checkbox" name="downgrade_to"
+      value="caution"> Step down to caution rather than lift entirely</label>
+    <br>
+    {% endif %}
+    <button class="btn" type="submit" style="background:#B45309;margin-top:10px">
+      Lift</button>
+  </form>
+</div>
+{% endif %}
+
+{% if attempts %}
+<div class="rg-card">
+  <h3>Attempts ({{ attempts|length }})</h3>
+  <table class="rg">
+    <tr><th>Who</th><th>What</th><th>When</th></tr>
+    {% for e in attempts[:25] %}
+    <tr><td>{{ e.user_id or '—' }}</td>
+      <td style="font-size:12.5px">{{ e.payload.get('what', '—') }}
+        <span style="color:#6b7280">({{ e.payload.get('level', '') }})</span></td>
+      <td style="font-size:12px;color:#6b7280">{{ e.at }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+{% if sensitive %}
+<div class="rg-card">
+  <h3>Documents</h3>
+  {% if files %}
+  <ul style="margin:0;padding-left:18px;font-size:13px">
+    {% for f in files %}
+    <li><a href="{{ url_prefix }}/admin/restrictions/{{ r.id }}/attachments/{{ f.id }}">
+      {{ f.filename }}</a>
+      <span style="color:#6b7280;font-size:11.5px">
+        {{ f.uploaded_by }} · {{ f.uploaded_at|string|truncate(10, True, '') }}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="rg-note">Nothing attached.</p>{% endif %}
+  <form method="post" enctype="multipart/form-data" style="margin-top:12px"
+        action="{{ url_prefix }}/admin/restrictions/{{ r.id }}/attachments">
+    <input type="file" name="file">
+    <button class="btn" type="submit" style="background:#4b5563">Attach</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="rg-card">
+  <h3>History</h3>
+  <ul class="rg-timeline">
+    {% for e in events %}
+    <li>
+      <b>{{ e.action.replace('_', ' ') }}</b>
+      {% if e.user_id %} — {{ e.user_id }}{% endif %}
+      <div class="when">{{ e.at }}</div>
+      {% if e.note %}<div style="color:#374151">{{ e.note }}</div>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="rg-note">
+    Nothing here is ever deleted or edited, including after a block is
+    lifted.
+  </p>
+</div>
+
+<script>
+document.getElementById('seeImpact') &&
+document.getElementById('seeImpact').addEventListener('click', function () {
+  var box = document.getElementById('impact');
+  box.innerHTML = '<p class="rg-note">Looking…</p>';
+  fetch({{ url_prefix|tojson }} + '/admin/restrictions/{{ r.id }}/impact',
+        {credentials: 'same-origin'})
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data.ok) { box.innerHTML = '<div class="rg-stop">' + (data.error || 'Could not check') + '</div>'; return; }
+      var c = data.impact.counts;
+      var html = '<div class="rg-warn">Approving this would close <b>'
+        + c.leads + '</b> lead(s), <b>' + c.rfqs + '</b> RFQ(s) and <b>'
+        + c.quotes + '</b> quote(s).';
+      if (c.won) {
+        html += ' <b>' + c.won + '</b> won or in-execution record(s) would be'
+          + ' left alone for management to decide on — the CRM does not close'
+          + ' work that is already on the road.';
+      }
+      html += '</div>';
+      box.innerHTML = html;
+    })
+    .catch(function () { box.innerHTML = '<div class="rg-stop">Could not check.</div>'; });
+});
+</script>
+{% endblock %}

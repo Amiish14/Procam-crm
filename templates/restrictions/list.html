@@ -1,0 +1,106 @@
+{% extends 'restrictions/_shell.html' %}
+{% block strap %}Clients the company has decided not to deal with, or to
+  be careful with{% endblock %}
+
+{% block body %}
+{% if pending and can_approve %}
+<div class="rg-warn">
+  <strong>{{ pending }}</strong> recommendation{{ 's' if pending != 1 }}
+  waiting for a decision.
+</div>
+{% endif %}
+
+<div class="rg-card">
+  <form method="get" action="{{ url_prefix }}/admin/restrictions"
+        style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end">
+    <div class="rg-field" style="margin:0">
+      <label for="f-status">Status</label>
+      <select id="f-status" name="status" style="width:170px">
+        <option value="">Any</option>
+        {% for s in ['recommended','blocked','caution','rejected','lifted'] %}
+        <option value="{{ s }}" {% if status == s %}selected{% endif %}>
+          {{ s|capitalize }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="rg-field" style="margin:0">
+      <label for="f-reason">Reason</label>
+      <select id="f-reason" name="reason" style="width:230px">
+        <option value="">Any</option>
+        {% for r in reasons %}
+        <option value="{{ r }}" {% if reason == r %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="rg-field" style="margin:0">
+      <label for="f-bu">Business unit</label>
+      <select id="f-bu" name="bu" style="width:120px">
+        <option value="">Both</option>
+        <option value="PLPL" {% if bu == 'PLPL' %}selected{% endif %}>PLPL</option>
+        <option value="PWLPL" {% if bu == 'PWLPL' %}selected{% endif %}>PWLPL</option>
+      </select>
+    </div>
+    <button class="btn" type="submit">Filter</button>
+    <a class="btn" style="background:#4b5563"
+       href="{{ url_prefix }}/admin/restrictions/new">Recommend a client</a>
+    <a class="btn" style="background:#6b7280"
+       href="{{ url_prefix }}/admin/restrictions.xlsx">Export</a>
+  </form>
+</div>
+
+{% if not rows %}
+<div class="rg-card"><p class="rg-note">
+  Nothing on the register. That is the normal state — an entry here
+  stops the whole company doing business with somebody, so it should be
+  rare and deliberate.
+</p></div>
+{% else %}
+<table class="rg">
+  <tr>
+    <th>Client</th><th>Status</th><th>Reason</th><th>Recommended by</th>
+    <th>Approved by</th><th>Date</th>
+    {% if sensitive %}<th class="num">Dispute</th>{% endif %}
+    <th>Review</th>
+  </tr>
+  {% for r in rows %}
+  <tr>
+    <td>
+      <a href="{{ url_prefix }}/admin/restrictions/{{ r.id }}"
+         style="font-weight:600;color:#1a1917;text-decoration:none">
+        {{ r.company_name }}</a>
+      {% if r.aliases %}
+      <div style="font-size:11.5px;color:#6b7280">
+        also {{ r.aliases[:3]|join(', ') }}{% if r.aliases|length > 3 %} …{% endif %}</div>
+      {% endif %}
+      {% if r.scope == 'group' and r.domains %}
+      <div style="font-size:11.5px;color:#92400E">
+        whole group — {{ r.domains|join(', ') }}</div>
+      {% endif %}
+    </td>
+    <td><span class="rg-badge {{ r.status }}">{{ r.status }}</span></td>
+    <td style="font-size:12.5px">{{ r.reason_category or '—' }}</td>
+    <td style="font-size:12.5px">{{ r.recommended_by or '—' }}</td>
+    <td style="font-size:12.5px">{{ r.approved_by or '—' }}</td>
+    <td style="font-size:12px;color:#6b7280">
+      {{ (r.approved_at or r.recommended_at)|string|truncate(10, True, '') }}</td>
+    {% if sensitive %}
+    <td class="num">
+      {% if r.dispute_amount %}{{ r.currency }}
+        {{ '{:,.0f}'.format(r.dispute_amount|float) }}{% else %}—{% endif %}</td>
+    {% endif %}
+    <td style="font-size:12px;color:#6b7280">{{ r.review_date or '—' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<p class="rg-note" style="margin-top:16px">
+  Everyone can read this register — that is what the caution list is
+  for, so somebody new learns about a client before dealing with them
+  rather than afterwards.
+  {% if not sensitive %}
+  Dispute amounts, references and attached documents are shown to
+  administrators only.
+  {% endif %}
+</p>
+{% endblock %}

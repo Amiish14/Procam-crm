@@ -1,0 +1,197 @@
+{% extends 'restrictions/_shell.html' %}
+{% block heading %}Recommend a block or caution{% endblock %}
+{% block strap %}{% if can_approve %}You may set this directly{% else %}
+  This goes to management to decide{% endif %}{% endblock %}
+
+{% block body %}
+{% if error %}<div class="rg-stop"><strong>{{ error }}</strong></div>{% endif %}
+
+<form method="post" action="{{ url_prefix }}/admin/restrictions/new">
+  <div class="rg-card">
+    <h3>Who</h3>
+    <div class="rg-field">
+      <label for="company_name">Company name</label>
+      <input type="text" id="company_name" name="company_name" required
+             list="accounts" autocomplete="off"
+             value="{{ data.company_name or '' }}">
+      <datalist id="accounts"></datalist>
+      <div class="rg-hint">The legal name. Variants go in aliases below.</div>
+    </div>
+    <div class="rg-field">
+      <label for="aliases">Aliases</label>
+      <input type="text" id="aliases" name="aliases"
+             value="{{ data.aliases or '' }}"
+             placeholder="Acme Industries Ltd, Acme Inds, AIL">
+      <div class="rg-hint">
+        Comma separated. The check already treats Ltd, Limited, Pvt and
+        the rest as the same word, and catches near-miss spellings — so
+        add real trading names and initials here, not punctuation
+        variants.
+      </div>
+    </div>
+    <div class="rg-field">
+      <label for="domains">Email domains</label>
+      <input type="text" id="domains" name="domains"
+             value="{{ data.domains or '' }}" placeholder="example.com">
+      <div class="rg-hint">
+        Only used when the scope is "the whole group".
+      </div>
+      <div id="domainWarn"></div>
+    </div>
+    <div class="rg-field">
+      <label for="emails">Specific contacts</label>
+      <input type="text" id="emails" name="emails"
+             value="{{ data.emails or '' }}">
+    </div>
+    <div class="rg-field" style="display:flex;gap:18px;flex-wrap:wrap">
+      <div><label for="gstin">GSTIN</label>
+        <input type="text" id="gstin" name="gstin" style="width:220px"></div>
+      <div><label for="pan">PAN</label>
+        <input type="text" id="pan" name="pan" style="width:160px"></div>
+    </div>
+    <input type="hidden" name="linked_account_id"
+           value="{{ data.linked_account_id or '' }}">
+  </div>
+
+  <div class="rg-card">
+    <h3>What is being asked for</h3>
+    <div class="rg-field">
+      <label for="status">Decision</label>
+      <select id="status" name="status">
+        <option value="caution">Caution — business allowed, with a warning</option>
+        <option value="blocked">Blocked — no business at all</option>
+      </select>
+      {% if not can_approve %}
+      <div class="rg-hint">
+        You are recommending this. It takes effect when management
+        approves it.
+      </div>
+      {% endif %}
+    </div>
+    <div class="rg-field">
+      <label for="scope">Scope</label>
+      <select id="scope" name="scope">
+        <option value="entity">This company and its aliases</option>
+        <option value="group">The whole group — everyone on the domain</option>
+      </select>
+      <div class="rg-hint">
+        "The whole group" restricts every company sharing the email
+        domain. Choose it deliberately: a dispute with one company is
+        not usually a reason to refuse its sister company.
+      </div>
+    </div>
+    <div class="rg-field">
+      <label for="reason_category">Reason</label>
+      <select id="reason_category" name="reason_category" required>
+        <option value="">Choose one</option>
+        {% for r in reasons %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="rg-field">
+      <label for="reason_detail">What happened</label>
+      <textarea id="reason_detail" name="reason_detail" required></textarea>
+      <div class="rg-hint">
+        Every salesperson who is refused this client reads this. Write
+        it so somebody who was not there understands it a year from now.
+      </div>
+    </div>
+  </div>
+
+  <div class="rg-card">
+    <h3>The dispute, if there is one</h3>
+    <div class="rg-field" style="display:flex;gap:18px;flex-wrap:wrap">
+      <div><label for="dispute_amount">Amount</label>
+        <input type="number" step="0.01" id="dispute_amount"
+               name="dispute_amount" style="width:200px"></div>
+      <div><label for="currency">Currency</label>
+        <input type="text" id="currency" name="currency" value="INR"
+               style="width:90px"></div>
+      <div><label for="legal_status">Legal status</label>
+        <select id="legal_status" name="legal_status" style="width:200px">
+          {% for s in ['None','Notice sent','In arbitration','In court','Settled'] %}
+          <option value="{{ s }}">{{ s }}</option>{% endfor %}
+        </select></div>
+    </div>
+    <div class="rg-field">
+      <label for="dispute_refs">Invoice / PO / LR / job references</label>
+      <input type="text" id="dispute_refs" name="dispute_refs">
+    </div>
+  </div>
+
+  <div class="rg-card">
+    <h3>Where and until when</h3>
+    <div class="rg-field">
+      <label>Business units</label>
+      <label style="font-weight:400"><input type="checkbox" name="business_units"
+        value="PLPL" checked> PLPL</label>
+      <label style="font-weight:400"><input type="checkbox" name="business_units"
+        value="PWLPL" checked> PWLPL</label>
+    </div>
+    <div class="rg-field">
+      <label for="review_date">Review on</label>
+      <input type="date" id="review_date" name="review_date" style="width:200px">
+      <div class="rg-hint">
+        Optional. A reminder goes to whoever approved it on that day.
+      </div>
+    </div>
+  </div>
+
+  <button class="btn" type="submit">
+    {% if can_approve %}Save and apply{% else %}Send for approval{% endif %}
+  </button>
+</form>
+
+<script>
+(function () {
+  var prefix = {{ url_prefix|tojson }};
+  var name = document.getElementById('company_name');
+  var list = document.getElementById('accounts');
+  var domains = document.getElementById('domains');
+  var warn = document.getElementById('domainWarn');
+
+  // Autocomplete from Accounts, so the entry links to the company the
+  // CRM already knows rather than to a second spelling of it.
+  var timer = null;
+  name.addEventListener('input', function () {
+    clearTimeout(timer);
+    timer = setTimeout(function () {
+      var q = name.value.trim();
+      if (q.length < 3) return;
+      fetch(prefix + '/api/companies?q=' + encodeURIComponent(q) + '&limit=10',
+            {credentials: 'same-origin'})
+        .then(function (r) { return r.ok ? r.json() : []; })
+        .then(function (rows) {
+          list.innerHTML = '';
+          (rows.items || rows || []).slice(0, 10).forEach(function (c) {
+            var o = document.createElement('option');
+            o.value = c.name || c.company || '';
+            list.appendChild(o);
+          });
+        })
+        .catch(function () {});
+    }, 250);
+  });
+
+  // A domain often reaches further than one company. Say so before the
+  // admin picks "the whole group", not after.
+  domains.addEventListener('blur', function () {
+    var value = domains.value.trim();
+    warn.innerHTML = '';
+    if (!value) return;
+    fetch(prefix + '/api/restrictions/domain-warning?domains='
+          + encodeURIComponent(value) + '&company='
+          + encodeURIComponent(name.value), {credentials: 'same-origin'})
+      .then(function (r) { return r.ok ? r.json() : {warnings: []}; })
+      .then(function (data) {
+        (data.warnings || []).forEach(function (w) {
+          var div = document.createElement('div');
+          div.className = 'rg-warn';
+          div.textContent = w.message;
+          warn.appendChild(div);
+        });
+      })
+      .catch(function () {});
+  });
+})();
+</script>
+{% endblock %}

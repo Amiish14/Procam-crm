@@ -80,6 +80,34 @@ def _thread_keys(msg):
         return {}
 
 
+
+def _log_blocked_intake(db, msg, verdict, sender_email, log):
+    """Record an enquiry that was refused because its client is blocked.
+
+    Written to the same EmailEvent log the rest of the intake uses, with
+    status 'blocked_client', so the Intake screens can show it under
+    "Intake — Blocked" beside everything else that arrived. The mail
+    itself is not deleted or hidden — somebody has to be able to see
+    that a blocked client is still writing in.
+    """
+    try:
+        from app import EmailEvent
+        db.session.add(EmailEvent(
+            received_at=email_parser.received_datetime(msg),
+            mailbox=(msg.get('_mailbox') or ''),
+            internet_message_id=(msg.get('internetMessageId') or '')[:400],
+            subject=(msg.get('subject') or '')[:500],
+            status='blocked_client',
+            reason=(f'{verdict.company_name} is blocked — '
+                    f'{verdict.reason_summary}')[:500],
+            classification='blocked_client',
+            decided_by='restriction-register',
+            payload_json=None,
+            lead_id=None))
+    except Exception:
+        log.exception('could not write the blocked-intake event')
+
+
 def _file_against_lead(db, decision, msg, extracted, log,
                        graph=None, mailbox=None):
     """File an email that is not a new lead against the lead it belongs to.
@@ -330,6 +358,45 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
             return {'status': 'skipped', 'reason': blocked,
                     'lead_id': None, 'internet_message_id': imid}
         sender_domain = sender_email.split('@', 1)[1] if '@' in sender_email else ''
+
+        # ── The client block register ─────────────────────────────────
+        # A blocked client's enquiry must not become a lead at all: the
+        # whole point is that nobody starts work on it, and a lead with
+        # a badge on it is still something somebody picks up. It is
+        # recorded as "Intake — Blocked" instead, so the enquiry is not
+        # silently lost and an administrator can see it arrived.
+        #
+        # A caution does create the lead: business is allowed, and the
+        # badge plus the acknowledgement on first touch is how the
+        # person learns about the dispute.
+        try:
+            from app.services import client_restrictions as _restrictions
+            _verdict = _restrictions.check(
+                company_name=(extracted.get('company')
+                              or msg.get('_company') or ''),
+                email=sender_email, domain=sender_domain)
+        except Exception:
+            log.exception('restriction check failed for %s', imid)
+            _verdict = None
+
+        if _verdict is not None and _verdict.blocked:
+            log.info('Blocked client %s — %s not turned into a lead',
+                     _verdict.company_name, imid)
+            try:
+                _restrictions.record_attempt(
+                    _verdict, what='inbound email', user_id='system',
+                    detail={'from': sender_email, 'subject':
+                            (msg.get('subject') or '')[:160],
+                            'internet_message_id': imid})
+                _log_blocked_intake(db, msg, _verdict, sender_email, log)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                log.exception('could not record the blocked intake %s', imid)
+            return {'status': 'skipped',
+                    'reason': f'client blocked: {_verdict.company_name}',
+                    'classification': 'blocked_client',
+                    'lead_id': None, 'internet_message_id': imid}
 
         # ── Intake classification ─────────────────────────────────────
         # This path was deliberately zero-skip: a parser reason was a

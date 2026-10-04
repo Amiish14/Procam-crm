@@ -20,6 +20,11 @@ from app.models.help_content import HelpArticle           # noqa: E402
 
 SECTION = 'Email and reports'
 
+#: The block register's article lives in its own section so it is found
+#: by somebody looking for "can I deal with this client?" rather than
+#: by somebody looking for email settings.
+RESTRICTION_SECTION = 'Clients and accounts'
+
 ARTICLES = [
     dict(
         slug='original-rfq-email',
@@ -119,6 +124,60 @@ ARTICLES = [
             'are reading: "Open pipeline" is every live lead, "Needs '
             'attention" is only the ones the board is raising today.'),
     ),
+    dict(
+        slug='client-block-register',
+        section=RESTRICTION_SECTION,
+        title='How to block or flag a client',
+        display_order=10,
+        what_it_is=(
+            'A register of clients the company has decided not to deal '
+            'with (Blocked), or to be careful with (Caution). It is at '
+            'More \u2192 Admin \u2192 Client Block Register, and everybody '
+            'can read it.'),
+        when_to_use=(
+            'When a client has not paid, is disputing invoices, has a '
+            'legal case running, or there is any other reason the '
+            'company should stop or be careful. Anyone can raise it \u2014 '
+            'you do not have to be an administrator. The person who '
+            'notices is usually the person being messed about.'),
+        how_to_use=(
+            'Open the register and choose "Recommend a client", or use '
+            'the button on the lead or account itself, which fills in '
+            'the name and the email domain for you.\n\n'
+            'Say which it is \u2014 Caution or Blocked \u2014 pick a reason '
+            'category, and write what happened. That last part matters: '
+            'every colleague who is later refused this client reads what '
+            'you wrote, so write it for somebody who was not there.\n\n'
+            'If you are not an approver, it goes to management as a '
+            'recommendation and nothing is enforced until they agree.'),
+        required_fields=(
+            'Company name, the reason category, and what happened. '
+            'Aliases, the email domain, the amount in dispute and a '
+            'review date are all optional but all useful.'),
+        what_happens_next=(
+            'Once a block is approved, nobody can create a lead, '
+            'contact, account, RFQ or quote for that client \u2014 the CRM '
+            'refuses it, including through the API and the Excel '
+            'import, and an email from them stops becoming a lead. Open '
+            'leads and RFQs for that client are closed and their owners '
+            'are told. Work already won or on the road is not touched: '
+            'that is listed for management to decide on.\n\n'
+            'A Caution stops nothing. Everyone sees the warning and has '
+            'to tick "I have read this" before going ahead, and that '
+            'acknowledgement is recorded.'),
+        common_mistakes=(
+            '"The whole group" scope blocks everybody sharing the email '
+            'domain, which usually catches sister companies you did not '
+            'mean. Use it deliberately.\n\n'
+            'Spelling variants do not need listing: Ltd, Limited, Pvt '
+            'and punctuation are already treated as the same, and a '
+            'close misspelling is caught too. Put real trading names '
+            'and initials in aliases instead.\n\n'
+            'Nothing here is ever deleted. Lifting a block keeps the '
+            'whole history, which is the point \u2014 the next person to '
+            'ask "have we had trouble with these people?" needs the '
+            'answer after the block has gone.'),
+    ),
 ]
 
 
@@ -138,9 +197,9 @@ def main():
                 row = HelpArticle(slug=spec['slug'])
                 db.session.add(row)
             for key, value in spec.items():
-                if key != 'slug':
+                if key not in ('slug', 'section'):
                     setattr(row, key, value)
-            row.section = SECTION
+            row.section = spec.get('section') or SECTION
             row.role_visibility = []          # everyone
             row.is_active = True
             print(f'  + {spec["slug"]}')
@@ -148,7 +207,7 @@ def main():
             print('\n== DRY-RUN — nothing written ==')
             return
         db.session.commit()
-        print(f'\n{len(ARTICLES)} article(s) in "{SECTION}".')
+        print(f'\n{len(ARTICLES)} article(s) seeded.')
 
 
 if __name__ == '__main__':

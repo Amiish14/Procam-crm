@@ -454,9 +454,30 @@ def _create_lead(record, company_id, mode):
     return lead
 
 
+
+def _restriction_for(record):
+    """Is this row's client blocked? None when the register cannot be
+    read, which means the import behaves as it did before it existed."""
+    try:
+        from app.services import client_restrictions as restrictions
+        return restrictions.check(
+            company_name=(record.get('company') or record.get('name')
+                          or record.get('_company')),
+            email=record.get('email') or record.get('_person_email'),
+            gstin=record.get('gstin'))
+    except Exception:
+        return None
+
+
 def commit(results, kind, mode, batch, actor):
     """Write a confirmed import. Rows with errors are never applied."""
-    counts = {'created': 0, 'updated': 0, 'skipped': 0, 'failed': 0}
+    counts = {'created': 0, 'updated': 0, 'skipped': 0, 'failed': 0,
+              'restricted': 0}
+    # Rows refused because their client is blocked, reported back by
+    # name so the person who uploaded the file can see which ones did
+    # not go in and why. The rest of the file still imports — one bad
+    # row must not cost somebody a four-hundred-row upload.
+    restricted = []
     # Companies created during THIS run, so later rows naming the same
     # organisation attach to it rather than creating another.
     seen = {}
@@ -467,6 +488,24 @@ def commit(results, kind, mode, batch, actor):
             continue
         if r['action'] == 'skip':
             counts['skipped'] += 1
+            continue
+
+        _verdict = _restriction_for(r['data'])
+        if _verdict is not None and _verdict.blocked:
+            counts['restricted'] += 1
+            restricted.append({
+                'row': r.get('row') or r.get('row_number'),
+                'company': (r['data'].get('company')
+                            or r['data'].get('name') or ''),
+                'reason': _verdict.message(),
+            })
+            try:
+                from app.services import client_restrictions as _restrictions
+                _restrictions.record_attempt(
+                    _verdict, what='Excel import row', user_id=actor,
+                    detail={'row': r.get('row'), 'kind': kind})
+            except Exception:
+                pass
             continue
 
         record = r['data']
@@ -511,6 +550,7 @@ def commit(results, kind, mode, batch, actor):
     batch.duplicate_rows = summary['update']
     batch.committed = True
     batch.committed_at = datetime.utcnow()
+    counts['restricted_rows'] = restricted
     batch.preview_data = json.dumps(counts)
     db.session.commit()
     return counts

@@ -196,6 +196,16 @@ def api_save(card_id):
 
     person_name  = (fields.get('name') or '').strip()
     company_name = (fields.get('company') or '').strip()
+    # A card from a blocked client is refused before anything is filed:
+    # scanning one is how a relationship starts, which is exactly what
+    # the block exists to stop.
+    from app.services import restriction_gate as _gate
+    _refusal = _gate.guard(
+        request.get_json(silent=True) or {}, what='business card',
+        company_name=company_name,
+        email=(fields.get('email') or '').strip())
+    if _refusal:
+        return _refusal
 
     if choice == 'new' and not data.get('confirm_duplicate'):
         # Duplicates were shown at upload, but the reviewer edits the

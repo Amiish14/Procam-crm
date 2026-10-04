@@ -103,6 +103,9 @@ SYSTEM_LISTS = [
     ('intake_learning_dismissed', 'Dismissed Intake Proposals',
      'Learning proposals an admin has declined, so they stop being '
      'suggested. Not a vocabulary anyone edits by hand.'),
+    ('restriction_reason', 'Restriction Reason',
+     'Why a client is blocked or on the caution register. Editable, so '
+     'a new category does not need a developer.'),
     ('lead_rejection_reason', 'Lead Rejection Reason',
      'Why a system-created lead was rejected. Each reason is a training '
      'signal, so the list is deliberately specific — "Other" is the only '

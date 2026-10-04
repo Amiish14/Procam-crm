@@ -1,0 +1,12 @@
+[Unit]
+Description=Procam CRM block register sweep — daily, 09:30 IST
+
+[Timer]
+# 04:00 UTC = 09:30 IST. After the morning brief, so the digest of
+# yesterday's attempts is not competing with it for attention.
+OnCalendar=Mon..Sat *-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

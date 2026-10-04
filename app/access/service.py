@@ -58,6 +58,10 @@ PERMISSION_GROUPS = [
          'Verticals, industries, relationship types and other lists'),
         ('admin.triage',        'Lead Triage',
          'Unassigned inbound leads, ageing, and quick assignment'),
+        ('admin.restrictions',  'Client Block Register',
+         'Approve, reject and lift blocks and cautions on clients, and '
+         'see the dispute amounts behind them. Anyone may recommend '
+         'one; only this permission decides.'),
     ]),
 ]
 

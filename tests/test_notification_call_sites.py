@@ -60,7 +60,12 @@ def test_every_event_rule_is_actually_dispatched_somewhere():
     must appear in a dispatch() call. Scheduled rules are raised by the
     report and escalation jobs, which address them by role instead."""
     body = _sources()
+    # Two ways a rule is raised: through dispatch(), or by a caller that
+    # addresses notify.send directly with the same event key. Both are
+    # real call sites; only a rule that appears in neither is a promise
+    # nothing keeps.
     fired = set(re.findall(r"dispatch\(\s*'([a-z_.]+)'", body))
+    fired |= set(re.findall(r"event_key='([a-z_.]+)'", body))
     orphans = [r['event'] for r in nrules.matrix_rows()
                if r['source'] == nrules.S_EVENT
                and r['event'] not in fired

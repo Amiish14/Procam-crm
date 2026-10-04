@@ -1,0 +1,66 @@
+{# Chrome for the Client Block & Caution Register. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{% block title %}Client Block Register — Procam CRM{% endblock %}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  table.rg { width:100%; border-collapse:collapse; background:#fff; font-size:13px; }
+  table.rg th, table.rg td { padding:9px 10px; border-bottom:1px solid #eef0f3;
+                             text-align:left; vertical-align:top; }
+  table.rg th { font-size:11px; text-transform:uppercase; letter-spacing:.04em;
+                color:#6b7280; }
+  table.rg td.num { text-align:right; font-variant-numeric:tabular-nums;
+                    white-space:nowrap; }
+  .rg-badge { display:inline-block; font-size:11px; font-weight:800;
+              border-radius:4px; padding:2px 8px; letter-spacing:.04em;
+              text-transform:uppercase; }
+  .rg-badge.blocked { background:#FEE2E2; color:#991B1B; }
+  .rg-badge.caution { background:#FEF3C7; color:#92400E; }
+  .rg-badge.recommended { background:#E0E7FF; color:#3730A3; }
+  .rg-badge.rejected, .rg-badge.lifted { background:#F3F4F6; color:#4B5563; }
+  .rg-card { background:#fff; border:1px solid #e5e7eb; border-radius:14px;
+             padding:16px 18px; margin-bottom:18px; }
+  .rg-card h3 { margin:0 0 10px; font-size:14px; }
+  .rg-note { font-size:12.5px; color:#4b5563; max-width:70ch; margin:8px 0 0; }
+  .rg-field { margin-bottom:14px; }
+  .rg-field label { display:block; font-size:12px; font-weight:600;
+                    color:#374151; margin-bottom:4px; }
+  .rg-field input[type=text], .rg-field input[type=number],
+  .rg-field input[type=date], .rg-field select, .rg-field textarea {
+      width:100%; max-width:560px; padding:7px 9px; font-size:13px;
+      border:1px solid #d1d5db; border-radius:6px; font-family:inherit; }
+  .rg-field textarea { min-height:90px; }
+  .rg-hint { font-size:11.5px; color:#6b7280; margin-top:3px; }
+  .rg-timeline { list-style:none; margin:0; padding:0; }
+  .rg-timeline li { padding:9px 0 9px 14px; border-left:2px solid #e5e7eb;
+                    margin-left:4px; font-size:13px; }
+  .rg-timeline li b { font-weight:600; }
+  .rg-timeline .when { color:#6b7280; font-size:11.5px; }
+  .rg-warn { background:#FFFBEB; border:1px solid #FDE68A; border-radius:10px;
+             padding:11px 14px; font-size:13px; margin:10px 0; }
+  .rg-stop { background:#FEF2F2; border:1px solid #FECACA; border-radius:10px;
+             padding:11px 14px; font-size:13px; margin:10px 0; }
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+  <div class="hero">
+    <div>
+      <h1>{% block heading %}Client Block Register{% endblock %}</h1>
+      <div class="today">{% block strap %}{% endblock %}</div>
+    </div>
+    <div>
+      <a class="top-back" href="{{ url_prefix }}/admin/restrictions">The register</a>
+      <a class="top-back" style="margin-left:12px"
+         href="{{ url_prefix }}/my-work">My Work</a>
+    </div>
+  </div>
+  {% block body %}{% endblock %}
+</div>
+</body>
+</html>

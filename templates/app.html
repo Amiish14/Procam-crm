@@ -2910,6 +2910,43 @@ async function openLd(id){
   if(!l)return;
   activeId=id;
   g('ldTtl').textContent=l.company;
+  /* A client the company has decided not to deal with, said once and
+     at the top. The server refuses the work regardless; this is so
+     nobody wastes an afternoon finding that out. */
+  (function(){
+    var host=g('ldTtl').parentNode, old=host.querySelector('.ld-restrict');
+    if(old)old.remove();
+    if(!l.restriction){
+      /* No restriction — offer the way to raise one. Anybody may, and
+         the person who notices a client is trouble is rarely an
+         administrator. The form is pre-filled from this lead. */
+      var ask=document.createElement('div');
+      ask.className='ld-restrict';
+      ask.style.cssText='margin:6px 0 2px;font-size:11.5px;color:var(--text-3)';
+      ask.innerHTML='<a href="'+crmUrl('/admin/restrictions/new'
+        +'?company='+encodeURIComponent(l.company||'')
+        +'&email='+encodeURIComponent(l.email||''))
+        +'" target="_blank" style="color:var(--text-3)">'
+        +'Recommend a block or caution for this client</a>';
+      host.insertBefore(ask, g('ldSub'));
+      return;
+    }
+    var blocked=l.restriction==='blocked';
+    var box=document.createElement('div');
+    box.className='ld-restrict';
+    box.style.cssText='margin:8px 0 2px;padding:9px 13px;border-radius:8px;'
+      +'font-size:12.5px;font-weight:600;'
+      +(blocked?'background:#FEF2F2;border:1px solid #FECACA;color:#991B1B'
+               :'background:#FFFBEB;border:1px solid #FDE68A;color:#92400E');
+    box.innerHTML=(blocked
+      ?'BLOCKED — management has stopped business with this client. '
+       +'Nothing new can be created or progressed.'
+      :'CAUTION — this client is on the watchlist. You will be asked to '
+       +'acknowledge the reason before you can go ahead.')
+      +' <a href="'+crmUrl('/admin/restrictions')+'" target="_blank" '
+      +'style="color:inherit;text-decoration:underline">Why?</a>';
+    host.insertBefore(box, g('ldSub'));
+  })();
   g('ldSub').textContent=(l.project?l.project+' · ':'')+[l.state,l.industry].filter(Boolean).join(' · ');
   const isAdmin=ME.role==='admin';
   const uOpts=EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('');
@@ -5188,6 +5225,7 @@ async function doChangePw(){
     sparkles:       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.6L19.5 10.5l-5.6 1.9L12 18l-1.9-5.6L4.5 10.5l5.6-1.9L12 3z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>',
     users:          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
     zap:            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+    shield:         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>',
     user_lock:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
     upload:         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
     key:            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-6 6"/><path d="m18 5 3 3"/></svg>',
@@ -5259,6 +5297,11 @@ async function doChangePw(){
         { page: 'assign',    label: 'Assign',               ic: 'zap',           adminOnly: true },
         { page: 'employees', label: 'Employees',            ic: 'user_lock',     adminOnly: true },
         { page: 'master',    label: 'Master Data',           ic: 'settings',      perm: 'admin.master' },
+        /* Everyone may open the register: the caution list exists so a
+           new colleague learns about a client before dealing with them,
+           and a page only administrators can see cannot do that. What
+           it shows them is narrowed server-side. */
+        { href: '/admin/restrictions', label: 'Client Block Register', ic: 'shield' },
         { page: 'mapping',   label: 'Data Mapping',          ic: 'layers',        perm: 'admin.master' },
         { href: '/admin/data-quality', label: 'Data Quality', ic: 'trending_up',  perm: 'admin.master' },
         { href: '/admin/import',       label: 'Import / Export', ic: 'upload',    perm: 'admin.master' },

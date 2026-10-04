@@ -44,6 +44,30 @@
   {% endif %}
 {% endif %}
 
+{% if r.restrictions and r.restrictions.total %}
+  {{ bits.heading('Clients the company will not deal with') }}
+  <table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+    {% for group, label in [('blocked', 'Blocked'), ('caution', 'Caution'),
+                            ('pending', 'Awaiting a decision')] %}
+      {% for row in r.restrictions[group] %}
+      <tr>
+        <td style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">
+          <strong>{{ row.name }}</strong>
+          <div style="font-size:11.5px;color:#8A857F;">{{ row.reason }}</div>
+        </td>
+        <td style="padding:6px 0;border-top:1px solid #EFEDEB;white-space:nowrap;
+                   font-size:11.5px;color:#8A857F;">{{ label }} · {{ row.since }}</td>
+      </tr>
+      {% endfor %}
+    {% endfor %}
+  </table>
+  <div style="font-size:11.5px;color:#8A857F;margin-top:6px;">
+    Read before the review, not discovered during it. A block agreed on
+    Tuesday changes what can be said about that client's pipeline on
+    Monday.
+  </div>
+{% endif %}
+
 <div style="font-size:11.5px;color:#8A857F;margin-top:18px;">
   These are live figures, read when this was sent. Friday morning's
   freeze writes them down; the review reads the frozen set, so a number

@@ -142,6 +142,38 @@ def _won_lost(sc, since, until):
     return out
 
 
+
+def register_summary():
+    """The client block register, for the Thursday pack.
+
+    Read before the review rather than discovered during it: a block
+    agreed on Tuesday changes what can be said about a client's
+    pipeline on Monday.
+    """
+    try:
+        from app.models.restriction import (BLOCKED, CAUTION,
+                                            ClientRestriction, RECOMMENDED)
+        rows = (ClientRestriction.query
+                .filter(ClientRestriction.status.in_(
+                    (BLOCKED, CAUTION, RECOMMENDED)))
+                .order_by(ClientRestriction.status,
+                          ClientRestriction.company_name).all())
+    except Exception:
+        return {'blocked': [], 'caution': [], 'pending': [], 'total': 0}
+
+    def _row(r):
+        return {'name': r.company_name, 'reason': r.reason_category or '',
+                'since': str(r.approved_at or r.recommended_at)[:10]}
+
+    out = {
+        'blocked': [_row(r) for r in rows if r.status == BLOCKED],
+        'caution': [_row(r) for r in rows if r.status == CAUTION],
+        'pending': [_row(r) for r in rows if r.status == RECOMMENDED],
+    }
+    out['total'] = sum(len(v) for v in out.values() if isinstance(v, list))
+    return out
+
+
 # ── the Thursday pack ────────────────────────────────────────────────
 def review_pack(emp_code, *, today=None):
     """What one person needs in front of them before the review."""
@@ -171,6 +203,7 @@ def review_pack(emp_code, *, today=None):
     return {
         'report': 'weekly_pack',
         'template': 'email/weekly_pack.html',
+        'restrictions': register_summary(),
         'date': str(today),
         'week': week_label(today),
         'person': person,

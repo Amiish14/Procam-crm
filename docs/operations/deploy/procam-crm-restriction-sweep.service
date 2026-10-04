@@ -1,0 +1,10 @@
+[Unit]
+Description=Procam CRM client block register — review reminders and the attempts digest
+After=network.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/restriction_sweep.py
+SuccessExitStatus=1

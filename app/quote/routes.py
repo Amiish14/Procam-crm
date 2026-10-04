@@ -130,6 +130,31 @@ def _fire(entity, entity_type, old_state, new_state):
 
 
 # ─── HTML ──────────────────────────────────────────────────────────────────
+
+def _restriction_refusal(payload, what, quote=None):
+    """The block register, for a quote.
+
+    A quote names no client of its own either — it hangs off an
+    account, so that is what is checked. A caution here also sends the
+    approval to a vertical head rather than letting it through on the
+    preparer's own authority; see api_approve.
+    """
+    from app.services import restriction_gate as gate
+
+    account_id = (payload or {}).get('account_id') \
+        or getattr(quote, 'account_id', None)
+    name = None
+    if account_id:
+        from app import Company
+        company = Company.query.get(account_id)
+        name = company.name if company is not None else None
+    if not (name or account_id):
+        return None
+    return gate.guard(payload, what=what, company_name=name,
+                      account_id=account_id,
+                      entity_id=getattr(quote, 'id', None))
+
+
 @bp.route('/quotes')
 @_require_auth
 def quote_list_page():
@@ -459,6 +484,10 @@ def api_submit_for_approval(qid):
     if q.status != 'Draft':
         return jsonify(ok=False,
                        error=f'Only Draft quotes may be submitted. Current: {q.status}'), 400
+    _refusal = _restriction_refusal(request.get_json(silent=True) or {},
+                                    'quote submitted for approval', quote=q)
+    if _refusal:
+        return _refusal
     old = q.status
     q.status = 'Awaiting Approval'
     try:

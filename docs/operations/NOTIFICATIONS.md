@@ -297,3 +297,30 @@ exactly as before the table existed.
 | `/admin/email/rules` | `admin.email` | who hears what, and what fires it |
 | `/admin/email/schedules` | `admin.email` | what runs when, and under which flag |
 | `/admin/email/health` | `admin.email` | what is queued, what failed, what was refused |
+
+
+---
+
+# Addendum — the client block register (2026-10)
+
+Five events, all delivered through `notify.send` rather than through
+`dispatch`, because who hears them is decided at send time rather than
+by a role on the row.
+
+| Event | Who | When |
+|---|---|---|
+| `restriction.recommended` | whoever holds `admin.restrictions` | somebody recommends a block or caution |
+| `restriction.blocked` | everyone who sells, plus the heads | a block is approved |
+| `restriction.records_closed` | the PIC of each closed record | with the block, individually |
+| `restriction.review_due` | whoever approved it | the review date arrives |
+| `restriction.attempt_digest` | the administrators | daily, if anyone tried |
+
+`restriction.blocked` and `restriction.records_closed` are marked
+**urgent**, so they ignore quiet hours and batching. They exist to stop
+somebody doing something, and a warning that arrives after the call has
+been made is not a warning.
+
+The attempts digest reports the pattern rather than the incident: one
+person trying once is a mistake, the same person three times is a
+conversation. Each individual refusal is already on the register's own
+timeline.

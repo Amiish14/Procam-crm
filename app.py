@@ -657,7 +657,19 @@ class Lead(db.Model):
             # want it. Guarded because the table arrives in a migration
             # and a reader older than it must not break.
             'original_email_id': self._original_email_id(),
+            # 'blocked' | 'caution' | '' — so a badge can be shown
+            # wherever this lead appears without a second request. The
+            # register is a handful of rows held in memory, so this is
+            # a dictionary lookup and not a query.
+            'restriction': self._restriction_level(),
         }
+
+    def _restriction_level(self):
+        try:
+            from app.services import restriction_gate as gate
+            return gate.badge(company_name=self.company, email=self.email)
+        except Exception:
+            return ''
 
     def _original_email_id(self):
         try:
@@ -1979,6 +1991,13 @@ def _fire_task_hook(entity, entity_type, old_state, new_state):
 @require_auth
 def api_create_lead():
     d = request.get_json()
+    # The block register, before anything is written. A blocked client
+    # is refused outright; a caution is refused once, with the reason,
+    # and allowed when the same request comes back acknowledged.
+    from app.services import restriction_gate as _gate
+    _refusal = _gate.guard(d, what='new lead')
+    if _refusal:
+        return _refusal
     emp = Employee.query.filter_by(emp_code=session['emp_code']).first()
     requested = d.get('assigned_to') or session['emp_code']
     if requested != session['emp_code'] and not _matrix_can('admin.triage'):
@@ -2086,6 +2105,18 @@ def api_update_lead(lid):
     # actually changed rather than what was submitted.
     _was_stage = lead.stage
     _was_value = _lead_value_now(lead)
+    # Changing the company on a lead, or pushing it further down the
+    # funnel, is starting business just as much as creating one is.
+    from app.services import restriction_gate as _gate
+    _advancing = (d.get('stage') or '') in ('RFQ Generated', 'Quoted', 'Won')
+    if d.get('company') or _advancing:
+        _refusal = _gate.guard(
+            {**d, 'company': d.get('company') or lead.company,
+             'email': d.get('email') or lead.email},
+            what=('lead stage change' if _advancing else 'lead company change'),
+            entity_id=lead.id)
+        if _refusal:
+            return _refusal
     fields_map = {
         'company':'company','project':'project','industry':'industry',
         'products':'products','state':'state','city':'city','country':'country',
@@ -2840,6 +2871,10 @@ def api_contacts():
 @require_auth
 def api_create_contact():
     d = request.get_json()
+    from app.services import restriction_gate as _gate
+    _refusal = _gate.guard(d, what='new contact')
+    if _refusal:
+        return _refusal
     ct = Contact(
         contact_type = d.get('type','person'),
         name         = d.get('name','').strip(),
@@ -3600,6 +3635,10 @@ def api_create_company():
     name = (d.get('name') or '').strip()
     if not name:
         return jsonify({'error': 'name required'}), 400
+    from app.services import restriction_gate as _gate
+    _refusal = _gate.guard(d, what='new account', company_name=name)
+    if _refusal:
+        return _refusal
 
     wanted = [t.strip() for t in (d.get('classifications') or [])
               if t and t.strip()]
@@ -4567,7 +4606,7 @@ def init_db():
                    'app.models.tms_handover', 'app.models.competitor',
                    'app.models.public_source', 'app.models.task_engine',
                    'app.models.notification', 'app.models.review',
-                   'app.models.mailops',
+                   'app.models.mailops', 'app.models.restriction',
                    'app.models.escalation', 'app.models.intel',
                    'app.directory.models'):
             try:
@@ -5338,6 +5377,7 @@ for _mod_path, _bp_name in [
     ('app.hygiene.routes',       'hygiene_bp'),
     ('app.intel.routes',         'intel_bp'),
     ('app.mailops.routes',       'mailops_bp'),
+    ('app.restrictions.routes',  'restrictions_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])
