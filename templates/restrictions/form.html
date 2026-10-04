@@ -7,6 +7,7 @@
 {% if error %}<div class="rg-stop"><strong>{{ error }}</strong></div>{% endif %}
 
 <form method="post" action="{{ url_prefix }}/admin/restrictions/new">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="rg-card">
     <h3>Who</h3>
     <div class="rg-field">

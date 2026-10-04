@@ -561,6 +561,87 @@ def test_finding_the_records_does_not_walk_the_whole_lead_table(world):
         f'not doing its job')
 
 
+# ── CSRF ─────────────────────────────────────────────────────────────
+def test_every_form_on_the_register_carries_a_csrf_token(world):
+    """CSRFProtect is on app-wide and rejects a POST before the handler
+    runs, with a 400 HTML page the screen cannot read. A form without a
+    token is a button that does nothing — and the rest of this module
+    disables CSRF, so nothing else here would notice.
+    """
+    import re
+
+    row = _block()
+    admin = _client(ADMIN)
+    for path in ('/admin/restrictions/new',
+                 f'/admin/restrictions/{row.id}'):
+        html = admin.get(path).get_data(as_text=True)
+        forms = re.findall(r'<form method="post".*?</form>', html,
+                           re.S | re.I)
+        assert forms, f'no POST form found on {path}'
+        for form in forms:
+            assert 'name="csrf_token"' in form, (
+                f'a form on {path} would be refused in a browser: '
+                f'{form[:120]}')
+
+
+def test_a_form_post_survives_csrf_being_on(world):
+    """The round trip the screens actually make."""
+    import re
+
+    row = _block(company=TAG + 'Csrf Co', aliases=[])
+    flask_app.config['WTF_CSRF_ENABLED'] = True
+    try:
+        admin = _client(ADMIN)
+        html = admin.get(f'/admin/restrictions/{row.id}').get_data(as_text=True)
+        token = re.search(r'name="csrf_token" value="([^"]+)"', html).group(1)
+        resp = admin.post(f'/admin/restrictions/{row.id}/lift',
+                          data={'csrf_token': token,
+                                'reason': 'Settled in full, confirmed by '
+                                          'accounts this morning.'})
+        assert resp.status_code in (200, 302), resp.get_data()[:200]
+    finally:
+        flask_app.config['WTF_CSRF_ENABLED'] = False
+    db.session.expire_all()
+    restrictions.cache_clear()
+    assert ClientRestriction.query.get(row.id).status == LIFTED
+
+
+def test_an_attachment_can_be_added_and_read_back(world, tmp_path,
+                                                  monkeypatch):
+    """With CSRF on, because a multipart form carries its token in the
+    body and that is a different path through flask-wtf than a JSON
+    post. This is the form that was found dead."""
+    import io
+    import re
+
+    monkeypatch.setenv('CRM_UPLOAD_ROOT', str(tmp_path))
+    row = _block(company=TAG + 'Papers Co', aliases=[])
+    admin = _client(ADMIN)
+
+    flask_app.config['WTF_CSRF_ENABLED'] = True
+    try:
+        page = admin.get(f'/admin/restrictions/{row.id}').get_data(as_text=True)
+        token = re.search(r'name="csrf_token" value="([^"]+)"', page).group(1)
+        up = admin.post(f'/admin/restrictions/{row.id}/attachments',
+                        data={'csrf_token': token,
+                              'file': (io.BytesIO(b'%PDF-1.4 legal notice'),
+                                       'notice.pdf')},
+                        content_type='multipart/form-data')
+    finally:
+        flask_app.config['WTF_CSRF_ENABLED'] = False
+    assert up.status_code == 200, up.get_data()[:200]
+    att_id = up.get_json()['attachment']['id']
+
+    got = admin.get(f'/admin/restrictions/{row.id}/attachments/{att_id}')
+    assert got.status_code == 200
+    assert b'legal notice' in got.data
+
+    # Somebody without the permission cannot read a legal notice.
+    assert _client(SALES).get(
+        f'/admin/restrictions/{row.id}/attachments/{att_id}'
+    ).status_code == 403
+
+
 # ── the TMS endpoint ─────────────────────────────────────────────────
 def test_the_tms_can_ask_and_gets_a_plain_answer(world):
     _block()

@@ -11,6 +11,7 @@
 {% endif %}
 
 <form method="post" action="{{ url_prefix }}/me/notifications">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="mo-card">
     <h3>Email</h3>
     <div class="mo-row">

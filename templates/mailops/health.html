@@ -73,6 +73,7 @@
 
 {% if h.failures %}
 <form method="post" action="{{ url_prefix }}/admin/email/health/retry">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="mo-card">
     <h3>Failed — the last {{ h.failures|length }}</h3>
     <table class="mo">

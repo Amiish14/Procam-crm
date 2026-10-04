@@ -16,6 +16,7 @@
 <div class="toolbar">
   <a href="{{ url_prefix }}/my-work" style="color:#6B7280">← My Work</a>
   <form method="post" action="{{ url_prefix }}/notifications/read-all">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button type="submit">Mark all read</button>
   </form>
 </div>
