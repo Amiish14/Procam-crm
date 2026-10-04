@@ -126,6 +126,39 @@ Watch the first run.
 moved out of the Inbox or is past the mailbox's retention. It is
 recorded once and not retried.
 
+### The files already on disk
+
+The webhook saved every attachment and recorded none of them, so on
+production **2,847 files — 905 MB** were sitting in the leads' own
+directories with nothing able to serve them, against 277 that had a
+row. The back-fill recovers whatever Microsoft still holds. For the
+rest, the file on disk is the only copy and can be adopted without the
+network:
+
+```bash
+# always look first
+.venv/bin/python scripts/find_orphan_attachments.py
+.venv/bin/python scripts/adopt_orphan_attachments.py
+# then, when the breakdown looks right
+.venv/bin/python scripts/adopt_orphan_attachments.py --apply --yes
+```
+
+Run the back-fill **first** wherever it can reach, because it also
+recovers the original `.eml`, which adoption cannot.
+
+Inline images from signature blocks are in there too — the ingest's
+20 KB floor only applies to ones Graph flags as inline. If the
+extension breakdown shows a lot of `.gif` or `.png`, exclude them:
+
+```bash
+.venv/bin/python scripts/adopt_orphan_attachments.py --apply --yes \
+    --exclude-ext .gif,.png --min-bytes 20480
+```
+
+Adoption never invents a lead: a directory whose lead has been deleted
+is reported and left, which is what `find_orphan_attachments.py
+--delete` is for, and that is a separate decision.
+
 ---
 
 ## 6. The rule that cannot be turned off from a screen
