@@ -91,10 +91,20 @@ def _dependents(engine, present):
     """
     from sqlalchemy import text
 
-    crm_left = sorted(t for t in CRM_TABLES if t in present)
+    # Only the tables that are actually candidates for dropping. The
+    # shared four are never dropped, so what points at them is not a
+    # question this has to answer — and asking it anyway produced a
+    # STOP over twenty-two TMS tables referencing the TMS's own
+    # `projects`, which is simply how the TMS is built.
+    crm_left = sorted(t for t in CRM_TABLES
+                      if t in present and t not in NEVER_DROP)
     if not crm_left:
-        print('no CRM tables left — nothing to untangle.')
+        print('no droppable CRM tables left — nothing to untangle.')
         return 0
+    shared_present = sorted(t for t in NEVER_DROP if t in present)
+    if shared_present:
+        print(f'not examined (never dropped): '
+              f'{", ".join(shared_present)}\n')
 
     sql = text("""
         SELECT tc.table_name      AS dependent_table,
@@ -116,8 +126,8 @@ def _dependents(engine, present):
     with engine.connect() as conn:
         rows = conn.execute(sql, {'names': crm_left}).fetchall()
 
-    print(f'FOREIGN KEYS POINTING AT THE {len(crm_left)} CRM TABLE(S) '
-          f'STILL PRESENT\n')
+    print(f'FOREIGN KEYS POINTING AT THE {len(crm_left)} DROPPABLE CRM '
+          f'TABLE(S)\n')
     foreign = []
     for dependent, column, referenced, constraint in rows:
         whose = 'CRM' if dependent in CRM_TABLES else 'NOT A CRM TABLE'
