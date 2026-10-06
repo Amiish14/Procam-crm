@@ -708,6 +708,23 @@ def api_won(qid):
         db.session.commit()
     except Exception:
         db.session.rollback()
+    # The TMS is the system that executes won work, so it is told —
+    # best effort and always logged. A quote being won is a fact in
+    # the CRM whether or not the TMS could be reached, so this never
+    # raises and never rolls the win back.
+    try:
+        from app.services import integration as _integ
+        _integ.notify_tms('quote.won', {
+            'crm_quote_id': q.id,
+            'crm_lead_id': getattr(q, 'lead_id', None),
+            'crm_account_id': getattr(q, 'account_id', None),
+            'quote_number': getattr(q, 'quote_number', '') or '',
+            'value': float(getattr(q, 'total_amount', 0) or 0),
+            'currency': getattr(q, 'currency', '') or 'INR',
+        }, crm_object_type='Quote', crm_object_id=q.id)
+    except Exception:
+        pass
+
     nrules.dispatch('quote.won', q, actor=session.get('emp_code'),
                     detail=f'Quote {q.quote_number} was won.')
     return jsonify(ok=True, quote=q.to_dict())

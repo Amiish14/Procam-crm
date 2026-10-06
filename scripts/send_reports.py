@@ -63,6 +63,7 @@ REPORT_FLAGS = (
     ('monthly', 'monthly'),
     ('weekly_pack', 'weekly_pack'),
     ('freeze', 'freeze'),
+    ('admin_daily', 'admin_daily'),
 )
 
 #: Reports addressed to one person's own board.
@@ -143,6 +144,14 @@ def recipients(key, only=None):
     elif key == 'freeze':
         people = list(nrules.management()) + vertical_heads()
         people = list(dict.fromkeys(people))
+    elif key == 'admin_daily':
+        # Whoever the administrators chose in Notification Settings.
+        # No fallback to "whoever looks like an admin": a recipient
+        # nobody chose is a recipient nobody maintains.
+        from app.services import admin_settings
+        if not admin_settings.get('admin_daily_report'):
+            return []
+        people = admin_settings.get('admin_recipients') or []
     else:
         people = nrules.management()
     cap = (os.environ.get('REPORT_MAX_RECIPIENTS') or '').strip()
@@ -331,6 +340,8 @@ def main(argv=None):
                     help='the Thursday review pack, before the meeting')
     ap.add_argument('--freeze', action='store_true',
                     help='the Friday freeze: write the week down and send it')
+    ap.add_argument('--admin-daily', dest='admin_daily', action='store_true',
+                    help="the administrators' morning report")
     ap.add_argument('--dry-run', dest='dry_run', action='store_true',
                     help='build and print, send nothing')
     ap.add_argument('--to', metavar='CODE',

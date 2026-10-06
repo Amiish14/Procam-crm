@@ -1,0 +1,11 @@
+[Unit]
+Description=Procam CRM administrators' report — 08:30 IST, Mon-Sat
+
+[Timer]
+# 03:00 UTC = 08:30 IST, alongside the action brief.
+OnCalendar=Mon..Sat *-*-* 03:05:00
+Persistent=true
+RandomizedDelaySec=180
+
+[Install]
+WantedBy=timers.target

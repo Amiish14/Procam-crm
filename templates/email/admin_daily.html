@@ -1,0 +1,94 @@
+{% extends 'email/_shell.html' %}
+{% import 'email/_bits.html' as bits %}
+
+{% block title %}CRM administration — {{ r.date }}{% endblock %}
+{% block strap %}What arrived, what nobody picked up, and what the
+  mailbox could not place{% endblock %}
+
+{% block body %}
+{{ bits.tiles([
+    ('New leads, 24h', r.new_leads),
+    ('Unassigned', r.unassigned_total),
+    ('Needs review', r.needs_review_total),
+    ('Quotes overdue', r.overdue_quotes)]) }}
+
+{% if r.empty %}
+  {{ bits.nothing('Nothing arrived and nothing is waiting. Quiet night.') }}
+{% else %}
+
+{% if r.by_vertical %}
+  {{ bits.heading('New leads by vertical') }}
+  <table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+    {% for name, count in r.by_vertical %}
+    <tr><td style="padding:5px 10px 5px 0;border-top:1px solid #EFEDEB;">{{ name }}</td>
+      <td align="right" style="padding:5px 0;border-top:1px solid #EFEDEB;">{{ count }}</td></tr>
+    {% endfor %}
+  </table>
+{% endif %}
+
+{% if r.by_pic %}
+  {{ bits.heading('New leads by PIC') }}
+  <table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+    {% for name, count in r.by_pic %}
+    <tr><td style="padding:5px 10px 5px 0;border-top:1px solid #EFEDEB;">{{ name }}</td>
+      <td align="right" style="padding:5px 0;border-top:1px solid #EFEDEB;">{{ count }}</td></tr>
+    {% endfor %}
+  </table>
+{% endif %}
+
+{% if r.unassigned %}
+  {{ bits.section({'key': 'unassigned', 'label': 'Nobody owns these',
+                   'count': r.unassigned_total, 'value': '',
+                   'items': r.unassigned,
+                   'more': r.unassigned_total - r.unassigned|length,
+                   'link': '/triage'}, base_url, show_owner=False) }}
+{% endif %}
+
+{% if r.needs_review %}
+  {{ bits.section({'key': 'review', 'label': 'The mailbox could not place these',
+                   'count': r.needs_review_total, 'value': '',
+                   'items': r.needs_review,
+                   'more': r.needs_review_total - r.needs_review|length,
+                   'link': '/admin/mail-ingest'}, base_url) }}
+  <div style="font-size:11.5px;color:#8A857F;margin-top:6px;">
+    A colleague forwarded something with no customer the CRM could
+    identify. The lead exists and is flagged rather than lost.
+  </div>
+{% endif %}
+
+{% if r.skipped or r.errored %}
+  {{ bits.heading('Mail the ingest did not turn into a lead') }}
+  <table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+    {% for row in (r.errored + r.skipped) %}
+    <tr>
+      <td style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">
+        <strong>{{ row.subject or '(no subject)' }}</strong>
+        <div style="color:#8A857F;font-size:11.5px;">
+          {{ row.from_addr }} · {{ row.reason }}</div>
+      </td>
+      <td align="right" style="padding:6px 0;border-top:1px solid #EFEDEB;
+                 white-space:nowrap;font-size:11.5px;color:#8A857F;">
+        {{ row.outcome }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div style="font-size:11.5px;color:#8A857F;margin-top:6px;">
+    Each of these can be turned into a lead from the ingestion log if
+    the classifier got it wrong.
+  </div>
+{% endif %}
+
+{% if r.mail and (r.mail.failed or r.mail.queued) %}
+  {{ bits.heading('Outbound email') }}
+  <div style="font-size:13px;">
+    {{ r.mail.queued }} waiting · <strong>{{ r.mail.failed }} failed</strong>
+    {% if r.mail.oldest_queued_minutes %}
+      · oldest has waited {{ r.mail.oldest_queued_minutes }} minutes
+    {% endif %}
+  </div>
+{% endif %}
+
+{% endif %}
+{% endblock %}
+
+{% block cta_label %}Open the ingestion log{% endblock %}

@@ -2360,6 +2360,23 @@ def _announce_lead_change(lead, was_stage, was_value):
             nrules.dispatch('lead.stage_changed', lead, actor=actor,
                             detail=f'{was_stage} \u2192 {lead.stage}.')
 
+        if lead.stage == 'Won' and was_stage != 'Won':
+            # Won work is executed in the TMS. Telling it is best
+            # effort: the win stands either way, and a failure is a
+            # row in the integration log rather than a silence.
+            try:
+                from app.services import integration as _integ
+                _integ.notify_tms('lead.won', {
+                    'crm_lead_id': lead.id,
+                    'crm_account_id': lead.company_id,
+                    'company': lead.company or '',
+                    'project': lead.project or '',
+                    'value': float(_lead_value_now(lead) or 0),
+                    'assigned_to': lead.assigned_to or '',
+                }, crm_object_type='Lead', crm_object_id=lead.id)
+            except Exception:
+                pass
+
         now_value = _lead_value_now(lead)
         threshold = sales_rules.HIGH_VALUE_INR
         if now_value and now_value >= threshold \

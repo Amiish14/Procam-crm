@@ -65,6 +65,8 @@ REPORTS = {
                     'Team review — week ending {date}'),
     'monthly': ('monthly_management', 'email/monthly_management.html',
                 'CRM management report — {date}'),
+    'admin_daily': ('admin_daily', 'email/admin_daily.html',
+                    'CRM administration — {date}'),
 }
 
 
@@ -442,3 +444,122 @@ def render(report):
     return render_template(report['template'], r=report,
                            base_url=base_url(),
                            groups=rules.GROUP_LABELS)
+
+
+# ── the administrators' own report ───────────────────────────────────
+def admin_daily(emp_code=None, *, today=None):
+    """What an administrator needs to see each morning.
+
+    Not a bigger version of somebody's action list. The questions this
+    answers are the ones only an administrator can act on: is work
+    arriving and being picked up, and did the mailbox lose anything
+    overnight. The last two sections are the ones that did not exist
+    before the ingestion log, and they are the reason this report is
+    worth sending.
+    """
+    from datetime import datetime, timedelta
+
+    from app import Lead, db
+
+    today = today or rules.business_today()
+    since = datetime.utcnow() - timedelta(hours=24)
+
+    def _recent():
+        column = db.func.coalesce(Lead.received_at, Lead.created_at)
+        return Lead.query.filter(column >= since,
+                                 Lead.is_archived.isnot(True))
+
+    new_leads = _recent().all()
+    by_vertical, by_pic = {}, {}
+    for lead in new_leads:
+        by_vertical[lead.procam_vertical or '(none)'] = \
+            by_vertical.get(lead.procam_vertical or '(none)', 0) + 1
+        key = lead.assigned_to or '(nobody)'
+        by_pic[key] = by_pic.get(key, 0) + 1
+
+    unassigned = [l for l in Lead.query.filter(
+        Lead.assigned_to.is_(None), Lead.is_archived.isnot(True),
+        Lead.stage.in_(rules.open_stages())).limit(200).all()]
+
+    needs_review = []
+    try:
+        needs_review = Lead.query.filter(
+            Lead.needs_review.is_(True),
+            Lead.is_archived.isnot(True)).limit(100).all()
+    except Exception:
+        pass
+
+    skipped, errored = [], []
+    try:
+        from app.models.ingest_log import MailIngestLog
+        skipped = (MailIngestLog.query
+                   .filter(MailIngestLog.outcome == 'skipped',
+                           MailIngestLog.received_at >= since)
+                   .order_by(MailIngestLog.received_at.desc())
+                   .limit(MAX_PER_SECTION).all())
+        errored = (MailIngestLog.query
+                   .filter(MailIngestLog.outcome == 'error',
+                           MailIngestLog.received_at >= since)
+                   .order_by(MailIngestLog.received_at.desc())
+                   .limit(MAX_PER_SECTION).all())
+    except Exception:
+        pass
+
+    overdue_quotes = []
+    try:
+        board = _board(company_scope(), today=today)
+        overdue_quotes = [i for i in _all_items(company_scope(), board,
+                                                today=today)
+                          if 'quote_overdue' in (i.get('conditions') or ())]
+    except Exception:
+        pass
+
+    mail_health = {}
+    try:
+        from app.services import outbox
+        mail_health = outbox.health(hours=24)
+    except Exception:
+        pass
+
+    return {
+        'report': 'admin_daily',
+        'template': 'email/admin_daily.html',
+        'date': str(today),
+        'person': _person(emp_code) if emp_code else {'name': 'Administrator'},
+        'new_leads': len(new_leads),
+        'by_vertical': sorted(by_vertical.items(), key=lambda kv: -kv[1]),
+        'by_pic': sorted(by_pic.items(), key=lambda kv: -kv[1]),
+        'unassigned': [_row(_as_item(l)) for l in unassigned[:MAX_PER_SECTION]],
+        'unassigned_total': len(unassigned),
+        'needs_review': [_row(_as_item(l)) for l in
+                         needs_review[:MAX_PER_SECTION]],
+        'needs_review_total': len(needs_review),
+        'skipped': [s.to_dict() for s in skipped],
+        'errored': [e.to_dict() for e in errored],
+        'overdue_quotes': len(overdue_quotes),
+        'mail': mail_health,
+        'empty': not (new_leads or unassigned or skipped or errored
+                      or needs_review),
+        'link': '/admin/mail-ingest',
+    }
+
+
+def _as_item(lead):
+    """A Lead in the shape `_row` expects, without going via a board.
+
+    The board is the right source for anything about *attention* — it
+    knows the conditions. This report lists leads for facts that need
+    no judgement (nobody owns it, nobody could place it), so building
+    the board for them would be a lot of work to reach a field that is
+    already on the row.
+    """
+    return {
+        'id': lead.id, 'kind': 'lead', 'title': lead.company or '',
+        'account': lead.company or '', 'stage': lead.stage or '',
+        'vertical': lead.procam_vertical or '',
+        'assigned_to': lead.assigned_to or '',
+        'assigned_name': lead.assigned_name or '',
+        'due': str(lead.followup_date) if lead.followup_date else '',
+        'value_inr': None, 'conditions': (), 'reasons': [],
+        'route': f'/app?lead={lead.id}',
+    }
