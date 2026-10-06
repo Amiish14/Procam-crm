@@ -52,6 +52,14 @@
     </div>
     <div><a class="top-back" href="{{ url_prefix }}/my-work">My Work</a></div>
   </div>
+  <div class="mo-tabs">
+    <a href="{{ url_prefix }}/admin/email/rules">Rules</a>
+    <a href="{{ url_prefix }}/admin/email/settings">Settings</a>
+    <a href="{{ url_prefix }}/admin/email/schedules">Schedules</a>
+    <a href="{{ url_prefix }}/admin/email/log">Email log</a>
+    <a href="{{ url_prefix }}/admin/email/health">Health</a>
+    <a href="{{ url_prefix }}/admin/mail-ingest">Mail ingestion</a>
+  </div>
   {% block tabs %}{% endblock %}
   {% block body %}{% endblock %}
 </div>

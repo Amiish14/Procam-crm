@@ -593,6 +593,18 @@ def dispatch(event, record=None, *, actor=None, detail='', escalate=False,
 
         people = recipients_for(event, record, actor=actor,
                                 escalate=escalate, roles=roles)
+
+        # Administrators copied on the events they chose, in the
+        # settings screen rather than in this file. Appended to the
+        # matrix's own recipients and de-duplicated below, so an
+        # administrator who is also the owner is told once.
+        try:
+            from app.services import admin_settings
+            people = list(people) + [
+                code for code in admin_settings.admin_recipients(event)
+                if code not in people]
+        except Exception:
+            pass
         out = {}
         for code in people:
             out[code] = notify.send(

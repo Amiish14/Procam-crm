@@ -289,7 +289,8 @@ def auto_assign_owners(lead, sender_email, *, subject='', body=''):
         return None, None
 
 def process_single_message(graph, mailbox: str, msg: dict, *,
-                           force: bool = False) -> dict:
+                           force: bool = False,
+                           override_classifier: bool = False) -> dict:
     """Process ONE Graph message into a Lead. Idempotent — safe to call
     multiple times for the same message; only the first call creates a
     Lead. Any subsequent call returns 'skipped' with reason='already ingested'.
@@ -482,6 +483,22 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
         except Exception:
             log.exception('intake classification failed for %s — '
                           'creating the lead rather than losing it', imid)
+
+        # An administrator pressing "create a lead from this email" on
+        # the ingestion log has overruled the classifier deliberately.
+        # `force` alone only skips the duplicate check — the
+        # classification would decline it a second time, and the
+        # button would appear to do nothing.
+        if override_classifier and decision is not None \
+                and not decision.creates_lead:
+            log.info('intake OVERRIDDEN for %s — was %s (%s)',
+                     imid, decision.klass, decision.reason)
+            try:
+                _lidb.record(decision, msg)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+            decision = None
 
         if _mode == 'observe' and decision is not None \
                 and not decision.creates_lead:

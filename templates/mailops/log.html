@@ -1,0 +1,103 @@
+{% extends 'mailops/_shell.html' %}
+{% block title %}Email log — Procam CRM{% endblock %}
+{% block heading %}Email log{% endblock %}
+{% block strap %}Every message the CRM has tried to send{% endblock %}
+
+{% block body %}
+<div class="mo-card {% if not transport_ok %}" style="border-color:#FECACA;background:#FEF2F2{% endif %}">
+  <h3>Transport</h3>
+  <p class="mo-note">{{ transport }}</p>
+  {% if not transport_ok %}
+  <p class="mo-note" style="color:#991B1B"><strong>Nothing can be sent:
+    {{ transport_why }}.</strong></p>
+  {% endif %}
+  <button class="btn" type="button" id="sendTest" style="margin-top:10px">
+    Send a test to me</button>
+  <span id="testResult" style="margin-left:12px;font-size:13px"></span>
+</div>
+
+<form method="get" action="{{ url_prefix }}/admin/email/log"
+      class="mo-card" style="display:flex;gap:14px;align-items:flex-end;
+      flex-wrap:wrap">
+  <div><label class="muted" for="st">Status</label><br>
+    <select id="st" name="status" style="width:150px">
+      <option value="">Any</option>
+      {% for s in ['queued','sending','sent','failed','cancelled'] %}
+      <option value="{{ s }}" {% if status == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select></div>
+  <div><label class="muted" for="q">Search</label><br>
+    <input id="q" name="q" value="{{ q }}" placeholder="recipient, subject"
+           style="width:260px;padding:7px 9px;border:1px solid #d1d5db;
+                  border-radius:6px"></div>
+  <button class="btn" type="submit">Filter</button>
+</form>
+
+<form method="post" action="{{ url_prefix }}/admin/email/log/resend">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <table class="mo">
+    <tr>
+      <th style="width:30px"></th><th>When</th><th>Event</th>
+      <th>Recipient</th><th>Subject</th><th>Status</th>
+      <th class="num">Tries</th><th>Error</th>
+    </tr>
+    {% for r in rows %}
+    <tr>
+      <td>{% if r.status in ('failed','cancelled') %}
+        <input type="checkbox" name="id" value="{{ r.id }}">{% endif %}</td>
+      <td style="font-size:12px;color:#6b7280;white-space:nowrap">
+        {{ r.created_at|string|truncate(16, True, '') }}</td>
+      <td style="font-size:12px"><code>{{ r.event_key or '—' }}</code></td>
+      <td style="font-size:12.5px">{{ r.to_addr }}</td>
+      <td style="font-size:12.5px">{{ r.subject|truncate(60) }}</td>
+      <td><span class="mo-pill {{ 'on' if r.status == 'sent' else 'off' }}">
+        {{ r.status }}</span></td>
+      <td class="num">{{ r.attempts or 0 }}</td>
+      <td style="font-size:12px;color:#B91C1C">{{ r.last_error or '' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="mo-note">
+      Nothing has been queued yet.</td></tr>
+    {% endfor %}
+  </table>
+  {% if rows %}
+  <div style="margin-top:12px">
+    <button class="btn" type="submit">Resend the ticked messages</button>
+    <span class="mo-note" style="margin-left:10px">
+      Re-queues them; it does not copy them, so pressing it twice sends
+      once. A message already delivered cannot be ticked.
+    </span>
+  </div>
+  {% endif %}
+</form>
+
+<div class="mo-note" style="margin-top:14px">
+  Showing {{ (page - 1) * size + 1 if rows else 0 }}–{{ (page - 1) * size + rows|length }}
+  of {{ '{:,}'.format(total) }}
+  {% if page > 1 %}
+    · <a href="?page={{ page - 1 }}&size={{ size }}&status={{ status }}&q={{ q }}">previous</a>
+  {% endif %}
+  {% if page < pages %}
+    · <a href="?page={{ page + 1 }}&size={{ size }}&status={{ status }}&q={{ q }}">next</a>
+  {% endif %}
+</div>
+
+<script>
+document.getElementById('sendTest').addEventListener('click', function () {
+  var out = document.getElementById('testResult');
+  out.textContent = 'Sending…';
+  var token = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/) || [])[1];
+  fetch({{ url_prefix|tojson }} + '/admin/email/log/test',
+        {method: 'POST', credentials: 'same-origin',
+         headers: {'X-CSRFToken': token ? decodeURIComponent(token) : ''}})
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      out.textContent = d.ok
+        ? 'Sent to ' + d.to + ' over ' + d.transport + '.'
+        : 'Not sent — ' + (d.error || 'unknown');
+      out.style.color = d.ok ? '#15803D' : '#B91C1C';
+    })
+    .catch(function () { out.textContent = 'Could not reach the server.'; });
+});
+</script>
+{% endblock %}

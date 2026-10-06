@@ -1,0 +1,82 @@
+{% extends 'mailops/_shell.html' %}
+{% block title %}Notification settings — Procam CRM{% endblock %}
+{% block heading %}Notification settings{% endblock %}
+{% block strap %}Who is copied, and on what{% endblock %}
+
+{% block body %}
+{% if saved %}
+<div class="mo-card" style="border-color:#BBF7D0;background:#F0FDF4">
+  Saved. The next notification follows these settings.
+</div>
+{% endif %}
+
+<form method="post" action="{{ url_prefix }}/admin/email/settings">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="mo-card">
+    <h3>Administrator copies</h3>
+    <div class="mo-row">
+      <label><input type="checkbox" name="admin_copies_enabled"
+        {% if copies_on %}checked{% endif %}> Send administrators a copy
+        of the events below</label>
+    </div>
+    <p class="mo-note">
+      {{ descriptions['admin_recipients'] }}
+      An administrator copy still respects that person's own
+      preferences — quiet hours hold it, and muting the event silences
+      it for them. A copy nobody wants is a copy nobody reads.
+    </p>
+    <table class="mo" style="margin-top:12px">
+      <tr><th style="width:34px"></th><th>Who</th><th>Address</th></tr>
+      {% for p in people %}
+      <tr>
+        <td><input type="checkbox" name="recipient" value="{{ p.emp_code }}"
+            {% if p.emp_code in chosen %}checked{% endif %}></td>
+        <td>{{ p.name }}
+          <div style="font-size:11.5px;color:#6b7280">{{ p.emp_code }}</div></td>
+        <td style="font-size:12.5px;color:#6b7280">{{ p.email }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <div class="mo-card">
+    <h3>Which events they are copied on</h3>
+    <table class="mo">
+      <tr><th style="width:34px">Copy</th><th>Event</th><th>Normally goes to</th></tr>
+      {% for row in events %}
+      <tr>
+        <td><input type="checkbox" name="copy_event" value="{{ row.event }}"
+            {% if row.event in copy_events %}checked{% endif %}></td>
+        <td><code>{{ row.event }}</code>
+          <div style="font-size:11.5px;color:#6b7280">{{ row.title }}</div></td>
+        <td style="font-size:12px;color:#6b7280">
+          {{ row.to|join(', ') or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <div class="mo-card">
+    <h3>Other</h3>
+    <div class="mo-row">
+      <label><input type="checkbox" name="admin_daily_report"
+        {% if daily_report %}checked{% endif %}>
+        The administrator daily report</label>
+    </div>
+    <p class="mo-note">{{ descriptions['admin_daily_report'] }}</p>
+    <div class="mo-row" style="margin-top:14px">
+      <label for="reopen_stage">A reopened lead becomes</label>
+      <select id="reopen_stage" name="reopen_stage" style="width:230px">
+        {% for s in stages %}
+        <option value="{{ s }}" {% if s == reopen_stage %}selected{% endif %}>
+          {{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <p class="mo-note">{{ descriptions['reopen_stage'] }}</p>
+  </div>
+
+  <button class="btn" type="submit">Save</button>
+</form>
+{% endblock %}

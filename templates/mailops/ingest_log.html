@@ -1,0 +1,118 @@
+{% extends 'mailops/_shell.html' %}
+{% block title %}Mail ingestion log — Procam CRM{% endblock %}
+{% block heading %}Mail ingestion log{% endblock %}
+{% block strap %}What happened to every message the leads mailbox saw{% endblock %}
+
+{% block body %}
+<div class="mo-tiles">
+  {% for key in outcomes %}
+  <div class="mo-tile {{ 'bad' if key == 'error' else 'warn' if key == 'skipped' else 'good' if key == 'created' else '' }}">
+    <div class="n">{{ counts.get(key, 0) }}</div>
+    <div class="l">{{ key }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<form method="get" action="{{ url_prefix }}/admin/mail-ingest"
+      class="mo-card" style="display:flex;gap:14px;align-items:flex-end;
+      flex-wrap:wrap">
+  <div><label class="muted" for="oc">Outcome</label><br>
+    <select id="oc" name="outcome" style="width:140px">
+      <option value="">Any</option>
+      {% for o in outcomes %}
+      <option value="{{ o }}" {% if outcome == o %}selected{% endif %}>{{ o }}</option>
+      {% endfor %}
+    </select></div>
+  <div><label class="muted" for="f">From</label><br>
+    <input id="f" type="date" name="from" value="{{ since }}"
+           style="padding:7px 9px;border:1px solid #d1d5db;border-radius:6px"></div>
+  <div><label class="muted" for="t">To</label><br>
+    <input id="t" type="date" name="to" value="{{ until }}"
+           style="padding:7px 9px;border:1px solid #d1d5db;border-radius:6px"></div>
+  <div><label class="muted" for="q">Search</label><br>
+    <input id="q" name="q" value="{{ q }}" placeholder="subject or sender"
+           style="width:240px;padding:7px 9px;border:1px solid #d1d5db;
+                  border-radius:6px"></div>
+  <button class="btn" type="submit">Filter</button>
+</form>
+
+<table class="mo">
+  <tr>
+    <th>Received</th><th>From</th><th>Subject</th><th>Outcome</th>
+    <th>Lead</th><th>Why</th><th></th>
+  </tr>
+  {% for r in rows %}
+  <tr>
+    <td style="font-size:12px;color:#6b7280;white-space:nowrap">
+      {{ r.received_at|string|truncate(16, True, '') }}</td>
+    <td style="font-size:12.5px">{{ r.from_addr or '—' }}</td>
+    <td style="font-size:12.5px">{{ (r.subject or '(no subject)')|truncate(60) }}
+      {% if r.classifier_label %}
+      <div style="font-size:11px;color:#6b7280">
+        {{ r.classifier_label }}{% if r.confidence %} · {{ r.confidence }}%{% endif %}</div>
+      {% endif %}</td>
+    <td><span class="mo-pill {{ 'on' if r.outcome in ('created','attached','reopened') else 'off' }}">
+      {{ r.outcome }}</span></td>
+    <td>{% if r.lead_id %}
+      <a href="{{ url_prefix }}/app?lead={{ r.lead_id }}">#{{ r.lead_id }}</a>
+      {% else %}—{% endif %}</td>
+    <td style="font-size:12px;color:#4b5563">{{ (r.reason or '')|truncate(80) }}
+      {% if r.overridden_by %}
+      <div style="font-size:11px;color:#92400E">
+        overridden by {{ r.overridden_by }}</div>
+      {% endif %}</td>
+    <td>
+      {% if r.outcome in ('skipped', 'error') and not r.lead_id %}
+      <button class="btn tiny" type="button"
+              onclick="makeLead({{ r.id }}, this)">Create lead</button>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="mo-note">
+    Nothing logged yet. Rows appear here as mail arrives.</td></tr>
+  {% endfor %}
+</table>
+
+<div class="mo-note" style="margin-top:14px">
+  Showing {{ (page - 1) * size + 1 if rows else 0 }}–{{ (page - 1) * size + rows|length }}
+  of {{ '{:,}'.format(total) }}
+  {% if page > 1 %}
+    · <a href="?page={{ page - 1 }}&size={{ size }}&outcome={{ outcome }}&q={{ q }}&from={{ since }}&to={{ until }}">previous</a>
+  {% endif %}
+  {% if page < pages %}
+    · <a href="?page={{ page + 1 }}&size={{ size }}&outcome={{ outcome }}&q={{ q }}&from={{ since }}&to={{ until }}">next</a>
+  {% endif %}
+</div>
+
+<p class="mo-note">
+  A <strong>skipped</strong> row is a message the classifier decided was
+  not a new enquiry — a reply, our own quotation, a newsletter. It is
+  kept rather than forgotten precisely so that when the classifier is
+  wrong, somebody can say so: "Create lead" re-fetches the message from
+  the mailbox and puts it through the ordinary ingest with the
+  classification overruled, so the lead is the same shape as any other.
+</p>
+
+<script>
+function makeLead(id, button) {
+  button.disabled = true;
+  button.textContent = 'Working…';
+  var token = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/) || [])[1];
+  fetch({{ url_prefix|tojson }} + '/admin/mail-ingest/' + id + '/create-lead',
+        {method: 'POST', credentials: 'same-origin',
+         headers: {'X-CSRFToken': token ? decodeURIComponent(token) : ''}})
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.ok) { window.location.reload(); return; }
+      button.disabled = false;
+      button.textContent = 'Create lead';
+      alert('Not created: ' + (d.error || 'unknown reason'));
+    })
+    .catch(function () {
+      button.disabled = false;
+      button.textContent = 'Create lead';
+    });
+}
+</script>
+{% endblock %}
