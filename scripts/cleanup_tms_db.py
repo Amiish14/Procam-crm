@@ -79,6 +79,12 @@ def main():
     ap.add_argument('--env-file', default='/var/www/procam-lr/.env')
     ap.add_argument('--apply', action='store_true')
     ap.add_argument('--yes', action='store_true')
+    # Accepted and the default anyway. The docstring offers it and the
+    # other migration scripts in this repository all take it, so a
+    # parser that rejects it is a script that argues with its own
+    # instructions at the moment somebody is being careful.
+    ap.add_argument('--check', action='store_true',
+                    help='list what would be dropped and stop (default)')
     args = ap.parse_args()
 
     url = _database_url(args.env_file)
