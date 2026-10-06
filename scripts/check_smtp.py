@@ -37,12 +37,54 @@ def _mask(value):
     return f'set, {len(value)} characters'
 
 
+
+def _load_env_file(path):
+    """Read KEY=VALUE lines out of a .env, without running it.
+
+    `set -a; . file` executes the file: a value containing a space, a
+    `<`, or a `$(...)` is a command as far as the shell is concerned.
+    The TMS's own sender line — `MAIL_DEFAULT_SENDER=Procam TMS
+    <tms@procamgroup.in>` — is enough to break it, and a less harmless
+    line would be enough to do something. So this parses.
+
+    Only MAIL_* is taken. Nothing else in another application's
+    configuration is any of this script's business.
+    """
+    taken = {}
+    try:
+        with open(path, encoding='utf-8', errors='replace') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, _, value = line.partition('=')
+                key = key.strip()
+                if not key.startswith('MAIL_'):
+                    continue
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] in ('"', "'"):
+                    value = value[1:-1]
+                os.environ[key] = value
+                taken[key] = value
+    except OSError as exc:
+        print(f'could not read {path}: {exc}')
+    return taken
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--send-to', dest='send_to',
                     help='address to send a real test message to')
     ap.add_argument('--timeout', type=int, default=20)
+    ap.add_argument('--env-file',
+                    help='read MAIL_* from this file for this run only. '
+                         'Parsed, never executed — do not source another '
+                         'application\'s .env into a shell.')
     args = ap.parse_args()
+
+    if args.env_file:
+        loaded = _load_env_file(args.env_file)
+        print(f'read {len(loaded)} MAIL_* value(s) from {args.env_file}\n')
 
     host = (os.environ.get('MAIL_SERVER') or '').strip()
     port = int((os.environ.get('MAIL_PORT') or '587').strip() or 587)
