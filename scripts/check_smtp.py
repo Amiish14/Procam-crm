@@ -59,7 +59,13 @@ def _load_env_file(path):
                     continue
                 key, _, value = line.partition('=')
                 key = key.strip()
-                if not key.startswith('MAIL_'):
+                # MAIL_* plus the CRM's own sender. Without the
+                # second, the configuration block reports the sender
+                # as "(not set)" and then the send goes out from the
+                # right address anyway, because importing the app
+                # loads the whole .env — true, and misleading.
+                if not (key.startswith('MAIL_')
+                        or key in ('CRM_MAIL_FROM', 'CRM_MAIL_TRANSPORT')):
                     continue
                 value = value.strip()
                 if len(value) >= 2 and value[0] == value[-1] in ('"', "'"):
@@ -84,7 +90,7 @@ def main():
 
     if args.env_file:
         loaded = _load_env_file(args.env_file)
-        print(f'read {len(loaded)} MAIL_* value(s) from {args.env_file}\n')
+        print(f'read {len(loaded)} mail setting(s) from {args.env_file}\n')
 
     host = (os.environ.get('MAIL_SERVER') or '').strip()
     port = int((os.environ.get('MAIL_PORT') or '587').strip() or 587)
@@ -105,6 +111,9 @@ def main():
     print(f'  MAIL_USERNAME      {username or "(not set)"}')
     print(f'  MAIL_PASSWORD      {_mask(password)}')
     print(f'  sender             {sender_raw or "(not set)"}')
+    transport = (os.environ.get('CRM_MAIL_TRANSPORT') or '').strip()
+    if transport:
+        print(f'  CRM_MAIL_TRANSPORT {transport}')
     print()
 
     if not host:
@@ -186,8 +195,7 @@ def main():
         print('\nTransport reachable and credentials accepted. Re-run with '
               '--send-to <your address> to prove delivery end to end.')
     elif good:
-        print('\nCRM email works over SMTP. Set the same MAIL_* variables '
-              'in the CRM .env and restart.')
+        print('\nCRM email works over SMTP.')
     else:
         print('\nCRM email will NOT work over SMTP with this configuration.')
     return 0 if good else 1
