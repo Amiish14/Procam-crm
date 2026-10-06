@@ -124,3 +124,83 @@ class AppSetting(db.Model):
     updated_by = db.Column(db.String(20))
     updated_at = db.Column(db.DateTime, default=datetime.utcnow,
                            onupdate=datetime.utcnow)
+
+
+class WebhookOutbox(db.Model):
+    """A CRM event owed to the TMS, written down before it is sent.
+
+    `notify_tms` used to POST inline and log the failure. That is fine
+    for something nobody is waiting on and wrong for this: the TMS
+    cannot discover a `lead.won` it never received — a won deal looks
+    identical to a deal that was always won when you poll for it — so
+    a webhook the CRM dropped is work that silently never reaches
+    operations.
+
+    Why not `email_outbox`: that table is shaped for email, down to
+    `to_addr`, `subject` and `html`. Making it carry webhooks would
+    mean half its columns null on every row and a `kind` column
+    deciding which half means anything. The *pattern* is what is
+    worth reusing — the lease, the claim-by-UPDATE, the back-off, the
+    systemd worker — and all of that is shared.
+
+    `event_id` is the idempotency key and it never changes across
+    retries, which is what lets the TMS recognise the fourth delivery
+    of an event as the same one it already processed.
+    """
+    __tablename__ = 'webhook_outbox'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    #: Stable for the life of this event, including every retry. The
+    #: TMS deduplicates on it. Unique, so the same business event
+    #: cannot be queued twice by two workers or a double-clicked
+    #: button.
+    event_id = db.Column(db.String(80), unique=True, index=True,
+                         nullable=False)
+    #: New on every attempt, so one delivery can be found in both
+    #: systems' logs. Not the idempotency key.
+    request_id = db.Column(db.String(80))
+
+    event_type = db.Column(db.String(60), index=True, nullable=False)
+    payload_json = db.Column(db.Text, nullable=False)
+    destination = db.Column(db.String(500))
+
+    crm_object_type = db.Column(db.String(40))
+    crm_object_id = db.Column(db.String(60), index=True)
+
+    #: queued | sending | delivered | failed | dead
+    #:
+    #: `failed` has attempts left and will be tried again. `dead` is
+    #: permanent — a 4xx that will not become a 2xx however many times
+    #: it is sent, or the attempt ceiling. The two are separate
+    #: because retrying a `dead` row is a decision somebody makes,
+    #: and retrying a `failed` one is just the worker doing its job.
+    status = db.Column(db.String(16), default='queued', index=True)
+    attempts = db.Column(db.Integer, default=0)
+    max_attempts = db.Column(db.Integer, default=8)
+    next_attempt_at = db.Column(db.DateTime, index=True,
+                                default=datetime.utcnow)
+
+    last_status_code = db.Column(db.Integer)
+    last_error = db.Column(db.String(500))
+    claimed_by = db.Column(db.String(120))
+    claimed_at = db.Column(db.DateTime)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    delivered_at = db.Column(db.DateTime)
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'event_id': self.event_id,
+            'event_type': self.event_type, 'status': self.status,
+            'attempts': self.attempts or 0,
+            'next_attempt_at': (str(self.next_attempt_at)[:19]
+                                if self.next_attempt_at else ''),
+            'last_status_code': self.last_status_code,
+            'last_error': self.last_error or '',
+            'crm_object': f'{self.crm_object_type or ""}:'
+                          f'{self.crm_object_id or ""}',
+            'created_at': str(self.created_at)[:19] if self.created_at else '',
+            'delivered_at': (str(self.delivered_at)[:19]
+                             if self.delivered_at else ''),
+        }

@@ -1,0 +1,11 @@
+[Unit]
+Description=Deliver the Procam CRM webhook queue every two minutes
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=2min
+# No Persistent: a pass missed while the machine was off is made up
+# by the next one, and the queue is what remembers.
+
+[Install]
+WantedBy=timers.target

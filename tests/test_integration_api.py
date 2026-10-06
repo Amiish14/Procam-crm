@@ -276,19 +276,37 @@ def test_the_log_never_keeps_the_token(tms):
 
 
 # ── CRM → TMS ────────────────────────────────────────────────────────
-def test_an_unreachable_tms_is_recorded_not_raised(world, monkeypatch):
-    monkeypatch.setenv('TMS_WEBHOOK_URL', 'http://127.0.0.1:1/hook')
+def test_an_event_is_recorded_as_owed_before_anything_is_sent(world):
+    """notify_tms no longer means "delivered". It means the TMS is
+    owed this event, and the worker will keep trying until it has it
+    — because the TMS cannot discover a lead.won it never received."""
+    from app.models.integration import WebhookOutbox
+
     assert integ.notify_tms('lead.won', {'crm_lead_id': 1},
-                            crm_object_type='Lead', crm_object_id=1) is False
-    row = (IntegrationLog.query.filter_by(direction='outbound')
-           .order_by(IntegrationLog.id.desc()).first())
-    assert row.status == 'error' and row.error
+                            crm_object_type='Lead', crm_object_id=1) is True
+    row = WebhookOutbox.query.filter_by(event_type='lead.won').one()
+    assert row.status == 'queued'
+    assert row.event_id == 'lead.won:1'
+    assert row.attempts == 0
 
 
-def test_nothing_is_attempted_when_no_webhook_is_configured(world,
-                                                            monkeypatch):
+def test_the_same_event_is_owed_once(world):
+    from app.models.integration import WebhookOutbox
+
+    for _ in range(3):
+        assert integ.notify_tms('lead.won', {'crm_lead_id': 7},
+                                crm_object_type='Lead', crm_object_id=7)
+    assert WebhookOutbox.query.filter_by(event_id='lead.won:7').count() == 1
+
+
+def test_an_event_is_queued_even_with_no_destination_configured(world,
+                                                                monkeypatch):
+    """Queued, not dropped. The TMS is owed it whether or not anyone
+    has configured where to send it yet."""
+    from app.models.integration import WebhookOutbox
+
     monkeypatch.delenv('TMS_WEBHOOK_URL', raising=False)
-    assert integ.notify_tms('lead.won', {'crm_lead_id': 1}) is False
-    row = (IntegrationLog.query.filter_by(direction='outbound')
-           .order_by(IntegrationLog.id.desc()).first())
-    assert row.status == 'skipped'
+    assert integ.notify_tms('quote.won', {'crm_quote_id': 3},
+                            crm_object_type='Quote', crm_object_id=3)
+    row = WebhookOutbox.query.filter_by(event_type='quote.won').one()
+    assert row.status == 'queued'

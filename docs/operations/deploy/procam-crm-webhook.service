@@ -1,0 +1,12 @@
+[Unit]
+Description=Procam CRM — deliver queued events to the TMS
+After=network.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/webhook_worker.py
+# An event that has gone dead exits 1. That wants a person, not a
+# timer marked broken.
+SuccessExitStatus=1

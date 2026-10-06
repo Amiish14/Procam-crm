@@ -8,6 +8,7 @@ The CRM's integration API — what the TMS calls.
     POST /api/integration/v1/leads
     POST /api/integration/v1/leads/<crm_lead_id>/link-tms
     GET  /api/integration/v1/leads/<crm_lead_id>
+    POST /api/integration/v1/client-restriction/check
 
 Separate from the browser API on purpose. These are called by another
 application with a token, not by a person with a session, so they
@@ -375,3 +376,138 @@ def _lead(lead):
                        if (lead.received_at or lead.created_at) else None,
         'links': links,
     }
+
+
+# ── the block register, for another server ───────────────────────────
+@bp.route(f'{PREFIX}/client-restriction/check', methods=['POST'])
+@_authenticated
+def check_restriction():
+    """Is this client blocked? Read-only, token-authenticated.
+
+    The browser endpoint at /api/client-restriction/check needs a
+    session, so the TMS could not use it without a person's cookie.
+    This is the same decision behind the same bearer token. The old
+    route is untouched — weakening it so one more caller could reach
+    it would have been the wrong repair.
+
+    **Nothing here writes a restriction.** It reads the register and
+    answers. The one thing it does record is the attempt, against the
+    register's own timeline, because "who keeps trying to raise work
+    for a blocked client" is a question administrators ask and the
+    answer should not depend on which system they tried it from.
+
+    Identifiers, most stable first. Send whatever you hold; they are
+    checked in this order and the first match wins:
+
+        crm_account_id   the CRM's own integer id. Prefer this.
+        gstin / pan      exact, and unambiguous
+        email            an exact contact address
+        tms_project_id   resolved through crm_tms_links to the CRM
+                         lead, then to its account
+        company_name     last resort — matched on a normalised name,
+                         and a near-miss answers "caution", never
+                         "blocked"
+
+    `business_unit` narrows to PLPL or PWLPL when a restriction only
+    covers one.
+    """
+    from app.services import client_restrictions as restrictions
+
+    data = request.get_json(silent=True)
+    if data is None or not isinstance(data, dict):
+        return _fail('malformed_request',
+                     'Send a JSON object naming the client.')
+
+    account_id = data.get('crm_account_id')
+    if account_id is not None:
+        try:
+            account_id = int(account_id)
+        except (TypeError, ValueError):
+            return _fail('malformed_request',
+                         'crm_account_id must be a number.')
+
+    tms_project_id = (data.get('tms_project_id') or '').strip()
+    resolved_from_link = None
+    if not account_id and tms_project_id:
+        from app.models.integration import CrmTmsLink
+        link = CrmTmsLink.query.filter_by(
+            tms_project_id=tms_project_id).first()
+        if link is not None:
+            account_id = link.crm_account_id
+            resolved_from_link = link.crm_lead_id
+            if not account_id and link.crm_lead_id:
+                from app import Lead
+                lead = Lead.query.get(link.crm_lead_id)
+                account_id = getattr(lead, 'company_id', None)
+
+    company_name = (data.get('company_name') or '').strip()
+    gstin = (data.get('gstin') or '').strip()
+    pan = (data.get('pan') or '').strip()
+    email = (data.get('email') or '').strip()
+
+    if not any((account_id, company_name, gstin, pan, email,
+                tms_project_id)):
+        return _fail('missing_identifier',
+                     'Name the client: crm_account_id, gstin, pan, '
+                     'email, tms_project_id or company_name.')
+
+    if not any((account_id, company_name, gstin, pan, email)):
+        # A tms_project_id the CRM has never been told about. Not an
+        # error: the TMS calls this before every PO, Job and LR, and
+        # most of its projects are not linked to a CRM lead. Answering
+        # 400 would make the ordinary case look like a failure and
+        # teach the TMS to ignore it.
+        return _ok({
+            'blocked': False, 'level': 'none', 'reason_code': None,
+            'reason': None, 'message': None, 'restriction_id': None,
+            'company_name': None, 'matched_on': None,
+            'resolved_crm_account_id': None, 'resolved_crm_lead_id': None,
+            'effective_from': None, 'effective_until': None,
+            'review_date': None, 'scope': None, 'business_units': None,
+            'note': (f'No CRM record is linked to {tms_project_id}, so '
+                     f'there is nothing to check. Send company_name or '
+                     f'gstin to check by identity instead.'),
+        }, tms_id=tms_project_id)
+
+    verdict = restrictions.check(
+        company_name=company_name or None, email=email or None,
+        gstin=gstin or None, pan=pan or None, account_id=account_id,
+        business_unit=(data.get('business_unit') or '').strip() or None)
+
+    row = verdict.row
+    body = {
+        'blocked': verdict.blocked,
+        'level': verdict.level,                 # none | caution | blocked
+        'reason_code': (row.reason_category if row is not None else None),
+        'reason': verdict.reason_summary or None,
+        'message': verdict.message() or None,
+        'restriction_id': verdict.restriction_id,
+        'company_name': verdict.company_name or None,
+        'matched_on': verdict.matched_on or None,
+        'resolved_crm_account_id': account_id,
+        'resolved_crm_lead_id': resolved_from_link,
+        # When the decision took effect. The register has no expiry
+        # column and none is invented here: a block runs until
+        # somebody lifts it. `review_date` is a reminder to look
+        # again, not an end date, and is reported as itself.
+        'effective_from': (str(row.approved_at or row.recommended_at)
+                           if row is not None
+                           and (row.approved_at or row.recommended_at)
+                           else None),
+        'effective_until': None,
+        'review_date': (str(row.review_date)
+                        if row is not None and row.review_date else None),
+        'scope': (row.scope if row is not None else None),
+        'business_units': (row.business_units if row is not None else None),
+    }
+
+    # Recorded against the register, not written to it. An attempt is
+    # history; the restriction is unchanged.
+    if not verdict.clear:
+        restrictions.record_attempt(
+            verdict, what=f'TMS restriction check ({g.caller})',
+            user_id=f'tms:{g.caller}',
+            detail={'tms_project_id': tms_project_id or None})
+
+    return _ok(body, crm_type='ClientRestriction',
+               crm_id=verdict.restriction_id, tms_id=tms_project_id or None)

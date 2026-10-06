@@ -249,61 +249,39 @@ def links_for_lead(lead_id):
 
 # ── CRM → TMS ────────────────────────────────────────────────────────
 def notify_tms(event, payload, *, crm_object_type=None, crm_object_id=None,
-               timeout=10):
-    """Tell the TMS something happened. Best effort, always logged.
+               timeout=None, event_id=None):
+    """Tell the TMS something happened — durably.
 
-    Never raises into the caller and never rolls anything back: a lead
-    being won is a fact in the CRM whether or not the TMS could be
-    reached. A failure is a row in the integration log with its
-    request id, which is what makes it findable and replayable.
+    This used to POST inline and log the failure, which was wrong for
+    these two events in particular. The TMS cannot discover a
+    `lead.won` it never received: a deal that was won and never
+    announced looks identical, from the outside, to a deal that was
+    always won. "Poll as well as listen" was advice that does not
+    work, and the TMS was right to say so.
 
-    The TMS's endpoint and token are configuration — this file does
-    not know what the TMS does with any of it.
+    So the event is written to `webhook_outbox` inside the caller's
+    transaction and `scripts/webhook_worker.py` delivers it, retrying
+    until the TMS takes it or the attempt ceiling is reached. The
+    caller waits for no network call and a win is never rolled back
+    because another system was down.
+
+    Returns True when the event is now owed to the TMS — queued, or
+    already queued by an earlier call. False only when nothing was
+    recorded.
     """
-    url = (os.environ.get('TMS_WEBHOOK_URL') or '').strip()
-    token = os.environ.get('TMS_WEBHOOK_TOKEN') or ''
-    request_id = new_request_id()
-    started = time.monotonic()
+    from app.services import webhooks
 
-    if not url:
-        record(direction='outbound', endpoint=f'(unset)/{event}',
-               status='skipped', status_code=0, request_id=request_id,
-               crm_object_type=crm_object_type, crm_object_id=crm_object_id,
-               request_summary=payload,
-               error='TMS_WEBHOOK_URL is not set')
-        return False
+    row = webhooks.enqueue(event, payload, crm_object_type=crm_object_type,
+                           crm_object_id=crm_object_id, event_id=event_id)
+    if row is not None:
+        return True
 
-    body = {'event': event, 'request_id': request_id,
-            'sent_at': _now_iso(), 'source': 'procam-crm',
-            'data': payload}
-    try:
-        import requests
-        headers = {'Content-Type': 'application/json',
-                   'X-Request-Id': request_id,
-                   # The same value the CRM honours on the way in, so
-                   # the TMS can make its handler idempotent with no
-                   # further agreement about what the key means.
-                   'Idempotency-Key': f'{event}:{crm_object_id}:{request_id}'}
-        if token:
-            headers['Authorization'] = f'Bearer {token}'
-        resp = requests.post(url, json=body, headers=headers,
-                             timeout=timeout)
-        ok = 200 <= resp.status_code < 300
-        record(direction='outbound', endpoint=f'{url}#{event}',
-               status='ok' if ok else 'error', status_code=resp.status_code,
-               request_id=request_id, crm_object_type=crm_object_type,
-               crm_object_id=crm_object_id, request_summary=body,
-               response_summary=resp.text[:2000],
-               error=None if ok else f'HTTP {resp.status_code}',
-               started=started)
-        return ok
-    except Exception as exc:                                  # noqa: BLE001
-        log.exception('could not reach the TMS for %s', event)
-        record(direction='outbound', endpoint=f'{url}#{event}',
-               status='error', status_code=0, request_id=request_id,
-               crm_object_type=crm_object_type, crm_object_id=crm_object_id,
-               request_summary=body, error=str(exc)[:500], started=started)
-        return False
+    # Already queued. The unique index on event_id refused a second
+    # copy, which is the behaviour we want — the TMS is still owed the
+    # event exactly once.
+    from app.models.integration import WebhookOutbox
+    key = event_id or webhooks._event_id(event, crm_object_id)
+    return WebhookOutbox.query.filter_by(event_id=key).first() is not None
 
 
 def _now_iso():

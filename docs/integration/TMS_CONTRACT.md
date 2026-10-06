@@ -151,30 +151,73 @@ environment and the CRM will POST to that URL:
 
 ```json
 {"event": "lead.won",
+ "event_id": "lead.won:1042",
  "request_id": "…",
  "sent_at": "2026-10-06T04:12:00Z",
  "source": "procam-crm",
+ "attempt": 1,
  "data": { … }}
 ```
 
-with `Authorization: Bearer <TMS_WEBHOOK_TOKEN>`, `X-Request-Id`, and
-an `Idempotency-Key` — **use it**; the CRM may retry.
+Headers: `Authorization: Bearer <TMS_WEBHOOK_TOKEN>`, `X-Request-Id`,
+`X-Event-Id`, and `Idempotency-Key`.
 
 | event | data |
 |---|---|
 | `lead.won` | `crm_lead_id`, `crm_account_id`, `company`, `project`, `value`, `assigned_to` |
 | `quote.won` | `crm_quote_id`, `crm_lead_id`, `crm_account_id`, `quote_number`, `value`, `currency` |
 
-Answer `2xx` for accepted. Anything else is logged as an error on the
-CRM side with the request id, and is visible to the CRM
-administrator.
+### Delivery is now durable
 
-The CRM treats this as best effort: a deal is won in the CRM whether
-or not the TMS could be reached. **If the TMS must never miss one, it
-should also poll** `GET /leads?…` rather than relying on the webhook
-alone.
+**This changed on 2026-10-14, and the change is the important part of
+this document.** The CRM used to POST inline and log the failure. You
+pointed out that you cannot discover a missed `lead.won` by polling —
+a deal that was won and never announced looks identical to one that
+was always won — and you were right. "Poll as well as listen" was
+advice that does not work.
 
----
+Now the event is written to `webhook_outbox` inside the transaction
+that caused it, and a worker on a two-minute systemd timer delivers
+it. **The CRM will keep trying until you accept it.**
+
+### What you must do
+
+**Deduplicate on `Idempotency-Key`** — it is also `event_id` and the
+`X-Event-Id` header. All three carry the same value, which is stable
+for the life of the event and identical on every retry. The format is
+`<event>:<crm object id>`, e.g. `lead.won:1042`. `request_id` is
+different on every attempt and is for correlating logs, **not** for
+deduplication.
+
+**Answer 2xx when you have it** — including for a replay you have
+already processed. A 200 to a duplicate tells the CRM the event is
+delivered, which is correct: the CRM does not need to know whether
+you meant "done" or "done already".
+
+### What the CRM does with your answer
+
+| You answer | The CRM does |
+|---|---|
+| `2xx` | marks it delivered, never sends it again |
+| `429` | retries, honouring `Retry-After` |
+| `5xx` | retries |
+| `408`, `409`, `425` | retries |
+| any other `4xx` | **stops.** Marks it dead and waits for a person |
+| connection refused, timeout | retries |
+
+Retries are at 1, 5, 15, 60, 120, 360, 720 and 720 minutes — eight
+attempts over roughly twelve hours, enough to ride out a deployment
+or an overnight outage.
+
+A `400` is treated as permanent on purpose: it means you will not
+accept that payload, and sending it another seven times will not
+change that. It becomes visible to the CRM administrator rather than
+disappearing into a retry loop.
+
+### If the CRM is not configured
+
+With `TMS_WEBHOOK_URL` unset, events are still queued. They are not
+lost; they are delivered once somebody configures the destination.
 
 ## 6. The client block register
 
@@ -191,17 +234,88 @@ as to its own screens**:
 Show the message to the user. Do not retry it and do not work around
 it — the attempt is recorded against the register either way.
 
-The TMS can ask before it starts:
+### Ask before you start
 
 ```
-GET /CRM/api/client-restriction/check?company_name=…&gstin=…
-→ {"level": "none" | "caution" | "blocked", "message": "…"}
+POST /api/integration/v1/client-restriction/check
 ```
 
-That endpoint currently needs a signed-in session rather than the
-integration token, which is a wart. If the TMS needs it
-server-to-server, say so and the CRM will expose it under
-`/api/integration/v1/` too.
+Bearer-authenticated like everything else here, and **read-only** —
+it never creates or changes a restriction.
+
+Send whatever identifiers you hold. They are tried in this order and
+the first match wins, so prefer the stable ones:
+
+```json
+{"crm_account_id": 42,
+ "gstin": "27AAAAA0000A1Z5",
+ "pan": "AAAAA0000A",
+ "email": "buyer@customer.test",
+ "tms_project_id": "TMS-PRJ-7001",
+ "company_name": "Some Customer Ltd",
+ "business_unit": "PLPL"}
+```
+
+| field | note |
+|---|---|
+| `crm_account_id` | the CRM's integer id. **Prefer this.** |
+| `gstin`, `pan` | exact, unambiguous |
+| `email` | an exact contact address |
+| `tms_project_id` | resolved through `crm_tms_links` to the CRM lead and its account |
+| `company_name` | last resort. Matched on a normalised name; a near miss answers `caution`, never `blocked` |
+| `business_unit` | `PLPL` or `PWLPL`, when a restriction covers only one |
+
+The answer:
+
+```json
+{"ok": true,
+ "blocked": false,
+ "level": "none",
+ "reason_code": null,
+ "reason": null,
+ "message": null,
+ "restriction_id": null,
+ "company_name": null,
+ "matched_on": null,
+ "resolved_crm_account_id": 42,
+ "resolved_crm_lead_id": null,
+ "effective_from": null,
+ "effective_until": null,
+ "review_date": null,
+ "scope": null,
+ "business_units": null,
+ "request_id": "…"}
+```
+
+- **`blocked`** is the field to branch on. `level` is
+  `none` | `caution` | `blocked`; a `caution` is not blocked — show
+  the `message` and let the user continue.
+- **`effective_until` is always `null`.** The register has no expiry:
+  a block runs until somebody lifts it. `review_date` is a reminder
+  to look again, not an end date, and is reported as itself. The
+  field is present so you do not have to special-case its absence.
+- **A `tms_project_id` the CRM has never seen** answers `200` with
+  `blocked: false` and a `note`, not an error. Most of your projects
+  will not be linked, and that is not a failure.
+
+| error code | status |
+|---|---|
+| `unauthorized` | 401 |
+| `integration_disabled` | 503 |
+| `missing_identifier` | 400 — you sent no identifiers at all |
+| `malformed_request` | 400 — not a JSON object, or a non-numeric `crm_account_id` |
+
+The old `GET /CRM/api/client-restriction/check` still exists and
+still requires a browser session. It was left alone deliberately:
+weakening it so one more caller could reach it would have been the
+wrong repair.
+
+One thing worth knowing: **a check against a restricted client is
+recorded** on the register's timeline as an attempt, attributed to
+`tms:<your token name>`. "Who keeps trying to raise work for a
+blocked client" is a question administrators ask, and the answer
+should not depend on which system it was tried from. Nothing about
+the restriction itself changes.
 
 ---
 
@@ -259,3 +373,46 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 
 Run the last one twice. The second answers `"replayed": true` and
 creates nothing — that is the behaviour to build against.
+
+---
+
+## 10. There is no reconciliation endpoint, and why
+
+An earlier draft of this contract suggested the TMS should poll as
+well as listen. That was wrong — you cannot discover a `lead.won` you
+never received by polling, because the polled state of a won deal is
+identical whether or not you were told. Adding a
+`GET /events?since=…` endpoint would have been building a second
+mechanism to paper over a first one that did not work.
+
+So the first one was fixed instead. Delivery is durable: the event is
+written down before anything is sent, retried for about twelve hours
+across eight attempts, and visible to a CRM administrator if it
+cannot be delivered at all. **Retries are the recovery mechanism.**
+
+If an event does go dead — eight failures, or a `4xx` from you — the
+CRM administrator can requeue it after the cause is fixed, and it
+arrives with the same `event_id` it always had. Nothing needs you to
+go looking.
+
+If it later turns out you do need to reconcile — say the TMS database
+is restored from a backup and loses events it had already accepted —
+say so and the endpoint is a small addition on top of
+`webhook_outbox`, which already holds every event with an immutable
+id and a creation time. It is not built now because nothing currently
+needs it, and an unused endpoint is one more thing to keep honest.
+
+---
+
+## 11. Configuration
+
+| CRM variable | What it is |
+|---|---|
+| `CRM_INTEGRATION_TOKENS` | `name:token` pairs, comma separated. One pair for the TMS. Unset means every integration route answers 503 |
+| `TMS_WEBHOOK_URL` | where the CRM posts `lead.won` and `quote.won` |
+| `TMS_WEBHOOK_TOKEN` | the bearer token the CRM sends with them |
+
+There is one token system, not two: the same `CRM_INTEGRATION_TOKENS`
+that authenticates the TMS calling in. The TMS's own token for
+inbound CRM webhooks is `TMS_WEBHOOK_TOKEN` and is the TMS's to
+choose.
