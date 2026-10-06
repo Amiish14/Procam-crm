@@ -26,14 +26,25 @@ import sys
 SHARED_NAMES = ('notifications', 'projects', 'task_definitions',
                 'task_instances')
 
-#: Columns the CRM's own versions of those tables have. If a table in
-#: the TMS database has these, the CRM created it.
+#: Columns the CRM's version of a shared table has and the TMS's does
+#: not. Kept, but no longer trusted on its own — see `_verdict_for`.
+#:
+#: The first run of this script called notifications, task_definitions
+#: and task_instances "CRM shape" and was wrong about all three. The
+#: CRM's notification and task-engine models were originally copied
+#: from the TMS codebase, so they share column names by descent. A
+#: column test cannot tell apart two tables with the same ancestor.
 CRM_FINGERPRINTS = {
     'notifications': {'user_id', 'kind', 'action_url', 'task_instance_id'},
     'projects': {'procam_vertical'},
     'task_definitions': {'task_key'},
     'task_instances': {'task_key', 'entity_type'},
 }
+
+#: What actually distinguishes them. The CRM created these tables
+#: minutes ago and wrote nothing to them, so a shared table holding
+#: real data is the TMS's, whatever its columns look like.
+ROWS_MEANING_TMS_OWNS_IT = 1
 
 
 def _database_url(path):
@@ -97,12 +108,16 @@ def main():
                     text(f'SELECT COUNT(*) FROM "{name}"')).scalar()
             except Exception:
                 rows = '?'
-        verdict = ('CRM shape — the CRM created it' if looks_crm
-                   else 'TMS shape — untouched')
+        has_data = isinstance(rows, int) and rows >= ROWS_MEANING_TMS_OWNS_IT
+        if has_data:
+            verdict = f'TMS data ({rows} rows) — untouched'
+        elif looks_crm:
+            verdict = 'EMPTY and CRM-shaped — check this one'
+            harmed.append(name)
+        else:
+            verdict = 'TMS shape — untouched'
         print(f'  {name:<20} {rows:>8} row(s)  {verdict}')
         print(f'  {"":<20} columns: {", ".join(sorted(columns))[:150]}')
-        if looks_crm:
-            harmed.append(name)
 
     print('\nCRM TABLES NOW IN THIS DATABASE')
     crm_only = [t for t in tables if t in _crm_table_names()
@@ -119,15 +134,14 @@ def main():
 
     print('\nVERDICT')
     if harmed:
-        print(f'  The CRM appears to OWN these shared tables: '
+        print(f'  These shared tables are empty AND look like the CRM\'s: '
               f'{", ".join(harmed)}.')
-        print('  That means the TMS versions were missing when the CRM '
-              'ran, or were replaced. Check the TMS before dropping '
+        print('  Check whether the TMS expects them before dropping '
               'anything.')
     else:
-        print('  No shared table has the CRM shape, so the TMS\'s own '
-              'tables were skipped rather than altered.')
-    total_rows_in_crm_tables = 0
+        print('  Every shared table holds TMS data. create_all skips a '
+              'table that already exists, so the TMS\'s own tables were '
+              'never touched.')
     print('\n  Nothing was deleted: create_all only adds, and no DROP or '
           'DELETE ran.')
     return 0
