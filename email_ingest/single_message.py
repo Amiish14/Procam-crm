@@ -108,6 +108,40 @@ def _log_blocked_intake(db, msg, verdict, sender_email, log):
         log.exception('could not write the blocked-intake event')
 
 
+
+def _record_ingest(outcome, msg, decision=None, *, lead_id=None, reason=''):
+    """One row per message in mail_ingest_log, whatever happened.
+
+    Wrapped rather than called directly so a failure to write the log
+    can never be the thing that loses an email.
+    """
+    try:
+        from app.services import mail_ingest as _mi
+        _mi.record(outcome, msg, lead_id=lead_id, reason=reason,
+                   classifier_label=getattr(decision, 'klass', '') or '',
+                   confidence=getattr(decision, 'confidence', None),
+                   commit=True)
+    except Exception:
+        log.exception('could not record the ingest outcome')
+
+
+def _reopen_if_closed(db, decision, msg, log):
+    """Reopen the lead this belongs to, if it was closed. Returns the
+    note written, or None."""
+    from app import Lead
+    from app.services import mail_ingest as _mi
+
+    lead = db.session.get(Lead, decision.lead_id)
+    if lead is None:
+        return None
+    if not _mi.should_reopen(lead, decision.klass):
+        return None
+    if _mi.reopen_for(lead, msg, classification=decision.klass):
+        return (f'Reopened from {lead.stage!r}: '
+                f'{decision.klass} on a closed lead')
+    return None
+
+
 def _file_against_lead(db, decision, msg, extracted, log,
                        graph=None, mailbox=None):
     """File an email that is not a new lead against the lead it belongs to.
@@ -464,12 +498,61 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                      'lead anyway', imid, decision.klass)
             decision = None
 
+        # ── An enquiry against a lead somebody closed ────────────────
+        # A new RFQ on a dead lead is the customer disagreeing with the
+        # decision to close it. Attaching it silently is how an enquiry
+        # arrives and nobody answers.
+        if decision is not None and decision.lead_id:
+            try:
+                _reopened = _reopen_if_closed(db, decision, msg, log)
+                if _reopened:
+                    _file_against_lead(db, decision, msg, extracted, log,
+                                       graph=graph, mailbox=mailbox)
+                    db.session.commit()
+                    _record_ingest('reopened', msg, decision,
+                                   lead_id=decision.lead_id,
+                                   reason=_reopened)
+                    return {'status': 'reopened', 'reason': _reopened,
+                            'lead_id': decision.lead_id,
+                            'classification': decision.klass,
+                            'internet_message_id': imid}
+            except Exception:
+                db.session.rollback()
+                log.exception('could not reopen lead %s for %s',
+                              decision.lead_id, imid)
+
+        # ── A colleague's forward with no external sender ────────────
+        # Every visible address is ours, so the classifier calls it
+        # internal and nothing is created — losing exactly the
+        # enquiries somebody cared enough to pass on. Look inside the
+        # quoted original before giving up on it.
+        _rescue = None
+        if decision is not None and not decision.creates_lead \
+                and decision.klass == _li.Klass.INTERNAL \
+                and not decision.lead_id:
+            try:
+                from app.services import mail_ingest as _mi
+                _rescue = _mi.rescue_internal_forward(
+                    msg, _li.body_text(msg),
+                    internal_domains=email_parser._skip_domains())
+                log.info('internal forward %s → %s (%s)', imid,
+                         _rescue['action'], _rescue['how'])
+                decision = None          # fall through and make the lead
+            except Exception:
+                log.exception('could not examine the internal forward %s',
+                              imid)
+                _rescue = None
+
         if decision is not None and not decision.creates_lead:
             try:
                 _lidb.record(decision, msg)
                 _file_against_lead(db, decision, msg, extracted, log,
                                    graph=graph, mailbox=mailbox)
                 db.session.commit()
+                _record_ingest(
+                    'attached' if decision.lead_id else 'skipped',
+                    msg, decision, lead_id=decision.lead_id,
+                    reason=f'{decision.klass}: {decision.reason}')
             except Exception:
                 db.session.rollback()
                 log.exception('could not file %s against lead %s',
@@ -538,11 +621,40 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                 log.exception('vertical recommendation failed for %s', imid)
 
             _keys = _thread_keys(msg)
+            # The client's own date, when it can be read. Different
+            # from `received` for a forward, and that difference is
+            # the point: an enquiry from the 1st forwarded on the 14th
+            # is work that arrived on the 14th, and losing the
+            # customer's date is how it then looks new.
+            _client_sent = None
+            try:
+                _client_sent = email_parser.client_sent_datetime(
+                    msg, _li.body_text(msg))
+            except Exception:
+                log.exception('could not read the client date on %s', imid)
+
+            # A colleague's forward that named a customer we could not
+            # otherwise see.
+            if _rescue:
+                if _rescue['action'] == 'review':
+                    lead_kwargs['company'] = _rescue['company']
+                    lead_kwargs['needs_review'] = True
+                else:
+                    lead_kwargs.setdefault('company', _rescue['company'])
+                    if not lead_kwargs.get('company'):
+                        lead_kwargs['company'] = _rescue['company']
+                    if _rescue.get('email'):
+                        lead_kwargs.setdefault('email', _rescue['email'])
+                    if _rescue.get('account_id'):
+                        lead_kwargs['company_id'] = _rescue['account_id']
+
             lead = Lead(
                 source            = 'email',
                 stage             = 'New Opportunity',
                 email_message_id  = imid,
                 created_at        = received,
+                received_at       = received,
+                client_sent_at    = _client_sent,
                 onboarded_date    = received.date(),
                 conversation_id   = _keys.get('conversation_id'),
                 in_reply_to       = _keys.get('in_reply_to'),
@@ -555,11 +667,55 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
             db.session.add(lead)
             db.session.flush()
 
-            auto_assign_owners(
-                lead,
-                extracted.get('email') or sender_email,
-                subject=extracted.get('subject') or '',
-                body=extracted.get('body_text') or '')
+            # "Dear Suranjan, please take this up" — a forward usually
+            # says who it is for, in the first line, in English. That
+            # beats the routing rules, because it is a person telling
+            # us rather than us inferring.
+            _named = None
+            try:
+                from app.services import mail_ingest as _mi
+                _named, _which = _mi.assignee_from_forward(
+                    _li.body_text(msg))
+                if _named is not None:
+                    from app.services import lead_assignment
+                    lead_assignment.assign(
+                        lead, primary_code=_named.emp_code, actor='system',
+                        note=f'Assigned by forward from {sender_email}',
+                        _defer_commit=True)
+                    log.info('lead %s assigned to %s — named in the forward',
+                             lead.id, _named.emp_code)
+            except Exception:
+                log.exception('could not act on the name in the forward %s',
+                              imid)
+
+            if _named is None:
+                auto_assign_owners(
+                    lead,
+                    extracted.get('email') or sender_email,
+                    subject=extracted.get('subject') or '',
+                    body=extracted.get('body_text') or '')
+
+            # A forward whose quoted message is itself a quotation means
+            # the enquiry has already been priced; a lead sitting at
+            # "New" while the customer holds our offer is one nobody
+            # chases.
+            try:
+                if _rescue and _mi.looks_like_a_forwarded_quotation(
+                        msg, _li.body_text(msg)):
+                    lead.stage = 'Quoted'
+                    if _client_sent:
+                        lead.quote_date = _client_sent.date()
+            except Exception:
+                pass
+
+            if _rescue and _rescue['action'] == 'review':
+                try:
+                    from app.services import mail_ingest as _mi2
+                    _mi2.notify_admin_review(
+                        lead, 'An internal forward arrived that named no '
+                              'client the CRM could identify.')
+                except Exception:
+                    pass
 
             # Row 1 of the email trail.
             try:
@@ -626,6 +782,10 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                                   'lead %s', lead.id)
 
             db.session.commit()
+            _record_ingest('created', msg, decision, lead_id=lead.id,
+                           reason=('rescued from an internal forward — '
+                                   + _rescue['how']) if _rescue
+                                  else 'new enquiry')
             return {'status': 'created', 'lead_id': lead.id,
                     'internet_message_id': imid, 'reason': None}
         except Exception as e:

@@ -565,6 +565,12 @@ class Lead(db.Model):
     #: an enquiry forwarded on the 14th is work that arrived on the
     #: 14th, however old the customer's email is.
     received_at = db.Column(db.DateTime, index=True)
+    #: Set when the ingest created the lead but could not work out who
+    #: the client is — an internal forward with nothing identifiable in
+    #: it. The lead exists and is flagged, because an enquiry on a
+    #: review screen is recoverable and one that was never recorded is
+    #: not.
+    needs_review = db.Column(db.Boolean, default=False, index=True)
     #: The customer's own sent time, when it can be read: from the
     #: forwarded header block, or Graph's sentDateTime. Shown beside
     #: the lead as "Client sent", never used for ordering. Losing it is
@@ -1981,8 +1987,7 @@ def api_leads():
     ind     = request.args.get('industry','')
     src     = request.args.get('source','')
     asgn    = request.args.get('assigned','')
-    srch    = request.args.get('q','').lower()
-    limit   = int(request.args.get('limit', 300))
+    srch    = (request.args.get('q') or '').strip()
     if stage:  q = q.filter_by(stage=stage)
     if vert:   q = q.filter_by(procam_vertical=vert)
     if ind:    q = q.filter_by(industry=ind)
@@ -2007,10 +2012,92 @@ def api_leads():
     cty = (request.args.get('city') or '').strip()
     if cty:
         q = q.filter(Lead.city == cty)
-    leads = q.order_by(Lead.created_at.desc()).limit(limit).all()
+    # The search runs in SQL. It used to run in Python *after* the
+    # limit, which meant searching the newest 300 leads and reporting
+    # "no results" for anything older — a silent wrong answer, and the
+    # real cost of the cap.
     if srch:
-        leads = [l for l in leads if srch in (l.company+l.project+l.state+l.industry+l.pic+'').lower()]
-    return jsonify([l.to_dict() for l in leads])
+        like = f'%{srch.lower()}%'
+        q = q.filter(db.or_(
+            db.func.lower(db.func.coalesce(Lead.company, '')).like(like),
+            db.func.lower(db.func.coalesce(Lead.project, '')).like(like),
+            db.func.lower(db.func.coalesce(Lead.state, '')).like(like),
+            db.func.lower(db.func.coalesce(Lead.industry, '')).like(like),
+            db.func.lower(db.func.coalesce(Lead.pic, '')).like(like),
+            db.func.lower(db.func.coalesce(Lead.email, '')).like(like),
+            db.func.lower(db.func.coalesce(Lead.city, '')).like(like),
+        ))
+
+    q = _order_leads(q, request.args.get('sort'), request.args.get('dir'))
+
+    total = q.order_by(None).count()
+    page, size, paginated = _page_args()
+    rows = q.limit(size).offset((page - 1) * size).all()
+
+    body = [l.to_dict() for l in rows]
+    if paginated:
+        # The shape a paginated caller asked for.
+        payload = jsonify({'items': body, 'total': total, 'page': page,
+                           'size': size,
+                           'pages': max(1, (total + size - 1) // size)})
+    else:
+        # The shape every existing caller expects. Kept, because
+        # changing it silently would break the lead list, the deep
+        # links and anything anyone has scripted against it.
+        payload = jsonify(body)
+    # Carried either way, so even a legacy caller can say "1-50 of
+    # 1,064" without asking twice.
+    payload.headers['X-Total-Count'] = str(total)
+    return payload
+
+
+#: What the list may be sorted by, and the column behind each. An
+#: allow-list rather than getattr: a sort parameter that reaches the
+#: ORM by name is a way to order by, and so infer, any column.
+_LEAD_SORTS = {
+    'received': 'received_at', 'created': 'created_at',
+    'company': 'company', 'stage': 'stage', 'value': 'estimated_value_inr',
+    'followup': 'followup_date', 'updated': 'updated_at',
+}
+
+#: Rows per page. The old behaviour was 300 with no way past it; this
+#: is the ceiling on one request, not on the data.
+MAX_PAGE_SIZE = 500
+DEFAULT_PAGE_SIZE = 50
+
+
+def _page_args():
+    """(page, size, was_asked_for). `limit` still works."""
+    args = request.args
+    asked = bool(args.get('page') or args.get('size'))
+    try:
+        page = max(1, int(args.get('page') or 1))
+    except (TypeError, ValueError):
+        page = 1
+    raw_size = args.get('size') or args.get('limit') or (
+        DEFAULT_PAGE_SIZE if asked else 300)
+    try:
+        size = int(raw_size)
+    except (TypeError, ValueError):
+        size = DEFAULT_PAGE_SIZE
+    return page, max(1, min(size, MAX_PAGE_SIZE)), asked
+
+
+def _order_leads(q, sort=None, direction=None):
+    """Newest first, by when the enquiry reached us.
+
+    `received_at` with `created_at` behind it: the column is new, and
+    a lead from before the migration has one and not the other until
+    the backfill has run. COALESCE means the list is right either way
+    rather than putting the un-backfilled rows at the end.
+    """
+    column_name = _LEAD_SORTS.get((sort or '').strip().lower(), 'received_at')
+    descending = (direction or 'desc').strip().lower() != 'asc'
+    if column_name == 'received_at':
+        expr = db.func.coalesce(Lead.received_at, Lead.created_at)
+    else:
+        expr = getattr(Lead, column_name)
+    return q.order_by(expr.desc() if descending else expr.asc())
 
 # v2026-09-04 — Task Engine hook helper (Phase 3).  Never raises;
 # wrapped so a broken engine can't break the parent request.

@@ -355,3 +355,67 @@ def assignee_from_forward(body_text):
             log.info('forward names %r, which matches %d employees — '
                      'leaving it unassigned', candidate, len(unique))
     return None, ''
+
+
+# ── rescuing an internal-only forward ────────────────────────────────
+def rescue_internal_forward(msg, body_text, *, internal_domains=()):
+    """A colleague forwards a customer's enquiry. Now what?
+
+    Every visible address on that message is ours, so the classifier
+    calls it internal and nothing is created — which loses exactly the
+    enquiries somebody cared enough to pass on. This looks inside the
+    quoted original instead.
+
+    Returns one of:
+
+        {'action': 'create', 'company', 'email', 'account_id', 'how'}
+            a customer was identified; make the lead for them
+        {'action': 'review', 'company': 'To review'}
+            something came in that nobody can attribute. It still
+            becomes a lead, flagged, because an enquiry sitting
+            unexamined on a review screen is recoverable and one that
+            was never recorded is not.
+
+    It never returns "drop it". That is the whole point.
+    """
+    found = client_in_forward(body_text, internal_domains=internal_domains)
+    company = (found.get('company') or '').strip()
+    email = (found.get('email') or '').strip()
+
+    if company or email:
+        account = match_account(company, email)
+        return {
+            'action': 'create',
+            'company': (getattr(account, 'name', None) or company
+                        or (email.split('@')[1] if email else '')),
+            'email': email,
+            'account_id': getattr(account, 'id', None),
+            'how': found.get('how') or 'the quoted message',
+        }
+    return {'action': 'review', 'company': NEEDS_REVIEW_COMPANY,
+            'email': '', 'account_id': None,
+            'how': 'nothing in the message identified a client'}
+
+
+def looks_like_a_forwarded_quotation(msg, body_text):
+    """Is this a quotation somebody forwarded in?
+
+    A forwarded commercial offer means the enquiry has already been
+    quoted, and a lead that sits at "New" while the customer is
+    holding our price is a lead nobody chases.
+    """
+    text = f"{(msg or {}).get('subject') or ''}\n{body_text or ''}".lower()
+    strong = ('quotation', 'quote no', 'quotation no', 'our offer',
+              'commercial offer', 'price offer', 'proforma')
+    return any(term in text for term in strong)
+
+
+def notify_admin_review(lead, reason):
+    """Tell the administrators a lead arrived that nobody could place."""
+    try:
+        from app.services import notification_rules as rules
+        rules.dispatch('lead.needs_review', lead, actor='system',
+                       detail=reason)
+    except Exception:
+        log.exception('could not raise the review notice for lead %s',
+                      getattr(lead, 'id', '?'))
