@@ -133,7 +133,7 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
                         out['error'] = ('already queued, muted, or not an '
                                         'internal address')
                 else:
-                    from email_ingest import notifier
+                    from app.services import mailer
                     files = None
                     if attachments:
                         from app.services import outbox
@@ -144,7 +144,7 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
                     # should not have to learn a new signature to keep
                     # working.
                     extra = {'attachments': files} if files else {}
-                    out['emailed'] = bool(notifier.send(
+                    out['emailed'] = bool(mailer.send(
                         address, title, html, **extra))
                     if not out['emailed']:
                         out['error'] = 'the mail server refused it'

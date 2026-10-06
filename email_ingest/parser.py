@@ -500,6 +500,95 @@ def _parse_addr(raw: str) -> Tuple[str, str]:
     return "", raw.strip(" \"'")
 
 
+#: Date shapes mail clients write into a forwarded header block. RFC-2822
+#: is tried first through the standard library; these cover what Outlook
+#: and the Indian locale settings actually produce.
+_SENT_FORMATS = (
+    "%A, %B %d, %Y %I:%M %p",      # Monday, September 1, 2026 10:42 AM
+    "%A, %d %B %Y %I:%M %p",       # Monday, 1 September 2026 10:42 AM
+    "%A, %d %B, %Y %I:%M %p",
+    "%d %B %Y %I:%M %p",           # 01 September 2026 10:42 AM
+    "%d %B %Y %H:%M",
+    "%d/%m/%Y %H:%M",
+    "%d-%m-%Y %H:%M",
+    "%m/%d/%Y %I:%M %p",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M",
+)
+
+
+def parse_sent_header(raw):
+    """A client's "Sent:" line, as naive UTC. None when unreadable.
+
+    A forwarded header carries no time zone more often than not, so a
+    value without one is taken at face value rather than guessed at.
+    Being an hour out on a date shown as context is tolerable; inventing
+    a time zone and being a day out is not.
+    """
+    text = (raw or "").strip().strip(",")
+    if not text:
+        return None
+
+    from email.utils import parsedate_to_datetime
+    try:
+        dt = parsedate_to_datetime(text)
+        if dt is not None:
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return dt
+    except (TypeError, ValueError, IndexError):
+        pass
+
+    # Strip a trailing time zone name or offset the formats below do not
+    # take, e.g. "... 10:42 AM IST" or "... 10:42 +0530".
+    cleaned = re.sub(r"\s*(?:GMT|UTC|IST|[A-Z]{2,4}|[+-]\d{4})\s*$", "",
+                     text).strip()
+    for fmt in _SENT_FORMATS:
+        try:
+            return datetime.strptime(cleaned, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def client_sent_datetime(msg: dict, body_text: str = None):
+    """When the *client* sent it, as against when it reached us.
+
+    These are the same thing for mail that comes to us directly, and
+    very much not for a forward: an enquiry from the 1st that a
+    colleague forwards on the 14th reached the mailbox on the 14th, and
+    the lead's date should say the 14th — but the customer's own date
+    is a fact worth keeping, and losing it is how a two-week-old
+    enquiry looks new.
+
+    Order: the forwarded block's own Sent:/Date: header, then Graph's
+    sentDateTime, then nothing. Never the received time — a caller that
+    wants that already has it.
+    """
+    body = body_text if body_text is not None else _get_body_text(msg)
+    try:
+        split = split_forwarded_body(body or "")
+        if split.get("is_forward"):
+            for key in ("sent", "date"):
+                found = parse_sent_header((split.get("headers") or {}).get(key))
+                if found is not None:
+                    return found
+    except Exception:
+        pass
+
+    raw = ((msg or {}).get("sentDateTime") or "").strip()
+    if raw:
+        txt = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+        try:
+            dt = datetime.fromisoformat(txt)
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return dt
+        except ValueError:
+            pass
+    return None
+
+
 def split_forwarded_body(body_text: str) -> dict:
     """Split a forwarded email body into its three parts.
 

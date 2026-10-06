@@ -86,8 +86,9 @@ PREF_FOR = {
 
 
 def _notify_enabled():
-    from email_ingest import notifier
-    return notifier.is_enabled()
+    from app.services import mailer
+    ok, _why = mailer.ready()
+    return ok
 
 
 def working_people():
@@ -233,8 +234,8 @@ def _one(key, emp_code, *, dry_run, send_empty, enabled, cache=None):
             row['detail'] = 'already queued for today, or not internal'
         return row
 
-    from email_ingest import notifier
-    sent = notifier.send(address, subject, html)
+    from app.services import mailer
+    sent = mailer.send(address, subject, html)
     row['status'] = 'sent' if sent else 'failed'
     if not sent:
         row['detail'] = 'the mail server refused it'

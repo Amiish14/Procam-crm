@@ -560,6 +560,16 @@ class Lead(db.Model):
     original_email_subject     = db.Column(db.String(500))
     original_email_from        = db.Column(db.String(320))
     original_email_received_at = db.Column(db.DateTime)
+    #: When the message reached leads@procamgroup.in. This, not the
+    #: client's own date, is what the lead is dated by and sorted on —
+    #: an enquiry forwarded on the 14th is work that arrived on the
+    #: 14th, however old the customer's email is.
+    received_at = db.Column(db.DateTime, index=True)
+    #: The customer's own sent time, when it can be read: from the
+    #: forwarded header block, or Graph's sentDateTime. Shown beside
+    #: the lead as "Client sent", never used for ordering. Losing it is
+    #: how a two-week-old enquiry looks new.
+    client_sent_at = db.Column(db.DateTime)
     original_email_body        = db.Column(db.Text)
     # ingested | migrated_from_notes | recovered_from_mailbox
     # Provenance matters here: a migrated body may actually be somebody's
@@ -4653,6 +4663,7 @@ def init_db():
                    'app.models.public_source', 'app.models.task_engine',
                    'app.models.notification', 'app.models.review',
                    'app.models.mailops', 'app.models.restriction',
+                   'app.models.ingest_log', 'app.models.integration',
                    'app.models.escalation', 'app.models.intel',
                    'app.directory.models'):
             try:

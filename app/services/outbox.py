@@ -285,11 +285,16 @@ def _mark_failed(rows, now, error):
 
 
 def send_group(rows, now=None, send=None):
-    """Deliver one group. Returns True if it went."""
-    from email_ingest import notifier
+    """Deliver one group. Returns True if it went.
+
+    Through `mailer.send`, which picks SMTP or Graph — not straight at
+    the Graph sender, which had never once succeeded because the
+    Mail.Send grant does not exist.
+    """
+    from app.services import mailer
 
     now = now or datetime.utcnow()
-    send = send or notifier.send
+    send = send or mailer.send
     lead = rows[0]
     if len(rows) == 1:
         subject, html = lead.subject, lead.html
