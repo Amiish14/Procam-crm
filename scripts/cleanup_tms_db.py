@@ -208,7 +208,9 @@ def main():
     drop, keep, refuse = [], [], []
     for name in CRM_TABLES:
         if name in NEVER_DROP:
-            refuse.append((name, 'shared with the TMS'))
+            # Listed under KEEPING with its row count, which says the
+            # same thing more usefully. Reporting it twice, the second
+            # time under REFUSING, read as an unresolved problem.
             continue
         if name not in present:
             continue
@@ -237,7 +239,7 @@ def main():
         print(f'  {name:<34} {rows:>6} row(s)')
 
     if refuse:
-        print('\nREFUSING')
+        print('\nREFUSING — more rows than the CRM could have written')
         for name, why in refuse:
             print(f'  {name:<34} {why}')
         print('  Not dropped. Work out whose these are first.')
