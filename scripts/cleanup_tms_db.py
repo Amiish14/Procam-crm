@@ -142,13 +142,31 @@ def main():
     if not args.yes:
         raise SystemExit('Refusing to drop without --yes.')
 
-    done = 0
-    with engine.begin() as conn:
-        for name, _rows in drop:
-            conn.execute(text(f'DROP TABLE IF EXISTS "{name}" CASCADE'))
+    # RESTRICT, not CASCADE. CASCADE would also remove anything
+    # depending on these tables — a foreign key from a TMS table, a
+    # view — quietly and without naming it. Nothing here should have
+    # a dependent, so a drop that fails for that reason is telling us
+    # something we need to hear rather than something to force past.
+    done, blocked = 0, []
+    for name, _rows in drop:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f'DROP TABLE "{name}" RESTRICT'))
             done += 1
             print(f'  - {name}')
-    print(f'\n{done} table(s) dropped. The TMS\'s own tables are untouched.')
+        except Exception as exc:                              # noqa: BLE001
+            blocked.append((name, str(exc).split('\n')[0][:160]))
+            print(f'  ! {name}: kept — something depends on it')
+
+    print(f'\n{done} table(s) dropped. The TMS\'s own tables are '
+          f'untouched.')
+    if blocked:
+        print('\nNOT DROPPED — each of these has a dependent object:')
+        for name, why in blocked:
+            print(f'  {name}\n    {why}')
+        print('  Find out what depends on them before forcing anything. '
+              'Do not re-run this with CASCADE.')
+        return 1
     return 0
 
 
