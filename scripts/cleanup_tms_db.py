@@ -35,9 +35,12 @@ import sys
 NEVER_DROP = ('notifications', 'projects', 'task_definitions',
               'task_instances')
 
-#: The CRM tables found in the TMS database on 2026-10-06. An explicit
-#: list rather than a pattern: a pattern that matched one TMS table
-#: would be unrecoverable.
+#: Fallback only. The authoritative list comes from
+#: `scripts/crm_table_names.py`, which asks SQLAlchemy — this one was
+#: typed out by hand and was missing four tables (`competitors`,
+#: `project_accounts`, `project_contacts`,
+#: `opportunity_source_links`), which is what a hand-kept list of
+#: sixty names does. Pass --crm-tables and this is not used.
 CRM_TABLES = (
     'account_activities', 'account_assignments',
     'account_relationship_tags', 'account_stage_history', 'audit_events',
@@ -151,6 +154,10 @@ def main():
     # instructions at the moment somebody is being careful.
     ap.add_argument('--check', action='store_true',
                     help='list what would be dropped and stop (default)')
+    ap.add_argument('--crm-tables',
+                    help='file of CRM table names, one per line, from '
+                         'scripts/crm_table_names.py. Strongly '
+                         'preferred over the built-in list.')
     ap.add_argument('--show-dependents', action='store_true',
                     help='name every foreign key pointing at the CRM '
                          'tables still present, and say whose table it '
@@ -161,7 +168,23 @@ def main():
     if not url:
         print('no DATABASE_URL in that file.')
         return 2
-    print(f'database: {_safe(url)}\n')
+    print(f'database: {_safe(url)}')
+
+    global CRM_TABLES
+    if args.crm_tables:
+        try:
+            with open(args.crm_tables, encoding='utf-8') as fh:
+                CRM_TABLES = tuple(sorted(
+                    line.strip() for line in fh if line.strip()))
+            print(f'CRM tables: {len(CRM_TABLES)} name(s) from '
+                  f'{args.crm_tables}')
+        except OSError as exc:
+            print(f'could not read {args.crm_tables}: {exc}')
+            return 2
+    else:
+        print(f'CRM tables: the built-in list of {len(CRM_TABLES)} — '
+              f'incomplete. Use --crm-tables.')
+    print()
 
     from sqlalchemy import create_engine, inspect, text
 
