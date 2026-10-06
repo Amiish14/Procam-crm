@@ -74,6 +74,72 @@ def _safe(url):
     return re.sub(r'://([^:/@]+):[^@]*@', r'://\1:***@', url or '')
 
 
+
+def _dependents(engine, present):
+    """Who points at the CRM tables that are still here.
+
+    The question that matters is not "is there a dependency" — four
+    drops already said there is — but "is the dependent a TMS table".
+    If every referring table is one of the CRM's own, this is an
+    ordering problem and dropping children before parents solves it.
+    If any TMS table points at a CRM table, that is a different
+    problem and nothing should be dropped until somebody understands
+    how it got there.
+    """
+    from sqlalchemy import text
+
+    crm_left = sorted(t for t in CRM_TABLES if t in present)
+    if not crm_left:
+        print('no CRM tables left — nothing to untangle.')
+        return 0
+
+    sql = text("""
+        SELECT tc.table_name      AS dependent_table,
+               kcu.column_name    AS dependent_column,
+               ccu.table_name     AS referenced_table,
+               tc.constraint_name
+          FROM information_schema.table_constraints tc
+          JOIN information_schema.key_column_usage kcu
+            ON tc.constraint_name = kcu.constraint_name
+           AND tc.table_schema = kcu.table_schema
+          JOIN information_schema.constraint_column_usage ccu
+            ON ccu.constraint_name = tc.constraint_name
+           AND ccu.table_schema = tc.table_schema
+         WHERE tc.constraint_type = 'FOREIGN KEY'
+           AND tc.table_schema = 'public'
+           AND ccu.table_name = ANY(:names)
+         ORDER BY ccu.table_name, tc.table_name
+    """)
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {'names': crm_left}).fetchall()
+
+    print(f'FOREIGN KEYS POINTING AT THE {len(crm_left)} CRM TABLE(S) '
+          f'STILL PRESENT\n')
+    foreign = []
+    for dependent, column, referenced, constraint in rows:
+        whose = 'CRM' if dependent in CRM_TABLES else 'NOT A CRM TABLE'
+        if dependent not in CRM_TABLES:
+            foreign.append((dependent, referenced, constraint))
+        print(f'  {dependent}.{column} → {referenced}   [{whose}]')
+    if not rows:
+        print('  none — the drops failed for some other dependency '
+              '(a view, perhaps). Investigate before forcing anything.')
+
+    print('\nVERDICT')
+    if foreign:
+        print('  STOP. These dependents are not CRM tables:')
+        for dependent, referenced, constraint in foreign:
+            print(f'    {dependent} → {referenced} ({constraint})')
+        print('  Something in the TMS references a CRM table. Do not '
+              'drop anything until that is understood.')
+        return 1
+    print('  Every dependent is another CRM table, so this is only an '
+          'ordering problem.')
+    print('  Re-run with --apply --yes: the script now drops children '
+          'before parents and will clear them.')
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--env-file', default='/var/www/procam-lr/.env')
@@ -85,6 +151,10 @@ def main():
     # instructions at the moment somebody is being careful.
     ap.add_argument('--check', action='store_true',
                     help='list what would be dropped and stop (default)')
+    ap.add_argument('--show-dependents', action='store_true',
+                    help='name every foreign key pointing at the CRM '
+                         'tables still present, and say whose table it '
+                         'is on')
     args = ap.parse_args()
 
     url = _database_url(args.env_file)
@@ -98,6 +168,9 @@ def main():
     engine = create_engine(url)
     insp = inspect(engine)
     present = set(insp.get_table_names())
+
+    if args.show_dependents:
+        return _dependents(engine, present)
 
     drop, keep, refuse = [], [], []
     for name in CRM_TABLES:
@@ -147,6 +220,13 @@ def main():
     # view — quietly and without naming it. Nothing here should have
     # a dependent, so a drop that fails for that reason is telling us
     # something we need to hear rather than something to force past.
+    # Children before parents. The first run refused companies,
+    # contacts, leads and opportunities because they reference one
+    # another; dropping in this order clears them without CASCADE.
+    order = {name: i for i, name in enumerate(
+        ('opportunities', 'leads', 'contacts', 'companies'))}
+    drop.sort(key=lambda pair: order.get(pair[0], -1))
+
     done, blocked = 0, []
     for name, _rows in drop:
         try:
