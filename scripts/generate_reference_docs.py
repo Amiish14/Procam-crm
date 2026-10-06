@@ -43,6 +43,12 @@ _GATES = (
     (re.compile(r"_card_or_404"), 'uploader or company scope'),
     (re.compile(r"_matrix_can\('([^']+)'\)"), 'permission {0}'),
     (re.compile(r"@_require_admin"), 'administrator (matrix)'),
+    # The TMS integration API. Not a session and not a permission — a
+    # bearer token belonging to another server, checked in
+    # app/services/integration.py::authenticate. Listed here so the
+    # route audit recognises it as a gate rather than reporting these
+    # as open, which would train people to ignore the audit.
+    (re.compile(r"@_authenticated\b"), 'integration bearer token'),
     (re.compile(r"@_action\b"), 'permission reports.action'),
     (re.compile(r"@_competitor\b"), 'permission reports.competitor'),
     (re.compile(r"@_accounts\b"), 'permission reports.accounts'),

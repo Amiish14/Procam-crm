@@ -349,10 +349,12 @@ def api_accounts_assign_bulk():
         if row is not None:
             changed_accounts.append(c)
     db.session.commit()
-    # After the commit, and batched: forty accounts moved to one person
-    # in one action should reach them as one email, not forty.
-    for account in changed_accounts:
-        _announce_pic_change(account, emp.emp_code, batch_key=batch_key)
+    # After the commit, and summarised: forty accounts moved to one
+    # person in one action should reach them as one email, not forty.
+    from app.services import notify as _notify
+    with _notify.bulk(what='accounts', url='/companies'):
+        for account in changed_accounts:
+            _announce_pic_change(account, emp.emp_code, batch_key=batch_key)
     ok_n = sum(1 for r in results if r['ok'])
     return jsonify(ok=True, results=results, succeeded=ok_n,
                    failed=len(results) - ok_n)

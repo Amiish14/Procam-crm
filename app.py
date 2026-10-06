@@ -5459,6 +5459,18 @@ except Exception as _e:                                              # pragma: n
 # not CSRF. Exempt only these.
 csrf.exempt(api_email_webhook)
 
+# The TMS integration API, for the same reason: a bearer token from
+# another server, no cookie, no browser. Exempted as a blueprint so a
+# route added to it later is not silently refused — and it is a
+# separate blueprint precisely so this exemption cannot widen to
+# anything a person's session can reach.
+try:
+    from app.integration.routes import bp as _integration_bp
+    csrf.exempt(_integration_bp)
+    app.logger.info('integration API exempted from CSRF (token auth).')
+except Exception as _e:
+    app.logger.warning('could not exempt the integration API: %s', _e)
+
 
 # ═════════════════════════════════════════════════════════════════════
 # v2026-09-04 — CRM Foundation blueprints (Phases 2-5).
@@ -5522,6 +5534,11 @@ for _mod_path, _bp_name in [
     ('app.intel.routes',         'intel_bp'),
     ('app.mailops.routes',       'mailops_bp'),
     ('app.restrictions.routes',  'restrictions_bp'),
+    # The TMS integration API. Exempted from CSRF below, because it is
+    # authenticated by a bearer token rather than by a session cookie —
+    # a CSRF token is a defence against a browser being used as a
+    # confused deputy, and there is no browser here.
+    ('app.integration.routes',   'integration_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])

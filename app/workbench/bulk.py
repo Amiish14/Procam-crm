@@ -226,48 +226,52 @@ def _write(action, stored, reason, actor, changes, skipped):
     applied, failed = [], []
     previous_reason = getattr(g, 'audit_reason', None)
     g.audit_reason = reason
-    try:
-        audit.record('workbench.bulk', 'lead_batch', batch_ref, strict=True,
-                     new={'action': action, 'value': str(stored),
-                          'count': len(changes),
-                          'ids': [c['id'] for c in changes][:BATCH_MAX]},
-                     reason=reason)
-        for change in changes:
-            try:
-                lead = db.session.get(Lead, change['id'])
-                if lead is None:
-                    failed.append({**change, 'error': 'no longer exists'})
-                    continue
-                with db.session.begin_nested():
-                    if action == 'assign_owner':
-                        from app.services import lead_assignment
-                        ok, err = lead_assignment.assign(
-                            lead, primary_code=stored, actor=actor,
-                            note=reason, _defer_commit=True)
-                        if not ok:
-                            raise ValueError(err)
-                    elif action == 'log_activity':
-                        db.session.add(LeadActivity(
-                            lead_id=lead.id, kind='note', subject=stored[:255],
-                            body=reason, performed_by=actor,
-                            occurred_at=datetime.utcnow()))
-                    elif action == 'archive':
-                        lead.is_archived = True
-                        lead.archived_at = datetime.utcnow()
-                        lead.archived_by = actor
-                        lead.archive_reason = reason[:200]
-                    else:
-                        setattr(lead, ACTIONS[action][2], stored)
-                    lead.updated_at = datetime.utcnow()
-                applied.append(change)
-            except Exception as exc:                  # one record only
-                current_app.logger.exception(
-                    'workbench bulk %s failed for lead %s', action, change['id'])
-                failed.append({**change, 'error': str(exc)[:160] or 'could not be saved'})
-        db.session.commit()
-        from app.workbench import service as wb_service
-        wb_service.hygiene_cache_clear()
-    finally:
+    # One summary per person, not one email per record. Forty leads
+    # reassigned to somebody is one message about forty leads.
+    from app.services import notify as _notify
+    with _notify.bulk(what='leads', url='/my-work'):
+      try:
+          audit.record('workbench.bulk', 'lead_batch', batch_ref, strict=True,
+                       new={'action': action, 'value': str(stored),
+                            'count': len(changes),
+                            'ids': [c['id'] for c in changes][:BATCH_MAX]},
+                       reason=reason)
+          for change in changes:
+              try:
+                  lead = db.session.get(Lead, change['id'])
+                  if lead is None:
+                      failed.append({**change, 'error': 'no longer exists'})
+                      continue
+                  with db.session.begin_nested():
+                      if action == 'assign_owner':
+                          from app.services import lead_assignment
+                          ok, err = lead_assignment.assign(
+                              lead, primary_code=stored, actor=actor,
+                              note=reason, _defer_commit=True)
+                          if not ok:
+                              raise ValueError(err)
+                      elif action == 'log_activity':
+                          db.session.add(LeadActivity(
+                              lead_id=lead.id, kind='note', subject=stored[:255],
+                              body=reason, performed_by=actor,
+                              occurred_at=datetime.utcnow()))
+                      elif action == 'archive':
+                          lead.is_archived = True
+                          lead.archived_at = datetime.utcnow()
+                          lead.archived_by = actor
+                          lead.archive_reason = reason[:200]
+                      else:
+                          setattr(lead, ACTIONS[action][2], stored)
+                      lead.updated_at = datetime.utcnow()
+                  applied.append(change)
+              except Exception as exc:                  # one record only
+                  current_app.logger.exception(
+                      'workbench bulk %s failed for lead %s', action, change['id'])
+                  failed.append({**change, 'error': str(exc)[:160] or 'could not be saved'})
+          db.session.commit()
+          from app.workbench import service as wb_service
+          wb_service.hygiene_cache_clear()
+      finally:
         g.audit_reason = previous_reason
     return {'applied': applied, 'failed': failed, 'skipped': skipped,
             'applied_count': len(applied), 'failed_count': len(failed),

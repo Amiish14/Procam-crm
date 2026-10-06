@@ -19,6 +19,8 @@ double-click and nothing more.
 """
 from __future__ import annotations
 
+import contextlib
+import threading
 from datetime import datetime, timedelta
 
 #: Suppress an identical notification repeated inside this window.
@@ -47,6 +49,115 @@ def _recent_duplicate(user_id, kind, entity_type, entity_id, since):
     return q.first()
 
 
+
+# ── bulk work ────────────────────────────────────────────────────────
+# A bulk assignment of four hundred leads must not be four hundred
+# emails. One person receiving four hundred notifications reads none
+# of them and turns the rest off, which costs the CRM every
+# notification it will ever send that person.
+#
+# Two modes, held per thread so one request's bulk run cannot silence
+# another's:
+#
+#   bulk()    collect, then send one summary per recipient
+#   silent()  send nothing at all — for a backfill, where the
+#             notifications would describe work that happened months
+#             ago
+_local = threading.local()
+
+
+def _mode():
+    return getattr(_local, 'mode', None)
+
+
+@contextlib.contextmanager
+def bulk(what='records', url=None):
+    """Collect notifications and send one summary each at the end."""
+    previous, previous_box = _mode(), getattr(_local, 'box', None)
+    _local.mode, _local.box = 'bulk', {}
+    try:
+        yield _local.box
+    finally:
+        box = _local.box
+        _local.mode, _local.box = previous, previous_box
+        try:
+            _send_summaries(box, what, url)
+        except Exception:
+            _logger().exception('could not send the bulk summaries')
+
+
+@contextlib.contextmanager
+def silent():
+    """Send nothing. Returns what would have been sent, for a report."""
+    previous, previous_box = _mode(), getattr(_local, 'box', None)
+    _local.mode, _local.box = 'silent', {}
+    try:
+        yield _local.box
+    finally:
+        _local.mode, _local.box = previous, previous_box
+
+
+def _collect(user_code, kind, title, body, url):
+    box = getattr(_local, 'box', None)
+    if box is None:
+        return
+    box.setdefault(user_code, []).append(
+        {'kind': kind, 'title': title, 'body': body, 'url': url})
+
+
+def _send_summaries(box, what, url):
+    """One email per person, listing what happened to their records."""
+    for user_code, items in (box or {}).items():
+        if not items:
+            continue
+        if len(items) == 1:
+            one = items[0]
+            send(user_code, kind=one['kind'], title=one['title'],
+                 body=one['body'], url=one['url'], email=True,
+                 dedupe=False)
+            continue
+        shown = items[:50]
+        more = len(items) - len(shown)
+        # The plain-text body and the HTML are built separately. A
+        # newline-joined list dropped into a <p> renders as one long
+        # run-on line, which is how a summary of forty things becomes
+        # unreadable.
+        lines = '\n'.join(f'• {i["title"]}' for i in shown)
+        if more:
+            lines += f'\n… and {more} more'
+        send(user_code, kind='bulk_summary',
+             event_key='bulk.summary',
+             title=f'{len(items)} {what} were updated',
+             body=f'A bulk update touched {len(items)} of your '
+                  f'{what}:\n{lines}',
+             email_html=_summary_html(len(items), what, shown, more, url),
+             url=url, email=True, dedupe=False)
+
+
+def _summary_html(total, what, shown, more, url):
+    from email_ingest import notifier
+    esc = notifier._esc
+
+    rows = ''.join(
+        f'<li style="margin:3px 0">{esc(i["title"])}</li>' for i in shown)
+    tail = (f'<p style="color:#6B6762;font-size:12.5px">… and {more} '
+            f'more.</p>' if more else '')
+    link = ''
+    if url:
+        base = notifier.base_url()
+        href = f'{base}{url}' if url.startswith('/') else url
+        link = (f'<p style="margin:18px 0"><a href="{esc(href)}" '
+                f'style="background:#BC1D2F;color:#fff;padding:10px 18px;'
+                f'border-radius:6px;text-decoration:none;font-weight:600">'
+                f'Open the CRM</a></p>')
+    return (f'<div style="font-family:Arial,sans-serif;font-size:14px;'
+            f'color:#111">'
+            f'<p style="font-weight:600;font-size:16px">A bulk update '
+            f'touched {total} of your {esc(what)}</p>'
+            f'<ul style="padding-left:18px;margin:10px 0">{rows}</ul>'
+            f'{tail}{link}</div>')
+
+
 def send(user_code, *, kind, title, body='', url=None, entity_type=None,
          entity_id=None, email=False, email_html=None, actor=None,
          audit_action=None, reason=None, commit=True, dedupe=True,
@@ -73,6 +184,15 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
     user_code = (user_code or '').strip().upper()
     if not user_code:
         out['error'] = 'no recipient'
+        return out
+
+    # Inside a bulk run or a backfill, nothing goes out one record at
+    # a time. See `bulk()` and `silent()`.
+    mode = _mode()
+    if mode is not None:
+        _collect(user_code, kind, title, body, url)
+        out['suppressed'] = True
+        out['collected'] = True
         return out
     try:
         if dedupe and in_app:
