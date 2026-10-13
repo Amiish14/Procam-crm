@@ -109,20 +109,60 @@ def ready():
 
 
 # ── the one entry point ──────────────────────────────────────────────
-def send(to, subject, html, *, cc=None, text=None, attachments=None,
-         reply_to=None, headers=None):
+def send(to, subject, html, **kw):
     """Send one message. True if it went. Never raises.
 
     `attachments` is [{'filename', 'content_type', 'content': bytes}].
     `text` is the plain-text alternative; one is generated from the
     HTML when it is not given, because a message with no text part
     scores as spam and reads as nothing in a text client.
+
+    The boolean is what almost every caller wants and what every
+    existing test double returns. The outbox worker wants more — it
+    has to tell a mailbox that is full (retry in two minutes) from an
+    address that does not exist (never retry) — and calls
+    `send_detail` for the SMTP code.
+    """
+    return send_detail(to, subject, html, **kw)['ok']
+
+
+def _result(ok, *, code=None, error='', retry=None, held=False):
+    """What a send attempt actually did.
+
+    `retry` is the decision, made here where the code is known rather
+    than in the worker where it is not: True for a 4xx or a dropped
+    connection, False for a 5xx. None when there is nothing to retry
+    (it went, or it was held back on purpose).
+    """
+    return {'ok': bool(ok), 'code': code, 'error': (error or '')[:500],
+            'retry': retry, 'held': bool(held)}
+
+
+def send_detail(to, subject, html, *, cc=None, text=None, attachments=None,
+                reply_to=None, headers=None):
+    """`send`, but returning the SMTP code and the server's own words.
+
+    See `_result`. Never raises.
     """
     from email_ingest import notifier
 
     if not notifier.is_enabled():
         log.info('notifications disabled — not sending %r', subject[:60])
-        return False
+        return _result(False, error='NOTIFY_ENABLED is off', held=True)
+
+    # The kill switch, checked here rather than at the call sites,
+    # because an emergency stop that depends on every caller
+    # remembering it is not an emergency stop. Queued mail stays
+    # queued: the worker holds too, and nothing is thrown away.
+    try:
+        from app.services import flags
+        if flags.mail_stopped():
+            log.warning('EMAIL_KILL_SWITCH is on — held back %r',
+                        subject[:60])
+            return _result(False, error='EMAIL_KILL_SWITCH is on',
+                           retry=True, held=True)
+    except Exception:
+        pass
 
     recipients = [to] if isinstance(to, str) else list(to or [])
     recipients = [r.strip() for r in recipients if r and '@' in r]
@@ -139,13 +179,16 @@ def send(to, subject, html, *, cc=None, text=None, attachments=None,
                   subject[:60], ', '.join(refused + cc_refused))
     if not recipients:
         log.info('no internal recipient for %r — skipping', subject[:60])
-        return False
+        return _result(False, error='no internal recipient — '
+                                    + ', '.join(refused + cc_refused
+                                                or ['(none given)']))
 
     which = transport()
     try:
         if which == SMTP:
-            return _send_smtp(recipients, subject, html, cc_list, text,
-                              attachments, reply_to, headers)
+            _send_smtp(recipients, subject, html, cc_list, text,
+                       attachments, reply_to, headers)
+            return _result(True)
         # Only pass what there is. The Graph sender's signature grew
         # over time and plenty of callers and test doubles still wrap
         # the three-argument form; handing them keywords they do not
@@ -160,10 +203,54 @@ def send(to, subject, html, *, cc=None, text=None, attachments=None,
         # test double expects. Normalising to a list here would be
         # tidier and would quietly change what they all receive.
         one = recipients[0] if len(recipients) == 1 else recipients
-        return notifier.send(one, subject, html, **extra)
-    except Exception:                                         # noqa: BLE001
+        ok = bool(notifier.send(one, subject, html, **extra))
+        # Graph reports nothing we can grade, so a refusal is treated
+        # as worth one more try. The outbox's attempt ceiling stops it
+        # from retrying forever.
+        return _result(ok, retry=None if ok else True,
+                       error='' if ok else 'the Graph transport refused it')
+    except Exception as exc:                                  # noqa: BLE001
         log.exception('send failed over %s for %r', which, subject[:60])
-        return False
+        return _result(False, **_grade(exc))
+
+
+def _grade(exc):
+    """Turn an exception into {code, error, retry}.
+
+    SMTP says in the first digit of its reply code whether trying
+    again could work: 4xx is "not now" (mailbox full, throttled,
+    greylisted), 5xx is "not ever" (no such mailbox, message refused).
+    The CRM used to treat both the same and retry a dead address five
+    times, which is how one wrong address on an employee record became
+    five identical failures in the log and nothing in the inbox.
+
+    A connection that never got a reply has no code. That is a 4xx in
+    spirit — the server was unreachable, not unwilling — so it retries.
+    """
+    import smtplib
+
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        # {address: (code, message)} — report the first, which is what
+        # an administrator needs to see next to the address.
+        for addr, (code, text) in (exc.recipients or {}).items():
+            words = text.decode(errors='replace') if isinstance(
+                text, bytes) else str(text)
+            return {'code': int(code or 0) or None,
+                    'error': f'{addr} refused: {code} {words}',
+                    'retry': int(code or 0) // 100 == 4}
+        return {'code': None, 'error': 'every recipient was refused',
+                'retry': False}
+
+    code = getattr(exc, 'smtp_code', None)
+    raw = getattr(exc, 'smtp_error', None)
+    if code:
+        words = raw.decode(errors='replace') if isinstance(raw, bytes) \
+            else str(raw or '')
+        return {'code': int(code),
+                'error': f'{int(code)} {words}'.strip(),
+                'retry': int(code) // 100 == 4}
+    return {'code': None, 'error': f'{type(exc).__name__}: {exc}',
+            'retry': True}
 
 
 def _send_smtp(recipients, subject, html, cc_list, text, attachments,

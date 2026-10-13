@@ -58,6 +58,12 @@ _GATES = (
      'signed in (checked inline)'),
     # the Workbench: a session, then per-record Access Matrix scope
     (re.compile(r"@_signed_in\b"), 'signed in; records by scope'),
+    # The vertical head master is readable by an administrator or by a
+    # vertical head, and writable only by an administrator. The read
+    # gate is its own decorator because no single permission expresses
+    # "or is named in the master this screen is about".
+    (re.compile(r"@_head_view\b"), 'admin.email, or a vertical head (read '
+                                   'only)'),
     (re.compile(r"session\.get\('emp_code'\)|_current_emp_code\(\)|"
                 r"'emp_code' not in session"), 'signed in (checked inline)'),
     (re.compile(r"require_auth|_login_required|_require_login|_authed\(\)"),

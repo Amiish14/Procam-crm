@@ -1,0 +1,52 @@
+{% extends "mailops/_shell.html" %}
+{% block title %}People who cannot receive CRM mail — Procam CRM{% endblock %}
+{% block heading %}People{% endblock %}
+{% block strap %}Addresses on the employee master that mail cannot reach{% endblock %}
+
+{% block body %}
+<div class="mo-tiles">
+  <div class="mo-tile {{ 'bad' if bad else 'good' }}">
+    <div class="n">{{ bad|length }}</div>
+    <div class="l">Cannot receive mail</div></div>
+</div>
+
+<div class="mo-card">
+  <h3>Why this screen exists</h3>
+  <p class="mo-note">Most undeliverable CRM email was never a mail problem.
+    It was an address on the employee record that could not work: a domain
+    the CRM is not allowed to write to, a placeholder minted from the
+    employee code so a form would save, or the same mailbox on two people —
+    where whoever reads the notification first dismisses it for the other.</p>
+  <p class="mo-note">None of these appear on the Email Health screen,
+    because a message the CRM never sent leaves no row. Allowed domains:
+    {% for d in domains %}<code>@{{ d }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.</p>
+  <p class="mo-note"><a href="{{ url_prefix }}/admin/email/people/import"
+    >Import addresses from an HRMS export →</a></p>
+</div>
+
+{% if bad %}
+<div class="mo-card">
+  <h3>The list</h3>
+  <table class="mo">
+    <tr><th>Code</th><th>Name</th><th>Vertical</th><th>Address on file</th>
+      <th>Why it cannot work</th></tr>
+    {% for row in bad %}
+    <tr>
+      <td><code>{{ row.emp_code }}</code></td>
+      <td>{{ row.name or '—' }}</td>
+      <td>{{ row.vertical or '—' }}</td>
+      <td>{{ row.email or '—' }}</td>
+      <td>{{ row.reason }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="mo-note">Fix these on the employee record. They are counted
+    again in the administrators' morning report until they are fixed.</p>
+</div>
+{% else %}
+<div class="mo-card">
+  <p class="mo-note" style="margin:0">Every active employee has an address
+    the CRM can send to.</p>
+</div>
+{% endif %}
+{% endblock %}

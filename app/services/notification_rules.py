@@ -591,38 +591,49 @@ def dispatch(event, record=None, *, actor=None, detail='', escalate=False,
         if attachments is None and row.get('attach_original'):
             attachments = _original_of(record)
 
-        people = recipients_for(event, record, actor=actor,
-                                escalate=escalate, roles=roles)
+        # Who, and on which line. The matrix is still the default;
+        # `notification_policy` lets an administrator change the To
+        # and CC lists, and the standing CC and the administrators'
+        # own copy list are folded in there rather than here.
+        from app.services import notification_policy
+        plan = notification_policy.resolve(event, record, actor=actor,
+                                           escalate=escalate, roles=roles)
 
-        # Administrators copied on the events they chose, in the
-        # settings screen rather than in this file. Appended to the
-        # matrix's own recipients and de-duplicated below, so an
-        # administrator who is also the owner is told once.
-        try:
-            from app.services import admin_settings
-            people = list(people) + [
-                code for code in admin_settings.admin_recipients(event)
-                if code not in people]
-        except Exception:
-            pass
-        out = {}
-        for code in people:
-            out[code] = notify.send(
-                code,
-                kind=row['kind'],
-                title=subject,
-                body=text,
-                url=link,
-                entity_type=row['entity_type'],
-                entity_id=rid,
-                email=(row['email'] if email is None else email),
-                email_html=email_html,
-                actor=actor,
-                in_app=row['in_app'],
-                dedupe=dedupe,
-                event_key=event,
-                attachments=attachments,
-                batch_key=batch_key)
+        wants_email = row['email'] if email is None else email
+        result = notify.send_policy(
+            plan['to'], plan['cc'],
+            kind=row['kind'],
+            title=subject,
+            body=text,
+            url=link,
+            entity_type=row['entity_type'],
+            entity_id=rid,
+            email=bool(wants_email and plan['email']),
+            email_html=email_html,
+            actor=actor,
+            in_app=(row['in_app'] and plan['bell']),
+            dedupe=dedupe,
+            event_key=event,
+            attachments=attachments,
+            batch_key=batch_key,
+            policy_version=plan['version'])
+
+        # Callers written before this release read `{code: result}`
+        # and some of them check `['emailed']`. That shape is kept:
+        # the per-person entry is the bell result, with the one
+        # email's outcome folded onto every recipient of it, so an
+        # existing caller sees what it saw before.
+        out = dict(result['bell'])
+        mail = result['email']
+        emailed = bool(mail['queued'] or mail['sent'])
+        for code in plan['to'] + plan['cc']:
+            entry = out.setdefault(code, {'notified': False,
+                                          'suppressed': False,
+                                          'queued': False, 'error': None})
+            entry['emailed'] = emailed
+            entry['queued'] = bool(mail['queued'])
+            if not emailed and mail['error'] and not entry.get('error'):
+                entry['error'] = mail['error']
         return out
     except Exception:
         _logger().exception('notification dispatch failed for %r', event)

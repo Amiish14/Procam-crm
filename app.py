@@ -1790,6 +1790,18 @@ def api_create_employee():
     # Validate emp_code unique
     if Employee.query.filter_by(emp_code=d['emp_code'].upper()).first():
         return jsonify({'error': 'Employee code already exists'}), 400
+    # An address that cannot receive mail is the commonest reason a
+    # person is told nothing by the CRM, and it is invisible: a
+    # notification that was never sent leaves no row in the email log.
+    # Refused here, where somebody is looking at the form, rather than
+    # discovered weeks later.
+    from app.services import employee_email
+    verdict = employee_email.check(d.get('email'),
+                                   emp_code=(d.get('emp_code') or '').upper(),
+                                   required=False)
+    if not verdict['ok']:
+        return jsonify({'error': ' '.join(verdict['errors'])}), 400
+
     emp = Employee(
         emp_code    = d['emp_code'].upper().strip(),
         name        = d['name'].strip(),
@@ -1827,6 +1839,21 @@ def api_update_employee(eid):
     if refused:
         return refused
     d = request.get_json()
+    if 'email' in d:
+        from app.services import employee_email
+        verdict = employee_email.check(d.get('email'), emp_code=emp.emp_code,
+                                       ignore_id=emp.id, required=False)
+        if not verdict['ok']:
+            return jsonify({'error': ' '.join(verdict['errors'])}), 400
+        if verdict['warnings']:
+            # A shared departmental mailbox is sometimes what a
+            # department wants, and the CRM is not in a position to
+            # overrule it. Saved, and said.
+            body_warnings = verdict['warnings']
+        else:
+            body_warnings = []
+    else:
+        body_warnings = []
     changed = []
     for field in ('name','email','mobile','department','designation','vertical',
                   'role','is_active','is_vertical_head'):
@@ -1837,6 +1864,8 @@ def api_update_employee(eid):
     if 'industries' in d:
         emp.industries = json.dumps(d['industries'])
     body = {'ok': True}
+    if body_warnings:
+        body['warnings'] = body_warnings
     if d.get('is_active') is False or d.get('revoke_sessions'):
         emp.session_version = (emp.session_version or 0) + 1
     if d.get('reset_password'):
@@ -1852,6 +1881,16 @@ def api_update_employee(eid):
         body['temp_password'] = temp
         changed.append('password_reset')
     db.session.commit()
+    if 'vertical' in changed or 'is_vertical_head' in changed:
+        # The vertical head master and this flag answer the same
+        # question, and a person moved between verticals by hand here
+        # would otherwise leave the master naming them for a vertical
+        # they have left.
+        try:
+            from app.services import vertical_heads
+            vertical_heads.cache_clear()
+        except Exception:
+            pass
     if changed:
         app.logger.warning('employee_change action=update actor=%s target=%s '
                            'fields=%s', session.get('emp_code'),
@@ -4768,6 +4807,7 @@ def init_db():
                    'app.models.notification', 'app.models.review',
                    'app.models.mailops', 'app.models.restriction',
                    'app.models.ingest_log', 'app.models.integration',
+                   'app.models.email_admin',
                    'app.models.escalation', 'app.models.intel',
                    'app.directory.models'):
             try:
@@ -4837,6 +4877,10 @@ def init_db():
             ('leads', 'next_action',           'VARCHAR(200)'),
             ('lead_notes',    'revisions',           'TEXT'),
             ('copilot_log',   'answer',              'VARCHAR(500)'),
+            # Email admin: which recipient policy chose the addresses,
+            # and what the mail server actually said when it refused.
+            ('email_outbox',  'policy_version',      'INTEGER'),
+            ('email_outbox',  'smtp_code',           'INTEGER'),
         ]
         # Indexes for the filters nearly every page uses. Named as the
         # models declare them, so create_all on a new database and this on

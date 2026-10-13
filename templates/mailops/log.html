@@ -39,7 +39,8 @@
     <tr>
       <th style="width:30px"></th><th>When</th><th>Event</th>
       <th>Recipient</th><th>Subject</th><th>Status</th>
-      <th class="num">Tries</th><th>Error</th>
+      <th class="num">Tries</th><th class="num">SMTP</th>
+      <th class="num">Policy</th><th>Error</th>
     </tr>
     {% for r in rows %}
     <tr>
@@ -48,15 +49,23 @@
       <td style="font-size:12px;color:#6b7280;white-space:nowrap">
         {{ r.created_at|string|truncate(16, True, '') }}</td>
       <td style="font-size:12px"><code>{{ r.event_key or '—' }}</code></td>
-      <td style="font-size:12.5px">{{ r.to_addr }}</td>
+      <td style="font-size:12.5px">{{ r.to_addr }}
+        {% if r.cc_addr %}<div class="mo-note" style="margin:2px 0 0">
+          cc {{ r.cc_addr }}</div>{% endif %}</td>
       <td style="font-size:12.5px">{{ r.subject|truncate(60) }}</td>
       <td><span class="mo-pill {{ 'on' if r.status == 'sent' else 'off' }}">
         {{ r.status }}</span></td>
       <td class="num">{{ r.attempts or 0 }}</td>
+      {# The server's own reply code, and which version of the
+         recipient policy chose these addresses. The second is the
+         only way to answer "why did that go there" about an email
+         sent before the policy was last changed. #}
+      <td class="num">{{ r.smtp_code or '' }}</td>
+      <td class="num">{{ r.policy_version or '' }}</td>
       <td style="font-size:12px;color:#B91C1C">{{ r.last_error or '' }}</td>
     </tr>
     {% else %}
-    <tr><td colspan="8" class="mo-note">
+    <tr><td colspan="10" class="mo-note">
       Nothing has been queued yet.</td></tr>
     {% endfor %}
   </table>

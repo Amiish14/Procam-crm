@@ -39,7 +39,7 @@ def main():
     with app.app_context():
         if args.status:
             report = {'health': outbox.health(), 'leases': leases.status(),
-                      'flags': dict((n, s) for n, _d, s in flags.all_flags())}
+                      'flags': dict((n, s) for n, _d, s, _src in flags.all_flags())}
             if args.json:
                 print(json.dumps(report, indent=2, default=str))
             else:

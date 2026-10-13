@@ -40,6 +40,17 @@ DEFAULTS = {
     'reopen_stage': (
         'RFQ Generated', 'What a lead becomes when an enquiry arrives '
                          'against it after it was closed.'),
+    'email_max_per_minute': (
+        20, 'How many emails a minute the queue may send. Office 365 '
+            'throttles a mailbox at thirty. 0 means no limit.'),
+    'always_copy': (
+        ['DIR12010'], 'Employees copied (CC) on every CRM notification '
+                      'email. Kept small — this is a CC on everything.'),
+    'always_copy_enabled': (
+        True, 'Turn the standing CC off without losing the list.'),
+    'allowed_email_domains': (
+        [], 'Domains an employee address may use, beyond Procam\'s own. '
+            'Empty means Procam domains only.'),
     'weekly_pack_recipients': (
         [], 'Extra people on the Thursday review pack, beyond the '
             'vertical heads.'),

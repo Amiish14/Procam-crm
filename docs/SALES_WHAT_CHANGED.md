@@ -13,6 +13,23 @@ email off entirely and keep the bell, batch it so several arrive
 together, set quiet hours, or mute individual notifications. Nothing
 is forced on you.
 
+## One email, with everyone who needs to know on it
+
+A notification that concerned four people used to arrive as four
+separate emails — one each, nobody on anybody else's. So two people
+would chase the same client, and a reply reached one person instead of
+the thread.
+
+It is now one email with the people who need to **act** on the To line
+and the people who are being **kept informed** on CC. You can see who
+else knows, and Reply All reaches them.
+
+Your head is on the CC where the notification calls for it. For most
+verticals that was not happening at all: the CRM held a list of four
+verticals and your leads carry nine, and the six that did not match
+had no head to copy. That is fixed, and anything still unmapped is
+reported to the administrators every morning until it is.
+
 ## Your lead list is no longer capped at 300
 
 Searching used to look at only the newest 300 leads and tell you

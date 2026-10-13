@@ -1,0 +1,109 @@
+{% extends "mailops/_shell.html" %}
+{% block title %}Recipients — Procam CRM{% endblock %}
+{% block heading %}Recipients{% endblock %}
+{% block strap %}Who is asked to act, and who is only kept informed{% endblock %}
+
+{% block body %}
+{% if saved %}<div class="mo-card" style="border-color:#86EFAC;background:#F0FDF4">
+  <p class="mo-note" style="margin:0">{{ saved }}</p></div>{% endif %}
+{% if error %}<div class="mo-card" style="border-color:#FCA5A5;background:#FEF2F2">
+  <p class="mo-note" style="margin:0">{{ error }}</p></div>{% endif %}
+
+<div class="mo-card">
+  <h3>One email, not four</h3>
+  <p class="mo-note">Everyone on the <strong>To</strong> line is being asked
+    to do something. Everyone on <strong>CC</strong> is being kept informed.
+    They arrive as one email with both lines filled, so a reply reaches the
+    thread and everybody can see who else knows — which is the thing four
+    separate emails destroy. Nobody appears twice, and nobody who is on
+    To is also on CC.</p>
+  <p class="mo-note">Blank means the built-in list is still in force. Every
+    change bumps a version number, and that version is recorded on each
+    email, so an email sent in November can still be explained in March.</p>
+</div>
+
+<div class="mo-card">
+  <h3>The standing copy</h3>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="what" value="always_copy">
+    <div class="mo-row">
+      <label><input type="checkbox" name="always_copy_enabled"
+        {% if always_on %}checked{% endif %}> Copy these people on every
+        notification email</label>
+    </div>
+    <div style="max-height:220px;overflow:auto;border:1px solid #eef0f3;
+                border-radius:10px;padding:8px">
+      {% for p in people %}
+      <label style="display:inline-block;width:280px;font-size:13px">
+        <input type="checkbox" name="always" value="{{ p.emp_code }}"
+          {% if p.emp_code in always %}checked{% endif %}>
+        {{ p.name }} <span class="mo-note">({{ p.emp_code }})</span></label>
+      {% endfor %}
+    </div>
+    <p class="mo-note">Keep this short. It is a CC on everything, and a
+      mailbox that receives everything reads nothing.</p>
+    <button type="submit" class="btn">Save the copy list</button>
+  </form>
+</div>
+
+<div class="mo-card">
+  <h3>Per event</h3>
+  <table class="mo">
+    <tr><th>Event</th><th>To</th><th>CC</th><th>Email</th><th>Bell</th>
+      <th>Version</th><th></th></tr>
+    {% for row in rows %}
+    {% set open_now = (focus == row.event) %}
+    <tr>
+      <td><code>{{ row.event }}</code><br>
+        <span class="mo-note">{{ titles.get(row.event, '') }}</span></td>
+      <td>{% if row.to_roles %}
+          {% for r in row.to_roles %}<span class="mo-pill on">{{ r }}</span>
+          {% endfor %}{% else %}<em>nobody</em>{% endif %}</td>
+      <td>{% if row.cc_roles %}
+          {% for r in row.cc_roles %}<span class="mo-pill off">{{ r }}</span>
+          {% endfor %}{% else %}—{% endif %}</td>
+      <td><span class="mo-pill {{ 'on' if row.email else 'off' }}">
+        {{ 'yes' if row.email else 'no' }}</span></td>
+      <td><span class="mo-pill {{ 'on' if row.bell else 'off' }}">
+        {{ 'yes' if row.bell else 'no' }}</span></td>
+      <td class="num">{{ row.version }}{% if row.edited %}
+        <span class="mo-note">edited</span>{% endif %}</td>
+      <td><a href="{{ url_prefix }}/admin/email/recipients?event={{ row.event }}"
+        >{{ 'Close' if open_now else 'Change' }}</a></td>
+    </tr>
+    {% if open_now %}
+    <tr><td colspan="7" style="background:#F9FAFB">
+      <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="what" value="event">
+        <input type="hidden" name="event" value="{{ row.event }}">
+        <p class="mo-note" style="margin-top:0"><strong>To</strong> — asked
+          to act</p>
+        {% for role in roles %}
+        <label style="display:inline-block;width:170px;font-size:13px">
+          <input type="checkbox" name="to" value="{{ role }}"
+            {% if role in row.to_roles %}checked{% endif %}> {{ role }}</label>
+        {% endfor %}
+        <p class="mo-note"><strong>CC</strong> — kept informed</p>
+        {% for role in roles %}
+        <label style="display:inline-block;width:170px;font-size:13px">
+          <input type="checkbox" name="cc" value="{{ role }}"
+            {% if role in row.cc_roles %}checked{% endif %}> {{ role }}</label>
+        {% endfor %}
+        <div class="mo-row" style="margin-top:12px">
+          <label><input type="checkbox" name="email_enabled"
+            {% if row.email %}checked{% endif %}> Send an email</label>
+          <label><input type="checkbox" name="bell_enabled"
+            {% if row.bell %}checked{% endif %}> Leave a bell notification</label>
+          <button type="submit" class="btn">Save</button>
+          <button type="submit" name="reset" value="1" class="btn"
+            >Back to the built-in list</button>
+        </div>
+      </form>
+    </td></tr>
+    {% endif %}
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

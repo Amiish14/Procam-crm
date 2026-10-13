@@ -133,7 +133,7 @@ def schedules_screen():
     except Exception:
         latest = []
     return render_template('mailops/schedules.html', schedules=SCHEDULES,
-                           flags=dict((n, s) for n, _d, s in flags.all_flags()),
+                           flags=dict((n, s) for n, _d, s, _src in flags.all_flags()),
                            frozen=latest,
                            week=weekly_pack.week_label())
 
@@ -429,3 +429,283 @@ def ingest_create_lead(rid):
     return jsonify(ok=bool(lead_id), lead_id=lead_id,
                    error='' if lead_id else
                    (result or {}).get('reason', 'nothing was created'))
+
+
+# ── the vertical head master ─────────────────────────────────────────
+def _may_edit_heads():
+    """Editing the master is Super Admin and Admin only.
+
+    Vertical heads can read it — they are the people most likely to
+    notice that the master names the wrong person for their own
+    vertical — and that is the whole of their access. See `_head_view`.
+    """
+    return access.is_super() or access.can('admin.email')
+
+
+def _head_view(f):
+    """Readable by an administrator or by a vertical head."""
+    @wraps(f)
+    def wrap(*a, **kw):
+        if not session.get('emp_code'):
+            return redirect(url_for('login'))
+        if _may_edit_heads():
+            return f(*a, **kw)
+        from app import Employee
+        emp = Employee.query.filter_by(emp_code=_me()).first()
+        if emp is not None and getattr(emp, 'is_vertical_head', False):
+            return f(*a, **kw)
+        return render_template('access_denied.html', need='admin.email'), 403
+    return wrap
+
+
+@bp.route('/admin/email/verticals')
+@_head_view
+def verticals_screen():
+    from app.models.email_admin import VerticalAlias, VerticalHead
+    from app.services import vertical_heads
+
+    from app import Employee
+    rows = VerticalHead.query.order_by(VerticalHead.vertical).all()
+    people = (Employee.query
+              .filter(Employee.is_active.isnot(False))
+              .order_by(Employee.name).all())
+    by_code = {p.emp_code: p for p in people}
+    return render_template(
+        'mailops/verticals.html',
+        rows=rows,
+        aliases=VerticalAlias.query.order_by(VerticalAlias.vertical,
+                                             VerticalAlias.alias).all(),
+        people=[p for p in people if (p.email or '').strip()],
+        by_code=by_code,
+        unmapped=vertical_heads.unmapped_verticals(),
+        gaps=vertical_heads.gaps(),
+        can_edit=_may_edit_heads(),
+        fallback=vertical_heads.FALLBACK_VERTICAL)
+
+
+@bp.route('/admin/email/verticals/save', methods=['POST'])
+@access.require('admin.email')
+def verticals_save():
+    from app import db
+    from app.models.email_admin import VerticalHead
+    from app.services import audit, vertical_heads
+
+    vertical = (request.form.get('vertical') or '').strip()
+    if not vertical:
+        return redirect(url_for('mailops.verticals_screen'))
+
+    row = VerticalHead.query.filter_by(vertical=vertical).first()
+    if row is None:
+        row = VerticalHead(vertical=vertical)
+        db.session.add(row)
+    was = {'head': row.head_emp_code, 'deputy': row.deputy_emp_code,
+           'active': row.active}
+    row.head_emp_code = (request.form.get('head') or '').strip().upper() or None
+    row.deputy_emp_code = ((request.form.get('deputy') or '').strip().upper()
+                           or None)
+    row.active = bool(request.form.get('active'))
+    row.note = (request.form.get('note') or '').strip()[:300] or None
+    row.updated_by = _me()
+    db.session.commit()
+    vertical_heads.cache_clear()
+    audit.record('vertical_head.changed', 'VerticalHead', vertical,
+                 old=was,
+                 new={'head': row.head_emp_code,
+                      'deputy': row.deputy_emp_code, 'active': row.active},
+                 actor=_me(), reason='changed in Admin → Email → Verticals')
+    # The old flag and the new master must not disagree: code written
+    # before this table reads `employees.is_vertical_head`.
+    vertical_heads.sync_employee_flags(actor=_me())
+    return redirect(url_for('mailops.verticals_screen'))
+
+
+@bp.route('/admin/email/verticals/alias', methods=['POST'])
+@access.require('admin.email')
+def verticals_alias():
+    from app import db
+    from app.models.email_admin import VerticalAlias
+    from app.services import audit, vertical_heads
+
+    alias = (request.form.get('alias') or '').strip()
+    vertical = (request.form.get('maps_to') or '').strip()
+    remove = request.form.get('remove')
+
+    if alias and remove:
+        row = VerticalAlias.query.filter_by(alias=alias).first()
+        if row is not None:
+            db.session.delete(row)
+            db.session.commit()
+            audit.record('vertical_alias.removed', 'VerticalAlias', alias,
+                         old={'vertical': vertical}, actor=_me(),
+                         reason='removed in Admin → Email → Verticals')
+    elif alias and vertical:
+        row = VerticalAlias.query.filter_by(alias=alias).first()
+        if row is None:
+            row = VerticalAlias(alias=alias)
+            db.session.add(row)
+        row.vertical = vertical
+        row.updated_by = _me()
+        db.session.commit()
+        audit.record('vertical_alias.changed', 'VerticalAlias', alias,
+                     new={'vertical': vertical}, actor=_me(),
+                     reason='mapped in Admin → Email → Verticals')
+    vertical_heads.cache_clear()
+    return redirect(url_for('mailops.verticals_screen'))
+
+
+# ── the recipient policy ─────────────────────────────────────────────
+@bp.route('/admin/email/recipients', methods=['GET', 'POST'])
+@access.require('admin.email')
+def recipients_screen():
+    """To and CC per event, and the standing copy list."""
+    from app.services import (admin_settings, notification_policy,
+                              notification_rules as rules)
+
+    saved = error = ''
+    if request.method == 'POST':
+        what = request.form.get('what') or 'event'
+        try:
+            if what == 'always_copy':
+                admin_settings.save(
+                    'always_copy',
+                    [c.strip().upper()
+                     for c in request.form.getlist('always') if c.strip()],
+                    actor=_me())
+                admin_settings.save(
+                    'always_copy_enabled',
+                    bool(request.form.get('always_copy_enabled')),
+                    actor=_me())
+                saved = 'The standing copy list is saved.'
+            else:
+                event = (request.form.get('event') or '').strip()
+                if request.form.get('reset'):
+                    notification_policy.reset(event, actor=_me())
+                    saved = f'{event} is back to the built-in list.'
+                else:
+                    version = notification_policy.save(
+                        event,
+                        to_roles=[r for r in request.form.getlist('to') if r],
+                        cc_roles=[r for r in request.form.getlist('cc') if r],
+                        email_enabled=bool(request.form.get('email_enabled')),
+                        bell_enabled=bool(request.form.get('bell_enabled')),
+                        actor=_me())
+                    saved = f'{event} saved — policy version {version}.'
+        except ValueError as exc:
+            error = str(exc)
+
+    from app import Employee
+    people = (Employee.query
+              .filter(Employee.is_active.isnot(False))
+              .order_by(Employee.name).all())
+    return render_template(
+        'mailops/recipients.html',
+        rows=notification_policy.rows(),
+        roles=rules.ROLES,
+        titles=dict((r['event'], r['title']) for r in rules.matrix_rows()),
+        people=[p for p in people if (p.email or '').strip()],
+        always=set(notification_policy.always_copy()),
+        always_on=admin_settings.get('always_copy_enabled'),
+        saved=saved, error=error,
+        focus=(request.args.get('event') or '').strip())
+
+
+# ── the switches ─────────────────────────────────────────────────────
+@bp.route('/admin/email/switches', methods=['GET', 'POST'])
+@access.require('admin.email')
+def switches_screen():
+    """Feature flags and the throttle, changeable without a restart."""
+    from app.services import admin_settings, flags
+
+    saved = ''
+    if request.method == 'POST':
+        what = request.form.get('what') or 'flags'
+        if what == 'throttle':
+            raw = (request.form.get('email_max_per_minute') or '').strip()
+            try:
+                admin_settings.save('email_max_per_minute', int(raw),
+                                    actor=_me())
+                saved = 'The throttle is saved.'
+            except ValueError:
+                saved = 'That is not a number — the throttle is unchanged.'
+        else:
+            wanted = set(request.form.getlist('flag'))
+            for name in flags.NAMES:
+                if request.form.get('clear_' + name):
+                    flags.clear(name, actor=_me())
+                    continue
+                flags.set(name, name in wanted, actor=_me())
+            saved = 'The switches are saved — no restart needed.'
+
+    from app.services import outbox
+    return render_template(
+        'mailops/switches.html', flags=flags.all_flags(), saved=saved,
+        kill_switch=flags.KILL_SWITCH,
+        throttle=admin_settings.get('email_max_per_minute'),
+        sent_last_minute=outbox.sent_in_last_minute(),
+        descriptions=dict((k, d) for k, (_v, d)
+                          in admin_settings.DEFAULTS.items()))
+
+
+# ── employee addresses ───────────────────────────────────────────────
+@bp.route('/admin/email/people')
+@access.require('admin.email')
+def people_screen():
+    """Who cannot receive CRM mail, and why."""
+    from app.services import employee_email
+
+    return render_template(
+        'mailops/people.html',
+        bad=employee_email.unreachable(),
+        domains=employee_email.allowed_domains())
+
+
+@bp.route('/admin/email/people/import', methods=['GET', 'POST'])
+@access.require('admin.email')
+def people_import():
+    """Preview an HRMS export, then apply only what it changes."""
+    import json
+    import os
+    import tempfile
+
+    from app.services import employee_email
+
+    plan, problem, report = [], '', None
+    if request.method == 'POST' and request.form.get('confirm'):
+        # The plan the person looked at, returned by the form, so what
+        # is applied is what was shown — not a second read of a file
+        # that may have been replaced in between.
+        try:
+            plan = json.loads(request.form.get('plan') or '[]')
+        except Exception:
+            plan = []
+        report = employee_email.apply_plan(plan, actor=_me())
+        plan = []
+    elif request.method == 'POST':
+        upload = request.files.get('file')
+        if upload is None or not (upload.filename or '').strip():
+            problem = 'Choose a CSV or XLSX file first.'
+        else:
+            suffix = os.path.splitext(upload.filename)[1][:10] or '.csv'
+            handle = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            try:
+                upload.save(handle.name)
+                handle.close()
+                plan, problem = employee_email.preview(handle.name)
+            finally:
+                try:
+                    os.unlink(handle.name)
+                except OSError:
+                    pass
+
+    import json as _json
+    return render_template('mailops/people_import.html', plan=plan,
+                           plan_json=_json.dumps(plan), problem=problem,
+                           report=report,
+                           counts=_count_actions(plan))
+
+
+def _count_actions(plan):
+    out = {}
+    for item in (plan or []):
+        out[item.get('action')] = out.get(item.get('action'), 0) + 1
+    return out

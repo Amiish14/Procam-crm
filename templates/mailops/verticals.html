@@ -1,0 +1,155 @@
+{% extends "mailops/_shell.html" %}
+{% block title %}Vertical heads — Procam CRM{% endblock %}
+{% block heading %}Vertical heads{% endblock %}
+{% block strap %}Whose vertical each one is, and which of the names on a
+lead means which vertical{% endblock %}
+
+{% block body %}
+{% if not can_edit %}
+<p class="mo-note"><strong>You are reading this.</strong> Vertical heads can
+see the master so they can tell an administrator when it names the wrong
+person for their own vertical. Changing it needs <code>admin.email</code>.</p>
+{% endif %}
+
+{% if gaps %}
+<div class="mo-card" style="border-color:#FCA5A5;background:#FEF2F2">
+  <h3>No head named</h3>
+  <p class="mo-note">Nobody is copied as the head for
+    {% for v in gaps %}<strong>{{ v }}</strong>{% if not loop.last %}, {% endif %}{% endfor %}.
+    Notifications for these verticals reach the owner and nobody above them.</p>
+</div>
+{% endif %}
+
+<div class="mo-card">
+  <h3>The master</h3>
+  {# A form cannot wrap table rows — the browser hoists it out of the
+     table and the Save button then submits an empty form, which is a
+     dead button that looks alive. The forms live outside the table and
+     each control points at its own with the HTML form attribute. #}
+  {% if can_edit %}
+    {% for row in rows %}
+    <form id="vh-{{ loop.index }}" method="post"
+          action="{{ url_prefix }}/admin/email/verticals/save">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="vertical" value="{{ row.vertical }}">
+    </form>
+    {% endfor %}
+  {% endif %}
+  <table class="mo">
+    <tr><th>Vertical</th><th>Head</th><th>Deputy</th><th>Active</th>
+      <th>Note</th>{% if can_edit %}<th></th>{% endif %}</tr>
+    {% for row in rows %}
+    {% set fid = 'vh-' ~ loop.index %}
+    <tr>
+      <td><strong>{{ row.vertical }}</strong></td>
+      {% if can_edit %}
+        <td>
+          <select name="head" form="{{ fid }}">
+            <option value="">— nobody —</option>
+            {% for p in people %}
+            <option value="{{ p.emp_code }}"
+              {% if p.emp_code == row.head_emp_code %}selected{% endif %}>
+              {{ p.name }} ({{ p.emp_code }})</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td>
+          <select name="deputy" form="{{ fid }}">
+            <option value="">— nobody —</option>
+            {% for p in people %}
+            <option value="{{ p.emp_code }}"
+              {% if p.emp_code == row.deputy_emp_code %}selected{% endif %}>
+              {{ p.name }} ({{ p.emp_code }})</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td><input type="checkbox" name="active" form="{{ fid }}"
+             {% if row.active %}checked{% endif %}></td>
+        <td><input type="text" name="note" form="{{ fid }}"
+             value="{{ row.note or '' }}" style="width:200px"
+             maxlength="300"></td>
+        <td><button type="submit" form="{{ fid }}" class="btn">Save</button></td>
+      {% else %}
+        <td>{% if row.head_emp_code %}
+            {{ by_code[row.head_emp_code].name if row.head_emp_code in by_code
+               else row.head_emp_code }}
+            <span class="mo-note">({{ row.head_emp_code }})</span>
+            {% else %}<em>nobody</em>{% endif %}</td>
+        <td>{% if row.deputy_emp_code %}
+            {{ by_code[row.deputy_emp_code].name if row.deputy_emp_code in by_code
+               else row.deputy_emp_code }}
+            {% else %}—{% endif %}</td>
+        <td><span class="mo-pill {{ 'on' if row.active else 'off' }}">
+            {{ 'yes' if row.active else 'no' }}</span></td>
+        <td>{{ row.note or '' }}</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="mo-note">A vertical with no match anywhere falls back to
+    <strong>{{ fallback }}</strong>, so somebody senior is copied rather
+    than nobody. The head is also written back to the employee record's
+    own vertical-head flag, which older screens and the escalation ladder
+    still read.</p>
+</div>
+
+<div class="mo-card">
+  <h3>What the names on a lead mean</h3>
+  <p class="mo-note">Leads carry nine vertical names and the employee master
+    holds four. An unmapped name has no head, so the head is copied on
+    nothing — which is invisible until somebody asks why they never heard
+    about a job in their own vertical.</p>
+  <table class="mo">
+    <tr><th>Name on the record</th><th>Means</th>
+      {% if can_edit %}<th></th>{% endif %}</tr>
+    {% for a in aliases %}
+    <tr>
+      <td><code>{{ a.alias }}</code></td>
+      <td>{{ a.vertical }}</td>
+      {% if can_edit %}
+      <td>
+        <form method="post" action="{{ url_prefix }}/admin/email/verticals/alias"
+              style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="alias" value="{{ a.alias }}">
+          <input type="hidden" name="maps_to" value="{{ a.vertical }}">
+          <button type="submit" name="remove" value="1" class="btn">Remove</button>
+        </form>
+      </td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </table>
+
+  {% if can_edit %}
+  <form method="post" action="{{ url_prefix }}/admin/email/verticals/alias"
+        class="mo-row" style="margin-top:12px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Name on the record
+      <input type="text" name="alias" required maxlength="80"></label>
+    <label>means
+      <select name="maps_to" required>
+        {% for row in rows %}
+        <option value="{{ row.vertical }}">{{ row.vertical }}</option>
+        {% endfor %}
+      </select></label>
+    <button type="submit" class="btn">Map it</button>
+  </form>
+  {% endif %}
+</div>
+
+{% if unmapped %}
+<div class="mo-card" style="border-color:#FCD34D;background:#FFFBEB">
+  <h3>Names in use that map to nothing</h3>
+  <table class="mo">
+    <tr><th>Name on the record</th><th class="num">Records</th></tr>
+    {% for name, count in unmapped %}
+    <tr><td><code>{{ name }}</code></td><td class="num">{{ count }}</td></tr>
+    {% endfor %}
+  </table>
+  <p class="mo-note">Each of these is a lead or an account whose head is
+    copied on nothing. They are listed again in the administrators'
+    morning report until they are mapped.</p>
+</div>
+{% endif %}
+{% endblock %}

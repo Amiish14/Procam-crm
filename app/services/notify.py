@@ -307,3 +307,155 @@ def _plain_html(title, body, url):
     return (f'<div style="font-family:Arial,sans-serif;font-size:14px;'
             f'color:#111"><p style="font-weight:600;font-size:16px">'
             f'{esc(title)}</p><p>{esc(body)}</p>{link}</div>')
+
+
+# ── one email, several people ────────────────────────────────────────
+def addresses_for(user_codes, *, event_key=None):
+    """(addresses, problems) for a list of employee codes.
+
+    `problems` is [(code, reason)] — no address on file, not an active
+    employee, muted this event. All three are ordinary outcomes that
+    an administrator should be able to see, which is why they are
+    returned rather than logged and dropped.
+    """
+    from app import Employee
+    from app.services import notify_prefs
+
+    addresses, problems = [], []
+    for code in dict.fromkeys(c for c in (user_codes or []) if c):
+        code = code.strip().upper()
+        emp = Employee.query.filter_by(emp_code=code).first()
+        if emp is None:
+            problems.append((code, 'not an employee on file'))
+            continue
+        if emp.is_active is False:
+            problems.append((code, 'no longer active'))
+            continue
+        address = (getattr(emp, 'email', '') or '').strip()
+        if not address:
+            problems.append((code, 'no email address on file'))
+            continue
+        if event_key and not notify_prefs.wants(code, event_key):
+            problems.append((code, 'has muted this notification'))
+            continue
+        if address not in addresses:
+            addresses.append(address)
+    return addresses, problems
+
+
+def send_policy(to_codes, cc_codes=(), *, kind, title, body='', url=None,
+                entity_type=None, entity_id=None, email=False,
+                email_html=None, actor=None, dedupe=True, in_app=True,
+                event_key=None, attachments=None, batch_key=None,
+                urgent=None, policy_version=None):
+    """Tell several people about one thing, as one email.
+
+    The bell is per person, because a notification is read and
+    dismissed by one person. The email is not: it goes out once, with
+    everybody on the To line and the CC list, so that
+
+        - a reply reaches the thread rather than one recipient,
+        - everyone can see who else knows, which is the thing four
+          separate emails destroy, and
+        - the four emails are one email.
+
+    Returns {'bell': {code: result}, 'email': {...}}. Never raises.
+    """
+    to_codes = [c.strip().upper() for c in (to_codes or []) if c and c.strip()]
+    cc_codes = [c.strip().upper() for c in (cc_codes or []) if c and c.strip()]
+    cc_codes = [c for c in cc_codes if c not in to_codes]
+
+    out = {'bell': {}, 'email': {'queued': False, 'sent': False,
+                                 'to': [], 'cc': [], 'problems': [],
+                                 'error': None}}
+
+    # The bell row for everyone who is told at all — a person on the
+    # CC line is being kept informed, and the place the CRM keeps
+    # people informed is the bell.
+    if in_app:
+        for code in to_codes + cc_codes:
+            out['bell'][code] = send(
+                code, kind=kind, title=title, body=body, url=url,
+                entity_type=entity_type, entity_id=entity_id,
+                email=False, actor=actor, dedupe=dedupe, in_app=True,
+                event_key=event_key)
+
+    if not email:
+        return out
+
+    mode = _mode()
+    if mode is not None:
+        # Inside a bulk run or a backfill. `send` above has already
+        # collected the lines for the summary; there is nothing to
+        # email now.
+        out['email']['error'] = 'collected into a summary'
+        return out
+
+    try:
+        to_addr, to_problems = addresses_for(to_codes, event_key=event_key)
+        cc_addr, cc_problems = addresses_for(cc_codes, event_key=event_key)
+        cc_addr = [a for a in cc_addr if a not in to_addr]
+        out['email']['to'] = to_addr
+        out['email']['cc'] = cc_addr
+        out['email']['problems'] = to_problems + cc_problems
+
+        if not to_addr:
+            # Everybody on the To line is unreachable. Promoting a CC
+            # recipient would send a client-facing document to
+            # somebody who was only being kept informed, so the
+            # message is not sent and the reason is recorded.
+            out['email']['error'] = ('no reachable recipient on the To line'
+                                     if (to_codes or cc_codes)
+                                     else 'no recipients')
+            return out
+
+        html = email_html or _plain_html(title, body, url)
+        from app.services import flags
+        if flags.on('FEATURE_EMAIL_NOTIFY'):
+            from app.services import notify_prefs, outbox
+
+            # One email cannot honour four different sets of quiet
+            # hours. It waits only if everybody on it is in theirs,
+            # and then only until the first of them is up.
+            when, _why = notify_prefs.release_at_for_all(
+                to_codes, event_key=event_key or kind, urgent=urgent)
+
+            row = outbox.enqueue(
+                to=to_addr, subject=title, html=html, text=body or None,
+                cc=cc_addr or None,
+                dedupe_key=_dedupe_key(','.join(to_codes),
+                                       event_key or kind, entity_type,
+                                       entity_id),
+                event_key=event_key or kind,
+                user_code=(to_codes[0] if len(to_codes) == 1 else None),
+                attachments=attachments, entity_type=entity_type,
+                entity_id=entity_id, batch_key=batch_key, urgent=urgent,
+                not_before=when,
+                policy_version=policy_version)
+            out['email']['queued'] = row is not None
+            if row is None:
+                out['email']['error'] = ('already queued, muted, or not an '
+                                         'internal address')
+        else:
+            from app.services import mailer
+            files = None
+            if attachments:
+                from app.services import outbox
+                files = outbox.resolve_attachments(attachments) or None
+            extra = {'attachments': files} if files else {}
+            if cc_addr:
+                extra['cc'] = cc_addr
+            result = mailer.send_detail(to_addr, title, html, **extra)
+            # A test double, and any caller that wrapped the transport
+            # before this release, returns a bare bool. Accept both.
+            if isinstance(result, dict):
+                ok, why = bool(result.get('ok')), result.get('error')
+            else:
+                ok, why = bool(result), None
+            out['email']['sent'] = ok
+            if not ok:
+                out['email']['error'] = why or 'the mail server refused it'
+    except Exception as exc:                                  # noqa: BLE001
+        _logger().exception('could not send a policy email for %r', event_key)
+        out['email']['error'] = str(exc)[:200]
+    return out

@@ -88,6 +88,88 @@
   </div>
 {% endif %}
 
+{% if r.failed_mail %}
+  {{ bits.heading('Email that did not arrive, and why') }}
+  <table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+    {% for row in r.failed_mail %}
+    <tr>
+      <td style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">
+        <strong>{{ row.subject or '(no subject)' }}</strong>
+        <div style="color:#8A857F;font-size:11.5px;">
+          {{ row.to }}{% if row.code %} &middot; SMTP {{ row.code }}{% endif %}
+          &middot; {{ row.reason }}</div>
+      </td>
+      <td align="right" style="padding:6px 0;border-top:1px solid #EFEDEB;
+                 white-space:nowrap;font-size:11.5px;color:#8A857F;">
+        {{ row.attempts }} tr{{ 'y' if row.attempts == 1 else 'ies' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div style="font-size:11.5px;color:#8A857F;margin-top:6px;">
+    The reason is what the mail server itself said. A 5xx code means the
+    message will never be accepted and was not retried &mdash; the address
+    is the thing to fix, not the queue.
+  </div>
+{% endif %}
+
+{% if r.bad_emails %}
+  {{ bits.heading('People who cannot receive CRM mail') }}
+  <table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+    {% for row in r.bad_emails %}
+    <tr>
+      <td style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">
+        <strong>{{ row.name or row.emp_code }}</strong>
+        <span style="color:#8A857F;font-size:11.5px;">({{ row.emp_code }})</span>
+        <div style="color:#8A857F;font-size:11.5px;">
+          {{ row.email or 'no address on file' }} &middot; {{ row.reason }}</div>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div style="font-size:11.5px;color:#8A857F;margin-top:6px;">
+    {% if r.bad_emails_total > r.bad_emails|length %}
+    {{ r.bad_emails_total }} in all; the first {{ r.bad_emails|length }} are
+    listed.
+    {% endif %}
+    Nothing the CRM sends reaches these people, and nothing appears in the
+    email log to say so &mdash; a message that was never sent leaves no
+    row. Fix the address on the employee record.
+  </div>
+{% endif %}
+
+{% if r.unmapped_verticals or r.head_gaps %}
+  {{ bits.heading('Verticals with nobody above the owner') }}
+  {% if r.head_gaps %}
+  <div style="font-size:13px;margin-bottom:8px;">
+    No head is named for
+    {% for v in r.head_gaps %}<strong>{{ v }}</strong>{% if not loop.last %},
+    {% endif %}{% endfor %}.
+  </div>
+  {% endif %}
+  {% if r.unmapped_verticals %}
+  <table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+    {% for name, count in r.unmapped_verticals %}
+    <tr>
+      <td style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">
+        <strong>{{ name }}</strong></td>
+      <td align="right" style="padding:6px 0;border-top:1px solid #EFEDEB;
+                 white-space:nowrap;font-size:11.5px;color:#8A857F;">
+        {{ count }} record{{ '' if count == 1 else 's' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <div style="font-size:11.5px;color:#8A857F;margin-top:6px;">
+    {% if r.unmapped_verticals_total > r.unmapped_verticals|length %}
+    {{ r.unmapped_verticals_total }} in all; the first
+    {{ r.unmapped_verticals|length }} are listed.
+    {% endif %}
+    These names appear on live records and map to no managed vertical, so
+    the head is copied on nothing for them. Map each one in
+    Admin &rarr; Email &rarr; Vertical heads.
+  </div>
+{% endif %}
+
 {% endif %}
 {% endblock %}
 

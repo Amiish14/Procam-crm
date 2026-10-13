@@ -214,8 +214,12 @@ def test_dispatch_emails_only_where_the_row_says_so(world, no_mail):
                         detail='Quoted → Under Negotiation.')
         assert no_mail == [], 'a silent row sent an email'
         nrules.dispatch('lead.high_value', lead, detail='Big one.')
-    assert [to for to, _s in no_mail] == [f'{REP.lower()}@notify.invalid',
-                                          f'{HEAD.lower()}@notify.invalid']
+    # One message, both recipients on it. Two separate emails was the
+    # old behaviour and the reason nobody could see who else knew.
+    assert len(no_mail) == 1
+    to, _subject = no_mail[0]
+    assert sorted(to) == sorted([f'{REP.lower()}@notify.invalid',
+                                 f'{HEAD.lower()}@notify.invalid'])
 
 
 def test_an_escalated_message_says_that_it_is_one(world, no_mail):
@@ -256,24 +260,26 @@ def test_notify_enabled_off_stops_the_email_and_nothing_else(world,
         assert not out[REP]['emailed']
 
 
-def test_one_bad_recipient_does_not_cost_the_others_theirs(world,
-                                                           monkeypatch):
+def test_the_bell_survives_a_mail_failure_for_everyone(world, monkeypatch):
+    """The recipients of one event now share one email, so a transport
+    failure costs all of them that email rather than one of them — the
+    trade for a real CC that shows who else knows. The retry is what
+    covers it, and in the meantime the bell has rung for everybody,
+    which is the part that must not depend on the mail server.
+    """
     from email_ingest import notifier
-    sent = []
 
-    def flaky(to, subject, html, cc=None):
-        if to.startswith(REP.lower()):
-            raise RuntimeError('the mail server fell over')
-        sent.append(to)
-        return True
+    def falls_over(to, subject, html, cc=None):
+        raise RuntimeError('the mail server fell over')
 
-    monkeypatch.setattr(notifier, 'send', flaky)
+    monkeypatch.setattr(notifier, 'send', falls_over)
     with flask_app.app_context():
         out = nrules.dispatch('lead.high_value', _lead(world),
                               detail='Big one.')
-    assert out[REP]['error'] and not out[REP]['emailed']
-    assert out[REP]['notified'], 'the bell must survive a mail failure'
-    assert out[HEAD]['emailed'] and sent == [f'{HEAD.lower()}@notify.invalid']
+    for code in (REP, HEAD):
+        assert out[code]['notified'], 'the bell must survive a mail failure'
+        assert not out[code]['emailed']
+        assert out[code]['error']
 
 
 def test_a_dispatch_never_raises_at_the_call_site(world, monkeypatch):

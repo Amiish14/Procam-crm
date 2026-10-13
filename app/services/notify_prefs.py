@@ -169,3 +169,34 @@ def release_at(user_code, *, event_key='', now=None, urgent=None):
         when = morning - IST
         why = 'quiet hours'
     return when, why
+
+
+def release_at_for_all(user_codes, *, event_key='', now=None, urgent=None):
+    """When one shared email may go out. Returns (when, why).
+
+    A notification with four recipients is now one email, and one
+    email cannot honour four different sets of quiet hours. The rule
+    that is honest about that: it waits only if *everybody* on it is
+    in their quiet hours, and then only until the first of them is
+    available. Anyone who is awake gets it now, which is what they
+    asked for by not setting quiet hours.
+
+    The alternative — holding it for the last person's morning —
+    would make one person's preference delay everyone else's work,
+    and the alternative to that — sending regardless — would make the
+    setting a lie for the person who set it.
+    """
+    now = now or datetime.utcnow()
+    codes = [c for c in (user_codes or []) if (c or '').strip()]
+    if not codes:
+        return now, 'no recipient preferences'
+
+    times = []
+    for code in codes:
+        when, why = release_at(code, event_key=event_key, now=now,
+                              urgent=urgent)
+        if when <= now:
+            return now, f'{code} is available now'
+        times.append((when, why, code))
+    when, why, code = min(times, key=lambda t: t[0])
+    return when, f'{why} — the earliest of {len(codes)} recipients ({code})'

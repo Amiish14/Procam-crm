@@ -45,8 +45,9 @@
 <div class="mo-card">
   <h3>Flags</h3>
   <table class="mo">
-    {% for name, note, state in flags %}
+    {% for name, note, state, source in flags %}
     <tr><td style="width:230px"><code>{{ name }}</code></td><td>{{ note }}</td>
+      <td style="width:90px" class="mo-note">{{ source }}</td>
       <td style="width:70px"><span class="mo-pill {{ 'on' if state else 'off' }}">
         {{ 'on' if state else 'off' }}</span></td></tr>
     {% endfor %}

@@ -166,12 +166,20 @@ def _address(emp_code):
     return (getattr(emp, 'email', '') or '').strip()
 
 
-def _one(key, emp_code, *, dry_run, send_empty, enabled, cache=None):
+def _one(key, emp_code, *, dry_run, send_empty, enabled, cache=None,
+         position=0):
     """Build and send one person's report. Returns a summary row.
 
     `cache` holds the company-wide report so the monthly run reads the
     whole database once rather than once per recipient — and so every
     recipient is sent the same figures.
+
+    `position` is this recipient's place in the run, used to spread the
+    queue across the throttle. The morning brief goes to everyone who
+    owns work — around a hundred and thirty people — and queueing all
+    of it for the same instant means the throttle holds most of it and
+    pushes it back two minutes at a time, which arrives later than
+    simply spacing it out would.
     """
     from app.services import digests, notify_prefs
 
@@ -233,11 +241,23 @@ def _one(key, emp_code, *, dry_run, send_empty, enabled, cache=None):
         # and a report that fails should retry rather than vanish.
         # `urgent` because the timer already chose the hour — holding a
         # 08:30 brief for a batching window would deliver it at 08:45.
+        from datetime import datetime, timedelta
+
         from app.services import outbox
+
+        # One minute's worth per minute, matching what the worker will
+        # actually send, so the queue drains in one pass each minute
+        # instead of being refused and backed off.
+        per_minute = outbox.max_per_minute()
+        offset = (int(position) // per_minute) if per_minute > 0 else 0
+        not_before = (datetime.utcnow() + timedelta(minutes=offset)
+                      if offset else None)
+
         queued = outbox.enqueue(
             to=address, subject=subject, html=html,
             dedupe_key=f'report:{key}:{emp_code}:{report.get("date", "")}',
-            event_key=f'report.{key}', user_code=emp_code, urgent=True)
+            event_key=f'report.{key}', user_code=emp_code, urgent=True,
+            not_before=not_before)
         row['status'] = 'queued' if queued else 'skipped'
         if not queued:
             row['detail'] = 'already queued for today, or not internal'
@@ -295,11 +315,11 @@ def run(key, *, only=None, dry_run=False, send_empty=False, quiet=False):
         if not people:
             print(f'{key}: nobody to send to.')
             return 0
-        for emp_code in people:
+        for position, emp_code in enumerate(people):
             try:
                 rows.append(_one(key, emp_code, dry_run=dry_run,
                                  send_empty=send_empty, enabled=enabled,
-                                 cache=cache))
+                                 cache=cache, position=position))
             except Exception as exc:                          # noqa: BLE001
                 # One person's report failing is one person's problem.
                 # The traceback goes to the journal; the run continues.

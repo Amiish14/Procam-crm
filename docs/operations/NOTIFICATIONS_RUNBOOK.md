@@ -275,3 +275,90 @@ In increasing order of severity. The first three lose nothing.
   `CRM_EMAIL_ALLOW_EXTERNAL`.
 - It does not change the intake classification, the pipeline stages, or
   the output of any report that existed before it.
+
+---
+
+## 10. Email administration (added 12 October 2026)
+
+See `docs/operations/RELEASE_2026_10_EMAIL_ADMIN.md` for what changed
+and why. What an operator needs at 3 a.m.:
+
+### Stop all outbound email, now
+
+`Admin → Email → Switches` → tick `EMAIL_KILL_SWITCH` → Save. It takes
+effect within ten seconds on every worker; no restart.
+
+Nothing is lost. The worker claims no rows while it is on, so nothing
+is marked, nothing spends an attempt, and turning it off releases the
+whole queue intact.
+
+If the screen is unreachable, `.env` still works and still wins:
+
+```
+# /var/www/procam-crm/.env
+EMAIL_KILL_SWITCH=true
+```
+
+```
+sudo systemctl restart procam-crm
+```
+
+The switch is on if **either** source says so, so a database row cannot
+turn off a kill switch that `.env` has on. To release it, remove the
+`.env` line *and* untick it on the screen.
+
+### A person says they get no CRM email
+
+In order, because this is the order of likelihood:
+
+1. `Admin → Email → People`. If they are listed, the address on their
+   employee record cannot receive mail and nothing was ever sent. Fix
+   the address. Nothing will be in the email log, because a message
+   that was never sent leaves no row.
+2. `Admin → Email → Recipients`, find the event. Are they in a role on
+   the To or CC list? A lead's owner is `owner`; their head comes from
+   `Admin → Email → Vertical heads`, and a vertical that maps to
+   nothing has no head.
+3. `Admin → Email → Log`, search their address. A row with an SMTP code
+   in the 500s was refused permanently and not retried — the code and
+   the server's own words are on the row.
+4. `/me/notifications` as them: they may have muted the event, or be in
+   quiet hours.
+
+### Mail is queueing and not sending
+
+```
+cd /var/www/procam-crm
+.venv/bin/python scripts/outbox_worker.py --status
+```
+
+- `skipped: EMAIL_KILL_SWITCH is on` — see above.
+- `skipped: … a minute already sent — holding until the next pass` —
+  the throttle. Normal after a report run; the queue drains at
+  `EMAIL_MAX_PER_MINUTE` a minute. Raise it on the Switches screen if
+  the mailbox can take it; 30 is where Office 365 starts refusing.
+- `another worker holds the lease` — normal. If it persists for more
+  than five minutes, see *A stuck lease* in §7.
+
+### A vertical head is not being copied
+
+`Admin → Email → Vertical heads`.
+
+- Red box at the top: the vertical has a row and nobody in it. Name
+  somebody.
+- Yellow box at the bottom: live records carry a vertical name that
+  maps to nothing. Map it to one of the managed verticals. Until then
+  those records fall back to **Management**, so a notification still
+  reaches somebody senior rather than nobody.
+
+Saving on this screen also writes `employees.is_vertical_head`, which
+the weekly head report and the escalation ladder still read. Do not
+edit that flag by hand on the employee record and expect this screen to
+follow — it is the other way round.
+
+### "Why did that email go to those people?"
+
+The email log shows the **policy version** on each row. Compare it with
+the version on `Admin → Email → Recipients`: if they differ, the policy
+has been changed since, and the audit trail
+(`notification_policy.changed`) holds the before and after.

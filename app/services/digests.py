@@ -521,6 +521,62 @@ def admin_daily(emp_code=None, *, today=None):
     except Exception:
         pass
 
+    # Three configuration problems that look like nothing from the
+    # outside. A notification with no recipient, an address the server
+    # refuses and a mail that failed four hours ago all produce the
+    # same visible result — silence — and none of them appear in a
+    # lead list, so they are put in front of the one person who can
+    # fix them.
+    unmapped, unmapped_total = [], 0
+    try:
+        from app.services import vertical_heads
+        found = vertical_heads.unmapped_verticals()
+        unmapped_total = len(found)
+        unmapped = found[:MAX_PER_SECTION]
+    except Exception:
+        pass
+
+    head_gaps = []
+    try:
+        from app.services import vertical_heads
+        head_gaps = vertical_heads.gaps()
+    except Exception:
+        pass
+
+    bad_emails, bad_emails_total = [], 0
+    try:
+        from app.services import employee_email
+        # Counted in full, listed up to the section limit. A report
+        # that silently shows the first few alphabetically reads as
+        # "these are the ones", and the fortieth is the one nobody
+        # ever fixes.
+        found = employee_email.unreachable(limit=500)
+        bad_emails_total = len(found)
+        bad_emails = found[:MAX_PER_SECTION]
+    except Exception:
+        pass
+
+    failed_mail = []
+    try:
+        from app.models.mailops import EmailOutbox
+        # `created_at`, because the table has no updated_at — a row
+        # that failed this morning was queued this morning, and a row
+        # queued yesterday that is still failing is on the Email
+        # Health screen rather than in a 24-hour report.
+        rows = (EmailOutbox.query
+                .filter(EmailOutbox.status == 'failed',
+                        EmailOutbox.created_at >= since)
+                .order_by(EmailOutbox.created_at.desc())
+                .limit(MAX_PER_SECTION).all())
+        failed_mail = [{'to': r.to_addr or '', 'subject': r.subject or '',
+                        'attempts': r.attempts or 0,
+                        'code': r.smtp_code or '',
+                        'reason': (r.last_error
+                                   or 'the mail server refused it')}
+                       for r in rows]
+    except Exception:
+        pass
+
     return {
         'report': 'admin_daily',
         'template': 'email/admin_daily.html',
@@ -538,8 +594,15 @@ def admin_daily(emp_code=None, *, today=None):
         'errored': [e.to_dict() for e in errored],
         'overdue_quotes': len(overdue_quotes),
         'mail': mail_health,
+        'unmapped_verticals': unmapped,
+        'unmapped_verticals_total': unmapped_total,
+        'head_gaps': head_gaps,
+        'bad_emails': bad_emails,
+        'bad_emails_total': bad_emails_total,
+        'failed_mail': failed_mail,
         'empty': not (new_leads or unassigned or skipped or errored
-                      or needs_review),
+                      or needs_review or unmapped or head_gaps
+                      or bad_emails or failed_mail),
         'link': '/admin/mail-ingest',
     }
 

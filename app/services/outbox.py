@@ -41,8 +41,18 @@ log = logging.getLogger(__name__)
 CLAIM_LIMIT = 50
 
 #: Retry back-off in minutes, by attempt number. After the last one the
-#: row is marked failed and waits for a person.
-BACKOFF_MINUTES = (2, 10, 30, 120, 360)
+#: row is marked failed and waits for a person. Five tries over just
+#: over an hour and a half: long enough to ride out a throttle or a
+#: full mailbox, short enough that a real problem is on the health
+#: screen the same morning.
+BACKOFF_MINUTES = (2, 5, 15, 30, 60)
+
+#: Messages per minute, across all workers. Office 365 throttles a
+#: mailbox at thirty a minute and answers the thirty-first with a 4.7.x
+#: — which the CRM then retried, which produced more throttling. The
+#: queue is not in a hurry; twenty leaves headroom for the mailbox's
+#: own traffic. `EMAIL_MAX_PER_MINUTE` overrides it.
+DEFAULT_MAX_PER_MINUTE = 20
 
 #: A row stuck in `sending` for longer than this was claimed by a
 #: worker that died. Returned to the queue by the next pass.
@@ -63,7 +73,7 @@ def make_key(*parts):
 def enqueue(*, to, subject, html, dedupe_key, event_key='', user_code=None,
             cc=None, text=None, attachments=None, entity_type=None,
             entity_id=None, not_before=None, batch_key=None, commit=True,
-            urgent=None):
+            urgent=None, policy_version=None):
     """Queue one email. Returns the row, or None if it was not queued.
 
     Not queued means one of: no internal recipient, the person has
@@ -109,6 +119,11 @@ def enqueue(*, to, subject, html, dedupe_key, event_key='', user_code=None,
             status='queued',
             not_before=not_before,
             batch_key=(batch_key or None),
+            #: Which version of the recipient policy chose these
+            #: addresses. Asked about months later, when the policy
+            #: has moved on and the email cannot be explained from
+            #: the current table.
+            policy_version=policy_version,
         )
         db.session.add(row)
         if commit:
@@ -186,6 +201,58 @@ def _unstick(now):
         .values(status='queued', claimed_by=None, claimed_at=None))
     db.session.commit()
     return res.rowcount or 0
+
+
+def max_per_minute():
+    """How many messages a minute the queue may send.
+
+    Database first (so it can be changed without a restart), then the
+    environment, then the default. Zero or less means no limit, which
+    is how the old behaviour is restored if the throttle is ever the
+    problem rather than the fix.
+    """
+    import os
+
+    raw = None
+    try:
+        from app.services import admin_settings
+        raw = admin_settings.get('email_max_per_minute')
+    except Exception:
+        raw = None
+    if raw in (None, ''):
+        raw = os.environ.get('EMAIL_MAX_PER_MINUTE')
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        value = DEFAULT_MAX_PER_MINUTE
+    return value
+
+
+def sent_in_last_minute(now=None):
+    """How many messages have gone out in the trailing minute.
+
+    Counted from `sent_at` rather than held in memory, because two
+    gunicorn workers and the systemd worker all send, and a limit each
+    of them counts separately is three times the limit.
+    """
+    from app.models.mailops import EmailOutbox
+
+    now = now or datetime.utcnow()
+    try:
+        return (EmailOutbox.query
+                .filter(EmailOutbox.status == 'sent',
+                        EmailOutbox.sent_at >= now - timedelta(minutes=1))
+                .count())
+    except Exception:
+        return 0
+
+
+def throttle_room(now=None, limit=None):
+    """How many more may go out right now. None means no limit."""
+    allowed = max_per_minute() if limit is None else limit
+    if allowed is None or allowed <= 0:
+        return None
+    return max(0, allowed - sent_in_last_minute(now))
 
 
 def claim(limit=CLAIM_LIMIT, now=None, worker=None):
@@ -266,13 +333,26 @@ def _mark_sent(rows, now):
     db.session.commit()
 
 
-def _mark_failed(rows, now, error):
+def _mark_failed(rows, now, error, *, code=None, retry=True):
+    """Record a refusal and decide whether it is worth trying again.
+
+    `retry=False` fails the row on the first attempt and stops. That
+    is what a 5xx means: the server has told us this message will
+    never be accepted, and four more identical attempts only bury the
+    real reason under four identical log lines.
+    """
     from app import db
     for row in rows:
         attempts = (row.attempts or 0) + 1
         row.attempts = attempts
         row.last_error = (error or 'the mail server refused it')[:500]
-        if attempts >= (row.max_attempts or len(BACKOFF_MINUTES)):
+        if code is not None:
+            try:
+                row.smtp_code = int(code)
+            except (TypeError, ValueError):
+                pass
+        ceiling = row.max_attempts or len(BACKOFF_MINUTES)
+        if not retry or attempts >= ceiling:
             row.status = 'failed'
             row.claimed_by = None
         else:
@@ -294,7 +374,7 @@ def send_group(rows, now=None, send=None):
     from app.services import mailer
 
     now = now or datetime.utcnow()
-    send = send or mailer.send
+    send = send or mailer.send_detail
     lead = rows[0]
     if len(rows) == 1:
         subject, html = lead.subject, lead.html
@@ -311,19 +391,55 @@ def send_group(rows, now=None, send=None):
         attachments.extend(resolve_attachments(spec))
 
     try:
-        ok = bool(send(lead.to_addr.split(', '), subject, html,
-                       cc=(lead.cc_addr.split(', ') if lead.cc_addr else None),
-                       attachments=attachments or None))
+        result = send(lead.to_addr.split(', '), subject, html,
+                      cc=(lead.cc_addr.split(', ') if lead.cc_addr else None),
+                      attachments=attachments or None)
     except Exception as exc:                                  # noqa: BLE001
         log.exception('outbox send raised for %r', subject[:60])
         _mark_failed(rows, now, str(exc))
         return False
 
+    # A caller's test double, and every pre-existing one, returns a
+    # bare bool. `mailer.send_detail` returns the code as well. Accept
+    # both, so the grading is an improvement rather than a new
+    # requirement on everything that sends.
+    if isinstance(result, dict):
+        ok = bool(result.get('ok'))
+        code = result.get('code')
+        reason = result.get('error') or 'the mail server refused it'
+        retry = result.get('retry')
+        held = bool(result.get('held'))
+    else:
+        ok, code, retry, held = bool(result), None, True, False
+        reason = 'the mail server refused it'
+
     if ok:
         _mark_sent(rows, now)
-    else:
-        _mark_failed(rows, now, 'the mail server refused it')
-    return ok
+        return True
+
+    if held:
+        # Not a refusal — the CRM chose not to send. Put the rows back
+        # with nothing counted against them, so turning the kill
+        # switch off releases the queue intact instead of releasing it
+        # one attempt closer to failed.
+        _requeue(rows, now, reason)
+        return False
+
+    _mark_failed(rows, now, reason, code=code,
+                 retry=True if retry is None else bool(retry))
+    return False
+
+
+def _requeue(rows, now, reason):
+    """Return claimed rows to the queue without spending an attempt."""
+    from app import db
+    for row in rows:
+        row.status = 'queued'
+        row.claimed_by = None
+        row.claimed_at = None
+        row.last_error = (reason or '')[:500]
+        row.not_before = now + timedelta(minutes=2)
+    db.session.commit()
 
 
 def run_once(limit=CLAIM_LIMIT, now=None, send=None, use_lease=True):
@@ -332,13 +448,39 @@ def run_once(limit=CLAIM_LIMIT, now=None, send=None, use_lease=True):
 
     now = now or datetime.utcnow()
     report = {'claimed': 0, 'sent': 0, 'failed': 0, 'groups': 0,
-              'unstuck': 0, 'skipped': 'no'}
+              'unstuck': 0, 'skipped': 'no', 'held': 0}
+
+    from app.services import flags
+    if flags.mail_stopped():
+        # Nothing is claimed, so nothing is marked, so nothing is
+        # lost. Turning the switch off releases the whole queue.
+        report['skipped'] = 'EMAIL_KILL_SWITCH is on'
+        return report
 
     def _work():
         report['unstuck'] = _unstick(now)
-        rows = claim(limit=limit, now=now)
+
+        room = throttle_room(now)
+        if room is not None:
+            report['throttle_room'] = room
+            if room <= 0:
+                report['skipped'] = (
+                    f'{max_per_minute()} a minute already sent — '
+                    f'holding until the next pass')
+                return
+        take = limit if room is None else min(limit, room)
+
+        rows = claim(limit=take, now=now)
         report['claimed'] = len(rows)
-        for group in _group(rows):
+        groups = _group(rows)
+        for group in groups:
+            # The throttle counts messages, and a batch is one message
+            # however many rows it carries — so it is checked per
+            # group, not per row.
+            if room is not None and report['groups'] >= room:
+                _requeue(group, now, 'held back by the per-minute throttle')
+                report['held'] = report.get('held', 0) + len(group)
+                continue
             report['groups'] += 1
             if send_group(group, now=now, send=send):
                 report['sent'] += len(group)

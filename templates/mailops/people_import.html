@@ -1,0 +1,94 @@
+{% extends "mailops/_shell.html" %}
+{% block title %}Import addresses — Procam CRM{% endblock %}
+{% block heading %}Import addresses{% endblock %}
+{% block strap %}An HRMS export, previewed before anything is written{% endblock %}
+
+{% block body %}
+{% if report %}
+<div class="mo-card" style="border-color:#86EFAC;background:#F0FDF4">
+  <h3>Done</h3>
+  <p class="mo-note">{{ report.updated }} address{{ '' if report.updated == 1
+    else 'es' }} updated, {{ report.skipped }} row{{ '' if report.skipped == 1
+    else 's' }} left alone.</p>
+  {% for err in report.errors %}
+  <p class="mo-note" style="color:#B91C1C">{{ err }}</p>
+  {% endfor %}
+  <p class="mo-note"><a href="{{ url_prefix }}/admin/email/people"
+    >Back to the people screen →</a></p>
+</div>
+{% endif %}
+
+{% if problem %}
+<div class="mo-card" style="border-color:#FCA5A5;background:#FEF2F2">
+  <p class="mo-note" style="margin:0">{{ problem }}</p>
+</div>
+{% endif %}
+
+{% if not plan %}
+<div class="mo-card">
+  <h3>Choose a file</h3>
+  <form method="post" enctype="multipart/form-data" class="mo-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="file" name="file" accept=".csv,.xlsx,.xlsm,text/csv">
+    <button type="submit" class="btn">Preview</button>
+  </form>
+  <p class="mo-note">CSV or XLSX. The file needs a heading for the employee
+    code and one for the email address; the CRM matches people on the code
+    and never on the name, because two people share a name and nobody
+    shares a code.</p>
+  <p class="mo-note">Only email addresses are taken. An HRMS export is
+    authoritative about addresses; it is not authoritative about who owns
+    which lead, which vertical the CRM files them under, or whether they
+    still use the CRM. <strong>No employee is created</strong> — a code the
+    CRM does not know is reported, not added, because an HRMS export covers
+    the whole company.</p>
+</div>
+{% endif %}
+
+{% if plan %}
+<div class="mo-tiles">
+  <div class="mo-tile good"><div class="n">{{ counts.get('update', 0) }}</div>
+    <div class="l">Will change</div></div>
+  <div class="mo-tile"><div class="n">{{ counts.get('unchanged', 0) }}</div>
+    <div class="l">Already right</div></div>
+  <div class="mo-tile warn"><div class="n">{{ counts.get('not_found', 0) }}</div>
+    <div class="l">Unknown code</div></div>
+  <div class="mo-tile bad"><div class="n">{{ counts.get('invalid', 0) }}</div>
+    <div class="l">Unusable address</div></div>
+</div>
+
+<div class="mo-card">
+  <h3>What this would do</h3>
+  <table class="mo">
+    <tr><th>Row</th><th>Code</th><th>Name in the file</th><th>Address</th>
+      <th>Action</th><th>Detail</th></tr>
+    {% for item in plan %}
+    <tr {% if item.action == 'invalid' %}style="background:#FEF2F2"
+        {% elif item.action == 'not_found' %}style="background:#FFFBEB"
+        {% endif %}>
+      <td class="num">{{ item.row }}</td>
+      <td><code>{{ item.emp_code }}</code></td>
+      <td>{{ item.name or '—' }}</td>
+      <td>{{ item.email or '—' }}</td>
+      <td><span class="mo-pill {{ 'on' if item.action == 'update' else 'off' }}"
+        >{{ item.action.replace('_', ' ') }}</span></td>
+      <td>{{ item.detail }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="confirm" value="1">
+    <input type="hidden" name="plan" value="{{ plan_json }}">
+    <p class="mo-note">Only the {{ counts.get('update', 0) }} row{{ ''
+      if counts.get('update', 0) == 1 else 's' }} marked
+      <strong>update</strong> will be written. Every change is recorded in
+      the audit trail against the employee.</p>
+    <button type="submit" class="btn">Apply {{ counts.get('update', 0) }}
+      change{{ '' if counts.get('update', 0) == 1 else 's' }}</button>
+    <a href="{{ url_prefix }}/admin/email/people/import" class="btn">Cancel</a>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

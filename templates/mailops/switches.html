@@ -1,0 +1,62 @@
+{% extends "mailops/_shell.html" %}
+{% block title %}Switches — Procam CRM{% endblock %}
+{% block heading %}Switches{% endblock %}
+{% block strap %}What is on, and how fast the queue sends{% endblock %}
+
+{% block body %}
+{% if saved %}<div class="mo-card" style="border-color:#86EFAC;background:#F0FDF4">
+  <p class="mo-note" style="margin:0">{{ saved }}</p></div>{% endif %}
+
+<div class="mo-card">
+  <h3>Feature switches</h3>
+  <p class="mo-note">These live in the database, so a change takes effect
+    within ten seconds on every worker — no file edit, no restart. The
+    environment is still read where the database says nothing, so a server
+    configured by the previous release keeps its settings; the source
+    column says which one is answering.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="what" value="flags">
+    <table class="mo">
+      <tr><th>Switch</th><th>What it does</th><th>Set in</th><th>On</th>
+        <th>Fall back to .env</th></tr>
+      {% for name, note, state, source in flags %}
+      <tr {% if name == kill_switch %}style="background:#FEF2F2"{% endif %}>
+        <td><code>{{ name }}</code></td>
+        <td>{{ note }}</td>
+        <td class="mo-note">{{ source }}</td>
+        <td><input type="checkbox" name="flag" value="{{ name }}"
+             {% if state %}checked{% endif %}></td>
+        <td><input type="checkbox" name="clear_{{ name }}"></td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="mo-note"><strong>{{ kill_switch }}</strong> stops all
+      outbound CRM email immediately. Nothing is lost: the queue keeps
+      filling and the worker holds, so turning it off releases everything
+      intact. It is on if <em>either</em> the database or the environment
+      says so — a kill switch a stale row could countermand is not a kill
+      switch, which is why the row cannot turn it off while
+      <code>.env</code> has it on.</p>
+    <button type="submit" class="btn">Save the switches</button>
+  </form>
+</div>
+
+<div class="mo-card">
+  <h3>Throttle</h3>
+  <form method="post" class="mo-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="what" value="throttle">
+    <label>Emails a minute
+      <input type="number" name="email_max_per_minute" min="0" max="600"
+        value="{{ throttle }}" style="width:90px"></label>
+    <button type="submit" class="btn">Save</button>
+    <span class="mo-note">{{ sent_last_minute }} sent in the last minute.</span>
+  </form>
+  <p class="mo-note">{{ descriptions.get('email_max_per_minute', '') }}
+    Office 365 answers the message past its limit with a 4.7.x, which the
+    CRM used to retry — producing more throttling. Counted from what has
+    actually been sent, so the two gunicorn workers and the queue worker
+    share one limit rather than having three.</p>
+</div>
+{% endblock %}

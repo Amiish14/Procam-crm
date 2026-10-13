@@ -107,6 +107,16 @@ class EmailOutbox(db.Model):
 
     to_addr = db.Column(db.String(1000), nullable=False)
     cc_addr = db.Column(db.String(1000))
+
+    #: Which version of the event's policy decided the recipients.
+    #: Stamped at queue time so "why did this go to her?" is answered
+    #: against the rules as they were, not as they are now.
+    policy_version = db.Column(db.Integer)
+    #: The SMTP code and text, where the server gave one. "the mail
+    #: server refused it" was the whole of the error for 155 messages
+    #: on 6 and 10 October, which told nobody that the mailbox had hit
+    #: its per-minute limit.
+    smtp_code = db.Column(db.Integer)
     subject = db.Column(db.String(400), nullable=False)
     html = db.Column(db.Text, nullable=False)
     text_body = db.Column(db.Text)
@@ -148,6 +158,9 @@ class EmailOutbox(db.Model):
             'not_before': str(self.not_before)[:16] if self.not_before else '',
             'sent_at': str(self.sent_at)[:16] if self.sent_at else '',
             'error': self.last_error or '',
+            'cc': self.cc_addr or '',
+            'smtp_code': self.smtp_code,
+            'policy_version': self.policy_version,
             'created_at': str(self.created_at)[:16] if self.created_at else '',
         }
 
