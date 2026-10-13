@@ -287,8 +287,12 @@ def main():
                   f'nothing. Map them in Admin → Email → Vertical heads:')
             for value, count in unmapped:
                 print(f'    {value:<24} {count:>6} records')
-        print('\nDone. Nothing needs restarting — the switches are read '
-              'from the database.')
+        print('\nDone. Restart the service: this release adds routes, '
+              'templates and models, and a running worker has none of '
+              'them.\n    sudo systemctl restart procam-crm'
+              '\n\n  (The switches themselves are read from the database '
+              'and need no restart after that — but the code that reads '
+              'them does.)')
 
 
 if __name__ == '__main__':
