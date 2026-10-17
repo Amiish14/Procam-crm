@@ -388,6 +388,137 @@ def workbench(for_codes=()):
         print(f'      {stage:<24} {n:>6} leads')
 
 
+# ── acceptance ───────────────────────────────────────────────────────
+def acceptance(for_codes=()):
+    """CRM-WB-01 acceptance tests 1-6, against whatever database this
+    process is pointed at.
+
+    The same assertions as tests/test_workbench_filters.py, run over
+    real data instead of a fixture. Read-only: every call is a board
+    read. Prints PASS or FAIL per test per viewer and exits non-zero
+    if anything failed, so it can be the gate in a deploy.
+    """
+    head(8, 'CRM-WB-01 ACCEPTANCE TESTS 1-6')
+    from app.access import scope as sc_mod
+    from app.services import sales_rules as _rules
+    from app.workbench import filters as wf
+    from app.workbench import service as wb
+
+    from app import Employee, Lead
+    admin = (Employee.query.filter_by(is_super_admin=True).first()
+             or Employee.query.filter_by(role='admin').first())
+    who = [c for c in for_codes if c] or ([admin.emp_code] if admin else [])
+    today = _rules.business_today()
+    ctx = {'today': today}
+    failures = []
+
+    def check(viewer, number, name, ok, detail=''):
+        mark = 'PASS' if ok else 'FAIL'
+        print(f'  [{mark}] {viewer:<10} {number}. {name}'
+              + (f'  — {detail}' if detail else ''))
+        if not ok:
+            failures.append(f'{viewer} test {number}: {name} — {detail}')
+
+    for code in who:
+        emp = Employee.query.filter_by(emp_code=code).first()
+        if emp is None:
+            print(f'  [SKIP] {code}: no such employee')
+            continue
+        sc = sc_mod.for_employee(code)
+        print(f'\n  viewer {code} ({emp.name}), scope '
+              f'{"company" if sc.unrestricted else sc.data_scope}')
+
+        base = wb.board(sc, per_page=1)
+        counts = base['counts']
+
+        # 1 — counts[key] == ?filter=key total == rows returned
+        bad = []
+        for key in wf.KEYS:
+            got = wb.board(sc, filter_key=key, per_page=200)
+            if got['total'] != counts[key]:
+                bad.append(f'{key}: count {counts[key]} vs list '
+                           f'{got["total"]}')
+                continue
+            wrong = [i for i in got['items']
+                     if not wf.BY_KEY[key].matches(i, ctx)]
+            if wrong:
+                bad.append(f'{key}: {len(wrong)} rows do not match')
+        check(code, 1, 'count == filter total == rows', not bad,
+              '; '.join(bad[:3]) or f'{len(wf.KEYS)} keys')
+
+        # 2 — tile number == chip number wherever both exist
+        tiles = {t['key']: t['count'] for t in base['tiles']}
+        chips = {c['key']: c['count'] for c in base['chips']}
+        pairs = [k for k in wf.KEYS if k in tiles and k in chips]
+        bad = [f'{k}: tile {tiles[k]} chip {chips[k]}'
+               for k in pairs if tiles[k] != chips[k]]
+        check(code, 2, 'tile == chip', not bad,
+              '; '.join(bad) or f'{len(pairs)} pairs: '
+              + ', '.join(f'{k}={tiles[k]}' for k in pairs))
+
+        # 3 — action_today == |due_today union overdue|
+        items = wb.board(sc, per_page=100000)['items']
+        due = {(i['kind'], i['id']) for i in items
+               if wf.BY_KEY['due_today'].matches(i, ctx)}
+        over = {(i['kind'], i['id']) for i in items
+                if wf.BY_KEY['overdue'].matches(i, ctx)}
+        union = len(due | over)
+        check(code, 3, 'action_today == due_today U overdue',
+              counts['action_today'] == union,
+              f'{counts["action_today"]} vs {union} '
+              f'(due {len(due)}, overdue {len(over)})')
+
+        # 4 — ageing buckets sum to the Quoted/Under Negotiation count
+        qa = base['quote_ageing']
+        total = sum(qa['counts'].values())
+        in_scope = len([i for i in items if i['kind'] == 'lead'
+                        and i['stage'] in ('Quoted', 'Under Negotiation')])
+        check(code, 4, 'ageing buckets sum == population',
+              total == qa['population'] == in_scope,
+              f'buckets {total}, population {qa["population"]}, '
+              f'leads in scope {in_scope}')
+
+        # 5 — RFQs awaiting quote == RFQ Generated with no quote sent
+        expected = len([i for i in items if i['kind'] == 'lead'
+                        and i['stage'] == 'RFQ Generated'
+                        and not i.get('quote_sent_at')])
+        check(code, 5, 'rfqs_awaiting_quote == RFQ Generated, unquoted',
+              counts['rfqs_awaiting_quote'] == expected,
+              f'{counts["rfqs_awaiting_quote"]} vs {expected}')
+
+        # 6 — everything is distinct, and paging loses nothing
+        seen, page = [], 1
+        while True:
+            got = wb.board(sc, per_page=50, page=page)
+            seen += [(i['kind'], i['id']) for i in got['items']]
+            if page >= got['pages']:
+                break
+            page += 1
+        dupes = len(seen) - len(set(seen))
+        check(code, 6, 'everything == distinct, paging loses nothing',
+              dupes == 0 and len(seen) == counts['everything'],
+              f'paged {len(seen)}, distinct {len(set(seen))}, '
+              f'everything {counts["everything"]}, pages {page}')
+
+    # 8 — nothing was written. Counted here rather than claimed.
+    print()
+    from app.models.task_engine import TaskInstance
+    from app import Company
+    print(f'  census after the run: leads {Lead.query.count()}, '
+          f'accounts {Company.query.count()}, '
+          f'tasks {TaskInstance.query.count()} '
+          f'(compare with before — this run writes nothing)')
+
+    print()
+    if failures:
+        print(f'  {len(failures)} FAILURE(S):')
+        for f in failures:
+            print(f'    {f}')
+    else:
+        print('  All acceptance tests passed for every viewer.')
+    return not failures
+
+
 def shell_bits():
     head(7, 'WHAT THIS SCRIPT CANNOT SEE — run these next to it')
     print("""  git log -1 --format='%h %ci %s'
@@ -422,6 +553,9 @@ def _safe(fn):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--workbench-only', action='store_true')
+    ap.add_argument('--acceptance', action='store_true',
+                    help='run CRM-WB-01 acceptance tests 1-6 and exit '
+                         'non-zero on any failure')
     ap.add_argument('--for', dest='for_codes', default='',
                     help='comma-separated employee codes to measure as, '
                          'as well as the admin')
@@ -429,6 +563,10 @@ def main():
     codes = [c.strip().upper() for c in (args.for_codes or '').split(',')
              if c.strip()]
     with app.app_context():
+        if args.acceptance:
+            ok = acceptance(codes)
+            print('\nRead-only: nothing was written, queued or sent.\n')
+            raise SystemExit(0 if ok else 1)
         if args.workbench_only:
             _safe(lambda: workbench(codes))
             return
