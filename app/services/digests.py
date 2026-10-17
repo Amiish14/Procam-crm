@@ -536,10 +536,23 @@ def admin_daily(emp_code=None, *, today=None):
     except Exception:
         pass
 
-    head_gaps = []
+    head_gaps, fallback_gap = [], None
     try:
+        from app.models.email_admin import FALLBACK_VERTICAL
         from app.services import vertical_heads
         head_gaps = vertical_heads.gaps()
+        # One of those gaps is not like the others. Every unmapped
+        # vertical falls back to Management, so Management having no
+        # head means the fallback resolves to nobody — and roughly
+        # 1,300 leads are on unmapped verticals. A gap anywhere else
+        # costs one vertical its head; this one costs all of them,
+        # and it is invisible from any screen but this report.
+        if FALLBACK_VERTICAL in head_gaps:
+            fallback_gap = {
+                'vertical': FALLBACK_VERTICAL,
+                'records': sum(n for _v, n in unmapped) if unmapped else 0,
+                'verticals': [v for v, _n in unmapped],
+            }
     except Exception:
         pass
 
@@ -597,12 +610,13 @@ def admin_daily(emp_code=None, *, today=None):
         'unmapped_verticals': unmapped,
         'unmapped_verticals_total': unmapped_total,
         'head_gaps': head_gaps,
+        'fallback_gap': fallback_gap,
         'bad_emails': bad_emails,
         'bad_emails_total': bad_emails_total,
         'failed_mail': failed_mail,
         'empty': not (new_leads or unassigned or skipped or errored
                       or needs_review or unmapped or head_gaps
-                      or bad_emails or failed_mail),
+                      or bad_emails or failed_mail or fallback_gap),
         'link': '/admin/mail-ingest',
     }
 

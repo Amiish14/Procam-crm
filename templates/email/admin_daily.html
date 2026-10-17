@@ -6,6 +6,36 @@
   mailbox could not place{% endblock %}
 
 {% block body %}
+{# The one gap that costs every unmapped vertical its head, rather
+   than one vertical. Above the tiles deliberately: it is the only
+   thing on this report that nothing else in the CRM will ever
+   mention, and it has stood open since 13 October. #}
+{% if r.fallback_gap %}
+<table role="presentation" width="100%" style="border-collapse:collapse;
+       background:#FEF2F2;border:1px solid #FCA5A5;border-radius:10px;
+       margin:0 0 18px">
+  <tr><td style="padding:14px 16px">
+    <div style="font-weight:700;font-size:15px;color:#B91C1C;margin-bottom:6px">
+      No head for {{ r.fallback_gap.vertical }} — notifications for
+      {{ r.fallback_gap.records }} record{{ '' if r.fallback_gap.records == 1 else 's' }}
+      reach nobody
+    </div>
+    <div style="font-size:13px;color:#7F1D1D">
+      {{ r.fallback_gap.vertical }} is the fallback for every vertical the
+      CRM has not been told about{% if r.fallback_gap.verticals %} — currently
+      {% for v in r.fallback_gap.verticals %}<strong>{{ v }}</strong>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.
+      With nobody named, those notifications are copied to no one at all.
+      The owner is still told; nobody above them is.
+    </div>
+    <div style="font-size:12.5px;color:#7F1D1D;margin-top:8px">
+      Fix: <strong>Admin &rarr; Email &rarr; Vertical heads</strong>, the
+      {{ r.fallback_gap.vertical }} row, choose a Head, Save. Takes effect
+      within 30 seconds; no restart.
+    </div>
+  </td></tr>
+</table>
+{% endif %}
+
 {{ bits.tiles([
     ('New leads, 24h', r.new_leads),
     ('Unassigned', r.unassigned_total),

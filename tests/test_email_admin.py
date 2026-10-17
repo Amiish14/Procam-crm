@@ -668,3 +668,47 @@ def test_quiet_hours_hold_a_shared_email_only_if_everybody_is_quiet(world):
     both, why = notify_prefs.release_at_for_all([OWNER, HEAD], now=night)
     assert both > night
     assert HEAD in why, 'the earliest of the two, which is the 06:00 one'
+
+
+# ── the Management gap, as a red item the administrators cannot miss ─
+def test_an_empty_fallback_head_is_reported_as_its_own_item(world):
+    """Every unmapped vertical falls back to Management. Management
+    with no head means those notifications reach nobody — one gap
+    that costs every unmapped vertical its head, not one vertical."""
+    row = VerticalHead.query.filter_by(vertical=FALLBACK_VERTICAL).first()
+    row.head_emp_code = None
+    db.session.commit()
+    vh.cache_clear()
+    _lead('Something Nobody Has Mapped')
+    db.session.commit()
+
+    from app.services import digests
+    report = digests.admin_daily()
+    gap = report['fallback_gap']
+    assert gap is not None
+    assert gap['vertical'] == FALLBACK_VERTICAL
+    assert 'Something Nobody Has Mapped' in gap['verticals']
+    assert gap['records'] >= 1
+    assert report['empty'] is False
+
+    html = flask_app.jinja_env.get_template(
+        'email/admin_daily.html').render(r=report)
+    assert 'reach nobody' in html
+    assert 'Admin &rarr; Email &rarr; Vertical heads' in html
+
+
+def test_naming_a_fallback_head_clears_the_red_item(world):
+    from app.services import digests
+    row = VerticalHead.query.filter_by(vertical=FALLBACK_VERTICAL).first()
+    row.head_emp_code = DIRECTOR
+    db.session.commit()
+    vh.cache_clear()
+    assert digests.admin_daily()['fallback_gap'] is None
+
+
+def test_a_gap_in_an_ordinary_vertical_is_not_the_red_item(world):
+    """Warehousing having no head is a gap. It is not this gap."""
+    from app.services import digests
+    report = digests.admin_daily()
+    assert 'Warehousing' in report['head_gaps']
+    assert report['fallback_gap'] is None
