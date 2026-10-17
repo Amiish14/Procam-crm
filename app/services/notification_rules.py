@@ -555,6 +555,108 @@ def _fill(pattern, *, what, detail, actor):
         return pattern or ''
 
 
+
+# ── re-rendering a message that waited ───────────────────────────────
+#: A record that changed after the alert was raised gets this line at
+#: the top. Said plainly, because the alternative — quietly swapping
+#: the figures — leaves the reader with no way to know the mail is not
+#: what was decided at the time.
+CHANGED_NOTE = 'Updated since this alert was raised.'
+
+
+def _load(entity_type, entity_id):
+    """The record an outbox row is about, or None."""
+    if not entity_type or entity_id in (None, ''):
+        return None
+    try:
+        from app import Company, Lead, db
+        table = {'Lead': Lead, 'lead': Lead,
+                 'Company': Company, 'account': Company}.get(entity_type)
+        if table is None:
+            from app.models.quote import Quote
+            from app.models.rfq import RFQ
+            table = {'Quote': Quote, 'quote': Quote,
+                     'RFQ': RFQ, 'rfq': RFQ}.get(entity_type)
+        if table is None:
+            return None
+        return db.session.get(table, int(entity_id))
+    except Exception:
+        try:
+            from app import db
+            db.session.rollback()
+        except Exception:
+            pass
+        return None
+
+
+def changed_since(record, when):
+    """Has this record moved since the alert was raised?
+
+    `updated_at` where the model has one. A record with no such column
+    answers False — unknown is not the same as changed, and claiming a
+    change that did not happen is worse than missing one.
+    """
+    if record is None or when is None:
+        return False
+    stamp = getattr(record, 'updated_at', None)
+    return bool(stamp and stamp > when)
+
+
+def render_spec(event, record, *, detail='', actor=None, url=None,
+                entity_id=None):
+    """What `rerender` needs later, as plain JSON-able data."""
+    rid = entity_id if entity_id is not None else getattr(record, 'id', None)
+    row = rule(event)
+    if row is None or rid is None:
+        return None
+    return {'event': event,
+            'entity_type': row['entity_type'] or type(record).__name__,
+            'entity_id': str(rid),
+            'detail': detail or '',
+            'actor': actor or '',
+            'url': url or ''}
+
+
+def rerender(spec, *, queued_at=None):
+    """Rebuild a queued message from the record as it stands now.
+
+    Returns {'subject', 'body', 'changed'} or None when it cannot —
+    an unknown event, a deleted record, anything at all going wrong.
+    None means "send what was queued", which is the behaviour this
+    replaces and is always safe.
+
+    The event, the actor and the detail are historical and are kept
+    exactly as they were: the mail still says what happened and who
+    did it. Only the description of the record is refreshed, because
+    that is the part that goes stale while a message waits in a
+    batching window or behind quiet hours.
+    """
+    try:
+        if not spec:
+            return None
+        row = rule(spec.get('event'))
+        if row is None:
+            return None
+        record = _load(spec.get('entity_type'), spec.get('entity_id'))
+        if record is None:
+            return None
+
+        what = describe(record)
+        actor = spec.get('actor') or ''
+        actor_name = f'Actioned by {actor}.' if actor else ''
+        detail = spec.get('detail') or ''
+        subject = _fill(row['title'], what=what, detail=detail,
+                        actor=actor_name)
+        body = _fill(row['body'], what=what, detail=detail, actor=actor_name)
+
+        changed = changed_since(record, queued_at)
+        if changed:
+            body = f'{CHANGED_NOTE}\n\n{body}'.strip()
+        return {'subject': subject, 'body': body, 'changed': changed}
+    except Exception:
+        _logger().exception('could not re-render a queued notification')
+        return None
+
 # ── dispatch ─────────────────────────────────────────────────────────
 def dispatch(event, record=None, *, actor=None, detail='', escalate=False,
              roles=None, url=None, title=None, body=None, email=None,
@@ -600,6 +702,14 @@ def dispatch(event, record=None, *, actor=None, detail='', escalate=False,
                                            escalate=escalate, roles=roles)
 
         wants_email = row['email'] if email is None else email
+        # What it takes to rebuild this message's words at send time,
+        # when the record may have moved on. Only where the caller has
+        # not supplied its own wording — a hand-written title is the
+        # caller's and must not be regenerated underneath them.
+        spec = (render_spec(event, record, detail=detail, actor=actor,
+                            url=link, entity_id=rid)
+                if (record is not None and title is None and body is None
+                    and email_html is None) else None)
         result = notify.send_policy(
             plan['to'], plan['cc'],
             kind=row['kind'],
@@ -616,7 +726,8 @@ def dispatch(event, record=None, *, actor=None, detail='', escalate=False,
             event_key=event,
             attachments=attachments,
             batch_key=batch_key,
-            policy_version=plan['version'])
+            policy_version=plan['version'],
+            render=spec)
 
         # Callers written before this release read `{code: result}`
         # and some of them check `['emailed']`. That shape is kept:

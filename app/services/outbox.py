@@ -73,7 +73,7 @@ def make_key(*parts):
 def enqueue(*, to, subject, html, dedupe_key, event_key='', user_code=None,
             cc=None, text=None, attachments=None, entity_type=None,
             entity_id=None, not_before=None, batch_key=None, commit=True,
-            urgent=None, policy_version=None):
+            urgent=None, policy_version=None, render=None):
     """Queue one email. Returns the row, or None if it was not queued.
 
     Not queued means one of: no internal recipient, the person has
@@ -124,6 +124,7 @@ def enqueue(*, to, subject, html, dedupe_key, event_key='', user_code=None,
             #: has moved on and the email cannot be explained from
             #: the current table.
             policy_version=policy_version,
+            render_json=(json.dumps(render) if render else None),
         )
         db.session.add(row)
         if commit:
@@ -364,6 +365,44 @@ def _mark_failed(rows, now, error, *, code=None, retry=True):
     db.session.commit()
 
 
+def refresh(row):
+    """Re-render one queued message from the current record.
+
+    Returns True when the message changed. Writes the new wording back
+    onto the row — not committed here; `_mark_sent` or `_mark_failed`
+    commits moments later, and a crash in between simply leaves the
+    original to be sent, which is what would have happened anyway.
+
+    Never raises. Everything about this is an improvement on sending
+    the snapshot, and nothing about it is worth failing a send for.
+    """
+    try:
+        if not getattr(row, 'render_json', None):
+            return False
+        from app.services import notification_rules as rules
+
+        spec = json.loads(row.render_json)
+        fresh = rules.rerender(spec, queued_at=row.created_at)
+        if not fresh:
+            return False
+
+        same = (fresh['subject'] == row.subject
+                and not fresh['changed'])
+        if same:
+            return False
+
+        from app.services.notify import _plain_html
+        row.subject = (fresh['subject'] or row.subject)[:400]
+        row.text_body = fresh['body']
+        row.html = _plain_html(fresh['subject'], fresh['body'],
+                               spec.get('url') or None)
+        return True
+    except Exception:                                         # noqa: BLE001
+        log.exception('could not re-render outbox row %s',
+                      getattr(row, 'id', '?'))
+        return False
+
+
 def send_group(rows, now=None, send=None):
     """Deliver one group. Returns True if it went.
 
@@ -376,6 +415,12 @@ def send_group(rows, now=None, send=None):
     now = now or datetime.utcnow()
     send = send or mailer.send_detail
     lead = rows[0]
+    # Rebuild the words from the record as it stands now. A message
+    # that has waited in a batching window, behind quiet hours or
+    # through a retry describes the lead as it was when the event
+    # fired — the median wait is over an hour.
+    for row in rows:
+        refresh(row)
     if len(rows) == 1:
         subject, html = lead.subject, lead.html
     else:

@@ -130,6 +130,19 @@ class EmailOutbox(db.Model):
     entity_type = db.Column(db.String(40))
     entity_id = db.Column(db.String(60))
 
+    #: What it takes to rebuild this message's words from the record
+    #: as it stands now: {"event", "entity_type", "entity_id",
+    #: "detail", "actor", "url"}. The HTML above is a snapshot taken
+    #: when the event fired, and the median message waits 69 minutes
+    #: before it is sent — nine hours at worst. So the body described
+    #: a lead as it was an hour ago, which is what people meant by
+    #: "the alerts don't show the latest updates".
+    #:
+    #: Null means "send the snapshot", which is right for anything
+    #: with no single record behind it — a report, a digest, a bulk
+    #: summary.
+    render_json = db.Column(db.Text)
+
     #: queued | sending | sent | failed | blocked | cancelled
     status = db.Column(db.String(16), default='queued', index=True)
     attempts = db.Column(db.Integer, default=0)
@@ -162,6 +175,7 @@ class EmailOutbox(db.Model):
             'smtp_code': self.smtp_code,
             'policy_version': self.policy_version,
             'created_at': str(self.created_at)[:16] if self.created_at else '',
+            'rerendered': bool(self.render_json),
         }
 
 

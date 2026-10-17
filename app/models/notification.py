@@ -43,6 +43,16 @@ class Notification(db.Model):
                                  nullable=True)
     action_url = db.Column(db.String(300), nullable=True)
 
+    #: A short hash of what this notification actually SAYS. The
+    #: duplicate check used to key on (user, kind, entity, 10 minutes)
+    #: and never look at the words, so a second, different update to
+    #: the same lead inside that window was dropped: no row, no email,
+    #: and the person kept the first version. 1,273 records hit that
+    #: in a fortnight. With the content in the key, a repeat of the
+    #: same message is still suppressed and a different one gets
+    #: through.
+    content_hash = db.Column(db.String(32), index=True)
+
     is_read = db.Column(db.Boolean, nullable=False, default=False, index=True)
     created_at = db.Column(db.DateTime, nullable=False,
                            default=datetime.utcnow, index=True)

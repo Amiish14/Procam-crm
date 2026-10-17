@@ -36,7 +36,38 @@ def _logger():
         return logging.getLogger(__name__)
 
 
-def _recent_duplicate(user_id, kind, entity_type, entity_id, since):
+def content_hash(title, body=''):
+    """A short, stable fingerprint of what a notification says.
+
+    Whitespace is collapsed first so a reflowed body is not a new
+    message. Nothing security-sensitive rests on this, so the digest
+    is truncated to keep the column narrow and the index small.
+    """
+    import hashlib
+
+    blob = ' '.join(f'{title or ""}\n{body or ""}'.split())
+    return hashlib.sha256(blob.encode('utf-8')).hexdigest()[:32]
+
+
+def _recent_duplicate(user_id, kind, entity_type, entity_id, since,
+                      digest=None):
+    """The same message, to the same person, about the same record,
+    inside the window — or None.
+
+    `digest` is what makes it *the same message*. Without it this
+    asked only "have I told them anything about this lead lately",
+    and answered yes for a lead that had changed in between. The
+    second, different update was then dropped silently: no bell row,
+    no email, and the person kept the first version. The health check
+    on 18 October counted 1,273 records in a fortnight with more than
+    one notification in the same hour — every one of them a chance to
+    have swallowed a real update.
+
+    A row written before this column existed has `content_hash` NULL.
+    Those are treated as matching nothing, so the first notification
+    after the migration is delivered rather than suppressed against a
+    row whose text nobody recorded.
+    """
     from app.models.notification import Notification
     q = Notification.query.filter(
         Notification.user_id == user_id,
@@ -46,6 +77,8 @@ def _recent_duplicate(user_id, kind, entity_type, entity_id, since):
         q = q.filter(Notification.entity_type == entity_type)
     if entity_id is not None:
         q = q.filter(Notification.entity_id == str(entity_id))
+    if digest is not None:
+        q = q.filter(Notification.content_hash == digest)
     return q.first()
 
 
@@ -195,9 +228,11 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
         out['collected'] = True
         return out
     try:
+        digest = content_hash(title, body)
         if dedupe and in_app:
             since = datetime.utcnow() - timedelta(minutes=DEDUPE_MINUTES)
-            if _recent_duplicate(user_code, kind, entity_type, entity_id, since):
+            if _recent_duplicate(user_code, kind, entity_type, entity_id,
+                                 since, digest=digest):
                 out['suppressed'] = True
                 return out
         if in_app:
@@ -205,6 +240,7 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
                 user_id=user_code, kind=kind, title=title[:200],
                 body=(body or '')[:2000], entity_type=entity_type,
                 entity_id=(str(entity_id) if entity_id is not None else None),
+                content_hash=digest,
                 action_url=url)
             db.session.add(row)
             out['notified'] = True
@@ -242,7 +278,8 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
                         to=address, subject=title, html=html,
                         text=body or None,
                         dedupe_key=_dedupe_key(user_code, event_key or kind,
-                                               entity_type, entity_id),
+                                               entity_type, entity_id,
+                                               digest=digest),
                         event_key=event_key or kind, user_code=user_code,
                         attachments=attachments, entity_type=entity_type,
                         entity_id=entity_id, batch_key=batch_key,
@@ -274,16 +311,20 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
     return out
 
 
-def _dedupe_key(user_code, event_key, entity_type, entity_id):
+def _dedupe_key(user_code, event_key, entity_type, entity_id, digest=None):
     """The same message, to the same person, about the same record,
     inside the same ten-minute window, is one message.
 
     The window is the same one the in-app dedupe uses, so the bell and
-    the inbox agree about what counts as a repeat.
+    the inbox agree about what counts as a repeat — including the
+    content: without the digest here, the bell would deliver a second,
+    different update and the email would still be refused by the
+    unique index.
     """
     bucket = int(datetime.utcnow().timestamp() // (DEDUPE_MINUTES * 60))
-    return f'{event_key}:{user_code}:{entity_type or "-"}:' \
-           f'{entity_id if entity_id is not None else "-"}:{bucket}'
+    return (f'{event_key}:{user_code}:{entity_type or "-"}:'
+            f'{entity_id if entity_id is not None else "-"}:'
+            f'{digest or "-"}:{bucket}')
 
 
 def send_many(user_codes, **kwargs):
@@ -347,7 +388,7 @@ def send_policy(to_codes, cc_codes=(), *, kind, title, body='', url=None,
                 entity_type=None, entity_id=None, email=False,
                 email_html=None, actor=None, dedupe=True, in_app=True,
                 event_key=None, attachments=None, batch_key=None,
-                urgent=None, policy_version=None):
+                urgent=None, policy_version=None, render=None):
     """Tell several people about one thing, as one email.
 
     The bell is per person, because a notification is read and
@@ -425,13 +466,14 @@ def send_policy(to_codes, cc_codes=(), *, kind, title, body='', url=None,
                 cc=cc_addr or None,
                 dedupe_key=_dedupe_key(','.join(to_codes),
                                        event_key or kind, entity_type,
-                                       entity_id),
+                                       entity_id,
+                                       digest=content_hash(title, body)),
                 event_key=event_key or kind,
                 user_code=(to_codes[0] if len(to_codes) == 1 else None),
                 attachments=attachments, entity_type=entity_type,
                 entity_id=entity_id, batch_key=batch_key, urgent=urgent,
                 not_before=when,
-                policy_version=policy_version)
+                policy_version=policy_version, render=render)
             out['email']['queued'] = row is not None
             if row is None:
                 out['email']['error'] = ('already queued, muted, or not an '
