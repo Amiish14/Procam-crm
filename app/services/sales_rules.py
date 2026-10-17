@@ -306,6 +306,9 @@ CONDITIONS = (
      f'Nothing said to the customer for {IDLE_DAYS} days or more.'),
     ('stale', 'Going cold', G_STALE,
      f'No contact for {STALE_DAYS} days or more.'),
+    ('quote_due_missing', 'Quote due date missing', G_DATA,
+     'Waiting to be quoted with no deadline, so nothing can tell '
+     'anyone it is late.'),
     ('no_next_action', 'No next action', G_DATA,
      'Nothing scheduled, so nothing will remind anyone.'),
     ('data_issue', 'Data update required', G_DATA,

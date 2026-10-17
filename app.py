@@ -4799,7 +4799,8 @@ def init_db():
         # Order matters: a table's foreign keys must find the tables
         # they point at already on the metadata, so the long-standing
         # modules load before the newer ones that reference them.
-        for _m in ('app.models.audit', 'app.models.data_quality',
+        for _m in ('app.models.access', 'app.models.audit',
+                   'app.models.data_quality',
                    'presales.models', 'presales.models_projects',
                    'app.models.rfq', 'app.models.quote',
                    'app.models.tms_handover', 'app.models.competitor',

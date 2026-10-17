@@ -195,8 +195,24 @@ def test_every_item_says_why_it_is_there(world):
 
 
 def test_groups_filter_and_paginate(world):
+    """An old `?group=` still lands somewhere sensible.
+
+    It no longer returns "items whose primary group is this", because
+    that is the bug CRM-WB-01 fixes: an item carries several
+    conditions and exactly one primary group, so filtering by group
+    showed a High-value chip of 0 while the tile said 10. `?group=`
+    now maps onto the equivalent filter, and the rows are whatever
+    that filter means — by stage, for Quotations.
+    """
+    from app.workbench import filters as wf
+
     quotes = _board(REP, group=rules.G_QUOTES, per_page=200)
-    assert all(i['group'] == rules.G_QUOTES for i in quotes['items'])
+    assert quotes['filter'] == 'quotations'
+    assert quotes['total'] == quotes['counts']['quotations']
+    for i in quotes['items']:
+        assert wf.BY_KEY['quotations'].matches(
+            i, {'today': rules.business_today()})
+
     page = _board(REP, per_page=2)
     assert len(page['items']) == 2 and page['pages'] >= 2
     assert page['total'] == _board(REP, per_page=200)['total']

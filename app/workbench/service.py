@@ -155,6 +155,70 @@ def _account_rows(sc, today):
     return rows
 
 
+def _quote_facts(sc, lead_ids):
+    """{lead_id: {'sent_at': date|None, 'validity': date|None}}.
+
+    The date a quote actually went to the customer. `Quote.submitted_at`
+    is the real event; `Quote.quote_date` is what somebody typed on the
+    document. Only quotes that have left the building count — a draft
+    is not a quote the customer is sitting on.
+    """
+    out = {}
+    if not lead_ids:
+        return out
+    try:
+        from app.models.quote import Quote
+        rows = (Quote.query
+                .filter(Quote.lead_id.in_(list(lead_ids)))
+                .filter(Quote.status.notin_(('Draft', 'Withdrawn',
+                                             'Superseded')))
+                .all())
+    except Exception:
+        from app import db
+        db.session.rollback()
+        return out
+    for q in rows:
+        sent = (q.submitted_at.date() if getattr(q, 'submitted_at', None)
+                else q.quote_date)
+        kept = out.get(q.lead_id)
+        # The earliest send is the one the customer has been waiting
+        # since; a revision does not reset the clock.
+        if kept is None or (sent and kept['sent_at']
+                            and sent < kept['sent_at']) \
+                or (sent and kept['sent_at'] is None):
+            out[q.lead_id] = {'sent_at': sent,
+                              'validity': q.validity_until}
+    return out
+
+
+def _stage_entered(lead_ids, stage):
+    """{lead_id: date it entered this stage}, from the stage history.
+
+    Used when there is no quote record to date the quote from. The
+    history is the only honest answer to "how long has the customer
+    been holding this"; `updated_at` moves every time anybody touches
+    the row, so a lead edited yesterday would read as quoted
+    yesterday.
+    """
+    out = {}
+    if not lead_ids:
+        return out
+    try:
+        from app import LeadStageHistory
+        rows = (LeadStageHistory.query
+                .filter(LeadStageHistory.lead_id.in_(list(lead_ids)),
+                        LeadStageHistory.to_stage == stage)
+                .order_by(LeadStageHistory.changed_at.asc()).all())
+    except Exception:
+        from app import db
+        db.session.rollback()
+        return out
+    for r in rows:
+        if r.lead_id not in out and r.changed_at:
+            out[r.lead_id] = r.changed_at.date()
+    return out
+
+
 def _priority_and_due(conditions, lead, today, rfq):
     """Where this record sits in the list, and the date it is judged on."""
     due, priority = None, rules.P_ROUTINE
@@ -192,9 +256,12 @@ def lead_items(sc, *, today=None):
     from app.services import lead_value
     today = today or _today()
     leads = _lead_rows(sc)
-    idle = rules.idle_days_map([l.id for l in leads])
+    lead_ids = [l.id for l in leads]
+    idle = rules.idle_days_map(lead_ids)
     hygiene = _hygiene_ids(sc)
     rfq_by_lead, ageing = _rfq_by_lead(sc, today)
+    quotes = _quote_facts(sc, lead_ids)
+    entered_quoted = _stage_entered(lead_ids, 'Quoted')
     now = datetime.utcnow()
     items = []
     for l in leads:
@@ -217,6 +284,13 @@ def lead_items(sc, *, today=None):
             if (l.quote_validity_date is not None
                     and l.quote_validity_date < today):
                 conds.append('quote_lapsed')
+        # Waiting to be quoted with no deadline anywhere. Nothing can
+        # tell anyone this one is late, so it is a data problem rather
+        # than a silent omission from the Quotes due tile.
+        quote_sent = (quotes.get(l.id) or {}).get('sent_at') or l.quote_date
+        if (l.stage == 'RFQ Generated' and not quote_sent
+                and not (rfq or {}).get('quote_due')):
+            conds.append('quote_due_missing')
         if (l.stage == 'Under Negotiation'
                 and idle_days is not None and idle_days >= rules.IDLE_DAYS):
             conds.append('negotiation_idle')
@@ -255,6 +329,15 @@ def lead_items(sc, *, today=None):
             'next_action_date': str(l.followup_date) if l.followup_date else '',
             'quote_due': (rfq or {}).get('quote_due', ''),
             'quote_number': l.quote_no or (rfq or {}).get('rfq_number', ''),
+            #: When the quote actually went to the customer, and how
+            #: sure we are of that date. The ageing buckets and the
+            #: "awaiting quote" filter both read these, so the answer
+            #: is worked out once, here, rather than in each of them.
+            'quote_sent_at': str(quote_sent) if quote_sent else '',
+            'quote_entered_quoted': (str(entered_quoted[l.id])
+                                     if l.id in entered_quoted else ''),
+            'quote_validity': (str(l.quote_validity_date)
+                               if l.quote_validity_date else ''),
             'ageing_days': rules.days_between(
                 (l.stage_entered_at or l.updated_at or l.created_at), today),
             'assigned_to': l.assigned_to or '',
@@ -293,6 +376,8 @@ def account_items(sc, *, today=None):
             'next_action': '',
             'next_action_date': str(c.next_action_at) if c.next_action_at else '',
             'quote_due': '', 'quote_number': '',
+            'quote_sent_at': '', 'quote_entered_quoted': '',
+            'quote_validity': '',
             'ageing_days': rules.days_between(c.last_activity_at, today),
             'assigned_to': c.pic_emp_code or '',
             'assigned_name': c.pic_emp_code or '',
@@ -347,6 +432,8 @@ def task_items(sc, *, today=None):
             'next_action': t.entity_display or '',
             'next_action_date': str(t.due_at)[:10] if t.due_at else '',
             'quote_due': '', 'quote_number': '',
+            'quote_sent_at': '', 'quote_entered_quoted': '',
+            'quote_validity': '',
             'ageing_days': int((now - t.created_at).days) if t.created_at else None,
             'assigned_to': t.owner_user_id or '',
             'assigned_name': t.owner_user_id or (t.owner_role or ''),
@@ -359,63 +446,175 @@ def task_items(sc, *, today=None):
     return out
 
 
+# ── quote ageing ─────────────────────────────────────────────────────
+def quote_ageing(items, *, today=None):
+    """How long customers have been holding our quotes.
+
+    Rebuilt on lead **stage**, because that is how the business tracks
+    a quote. The old version bucketed RFQ records against a quote-due
+    date: one item in 1,984 had a quote number and none had a due
+    date, so every bucket read 0 while 130 leads sat in Quoted or
+    Under Negotiation. A dashboard of zeroes over a hundred and thirty
+    live quotes is worse than no dashboard.
+
+    Population = the open leads in Quoted or Under Negotiation that
+    are already in `items`, so the scope, vertical, stage and search
+    filters apply here exactly as they do to the list.
+
+    Age is days since the quote went out, in falling order of how much
+    we trust the date:
+
+        the quote record's submitted_at  — the real event
+        the date the lead entered Quoted — from the stage history
+        the lead's own quote_date        — what somebody typed
+        updated_at                       — a guess, and flagged as one
+
+    Every item in the population lands in exactly one bucket, so the
+    buckets sum to the population. A row dated in the future is
+    clamped to Today rather than dropped: a wrong date is a data
+    problem to see, not a row to lose.
+    """
+    today = today or _today()
+    pop = [i for i in items
+           if i.get('kind') == 'lead'
+           and i.get('stage') in ('Quoted', 'Under Negotiation')]
+
+    counts = rules.empty_buckets()
+    buckets = {k: [] for k, _l, _lo, _hi in rules.AGEING_BUCKETS}
+    estimated, overdue = 0, []
+
+    for item in pop:
+        when, sure = _quote_age_from(item)
+        if when is None:
+            days, sure = 0, False
+        else:
+            days = rules.days_between(when, today) or 0
+        if days < 0:
+            days, sure = 0, False
+        if not sure:
+            estimated += 1
+        item['ageing_bucket'] = rules.bucket_for(days) or 'd10_plus'
+        item['quote_age_days'] = days
+        item['quote_date_estimated'] = not sure
+        counts[item['ageing_bucket']] += 1
+        buckets[item['ageing_bucket']].append(item['id'])
+        if _quote_is_overdue(item, days, today):
+            overdue.append(item['id'])
+
+    return {
+        'population': len(pop),
+        'counts': counts,
+        'estimated': estimated,
+        'overdue_count': len(overdue),
+        'buckets': [{'key': k, 'label': lbl, 'count': counts.get(k, 0)}
+                    for k, lbl, _lo, _hi in rules.AGEING_BUCKETS],
+        'bucket_ids': buckets,
+        'overdue_ids': overdue,
+    }
+
+
+def _quote_age_from(item):
+    """(date the clock starts, is that date reliable)."""
+    from datetime import date as _d
+
+    def _parse(value):
+        if not value:
+            return None
+        try:
+            return _d.fromisoformat(str(value)[:10])
+        except (ValueError, TypeError):
+            return None
+
+    for field in ('quote_sent_at', 'quote_entered_quoted'):
+        when = _parse(item.get(field))
+        if when is not None:
+            return when, True
+    # Nothing recorded the send. `ageing_days` is already days since
+    # the lead entered its current stage, falling back to updated_at —
+    # the best guess available, and shown as a guess.
+    days = item.get('ageing_days')
+    if days is not None:
+        return (_today() - timedelta(days=int(days))), False
+    return None, False
+
+
+def _quote_is_overdue(item, days, today):
+    """Past its validity, or gone quiet with nothing scheduled."""
+    from datetime import date as _d
+    validity = item.get('quote_validity')
+    if validity:
+        try:
+            if _d.fromisoformat(str(validity)[:10]) < today:
+                return True
+        except (ValueError, TypeError):
+            pass
+    quiet = item.get('quiet_days')
+    return bool(days > 10 and (quiet is None or quiet > 10)
+                and not item.get('next_action_date'))
+
+
 def _sort_key(item):
     return (item['priority'], item['due'] or '9999-12-31',
             -(item['value_inr'] or 0))
 
 
-def board(sc, *, today=None, group=None, search='', vertical='', stage='',
-          owner='', page=1, per_page=50, sort='priority'):
-    """The whole Workbench: counters, the filtered page of items, and
-    the quote-ageing buckets."""
+def board(sc, *, today=None, group=None, filter_key=None, age='',
+          search='', vertical='', stage='', owner='', page=1, per_page=50,
+          sort='priority'):
+    """The whole Workbench: one counts object, a filtered page of
+    items, and the quote-ageing buckets.
+
+    `filter_key` selects a view from `app.workbench.filters`. The count
+    the tile shows, the count the chip shows and the rows returned here
+    all come from that one predicate, so they cannot disagree.
+
+    `group` is still accepted so a bookmarked `?group=` keeps working;
+    it is mapped onto the equivalent filter and is no longer used for
+    counting anything.
+    """
+    from app.workbench import filters as wf
+
     today = today or _today()
-    items, ageing = lead_items(sc, today=today)
+    items, _rfq_ageing = lead_items(sc, today=today)
     items += account_items(sc, today=today)
     items += task_items(sc, today=today)
 
-    counts = {key: 0 for key, _l in rules.GROUPS}
-    summary = {
-        'due_today': 0, 'overdue': 0, 'rfqs_awaiting_quote': ageing['total'],
-        'quotes_due': 0, 'followups_due': 0, 'stale': 0, 'no_next_action': 0,
-        'new_assignments': 0, 'data_updates': 0, 'high_value': 0,
-        'quotes_overdue': ageing['overdue_count'],
-    }
-    for it in items:
-        counts[it['group']] = counts.get(it['group'], 0) + 1
-        c = it['conditions']
-        if 'followup_today' in c or 'account_next_action' in c:
-            summary['due_today'] += 1
-        if 'followup_overdue' in c or 'quote_overdue' in c or 'quote_lapsed' in c:
-            summary['overdue'] += 1
-        if 'quote_due_soon' in c or 'quote_overdue' in c:
-            summary['quotes_due'] += 1
-        if 'followup_today' in c or 'followup_overdue' in c:
-            summary['followups_due'] += 1
-        if 'stale' in c:
-            summary['stale'] += 1
-        if 'no_next_action' in c:
-            summary['no_next_action'] += 1
-        if 'newly_assigned' in c:
-            summary['new_assignments'] += 1
-        if 'data_issue' in c or 'quote_missing_detail' in c:
-            summary['data_updates'] += 1
-        if 'high_value' in c:
-            summary['high_value'] += 1
-
-    rows = items
-    if group:
-        rows = [r for r in rows if r['group'] == group]
+    # The scope-wide filters first: everything downstream — counts,
+    # chips, ageing, the list — has to see the same population, or
+    # changing the vertical moves the list and leaves the tiles
+    # behind. That was acceptance test 7's failure.
     if vertical:
-        rows = [r for r in rows if r['vertical'] == vertical]
+        items = [r for r in items if r['vertical'] == vertical]
     if stage:
-        rows = [r for r in rows if r['stage'] == stage]
+        items = [r for r in items if r['stage'] == stage]
     if owner:
-        rows = [r for r in rows if r['assigned_to'] == owner]
+        items = [r for r in items if r['assigned_to'] == owner]
     if search:
-        s = search.lower()
+        s_ = search.lower()
+        items = [r for r in items
+                 if s_ in (r['account'] or '').lower()
+                 or s_ in (r['title'] or '').lower()]
+
+    ctx = {'today': today}
+    counts = wf.counts(items, ctx)
+    ageing = quote_ageing(items, today=today)
+
+    # A `?group=` from an old bookmark or an old tab.
+    key = (filter_key or '').strip()
+    if not key and group:
+        key = _GROUP_TO_FILTER.get(group, '')
+
+    rows = wf.select(items, key, ctx) if key and key != 'everything' \
+        else list(items)
+
+    # An ageing bucket narrows whatever view is active, so the heading
+    # count and the list agree when somebody clicks a bucket.
+    if age:
+        wanted = set(ageing['overdue_ids'] if age == 'overdue'
+                     else ageing['bucket_ids'].get(age, []))
         rows = [r for r in rows
-                if s in (r['account'] or '').lower()
-                or s in (r['title'] or '').lower()]
+                if r.get('kind') == 'lead' and r['id'] in wanted]
+
     if sort == 'value':
         rows.sort(key=lambda r: -(r['value_inr'] or 0))
     elif sort == 'ageing':
@@ -429,21 +628,54 @@ def board(sc, *, today=None, group=None, search='', vertical='', stage='',
     per_page = max(1, min(int(per_page or 50), 200))
     page = max(1, int(page or 1))
     start = (page - 1) * per_page
+
+    # `group_counts` is kept for the Team Workbench's older callers and
+    # for the reference docs. It is the same numbers as `counts`, by
+    # filter key — not the primary-group tally it used to be, which is
+    # the tally that disagreed with every tile.
+    group_counts = {g: counts.get(_GROUP_TO_FILTER.get(g, ''), 0)
+                    for g, _lbl in rules.GROUPS}
+
     return {
-        'summary': summary,
-        'group_counts': counts,
-        'groups': [{'key': k, 'label': lbl, 'count': counts.get(k, 0)}
+        'counts': counts,
+        'filter': key or 'everything',
+        'age': age or '',
+        'tiles': [{'key': k, 'label': wf.BY_KEY[k].tile,
+                   'count': counts.get(k, 0)} for k in wf.TILE_KEYS],
+        'chips': [{'key': k, 'label': wf.BY_KEY[k].chip,
+                   'count': counts.get(k, 0)} for k in wf.CHIP_KEYS],
+        # The old shapes, so nothing that reads this API breaks on the
+        # day of the deploy. Both now carry the registry's numbers.
+        'summary': dict(counts, new_assignments=counts.get('newly_assigned', 0),
+                        quotes_overdue=ageing['overdue_count']),
+        'group_counts': group_counts,
+        'groups': [{'key': k, 'label': lbl, 'count': group_counts.get(k, 0)}
                    for k, lbl in rules.GROUPS],
         'items': rows[start:start + per_page],
         'total': total,
         'page': page,
         'per_page': per_page,
         'pages': max(1, (total + per_page - 1) // per_page),
+        'multi_membership': True,
         'quote_ageing': {
+            'population': ageing['population'],
+            'estimated': ageing['estimated'],
             'counts': ageing['counts'],
             'overdue_count': ageing['overdue_count'],
-            'buckets': [{'key': k, 'label': lbl,
-                         'count': ageing['counts'].get(k, 0)}
-                        for k, lbl, _lo, _hi in rules.AGEING_BUCKETS],
+            'buckets': ageing['buckets'],
         },
     }
+
+
+#: An old `?group=` maps onto the filter that means the same thing, so
+#: a bookmark saved before this release still lands somewhere sensible.
+_GROUP_TO_FILTER = {
+    rules.G_TODAY: 'action_today',
+    rules.G_QUOTES: 'quotations',
+    rules.G_FOLLOWUP: 'followups_due',
+    rules.G_STALE: 'stale',
+    rules.G_DATA: 'data_updates',
+    rules.G_NEW: 'newly_assigned',
+    rules.G_HIGH_VALUE: 'high_value',
+    rules.G_ACCOUNTS: 'account_development',
+}

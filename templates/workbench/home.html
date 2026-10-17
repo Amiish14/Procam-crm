@@ -77,7 +77,7 @@
   <div class="wb-tabs" id="wbTabs" role="group" aria-label="Work groups"></div>
 
   <details style="margin-bottom:12px">
-    <summary style="cursor:pointer;font-weight:600">Quote ageing — how long customers have been waiting</summary>
+    <summary style="cursor:pointer;font-weight:600"><span id="wbAgeingHead">Quote ageing</span> — how long customers have been waiting</summary>
     <div class="wb-ageing" id="wbAgeing"></div>
   </details>
 
@@ -119,18 +119,13 @@
 <script>
 const PREFIX = {{ url_prefix|tojson }};
 const TEAM = {{ 'true' if team else 'false' }};
-const SUM_TILES = [
-  ['due_today','Due today',''], ['overdue','Overdue','danger'],
-  ['rfqs_awaiting_quote','RFQs awaiting quote',''], ['quotes_due','Quotes due','warn'],
-  ['followups_due','Follow-ups due',''], ['stale','Stale leads',''],
-  ['no_next_action','No next action',''], ['new_assignments','New assignments',''],
-  ['data_updates','Data updates required',''], ['high_value','High-value priorities','']
-];
-const TILE_GROUP = {due_today:'action_today', overdue:'action_today',
-  rfqs_awaiting_quote:'quotations', quotes_due:'quotations', followups_due:'customer_followup',
-  stale:'stale', no_next_action:'data_update', new_assignments:'newly_assigned',
-  data_updates:'data_update', high_value:'high_value'};
-let STATE = {group:'', page:1, sel:new Set(), rows:[], token:null};
+/* The tiles, their labels and what each one lists all come from the
+   server's filter registry now. This page used to hold its own list
+   and its own tile-to-group map, which is how a tile called "Stale
+   leads" ended up over a chip called "Stale opportunities", showing a
+   different number, and opening a third set of rows. */
+const TILE_CLASS = {overdue:'danger', quotes_due:'warn'};
+let STATE = {filter:'', age:'', page:1, sel:new Set(), rows:[], token:null};
 const $ = id => document.getElementById(id);
 /* This page is served outside the main app shell, which carries its own
    fetch wrapper, so every write here has to send the CSRF token itself. */
@@ -149,7 +144,8 @@ const money = v => { v = Number(v||0); if(!(v>0)) return '—';
 
 function params(page){
   const p = new URLSearchParams();
-  if (STATE.group) p.set('group', STATE.group);
+  if (STATE.filter) p.set('filter', STATE.filter);
+  if (STATE.age) p.set('age', STATE.age);
   if ($('wbQ').value.trim()) p.set('q', $('wbQ').value.trim());
   if ($('wbVertical').value) p.set('vertical', $('wbVertical').value);
   if ($('wbStage').value) p.set('stage', $('wbStage').value);
@@ -167,23 +163,29 @@ async function wbLoad(page){
   const r = await fetch(PREFIX + '/api/workbench?' + params(STATE.page), {credentials:'same-origin'});
   const d = await r.json().catch(() => null);
   if (!d || !d.ok) { $('wbRows').innerHTML = '<tr><td colspan="15">Could not load the Workbench.</td></tr>'; return; }
-  paintSummary(d.summary); paintTabs(d.groups); paintAgeing(d.quote_ageing); paintRows(d);
+  paintSummary(d.tiles); paintTabs(d.chips); paintAgeing(d.quote_ageing); paintRows(d);
   if (!$('wbVertical').dataset.filled) fillFilters(d);
 }
-function paintSummary(s){
-  $('wbSum').innerHTML = SUM_TILES.map(([k,label,cls]) =>
-    `<button class="${cls}" aria-pressed="${STATE.group===TILE_GROUP[k]}" onclick="wbGroup('${TILE_GROUP[k]}')">
-       <div class="l">${esc(label)}</div><div class="v">${s[k]||0}</div></button>`).join('');
+/* Tiles and chips are painted from the same `counts`, so a tile and a
+   chip that share a key cannot show different numbers — and clicking
+   either sends the same ?filter=. */
+function paintSummary(tiles){
+  $('wbSum').innerHTML = tiles.map(t =>
+    `<button class="${TILE_CLASS[t.key]||''}" aria-pressed="${STATE.filter===t.key}" onclick="wbFilter('${t.key}')">
+       <div class="l">${esc(t.label)}</div><div class="v">${t.count}</div></button>`).join('');
 }
-function paintTabs(groups){
-  $('wbTabs').innerHTML = `<button aria-pressed="${!STATE.group}" onclick="wbGroup('')">Everything<span class="n">${
-      groups.reduce((a,g)=>a+g.count,0)}</span></button>` +
-    groups.map(g => `<button aria-pressed="${STATE.group===g.key}" onclick="wbGroup('${g.key}')">${esc(g.label)}<span class="n">${g.count}</span></button>`).join('');
+function paintTabs(chips){
+  $('wbTabs').innerHTML = chips.map(c =>
+    `<button aria-pressed="${STATE.filter===c.key || (!STATE.filter && c.key==='everything')}" onclick="wbFilter('${c.key}')">${esc(c.label)}<span class="n">${c.count}</span></button>`).join('')
+    + `<div class="wb-note" style="width:100%;margin-top:6px">An item can appear in more than one view, so these add up to more than Everything.</div>`;
 }
 function paintAgeing(a){
+  const h = $('wbAgeingHead');
+  if (h) h.textContent = `Quote ageing: ${a.population} open quote${a.population===1?'':'s'}`
+    + (a.estimated ? ` · ${a.estimated} with an estimated quote date` : '');
   $('wbAgeing').innerHTML = a.buckets.map(b =>
-      `<button onclick="wbGroup('quotations')"><div class="l">${esc(b.label)}</div><div class="v">${b.count}</div></button>`).join('')
-    + `<button onclick="wbGroup('quotations')"><div class="l">Overdue</div><div class="v" style="color:#B91C1C">${a.overdue_count}</div></button>`;
+      `<button aria-pressed="${STATE.age===b.key}" onclick="wbAge('${b.key}')"><div class="l">${esc(b.label)}</div><div class="v">${b.count}</div></button>`).join('')
+    + `<button aria-pressed="${STATE.age==='overdue'}" onclick="wbAge('overdue')"><div class="l">Overdue</div><div class="v" style="color:#B91C1C">${a.overdue_count}</div></button>`;
 }
 function fillFilters(d){
   const verts = [...new Set(d.items.map(i => i.vertical).filter(Boolean))].sort();
@@ -243,7 +245,21 @@ function paintRows(d){
     (d.page < d.pages ? `<button class="btn" onclick="wbLoad(${d.page+1})">Next</button>` : '');
   wbPaintSelection();
 }
-function wbGroup(g){ STATE.group = (STATE.group === g) ? '' : g; wbLoad(1); }
+function wbFilter(k){
+  if (k === 'everything') { STATE.filter = ''; }
+  else { STATE.filter = (STATE.filter === k) ? '' : k; }
+  STATE.age = '';
+  wbLoad(1);
+}
+/* An ageing bucket narrows the Quotations view rather than replacing
+   it, so the bucket number and the list agree. */
+function wbAge(b){
+  STATE.age = (STATE.age === b) ? '' : b;
+  if (STATE.age) STATE.filter = 'quotations';
+  wbLoad(1);
+}
+/* Kept so an older bookmark or an open tab still works. */
+function wbGroup(g){ STATE.filter = g || ''; STATE.age = ''; wbLoad(1); }
 function wbToggle(id, on){ on ? STATE.sel.add(id) : STATE.sel.delete(id); wbPaintSelection(); }
 function wbSelectAll(on){
   STATE.rows.filter(r => r.kind === 'lead').forEach(r => on ? STATE.sel.add(r.id) : STATE.sel.delete(r.id));
@@ -299,7 +315,7 @@ async function wbRemind(){
   const message = window.prompt('What should the reminder say?', 'Please bring your Workbench up to date.');
   if (message === null) return;
   const r = await postJson('/api/workbench/remind',
-      {to: who, message, group: STATE.group, email: true});
+      {to: who, message, group: STATE.filter, email: true});
   const d = await r.json().catch(()=>null);
   $('wbResult').textContent = (d && d.ok)
     ? `Reminder sent to ${who}${d.emailed ? ' (in-app and email)' : ' (in-app)'}${d.suppressed ? ' — already sent recently' : ''}.`

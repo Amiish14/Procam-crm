@@ -80,6 +80,11 @@ def api_workbench():
         return refused
     data = wb.board(
         sc,
+        # `filter` is the one that counts. `group` is still read so a
+        # bookmark saved before this release keeps working; the board
+        # maps it onto the equivalent filter.
+        filter_key=(request.args.get('filter') or '').strip() or None,
+        age=(request.args.get('age') or '').strip(),
         group=(request.args.get('group') or '').strip() or None,
         search=(request.args.get('q') or '').strip(),
         vertical=(request.args.get('vertical') or '').strip(),
@@ -97,20 +102,47 @@ def api_workbench():
 @bp.route('/api/workbench/quote-ageing')
 @_signed_in
 def api_quote_ageing():
+    """The ageing buckets, and the rows behind one of them.
+
+    Built from the same board the screen shows, so the buckets here
+    and the buckets on `/api/workbench` are the same numbers. They
+    used to come from `rules.rfq_ageing`, which counts RFQ records —
+    and the business tracks quotes by lead stage, so it counted zero.
+    """
     sc, refused = _scope_for_request()
     if refused:
         return refused
-    ageing = rules.rfq_ageing(sc=sc)
     bucket = (request.args.get('bucket') or '').strip()
-    rows = (ageing['overdue'] if bucket == 'overdue'
-            else ageing['buckets'].get(bucket, []) if bucket
-            else [r for rs in ageing['buckets'].values() for r in rs])
-    return jsonify(ok=True, total=ageing['total'],
-                   overdue_count=ageing['overdue_count'],
-                   buckets=[{'key': k, 'label': lbl,
-                             'count': ageing['counts'].get(k, 0)}
-                            for k, lbl, _lo, _hi in rules.AGEING_BUCKETS],
-                   rows=rows[:500])
+    data = wb.board(sc, filter_key='quotations', age=bucket,
+                    vertical=(request.args.get('vertical') or '').strip(),
+                    stage=(request.args.get('stage') or '').strip(),
+                    search=(request.args.get('q') or '').strip(),
+                    per_page=200)
+    qa = data['quote_ageing']
+    return jsonify(ok=True,
+                   total=qa['population'],
+                   population=qa['population'],
+                   estimated=qa['estimated'],
+                   overdue_count=qa['overdue_count'],
+                   buckets=qa['buckets'],
+                   rows=data['items'])
+
+
+@bp.route('/api/workbench/filters')
+@_signed_in
+def api_filters():
+    """The registry itself, so the page cannot invent its own labels.
+
+    The screen used to hold its own tile list and its own tile→group
+    map in JavaScript. That is how a tile came to be called "Stale
+    leads" over a chip called "Stale opportunities" and to send a
+    click somewhere that listed different rows.
+    """
+    from app.workbench import filters as wf
+    return jsonify(ok=True, filters=[
+        {'key': k, 'tile': tile, 'chip': chip, 'note': note}
+        for k, tile, chip, note in wf.describe()],
+        tiles=list(wf.TILE_KEYS), chips=list(wf.CHIP_KEYS))
 
 
 def _refused(exc):
