@@ -57,6 +57,21 @@ class MailIngestLog(db.Model):
 
     raw_eml_path = db.Column(db.String(600))
 
+    #: Who forwarded it in — the internal From of the outermost
+    #: message, and their employee code where the address matches
+    #: somebody on file. This is what makes My Mail possible: without
+    #: it the CRM knows a mail arrived and not whose question it
+    #: answers. Null where the sender was external or unrecognised; a
+    #: guess here would put one person's mail on another's page.
+    forwarded_by = db.Column(db.String(200))
+    forwarded_by_emp = db.Column(db.String(20), index=True)
+
+    #: What the lead's stage was at the moment the mail landed on it.
+    #: "It was attached to a Lost lead" is the whole explanation for
+    #: the Pandacs case, and the stage has usually moved by the time
+    #: anybody asks.
+    lead_stage_at_ingest = db.Column(db.String(40))
+
     #: Set when an administrator turns a skipped message into a lead
     #: from the screen, so the override is visible beside the original
     #: decision rather than replacing it.
@@ -81,4 +96,8 @@ class MailIngestLog(db.Model):
             'classifier_label': self.classifier_label or '',
             'confidence': self.confidence,
             'overridden_by': self.overridden_by or '',
+            'forwarded_by': self.forwarded_by or '',
+            'forwarded_by_emp': self.forwarded_by_emp or '',
+            'lead_stage_at_ingest': self.lead_stage_at_ingest or '',
+            'has_original': bool(self.raw_eml_path),
         }

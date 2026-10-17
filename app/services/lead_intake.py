@@ -29,7 +29,12 @@ from __future__ import annotations
 import re
 
 
-# ─── the ten classes ─────────────────────────────────────────────────────
+#: Where a lead created from an inbound mail starts, unless the
+#: decision says otherwise.
+DEFAULT_NEW_STAGE = 'New Opportunity'
+
+
+# ─── the classes ─────────────────────────────────────────────────────────
 class Klass:
     NEW_LEAD      = 'A_new_lead'
     EXISTING      = 'B_existing_lead_comm'
@@ -41,12 +46,18 @@ class Klass:
     QUOTE         = 'H_quote_submission'
     NON_BUSINESS  = 'I_non_business'
     REVIEW        = 'J_needs_review'
+    #: A colleague forwarding our own offer back in, or a client's
+    #: answer to one. Neither a new enquiry nor a known thread, so it
+    #: matched nothing and was dropped as a reply — which is how the
+    #: BrahMos offer reached the CRM as nothing at all.
+    QUOTE_OR_REPLY = 'Q_quote_or_reply'
 
     #: The only class that creates a lead.
     CREATES_LEAD = (NEW_LEAD,)
 
     #: Classes that attach to an existing lead rather than standing alone.
-    ATTACHES = (EXISTING, REPLY, FORWARD, DUPLICATE, RATE_SOURCING, QUOTE)
+    ATTACHES = (EXISTING, REPLY, FORWARD, DUPLICATE, RATE_SOURCING, QUOTE,
+                QUOTE_OR_REPLY)
 
     LABELS = {
         NEW_LEAD:      'New Lead / RFQ',
@@ -59,6 +70,7 @@ class Klass:
         QUOTE:         'Quote Submission',
         NON_BUSINESS:  'Non-business',
         REVIEW:        'Needs Admin Review',
+        QUOTE_OR_REPLY: 'Forwarded Offer / Client Reply',
     }
 
 
@@ -153,7 +165,23 @@ class Decision:
 
     @property
     def creates_lead(self):
-        return self.klass in Klass.CREATES_LEAD
+        """Does this decision make a new lead?
+
+        `Q_quote_or_reply` is the one class that depends on the
+        lookup: a forwarded offer that matches an existing lead
+        attaches to it, and one that matches nothing becomes a lead
+        of its own at Quoted — because the quote has already gone to
+        the customer and a CRM that does not know about it cannot
+        chase it.
+        """
+        if self.klass in Klass.CREATES_LEAD:
+            return True
+        return self.klass == Klass.QUOTE_OR_REPLY and not self.lead_id
+
+    @property
+    def create_stage(self):
+        """The stage a lead created from this should start at."""
+        return self.extra.get('create_stage') or DEFAULT_NEW_STAGE
 
     @property
     def label(self):
@@ -179,6 +207,100 @@ class Decision:
 
 
 # ─── small readers over the Graph message shape ──────────────────────────
+
+def _forwarded_offer(msg, ctx, sender_is_internal, stripped, from_addr):
+    """Our own offer forwarded back in, or a client's reply to one.
+
+    Returns a Decision, or None to let the tree carry on.
+
+    Only for an internal forwarder: a quote arriving from outside is
+    somebody quoting *us*, which step 7 already handles. The match
+    order is the spec's — thread, then subject with the external
+    parties, then subject alone — and a miss creates the lead at
+    Quoted rather than dropping it, because the customer is already
+    holding a price.
+
+    Behind FEATURE_QUOTE_REPLY_CLASS. Off, this returns None and the
+    tree behaves exactly as it did.
+    """
+    try:
+        from app.services import flags
+        if not flags.on('FEATURE_QUOTE_REPLY_CLASS'):
+            return None
+    except Exception:
+        return None
+    if not sender_is_internal:
+        return None
+
+    try:
+        from app.services import mail_signals
+    except Exception:
+        return None
+
+    chain = _chain_addresses(msg)
+    names = attachment_names(msg)
+    if not mail_signals.looks_like_quote(subject=msg.get('subject') or '',
+                                         body=body_text(msg),
+                                         filenames=names,
+                                         chain_froms=chain):
+        return None
+
+    why = mail_signals.quote_signals(subject=msg.get('subject') or '',
+                                     body=body_text(msg), filenames=names,
+                                     chain_froms=chain)
+    outsiders = mail_signals.external_parties(chain)
+
+    match = ctx.find_by_thread(**thread_keys(msg))
+    if not match and outsiders:
+        match = ctx.find_by_subject(subject=stripped,
+                                    counterparties=outsiders)
+    if not match:
+        match = ctx.find_by_subject(subject=stripped,
+                                    counterparties=[from_addr])
+    if match:
+        return Decision(Klass.QUOTE_OR_REPLY, step=7.5, lead_id=match,
+                        extra={'quote_signals': why,
+                               'external_parties': outsiders[:5]},
+                        reason=f'a forwarded offer against an existing '
+                               f'enquiry ({why})')
+
+    return Decision(
+        Klass.QUOTE_OR_REPLY, step=7.5,
+        extra={'create_stage': 'Quoted',
+               'quote_signals': why,
+               'external_parties': outsiders[:5],
+               'vertical': mail_signals.vertical_for(
+                   subject=msg.get('subject') or '', body=body_text(msg),
+                   filenames=names)},
+        reason=f'a forwarded offer matching no existing lead ({why})')
+
+
+def _chain_addresses(msg):
+    """Every address that appears in the message or its quoted chain.
+
+    The From, the recipients, and anything that looks like an address
+    in the body — a forwarded mail carries its original headers as
+    text, which is the only place the real sender survives.
+    """
+    found = []
+    try:
+        found.append(sender(msg))
+        found += recipients(msg, 'toRecipients')
+        found += recipients(msg, 'ccRecipients')
+    except Exception:
+        pass
+    try:
+        found += re.findall(r'[\w.+-]+@[\w-]+\.[\w.-]+', body_text(msg))
+    except Exception:
+        pass
+    out = []
+    for a in found:
+        a = (a or '').strip()
+        if a and a.lower() not in [x.lower() for x in out]:
+            out.append(a)
+    return out[:40]
+
+
 def sender(msg):
     addr = ((msg.get('from') or {}).get('emailAddress') or {})
     return (addr.get('address') or '').strip().lower()
@@ -469,9 +591,22 @@ def classify(msg, ctx=None):
         if quote:
             match = ctx.find_by_subject(subject=stripped,
                                         counterparties=to_all + cc_all)
-            return Decision(Klass.QUOTE, step=4, lead_id=match,
+            if match:
+                return Decision(Klass.QUOTE, step=4, lead_id=match,
+                                reason=f'quotation sent out ({quote})',
+                                extra={'quote_evidence': quote})
+            # Our own offer, and no lead to attach it to. This used to
+            # return a QUOTE decision with lead_id=None — a class that
+            # attaches to nothing and creates nothing, so the message
+            # produced no lead, no note and no row. That is exactly
+            # what happened to the BrahMos offer on 23 September.
+            forwarded = _forwarded_offer(msg, ctx, sender_is_internal,
+                                         stripped, from_addr)
+            if forwarded is not None:
+                return forwarded
+            return Decision(Klass.QUOTE, step=4, lead_id=None,
                             reason=f'quotation sent out ({quote})',
-                            needs_review=match is None,
+                            needs_review=True,
                             extra={'quote_evidence': quote})
 
         if looks_like_a_rate_request(msg):
@@ -524,6 +659,18 @@ def classify(msg, ctx=None):
         if match:
             return Decision(Klass.QUOTE, step=7, lead_id=match,
                             reason=f'quotation against a known enquiry ({quote})')
+
+    # ── 7.5 a forwarded Procam offer, or a client answering one ──
+    # Before the non-business rule, deliberately. The BrahMos mail
+    # failed every test above it — the top message was the client's
+    # two-word "Will revert asap", and our own offer was further down
+    # the chain where nothing looked. It then fell to step 8 and was
+    # dropped. A quote that has gone to a customer is the most
+    # business a message can contain.
+    forwarded = _forwarded_offer(msg, ctx, sender_is_internal, stripped,
+                                 from_addr)
+    if forwarded is not None:
+        return forwarded
 
     # ── 8. is it logistics at all ──
     if not ctx.has_logistics_content(msg):

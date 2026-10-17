@@ -317,6 +317,9 @@ CONDITIONS = (
      'Came to you in the last two days.'),
     ('high_value', 'High-value priority', G_HIGH_VALUE,
      f'Worth ₹{HIGH_VALUE_INR / 10000000:.0f} crore or more.'),
+    ('mail_on_closed', 'New mail on a closed lead', G_TODAY,
+     'A message arrived on a lead nobody is working, so nothing would '
+     'otherwise put it in front of you.'),
     ('account_quiet', 'Account not contacted', G_ACCOUNTS,
      f'No activity on the account for {ACCOUNT_QUIET_DAYS} days.'),
     ('account_next_action', 'Account action due', G_ACCOUNTS,

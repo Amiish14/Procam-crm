@@ -709,3 +709,90 @@ def _count_actions(plan):
     for item in (plan or []):
         out[item.get('action')] = out.get(item.get('action'), 0) + 1
     return out
+
+
+# ── My Mail ──────────────────────────────────────────────────────────
+def _is_admin():
+    return access.is_super() or access.can('admin.email')
+
+
+@bp.route('/my-mail')
+@_signed_in
+def my_mail():
+    """What happened to the mail you forwarded to leads@.
+
+    Every user, not administrators only. The whole complaint was that
+    the record existed and the person who needed it could not reach
+    it.
+    """
+    from app.services import flags, my_mail as svc
+
+    if not flags.on('FEATURE_MY_MAIL'):
+        return render_template('mailops/my_mail_off.html'), 200
+
+    me, admin = _me(), _is_admin()
+    rows = svc.rows(me, is_admin=admin,
+                    outcome=(request.args.get('outcome') or '').strip(),
+                    search=(request.args.get('q') or '').strip(),
+                    forwarded_by=(request.args.get('by') or '').strip(),
+                    days=min(365, max(1, int(request.args.get('days')
+                                             or svc.WINDOW_DAYS))))
+    forwarders = []
+    if admin:
+        from app import Employee, db
+        from app.models.ingest_log import MailIngestLog
+        codes = [c for (c,) in db.session.query(
+            MailIngestLog.forwarded_by_emp).distinct() if c]
+        if codes:
+            forwarders = (Employee.query
+                          .filter(Employee.emp_code.in_(codes))
+                          .order_by(Employee.name).all())
+    return render_template(
+        'mailops/my_mail.html', rows=rows, me=me, is_admin=admin,
+        counts=svc.counts(me, is_admin=admin),
+        outcomes=svc.OUTCOME_LABELS,
+        forwarders=forwarders,
+        focus=(request.args.get('msg') or '').strip(),
+        outcome=(request.args.get('outcome') or '').strip(),
+        search=(request.args.get('q') or '').strip(),
+        by=(request.args.get('by') or '').strip(),
+        days=(request.args.get('days') or svc.WINDOW_DAYS))
+
+
+@bp.route('/api/my-mail/badge')
+@_signed_in
+def my_mail_badge():
+    """How many of my forwards were skipped this week, for the nav."""
+    from app.services import flags, my_mail as svc
+
+    if not flags.on('FEATURE_MY_MAIL'):
+        return jsonify(ok=True, skipped=0)
+    return jsonify(ok=True, skipped=svc.badge(_me(), is_admin=_is_admin()))
+
+
+@bp.route('/my-mail/<int:row_id>/original')
+@_signed_in
+def my_mail_original(row_id):
+    """The message as it arrived, as a .eml.
+
+    Access is checked against the row, not against the URL: a row id
+    is not proof that it is yours.
+    """
+    import os
+
+    from flask import abort, send_file
+
+    from app.models.ingest_log import MailIngestLog
+    from app.services import my_mail as svc
+
+    row = MailIngestLog.query.get_or_404(row_id)
+    if not svc.may_see(_me(), row, is_admin=_is_admin()):
+        return render_template('access_denied.html',
+                               need='your own forwarded mail'), 403
+    path = row.raw_eml_path or ''
+    if not path or not os.path.exists(path):
+        abort(404)
+    name = (row.subject or 'original')[:80].strip() or 'original'
+    name = ''.join(c for c in name if c.isalnum() or c in ' -_()') + '.eml'
+    return send_file(path, as_attachment=True, download_name=name,
+                     mimetype='message/rfc822')

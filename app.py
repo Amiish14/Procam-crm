@@ -800,6 +800,20 @@ class NewsItem(db.Model):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+@app.template_global('feature')
+def _feature(name, default=False):
+    """Is this feature switch on? For templates.
+
+    Never raises: a nav bar that cannot render because a settings
+    table is unreachable is a worse failure than a missing link.
+    """
+    try:
+        from app.services import flags
+        return flags.on(name, default)
+    except Exception:
+        return bool(default)
+
+
 @app.template_global('restriction_level')
 def _restriction_level(company_name, email=None, account_id=None):
     """'' | 'caution' | 'blocked' for anything that names a client.
@@ -4882,6 +4896,14 @@ def init_db():
             # and what the mail server actually said when it refused.
             ('email_outbox',  'policy_version',      'INTEGER'),
             ('email_outbox',  'smtp_code',           'INTEGER'),
+            # Mail visibility: re-render a delayed message from the
+            # record, and tell a repeat notification from a different
+            # one about the same lead.
+            ('email_outbox',  'render_json',         'TEXT'),
+            ('notifications', 'content_hash',        'VARCHAR(32)'),
+            ('mail_ingest_log', 'forwarded_by',        'VARCHAR(200)'),
+            ('mail_ingest_log', 'forwarded_by_emp',    'VARCHAR(20)'),
+            ('mail_ingest_log', 'lead_stage_at_ingest', 'VARCHAR(40)'),
         ]
         # Indexes for the filters nearly every page uses. Named as the
         # models declare them, so create_all on a new database and this on

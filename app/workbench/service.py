@@ -389,6 +389,92 @@ def account_items(sc, *, today=None):
     return out
 
 
+#: How long a closed lead stays on the board after client mail lands
+#: on it. Long enough that a PIC who was away still sees it.
+CLOSED_MAIL_DAYS = 14
+
+
+def closed_mail_items(sc, *, today=None):
+    """Closed leads that have received mail, as action items.
+
+    `lead_items` reads open leads only, which is right for everything
+    else and is exactly why lead #11807 was invisible: an enquiry was
+    filed against it, the lead was Lost, and the board does not show
+    Lost leads. The mail arrived, the record was updated, and nothing
+    in the CRM put it in front of the person who owned it.
+
+    One query against the ingest log, so a lead appears here only if
+    a message genuinely landed on it.
+    """
+    from app.services import flags, mail_signals
+
+    today = today or _today()
+    if not flags.on('FEATURE_REOPEN_ON_MAIL'):
+        return []
+
+    from app import Lead, db
+    from app.models.ingest_log import MailIngestLog
+    from app.access import scope as sc_mod
+
+    since = datetime.utcnow() - timedelta(days=CLOSED_MAIL_DAYS)
+    try:
+        recent = (db.session.query(MailIngestLog.lead_id,
+                                   db.func.max(MailIngestLog.received_at),
+                                   db.func.count(MailIngestLog.id))
+                  .filter(MailIngestLog.lead_id.isnot(None),
+                          MailIngestLog.received_at >= since)
+                  .group_by(MailIngestLog.lead_id).all())
+    except Exception:
+        db.session.rollback()
+        return []
+    if not recent:
+        return []
+
+    by_lead = {lid: (when, n) for lid, when, n in recent if lid}
+    try:
+        q = Lead.query.filter(
+            Lead.id.in_(list(by_lead)),
+            Lead.is_archived.isnot(True),
+            Lead.stage.in_(mail_signals.CLOSED_STAGES))
+        leads = sc_mod.leads(q, sc=sc).all()
+    except Exception:
+        db.session.rollback()
+        return []
+
+    out = []
+    for l in leads:
+        when, n = by_lead.get(l.id, (None, 0))
+        out.append({
+            'kind': 'lead', 'id': l.id,
+            'group': rules.G_TODAY,
+            'priority': rules.P_TODAY,
+            'due': str(when)[:10] if when else '',
+            'account': l.company or '',
+            'account_id': l.company_id,
+            'title': l.project or l.company or f'Lead #{l.id}',
+            'vertical': l.procam_vertical or '',
+            'stage': l.stage or '',
+            'value_inr': None,
+            'last_activity_days': rules.days_between(when, today),
+            'quiet_days': None,
+            'next_action': '',
+            'next_action_date': '',
+            'quote_due': '', 'quote_number': '',
+            'quote_sent_at': '', 'quote_entered_quoted': '',
+            'quote_validity': '',
+            'ageing_days': rules.days_between(when, today),
+            'assigned_to': l.assigned_to or '',
+            'assigned_name': l.assigned_name or l.assigned_to or '',
+            'data_issues': [],
+            'conditions': ['mail_on_closed'],
+            'reasons': [f'{n} message{"" if n == 1 else "s"} received while '
+                        f'the lead is {l.stage}'],
+            'mail_count': n,
+            'route': f'/app?lead={l.id}',
+        })
+    return out
+
+
 def task_items(sc, *, today=None):
     """Open task-engine tasks, on the same board as everything else.
 
@@ -578,6 +664,7 @@ def board(sc, *, today=None, group=None, filter_key=None, age='',
     items, _rfq_ageing = lead_items(sc, today=today)
     items += account_items(sc, today=today)
     items += task_items(sc, today=today)
+    items += closed_mail_items(sc, today=today)
 
     # The scope-wide filters first: everything downstream — counts,
     # chips, ageing, the list — has to see the same population, or

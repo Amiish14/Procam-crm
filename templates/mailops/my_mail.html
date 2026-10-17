@@ -1,0 +1,102 @@
+{% extends "mailops/_shell.html" %}
+{% block title %}My Mail — Procam CRM{% endblock %}
+{% block heading %}My Mail{% endblock %}
+{% block strap %}What the CRM did with the mail you forwarded to
+leads@procamgroup.in{% endblock %}
+
+{% block body %}
+<div class="mo-tiles">
+  {% for key, label in outcomes.items() %}
+  <a class="mo-tile{{ ' bad' if key == 'error' else ' warn' if key == 'skipped' else ' good' if key in ('created','reopened') else '' }}"
+     style="text-decoration:none;color:inherit"
+     href="{{ url_prefix }}/my-mail?outcome={{ '' if outcome == key else key }}{% if search %}&q={{ search }}{% endif %}">
+    <div class="n">{{ counts.get(key, 0) }}</div>
+    <div class="l">{{ label }}{% if outcome == key %} ·{% endif %}</div>
+  </a>
+  {% endfor %}
+  <a class="mo-tile" style="text-decoration:none;color:inherit"
+     href="{{ url_prefix }}/my-mail">
+    <div class="n">{{ counts.get('all', 0) }}</div>
+    <div class="l">Everything</div></a>
+</div>
+
+<div class="mo-card">
+  <form method="get" action="{{ url_prefix }}/my-mail" class="mo-row">
+    <input type="search" name="q" value="{{ search }}" placeholder="Subject, sender or forwarder" style="min-width:260px">
+    <select name="outcome">
+      <option value="">Any outcome</option>
+      {% for key, label in outcomes.items() %}
+      <option value="{{ key }}" {% if outcome == key %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <select name="days">
+      {% for d in [7, 30, 90, 365] %}
+      <option value="{{ d }}" {% if days|string == d|string %}selected{% endif %}>Last {{ d }} days</option>
+      {% endfor %}
+    </select>
+    {% if is_admin %}
+    <select name="by">
+      <option value="">Anyone</option>
+      {% for p in forwarders %}
+      <option value="{{ p.emp_code }}" {% if by == p.emp_code %}selected{% endif %}>{{ p.name }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <button type="submit" class="btn">Search</button>
+  </form>
+  {% if is_admin %}
+  <p class="mo-note">You are an administrator, so this shows everyone's
+    mail. Everybody else sees only what they forwarded and what landed on
+    their own leads.</p>
+  {% endif %}
+</div>
+
+<div class="mo-card">
+  <h3>{{ rows|length }} message{{ '' if rows|length == 1 else 's' }}</h3>
+  <table class="mo">
+    <tr>
+      <th style="width:110px">Received</th>
+      <th>Original sender</th>
+      <th>Subject</th>
+      <th style="width:90px">Outcome</th>
+      <th>Lead</th>
+      <th style="width:120px">Stage</th>
+      <th>Why</th>
+      <th style="width:90px"></th>
+    </tr>
+    {% for r in rows %}
+    <tr {% if focus and focus == r.id|string %}style="background:#FFFBEB"{% endif %}>
+      <td style="white-space:nowrap">{{ r.received_at or '—' }}</td>
+      <td style="font-size:12.5px">{{ r.from_addr or '—' }}
+        {% if is_admin and r.forwarded_by %}
+        <div class="mo-note" style="margin:2px 0">fwd {{ r.forwarded_by }}</div>
+        {% endif %}
+      </td>
+      <td>{{ r.subject or '(no subject)' }}</td>
+      <td><span class="mo-pill {{ 'on' if r.outcome in ('created','attached','reopened') else 'off' }}">
+        {{ r.outcome_label }}</span></td>
+      <td>{% if r.lead_id %}
+          <a href="{{ url_prefix }}{{ r.route }}">#{{ r.lead_id }}</a>
+          {{ r.lead_company }}
+          {% else %}—{% endif %}</td>
+      <td>{% if r.lead_stage %}{{ r.lead_stage }}
+            {% if r.stage_moved %}
+            <div class="mo-note" style="margin:2px 0">was {{ r.stage_then }}</div>
+            {% endif %}
+          {% else %}—{% endif %}</td>
+      <td style="font-size:12.5px">{{ r.reason or '' }}</td>
+      <td>{% if r.has_original %}
+          <a href="{{ url_prefix }}/my-mail/{{ r.id }}/original">Original</a>
+          {% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="mo-note" style="padding:24px">
+      Nothing here. Mail you forward to leads@procamgroup.in appears on
+      this page with what the CRM did about it.</td></tr>
+    {% endfor %}
+  </table>
+  <p class="mo-note">A message filed against a lead that is Lost, On Hold
+    or Not Interested is still filed — it is just somewhere you would not
+    look. The <strong>Stage</strong> column is there to show you that.</p>
+</div>
+{% endblock %}

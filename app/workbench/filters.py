@@ -162,6 +162,10 @@ def _high_value(item, _ctx):
     return _has(item, 'high_value')
 
 
+def _new_mail_on_closed(item, _ctx):
+    return _has(item, 'mail_on_closed')
+
+
 def _account_development(item, _ctx):
     return _has(item, 'account_quiet', 'account_next_action')
 
@@ -221,6 +225,9 @@ WORKBENCH_FILTERS = (
            tile='New assignments', chip='New assignments'),
     Filter('high_value', _high_value,
            tile='High-value priorities', chip='High-value priorities'),
+    Filter('new_mail_on_closed', _new_mail_on_closed,
+           tile='New mail on closed lead', chip='New mail on closed lead',
+           note='A message arrived on a lead nobody is working.'),
     Filter('account_development', _account_development,
            chip='Account development'),
     Filter('everything', _everything, chip='Everything'),

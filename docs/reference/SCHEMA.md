@@ -615,6 +615,7 @@ Composite indexes: `ix_dmq_status_reason` (status, reason); `ix_dmq_entity` (ent
 | attachments_json | TEXT | yes |  |  |
 | entity_type | VARCHAR(40) | yes |  |  |
 | entity_id | VARCHAR(60) | yes |  |  |
+| render_json | TEXT | yes |  |  |
 | status | VARCHAR(16) | yes | indexed | 'queued' |
 | attempts | INTEGER | yes |  | 0 |
 | max_attempts | INTEGER | yes |  | 5 |
@@ -1104,6 +1105,9 @@ Composite indexes: `ix_escalation_entity_stage` (entity_type, entity_id, stage)
 | classifier_label | VARCHAR(40) | yes |  |  |
 | confidence | INTEGER | yes |  |  |
 | raw_eml_path | VARCHAR(600) | yes |  |  |
+| forwarded_by | VARCHAR(200) | yes |  |  |
+| forwarded_by_emp | VARCHAR(20) | yes | indexed |  |
+| lead_stage_at_ingest | VARCHAR(40) | yes |  |  |
 | overridden_by | VARCHAR(20) | yes |  |  |
 | overridden_at | DATETIME | yes |  |  |
 | created_at | DATETIME | yes | indexed |  |
@@ -1200,6 +1204,7 @@ Composite indexes: `ix_master_item_list_active` (list_key, is_active)
 | entity_id | INTEGER | yes |  |  |
 | task_instance_id | INTEGER | yes | FK → task_instances.id |  |
 | action_url | VARCHAR(300) | yes |  |  |
+| content_hash | VARCHAR(32) | yes | indexed |  |
 | is_read | BOOLEAN | no | indexed | False |
 | created_at | DATETIME | no | indexed |  |
 | read_at | DATETIME | yes |  |  |

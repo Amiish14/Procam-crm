@@ -14,6 +14,12 @@ rollback a line in the admin screen rather than a revert.
     FEATURE_WEEKLY_PACK     the Thursday review pack and the Friday
                             freeze
     FEATURE_REPLY_CAPTURE   file replies on the thread against the lead
+    FEATURE_MY_MAIL         the My Mail page
+    FEATURE_FORWARD_RECEIPT a receipt to whoever forwarded the mail
+    FEATURE_REOPEN_ON_MAIL  reopen a closed lead that receives client mail
+    FEATURE_QUOTE_REPLY_CLASS
+                            treat a forwarded offer or client reply as
+                            business rather than dropping it
     EMAIL_KILL_SWITCH       stop all outbound CRM email, now, without a
                             deploy or a restart. Nothing is lost: the
                             outbox keeps queueing and the worker holds.
@@ -53,6 +59,14 @@ FLAGS = (
     ('FEATURE_DAILY_BRIEF', 'Daily action brief, 08:30 IST', True),
     ('FEATURE_WEEKLY_PACK', 'Thursday review pack and Friday freeze', False),
     ('FEATURE_REPLY_CAPTURE', 'File replies against the lead', False),
+    ('FEATURE_MY_MAIL', 'The My Mail page: what happened to what you '
+                        'forwarded to leads@', False),
+    ('FEATURE_FORWARD_RECEIPT', 'Tell the forwarder what the CRM did with '
+                                'their mail', False),
+    ('FEATURE_REOPEN_ON_MAIL', 'Reopen a closed lead when client mail '
+                               'lands on it', False),
+    ('FEATURE_QUOTE_REPLY_CLASS', 'Recognise a forwarded Procam offer or a '
+                                  'client reply as business', False),
     (KILL_SWITCH, 'Stop all outbound CRM email immediately', False),
 )
 

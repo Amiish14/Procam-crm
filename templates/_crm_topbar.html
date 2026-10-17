@@ -9,6 +9,18 @@
   <nav aria-label="Sections">
     <a href="{{ url_prefix }}/my-work"
        class="{{ 'on' if request.path.startswith('/my-work') }}">My Work</a>
+    {# Every user, no permission: the whole complaint was that the
+       record of what happened to a forward existed and the person who
+       needed it could not reach it. The badge counts mail of theirs
+       that was skipped in the last week — the only outcome that needs
+       a person to do something. #}
+    {% if feature('FEATURE_MY_MAIL') %}
+    <a href="{{ url_prefix }}/my-mail"
+       class="{{ 'on' if request.path.startswith('/my-mail') }}">My Mail<span
+       id="myMailBadge" style="display:none;background:#BC1D2F;color:#fff;
+       border-radius:999px;font-size:10.5px;font-weight:700;padding:1px 6px;
+       margin-left:5px;vertical-align:1px"></span></a>
+    {% endif %}
     {% if can('module.rfq') %}
     <a href="{{ url_prefix }}/rfqs"
        class="{{ 'on' if request.path.startswith('/rfqs') }}">RFQs</a>
@@ -53,3 +65,26 @@
 
 {# Procam AI is available on every screen, §6.1 #}
 {% include "_copilot_panel.html" %}
+
+{% if feature('FEATURE_MY_MAIL') %}
+<script>
+/* The badge is fetched rather than rendered: the count needs a query
+   per page otherwise, on every page, for a number most people will
+   see as zero. */
+(function(){
+  var el = document.getElementById('myMailBadge');
+  if (!el) return;
+  fetch('{{ url_prefix }}/api/my-mail/badge', {credentials:'same-origin'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d && d.ok && d.skipped > 0) {
+        el.textContent = d.skipped;
+        el.style.display = 'inline-block';
+        el.title = d.skipped + ' of your forwarded mails were not turned '
+                 + 'into leads in the last 7 days';
+      }
+    })
+    .catch(function(){ /* the link still works */ });
+})();
+</script>
+{% endif %}

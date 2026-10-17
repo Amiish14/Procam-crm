@@ -85,8 +85,18 @@ def record(outcome, msg=None, *, lead_id=None, reason='', classifier_label='',
                 pass
         if raw_eml_path:
             row.raw_eml_path = raw_eml_path[:600]
+
+        # Who forwarded it, and what the lead was at the moment the
+        # mail landed. Both are needed later and neither can be
+        # recovered afterwards: the forwarder is only in this message,
+        # and the stage will have moved by the time anybody asks why
+        # their enquiry went to a Lost lead.
+        _note_forwarder(row, sender)
+        _note_stage(row, lead_id)
+
         if commit:
             db.session.commit()
+        _receipt(row)
         return row
     except Exception:
         try:
@@ -119,6 +129,54 @@ def already_ingested(internet_message_id):
         return False
 
 
+
+def _note_forwarder(row, sender):
+    """Record the internal colleague who forwarded this in.
+
+    Only an internal sender. An external address is the client, and
+    putting a client on somebody's My Mail page as the forwarder
+    would be both wrong and confusing.
+    """
+    try:
+        from app.services import mail_signals
+        addr = (sender or '').strip().lower()
+        if '<' in addr and '>' in addr:
+            addr = addr[addr.rfind('<') + 1:addr.rfind('>')].strip()
+        if not addr or not mail_signals.is_internal(addr):
+            return
+        row.forwarded_by = addr[:200]
+        if not row.forwarded_by_emp:
+            from app import Employee, db
+            emp = (Employee.query
+                   .filter(db.func.lower(Employee.email) == addr).first())
+            if emp is not None:
+                row.forwarded_by_emp = emp.emp_code
+    except Exception:
+        log.debug('could not record the forwarder', exc_info=True)
+
+
+def _note_stage(row, lead_id):
+    """What the lead's stage was when this mail arrived."""
+    try:
+        if not lead_id:
+            return
+        from app import Lead, db
+        lead = db.session.get(Lead, lead_id)
+        if lead is not None and not row.lead_stage_at_ingest:
+            row.lead_stage_at_ingest = (lead.stage or '')[:40] or None
+    except Exception:
+        log.debug('could not record the stage at ingest', exc_info=True)
+
+
+def _receipt(row):
+    """Tell the forwarder what happened. Behind its own flag."""
+    try:
+        from app.services import forward_receipt
+        forward_receipt.send_for(row)
+    except Exception:
+        log.debug('could not queue a forward receipt', exc_info=True)
+
+
 # ── reopening ────────────────────────────────────────────────────────
 def reopen_stage():
     try:
@@ -131,13 +189,34 @@ def reopen_stage():
     return DEFAULT_REOPEN_STAGE
 
 
-def should_reopen(lead, classification):
+def should_reopen(lead, classification, *, msg=None):
+    """Is this mail worth bringing a closed lead back for?
+
+    The classifier's own answer, plus one the classifier cannot give:
+    a pre-alert, a B/L or a booking confirmation is shipment activity
+    on a job that is actually running, whatever label the message
+    carries. Lead #11807 received pre-alerts on 12 October and stayed
+    Lost, because "Pre-alert" is not an enquiry and nothing else
+    looked.
+    """
     if lead is None:
         return False
     if (lead.stage or '') not in CLOSED_STAGES:
         return False
     label = (classification or '').strip().lower()
-    return any(key in label for key in REOPENING_CLASSES)
+    if any(key in label for key in REOPENING_CLASSES):
+        return True
+    if msg is not None:
+        try:
+            from app.services import flags, mail_signals
+            if not flags.on('FEATURE_REOPEN_ON_MAIL'):
+                return False
+            return mail_signals.looks_like_shipment(
+                (msg or {}).get('subject') or '',
+                (msg or {}).get('bodyPreview') or '')
+        except Exception:
+            return False
+    return False
 
 
 def reopen_for(lead, msg, *, classification='', actor='system'):
@@ -153,7 +232,7 @@ def reopen_for(lead, msg, *, classification='', actor='system'):
     from app import db
     from email_ingest import parser as email_parser
 
-    if not should_reopen(lead, classification):
+    if not should_reopen(lead, classification, msg=msg):
         return False
 
     was = lead.stage
@@ -161,8 +240,27 @@ def reopen_for(lead, msg, *, classification='', actor='system'):
     when = email_parser.received_datetime(msg) or datetime.utcnow()
     note = (f'Reopened by inbound email "{subject[:160]}" on '
             f'{str(when)[:16]}')
+    shipment = ''
+    try:
+        from app.services import mail_signals
+        shipment = mail_signals.shipment_reason(
+            subject, (msg or {}).get('bodyPreview') or '')
+    except Exception:
+        pass
+    if shipment:
+        note += f' — shipment activity ({shipment})'
 
-    lead.stage = reopen_stage()
+    # Back where it was, not to a nominated stage. A deal that was in
+    # Under Negotiation when somebody marked it Lost is not a fresh
+    # RFQ, and filing it as one loses its pipeline position and its
+    # place in the forecast. The configured stage is the fallback for
+    # a lead whose history says nothing.
+    try:
+        from app.services import mail_signals
+        lead.stage = mail_signals.last_open_stage(lead,
+                                                  fallback=reopen_stage())
+    except Exception:
+        lead.stage = reopen_stage()
     lead.stage_entered_at = datetime.utcnow()
     lead.updated_at = datetime.utcnow()
     lead.received_at = when

@@ -134,7 +134,7 @@ def _reopen_if_closed(db, decision, msg, log):
     lead = db.session.get(Lead, decision.lead_id)
     if lead is None:
         return None
-    if not _mi.should_reopen(lead, decision.klass):
+    if not _mi.should_reopen(lead, decision.klass, msg=msg):
         return None
     if _mi.reopen_for(lead, msg, classification=decision.klass):
         return (f'Reopened from {lead.stage!r}: '
@@ -665,9 +665,19 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                     if _rescue.get('account_id'):
                         lead_kwargs['company_id'] = _rescue['account_id']
 
+            # A lead created from a forwarded offer starts at Quoted:
+            # the price is already with the customer, and a lead at
+            # New Opportunity would be chased as if it were not.
+            _stage = (decision.create_stage if decision is not None
+                      else _li.DEFAULT_NEW_STAGE)
+            if decision is not None:
+                _vert = (decision.extra or {}).get('vertical')
+                if _vert and not lead_kwargs.get('procam_vertical'):
+                    lead_kwargs['procam_vertical'] = _vert
+
             lead = Lead(
                 source            = 'email',
-                stage             = 'New Opportunity',
+                stage             = _stage,
                 email_message_id  = imid,
                 created_at        = received,
                 received_at       = received,
@@ -724,6 +734,12 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                         lead.quote_date = _client_sent.date()
             except Exception:
                 pass
+
+            # Same for a lead the classifier placed at Quoted: date
+            # the quote from the message that carried it, so ageing
+            # and the quote reports can see it at all.
+            if _stage == 'Quoted' and not lead.quote_date:
+                lead.quote_date = (_client_sent or received).date()
 
             if _rescue and _rescue['action'] == 'review':
                 try:
