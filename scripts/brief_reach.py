@@ -117,8 +117,26 @@ def main():
         people = (Employee.query
                   .filter(Employee.is_active.is_(True))
                   .order_by(Employee.emp_code).all())
-        print(f'{len(people)} active employees, {len(owners)} of whom are '
-              f'named on a lead or an account\n')
+
+        # Everyone the job never even considers. `is_active.is_(True)`
+        # is the filter `send_reports.working_people()` uses, and it
+        # excludes NULL as well as False. The column's default is
+        # applied by the ORM on insert, so anybody added by a bulk
+        # import or by raw SQL has NULL — and is silently left out of
+        # every report, for ever, with nothing anywhere saying so.
+        total = Employee.query.count()
+        inactive = Employee.query.filter(
+            Employee.is_active.is_(False)).count()
+        unset = Employee.query.filter(Employee.is_active.is_(None)).count()
+        print(f'{total} employees on file: {len(people)} active, '
+              f'{inactive} marked inactive, {unset} never set')
+        if unset:
+            print(f'  !! {unset} employee(s) have is_active NULL rather '
+                  f'than true or false. The 08:30 job filters on '
+                  f'is_active IS TRUE, so they receive nothing and never '
+                  f'will. They are listed at the end.')
+        print(f'{len(owners)} distinct employee code(s) are named on a '
+              f'lead or an account\n')
 
         rows, tally = [], {k: 0 for k in ORDER}
         for emp in people:
@@ -158,6 +176,28 @@ def main():
         for r in sorted(shown, key=lambda r: (r['bucket'], r['emp_code'])):
             print(f'  {r["bucket"]:<22} {r["emp_code"]:<12} '
                   f'{r["name"][:26]:<26} {r["detail"][:60]}')
+
+        if unset:
+            print('\n' + '=' * 72)
+            print('NEVER SET ACTIVE — invisible to the 08:30 job entirely')
+            print('=' * 72)
+            never = (Employee.query
+                     .filter(Employee.is_active.is_(None))
+                     .order_by(Employee.emp_code).limit(200).all())
+            for emp in never:
+                owns = 'owns records' if emp.emp_code in owners \
+                    else 'owns nothing'
+                print(f'  {emp.emp_code:<12} {(emp.name or "")[:30]:<30} '
+                      f'{(emp.email or "no address"):<34} {owns}')
+                rows.append({'emp_code': emp.emp_code,
+                             'name': (emp.name or '').strip(),
+                             'vertical': (emp.vertical or '').strip(),
+                             'email': (emp.email or '').strip(),
+                             'bucket': 'never set active',
+                             'detail': f'is_active is NULL; {owns}'})
+            print('\n  Fix: set is_active on each, true or false. Until '
+                  'then the CRM has no opinion about them and neither '
+                  'does any report.')
 
         if args.csv:
             with open(args.csv, 'w', newline='', encoding='utf-8') as fh:
