@@ -285,6 +285,7 @@ def workbench(for_codes=()):
     Also the post-deploy check the work order asks for: run it as
     Admin and as two named people and every pair should read "yes".
     """
+    head(6, 'WORKBENCH — the live tile vs chip numbers')
     from app.access import scope as sc_mod
     from app.workbench import service as wb
 
@@ -301,6 +302,10 @@ def workbench(for_codes=()):
         new_shape = True
     except Exception:
         wf, new_shape = None, False
+    from app.services import sales_rules as _rules
+    _biz = _rules.business_today()
+    print(f'  business day   {_biz} ({_biz.strftime("%A")}) — "due today" '
+          f'is measured against this, not against the server\'s date')
     print('  registry: ' + ('present (CRM-WB-01)' if new_shape
                             else 'ABSENT — this is the pre-release board'))
 
