@@ -303,6 +303,46 @@ def _send_smtp(recipients, subject, html, cc_list, text, attachments,
     return True
 
 
+def _attach_message(msg, content, filename):
+    """Attach a captured .eml so that Exchange will accept it.
+
+    `add_attachment(bytes, maintype='message', subtype='rfc822')` base64-
+    encodes the part. RFC 2046 §5.2.1: "No encoding other than 7bit,
+    8bit, or binary is permitted for the body of a message/rfc822
+    entity." Exchange enforces that and answers
+
+        554 5.6.0 Invalid message content when handling MIME exception
+
+    which is what two notifications carrying a client's original mail
+    got on 16 October, three days after RFQ capture started attaching
+    them. The whole message is refused, so the colleague is told
+    nothing at all.
+
+    Parsed into a Message and attached as an object, Python emits the
+    part with a legal encoding. Where the bytes will not parse — a
+    truncated capture, something that is not mail — it goes as an
+    ordinary binary attachment instead: still named .eml, still opens
+    in Outlook, and legal to base64.
+    """
+    from email import message_from_bytes
+    from email.policy import default as _policy
+
+    try:
+        inner = message_from_bytes(content, policy=_policy)
+        # A parse that found no headers is not a message; treat the
+        # bytes as a file rather than emitting an empty rfc822 part.
+        if not inner.keys():
+            raise ValueError('no headers')
+        msg.add_attachment(inner, filename=filename)
+        return 'message/rfc822'
+    except Exception:                                         # noqa: BLE001
+        log.info('%s would not parse as a message — attaching it as a '
+                 'file', filename)
+        msg.add_attachment(content, maintype='application',
+                           subtype='octet-stream', filename=filename)
+        return 'application/octet-stream'
+
+
 def _attach(msg, attachments, subject=''):
     """Add what fits inside the budget; name what does not."""
     used = 0
@@ -319,11 +359,20 @@ def _attach(msg, attachments, subject=''):
             used += len(content)
             ctype = (att.get('content_type')
                      or 'application/octet-stream').split(';')[0]
+            filename = (att.get('filename') or 'attachment')[:200]
+            # A filename cannot carry a line break: it goes into a
+            # header, and a header with a newline in it is a different
+            # message from the one intended.
+            filename = ''.join(c for c in filename if c not in '\r\n\t')
+
+            if ctype.lower() == 'message/rfc822':
+                _attach_message(msg, content, filename)
+                continue
+
             maintype, _, subtype = ctype.partition('/')
             msg.add_attachment(content, maintype=maintype or 'application',
                                subtype=subtype or 'octet-stream',
-                               filename=(att.get('filename')
-                                         or 'attachment')[:200])
+                               filename=filename)
         except Exception:                                     # noqa: BLE001
             log.exception('could not attach %r', att.get('filename'))
 

@@ -188,3 +188,117 @@ def test_html_becomes_readable_text():
     assert 'Acme & Co' in text
     assert 'Mumbai' in text
     assert '<' not in text
+
+
+# ── message/rfc822: the 554 that stopped two notifications ───────────
+def _built(attachments, **kw):
+    """The assembled MIME message, as the SMTP path would send it."""
+    from email.message import EmailMessage
+    from email.utils import formataddr
+
+    from app.services import mailer
+
+    msg = EmailMessage()
+    msg['Subject'] = kw.get('subject', 'Subject')
+    msg['From'] = formataddr(('Procam CRM', 'tms@procamgroup.in'))
+    msg['To'] = 'ops@procamgroup.in'
+    msg.set_content('text part')
+    msg.add_alternative('<p>html part</p>', subtype='html')
+    mailer._attach(msg, attachments, kw.get('subject', 'Subject'))
+    return msg
+
+
+def _parts(msg):
+    return [p for p in msg.walk()
+            if p.get_content_disposition() == 'attachment']
+
+
+RAW_EML = (b'From: buyer@client.com\r\n'
+           b'To: leads@procamgroup.in\r\n'
+           b'Subject: Enquiry DAP AE260904542\r\n'
+           b'Message-ID: <abc@client.com>\r\n'
+           b'\r\n'
+           b'Please quote for Shanghai to Nhava Sheva.\r\n')
+
+
+def test_an_eml_attachment_is_not_base64_encoded():
+    """RFC 2046 §5.2.1: a message/rfc822 body may only be 7bit, 8bit
+    or binary. Exchange enforces it and answers
+
+        554 5.6.0 Invalid message content when handling MIME exception
+
+    which is what two notifications carrying a captured original got
+    on 16 October. The whole message is refused, so the colleague is
+    told nothing at all.
+    """
+    msg = _built([{'filename': 'Enquiry.eml',
+                   'content_type': 'message/rfc822',
+                   'content': RAW_EML}])
+    part = _parts(msg)[0]
+    assert part.get_content_type() == 'message/rfc822'
+    assert part.get('Content-Transfer-Encoding') in ('7bit', '8bit', 'binary')
+    assert part.get('Content-Transfer-Encoding') != 'base64'
+    bytes(msg)                      # must serialise without raising
+
+
+def test_the_original_survives_being_attached():
+    msg = _built([{'filename': 'Enquiry.eml',
+                   'content_type': 'message/rfc822',
+                   'content': RAW_EML}])
+    raw = bytes(msg).decode('utf-8', 'replace')
+    assert 'Enquiry DAP AE260904542' in raw
+    assert 'Shanghai to Nhava Sheva' in raw
+
+
+def test_bytes_that_are_not_a_message_go_as_a_file():
+    """A truncated capture must still reach the reader, not take the
+    whole notification down with it."""
+    msg = _built([{'filename': 'Broken.eml',
+                   'content_type': 'message/rfc822',
+                   'content': b'\x00\x01 not a mail at all'}])
+    part = _parts(msg)[0]
+    assert part.get_content_type() == 'application/octet-stream'
+    assert part.get_filename() == 'Broken.eml'
+    bytes(msg)
+
+
+def test_an_empty_eml_is_left_out_rather_than_sent_empty():
+    msg = _built([{'filename': 'Nothing.eml',
+                   'content_type': 'message/rfc822', 'content': b''}])
+    assert _parts(msg) == []
+
+
+def test_a_filename_cannot_carry_a_line_break():
+    """It goes into a header. A newline there is a different message
+    from the one intended."""
+    msg = _built([{'filename': 'Quote\r\nBcc: outsider@example.com.pdf',
+                   'content_type': 'application/pdf',
+                   'content': b'%PDF-1.4 ...'}])
+    part = _parts(msg)[0]
+    name = part.get_filename() or ''
+    assert '\n' not in name and '\r' not in name
+    # The text survives inside the quoted filename parameter, which is
+    # harmless. What must not exist is a line that *starts* a Bcc
+    # header — that is what injection would have produced.
+    raw = bytes(msg).decode('utf-8', 'replace')
+    assert not any(line.lower().startswith('bcc:')
+                   for line in raw.splitlines())
+
+
+def test_an_ordinary_attachment_is_unchanged():
+    msg = _built([{'filename': 'BOQ.pdf', 'content_type': 'application/pdf',
+                   'content': b'%PDF-1.4 ...'}])
+    part = _parts(msg)[0]
+    assert part.get_content_type() == 'application/pdf'
+    assert part.get_filename() == 'BOQ.pdf'
+
+
+def test_an_eml_beside_an_ordinary_file_both_arrive():
+    msg = _built([
+        {'filename': 'Enquiry.eml', 'content_type': 'message/rfc822',
+         'content': RAW_EML},
+        {'filename': 'BOQ.pdf', 'content_type': 'application/pdf',
+         'content': b'%PDF-1.4 ...'}])
+    types = sorted(p.get_content_type() for p in _parts(msg))
+    assert types == ['application/pdf', 'message/rfc822']
+    bytes(msg)
