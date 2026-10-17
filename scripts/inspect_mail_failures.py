@@ -116,13 +116,26 @@ def _rebuild(row, resolved):
         cte = part.get('Content-Transfer-Encoding', '-')
         print(f'        {ctype:<34} {disp:<12} {cte:<18} {fname!r}')
 
-    # The things Exchange refuses outright.
+    # The things Exchange refuses outright, checked against the
+    # SERIALISED message. Reading msg.items() instead reports every
+    # em dash in a subject as a fault: Python encodes non-ASCII
+    # headers as RFC 2047 on the way out, so the attribute is 8-bit
+    # and the wire form is not.
     problems = []
-    for header, value in msg.items():
-        if any(ord(c) > 126 for c in str(value)):
-            problems.append(f'non-ASCII in header {header}: {value[:60]!r}')
-        if '\n' in str(value) or '\r' in str(value):
-            problems.append(f'line break inside header {header}')
+    head = raw.split(b'\r\n\r\n', 1)[0]
+    for line in head.split(b'\r\n'):
+        try:
+            line.decode('ascii')
+        except UnicodeDecodeError:
+            problems.append(f'8-bit bytes in a header line: {line[:60]!r}')
+    for part in msg.walk():
+        ctype = part.get_content_type()
+        cte = (part.get('Content-Transfer-Encoding') or '').lower()
+        if ctype == 'message/rfc822' and cte not in ('7bit', '8bit',
+                                                     'binary', ''):
+            problems.append(f'message/rfc822 encoded as {cte} — RFC 2046 '
+                            f'5.2.1 permits only 7bit, 8bit or binary, '
+                            f'and Exchange answers 554 5.6.0')
     if not (row.html or '').strip():
         problems.append('the HTML part is empty')
     if len(raw) > 35 * 1024 * 1024:

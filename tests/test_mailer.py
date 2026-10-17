@@ -302,3 +302,45 @@ def test_an_eml_beside_an_ordinary_file_both_arrive():
     types = sorted(p.get_content_type() for p in _parts(msg))
     assert types == ['application/pdf', 'message/rfc822']
     bytes(msg)
+
+
+def test_the_documents_arrive_and_the_bulky_original_is_what_gives():
+    """Lead 12208: a 15.1 MB .eml consumed all but 565 KB of the
+    budget, so seven of the ten real documents were dropped in favour
+    of a second copy of each inside the original. An .eml carries the
+    whole message including its own attachments, so everything
+    travelled twice.
+    """
+    big_eml = RAW_EML + b'X' * (14 * 1024 * 1024)
+    docs = [{'filename': f'Doc{i}.pdf', 'content_type': 'application/pdf',
+             'content': b'%PDF-1.4 ' + b'd' * 200_000} for i in range(6)]
+    msg = _built([{'filename': 'Original.eml',
+                   'content_type': 'message/rfc822',
+                   'content': big_eml}] + docs)
+
+    names = [p.get_filename() for p in _parts(msg)]
+    assert [n for n in names if n and n.startswith('Doc')] == \
+        [f'Doc{i}.pdf' for i in range(6)], \
+        'every real document should arrive'
+    assert 'Original.eml' not in names, \
+        'the original is what gives way, not the documents'
+
+
+def test_the_original_still_goes_when_there_is_room():
+    msg = _built([{'filename': 'Original.eml',
+                   'content_type': 'message/rfc822', 'content': RAW_EML},
+                  {'filename': 'BOQ.pdf', 'content_type': 'application/pdf',
+                   'content': b'%PDF-1.4 ...'}])
+    names = [p.get_filename() for p in _parts(msg)]
+    assert set(names) == {'Original.eml', 'BOQ.pdf'}
+    # and it is still last, so a future budget squeeze drops it first
+    assert names[-1] == 'Original.eml'
+
+
+def test_a_non_ascii_subject_leaves_as_rfc_2047():
+    """An em dash in a subject is not a MIME fault. Python encodes
+    non-ASCII headers on the way out; only the attribute is 8-bit."""
+    msg = _built([], subject='Lead assigned to you — Alstom')
+    head = bytes(msg).split(b'\r\n\r\n', 1)[0]
+    head.decode('ascii')           # raises if anything 8-bit got out
+    assert b'=?utf-8?' in head

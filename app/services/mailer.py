@@ -344,9 +344,28 @@ def _attach_message(msg, content, filename):
 
 
 def _attach(msg, attachments, subject=''):
-    """Add what fits inside the budget; name what does not."""
+    """Add what fits inside the budget; name what does not.
+
+    The captured original goes last, whatever order the caller asked
+    for. An `.eml` contains the whole message *including its own
+    attachments*, so when the CRM attaches both the original and the
+    files extracted from it, every document travels twice — and the
+    original is usually the larger of the two by an order of
+    magnitude.
+
+    Lead 12208 showed what that costs: a 15.1 MB `.eml` consumed all
+    but 565 KB of the budget, so seven of the ten real documents —
+    the scope of work, the EHS requirements, the RFQ itself — were
+    dropped in favour of a second copy of each inside the original.
+    Sorting the bulky original to the back means the documents
+    somebody actually needs are the ones that arrive.
+    """
+    def _last(att):
+        ctype = (att.get('content_type') or '').split(';')[0].lower()
+        return (ctype == 'message/rfc822', len(att.get('content') or b''))
+
     used = 0
-    for att in (attachments or []):
+    for att in sorted(attachments or [], key=_last):
         try:
             content = att.get('content')
             if not content:
