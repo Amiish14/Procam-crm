@@ -2896,7 +2896,47 @@ function renderEmailSummaryCard(l){
     </div>`;
 }
 
+/* The Procam vertical list, and the lead's own value whatever it is.
+
+   This select used to carry four hard-coded options: Heavy Transport,
+   Project Freight, Warehousing, Installation. Leads carry eleven —
+   Freight Forwarding, Customs, Sea Freight, General Transport, Heavy
+   Cargo and more. Opening one of those leads and pressing Save, even
+   to change nothing but the follow-up date, posted option zero and
+   silently rewrote the vertical to Heavy Transport. 677 leads sit on
+   General Transport and 450 on Freight Forwarding, so this was not a
+   corner case.
+
+   The list now comes from the same place as the filters and the New
+   Lead form. The lead's stored value is always present and always
+   selected, even when it is not on the list — a value nobody
+   recognises is a data question, not a licence to overwrite it. */
+let VERTICAL_OPTIONS = [];
+
+async function loadVerticalOptions(){
+  try{
+    const opt = await api('/api/dashboard/options');
+    if (opt && Array.isArray(opt.verticals) && opt.verticals.length)
+      VERTICAL_OPTIONS = opt.verticals;
+  }catch(err){ /* the select still offers the lead's own value */ }
+}
+
+function verticalOptions(current){
+  const cur = (current == null ? '' : String(current));
+  const list = VERTICAL_OPTIONS.slice();
+  if (cur && list.indexOf(cur) === -1) list.unshift(cur);
+  if (list.indexOf('') === -1) list.unshift('');
+  return list.map(function(v){
+    return '<option' + (v === cur ? ' selected' : '') + '>' + e(v) + '</option>';
+  }).join('');
+}
+
+
 async function openLd(id){
+  // Guarantees the vertical select is built from the master list and
+  // not from an empty cache: without this, the first lead opened
+  // after a page load would offer only its own value.
+  if (!VERTICAL_OPTIONS.length) await loadVerticalOptions();
   let leads=await api('/api/leads?limit=500');
   if(!Array.isArray(leads))leads=[];
   let l=leads.find(x=>x.id===id);
@@ -2975,7 +3015,7 @@ async function openLd(id){
     <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="lEm" value="${e(l.email||'')}"></div><div class="fmg"><label class="fml">Phone</label><input class="fmc" id="lPh" value="${e(l.phone||'')}"></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Primary PIC</label><select class="fmc" id="lAsgn" ${isAdmin?'':'disabled'}>${uOpts}</select></div><div class="fmg"><label class="fml">Secondary PIC <span style="font-weight:400;color:var(--text-3)">— monitor / backup</span></label><select class="fmc" id="lAsgn2" ${isAdmin?'':'disabled'}>${sOpts}</select></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">If changing the PIC, why? <span style="font-weight:400;color:var(--text-3)">— recorded in the assignment history</span></label><select class="fmc" id="lReasgn" ${isAdmin?'':'disabled'}>${['','Different geography','Different service vertical','Different customer relationship owner','Capacity / workload','Specialist required','Incorrect automatic assignment','Other'].map(r=>`<option value="${e(r)}">${e(r||'— not changing the PIC —')}</option>`).join('')}</select></div></div>
-    <div class="fmr"><div class="fmg"><label class="fml">Procam vertical</label><select class="fmc" id="lVt">${['Heavy Transport','Project Freight','Warehousing','Installation'].map(v=>`<option${v===l.procam_vertical?' selected':''}>${v}</option>`).join('')}</select>
+    <div class="fmr"><div class="fmg"><label class="fml">Procam vertical</label><select class="fmc" id="lVt">${verticalOptions(l.procam_vertical)}</select>
       ${l.vertical_confidence!=null ? `<div style="font-size:11.5px;color:var(--text-3);margin-top:4px">Suggested at intake with <b>${e(l.vertical_confidence)}%</b> confidence${l.vertical_reason?` — ${e(l.vertical_reason)}`:''}</div>` : ''}
     </div></div>
     <div class="fmg" id="lClassExpl" style="display:none"></div>
