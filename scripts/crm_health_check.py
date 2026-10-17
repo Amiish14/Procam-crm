@@ -399,6 +399,8 @@ def acceptance(for_codes=()):
     if anything failed, so it can be the gate in a deploy.
     """
     head(8, 'CRM-WB-01 ACCEPTANCE TESTS 1-6')
+    #: Page size for the full walk. `board()` refuses more than 200.
+    PAGE = 200
     from app.access import scope as sc_mod
     from app.services import sales_rules as _rules
     from app.workbench import filters as wf
@@ -456,8 +458,21 @@ def acceptance(for_codes=()):
               '; '.join(bad) or f'{len(pairs)} pairs: '
               + ', '.join(f'{k}={tiles[k]}' for k in pairs))
 
+        # Every item, by paging. `board()` clamps per_page to 200 —
+        # a deliberate guard — so asking for 100000 silently returns
+        # 200 and every count below is then measured against a
+        # sample. That mistake produced nine "failures" against
+        # production that were the test's and not the board's.
+        items, pages, page = [], 1, 1
+        while True:
+            got = wb.board(sc, per_page=PAGE, page=page)
+            items += got['items']
+            pages = got['pages']
+            if page >= pages:
+                break
+            page += 1
+
         # 3 — action_today == |due_today union overdue|
-        items = wb.board(sc, per_page=100000)['items']
         due = {(i['kind'], i['id']) for i in items
                if wf.BY_KEY['due_today'].matches(i, ctx)}
         over = {(i['kind'], i['id']) for i in items
@@ -486,19 +501,14 @@ def acceptance(for_codes=()):
               counts['rfqs_awaiting_quote'] == expected,
               f'{counts["rfqs_awaiting_quote"]} vs {expected}')
 
-        # 6 — everything is distinct, and paging loses nothing
-        seen, page = [], 1
-        while True:
-            got = wb.board(sc, per_page=50, page=page)
-            seen += [(i['kind'], i['id']) for i in got['items']]
-            if page >= got['pages']:
-                break
-            page += 1
+        # 6 — everything is distinct, and paging loses nothing.
+        # The same pass as above: it already walked every page.
+        seen = [(i['kind'], i['id']) for i in items]
         dupes = len(seen) - len(set(seen))
         check(code, 6, 'everything == distinct, paging loses nothing',
               dupes == 0 and len(seen) == counts['everything'],
               f'paged {len(seen)}, distinct {len(set(seen))}, '
-              f'everything {counts["everything"]}, pages {page}')
+              f'everything {counts["everything"]}, pages {pages}')
 
     # 8 — nothing was written. Counted here rather than claimed.
     print()
