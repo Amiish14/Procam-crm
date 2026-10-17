@@ -138,16 +138,31 @@ def empty_buckets():
     return {key: 0 for key, _l, _lo, _hi in AGEING_BUCKETS}
 
 
+def business_date(value):
+    """The business day a timestamp falls on.
+
+    Timestamps in this database are naive UTC. `business_today()` is
+    IST. Taking `.date()` off a UTC datetime and comparing it with an
+    IST date is the bug BUSINESS_TZ was introduced to fix, and it was
+    only half fixed: today moved to IST, the timestamps did not. So
+    between 18:30 and midnight UTC — 00:00 to 05:30 IST — a call
+    logged a minute ago read as one day old, and "contacted today"
+    came out false for work somebody had just done.
+    """
+    if isinstance(value, datetime):
+        return (value + BUSINESS_TZ).date()
+    return value
+
+
 def days_between(earlier, later=None):
-    """Whole days from `earlier` to `later` (today by default)."""
+    """Whole days from `earlier` to `later` (today by default).
+
+    Both ends are read as business days — see `business_date`.
+    """
     if earlier is None:
         return None
     later = later or business_today()
-    if isinstance(earlier, datetime):
-        earlier = earlier.date()
-    if isinstance(later, datetime):
-        later = later.date()
-    return (later - earlier).days
+    return (business_date(later) - business_date(earlier)).days
 
 
 def idle_days_map(lead_ids):
