@@ -721,3 +721,140 @@ def test_a_filled_in_split_file_applies(damaged, tmp_path):
     assert res.returncode == 0, res.stderr[-800:]
     with flask_app.app_context():
         assert db.session.get(Lead, lead_id).procam_vertical == 'Sea Freight'
+
+
+# ── CRM-VERTICAL-MASTER-01 Stage A ───────────────────────────────────
+@pytest.fixture()
+def master_world(world):
+    """Values of every kind the survey has to tell apart."""
+    from app.models.email_admin import VerticalAlias, VerticalHead
+
+    with flask_app.app_context():
+        for alias, real in (('Transportation', 'Heavy Transport'),
+                            ('Project Logistics', 'Project Freight')):
+            if not VerticalAlias.query.filter_by(alias=alias).first():
+                db.session.add(VerticalAlias(alias=alias, vertical=real))
+        for v in ('Heavy Transport', 'Project Freight', 'Management'):
+            if not VerticalHead.query.filter_by(vertical=v).first():
+                db.session.add(VerticalHead(vertical=v, active=True))
+        db.session.flush()
+        # a head who has left, and a vertical with nobody
+        gone = _emp('VFLEFT', 'Departed Head', role='user')
+        gone.is_active = False
+        hv = VerticalHead.query.filter_by(vertical='Heavy Transport').first()
+        hv.head_emp_code = 'VFLEFT'
+        VerticalHead.query.filter_by(vertical='Management').first() \
+            .head_emp_code = None
+
+        for value in ('Heavy Transport', 'Transportation', 'Heavy Cargo',
+                      'heavy  cargo', None):
+            for _i in range(2):
+                db.session.add(Lead(
+                    company=TAG + 'M ' + (value or 'blank'),
+                    assigned_to=ADMIN, stage='Quoted',
+                    procam_vertical=value,
+                    created_at=datetime.utcnow() - timedelta(days=3),
+                    updated_at=datetime.utcnow()))
+        db.session.commit()
+        yield
+
+
+def test_the_survey_separates_certain_from_needs_a_decision(master_world,
+                                                            tmp_path):
+    from openpyxl import load_workbook
+
+    out = tmp_path / 'master.xlsx'
+    res = _run('vertical_master_survey.py', '--out', str(out))
+    assert res.returncode == 0, res.stderr[-800:]
+
+    wb = load_workbook(out)
+    assert wb.sheetnames[:1] == ['About']
+    for name in ('Values', 'Heads', 'Variants'):
+        assert name in wb.sheetnames
+
+    ws = wb['Values']
+    hdr = [c.value for c in ws[2]]
+    rows = {r[hdr.index('value')].value:
+            dict(zip(hdr, [c.value for c in r]))
+            for r in ws.iter_rows(min_row=3) if r[0].value}
+
+    assert rows['Heavy Transport']['certainty'] == 'certain'
+    # an alias is certain, and says where it goes
+    assert rows['Transportation']['certainty'] == 'certain'
+    assert rows['Transportation']['proposed official vertical'] \
+        == 'Heavy Transport'
+    # in use, in neither table: a decision
+    assert rows['Heavy Cargo']['certainty'] == 'needs Nilesh'
+    # An empty cell reads back as None, not '' — Excel has no concept
+    # of an empty string distinct from an empty cell.
+    assert not (rows['Heavy Cargo']['proposed official vertical'] or '')
+    assert '(blank)' in rows
+    assert rows['(blank)']['certainty'] == 'needs Nilesh'
+
+
+def test_open_and_closed_are_counted_apart(master_world, tmp_path):
+    from openpyxl import load_workbook
+
+    out = tmp_path / 'master.xlsx'
+    _run('vertical_master_survey.py', '--out', str(out))
+    ws = load_workbook(out)['Values']
+    hdr = [c.value for c in ws[2]]
+    for r in ws.iter_rows(min_row=3):
+        row = dict(zip(hdr, [c.value for c in r]))
+        if not row.get('value'):
+            continue
+        assert row['lead_total'] == row['lead_open'] + row['lead_closed']
+
+
+def test_a_head_who_has_left_is_flagged(master_world, tmp_path):
+    from openpyxl import load_workbook
+
+    out = tmp_path / 'master.xlsx'
+    _run('vertical_master_survey.py', '--out', str(out))
+    ws = load_workbook(out)['Heads']
+    hdr = [c.value for c in ws[2]]
+    rows = {r[hdr.index('vertical')].value:
+            dict(zip(hdr, [c.value for c in r]))
+            for r in ws.iter_rows(min_row=3) if r[0].value}
+    assert rows['Heavy Transport']['status'] == 'HEAD HAS LEFT'
+    assert rows['Management']['status'] == 'NO HEAD'
+
+
+def test_variants_that_differ_only_by_spacing_are_grouped(master_world,
+                                                          tmp_path):
+    from openpyxl import load_workbook
+
+    out = tmp_path / 'master.xlsx'
+    _run('vertical_master_survey.py', '--out', str(out))
+    ws = load_workbook(out)['Variants']
+    hdr = [c.value for c in ws[2]]
+    found = [dict(zip(hdr, [c.value for c in r]))
+             for r in ws.iter_rows(min_row=3) if r[0].value]
+    collapsed = ' | '.join(f['values that collapse to it'] for f in found)
+    assert 'Heavy Cargo' in collapsed and 'heavy  cargo' in collapsed
+
+
+def test_the_decision_column_has_a_dropdown_allowing_blank(master_world,
+                                                           tmp_path):
+    import zipfile
+    from openpyxl import load_workbook
+
+    out = tmp_path / 'master.xlsx'
+    _run('vertical_master_survey.py', '--out', str(out))
+    wb = load_workbook(out)
+    assert [c.value for c in wb['Values'][2]][-1] == 'Nilesh decision'
+    with zipfile.ZipFile(out) as z:
+        xml = ''.join(z.read(n).decode() for n in z.namelist()
+                      if n.startswith('xl/worksheets/sheet'))
+    i = xml.find('<dataValidation ')
+    assert i != -1
+    assert 'allowBlank="1"' in xml[i:i + 400]
+
+
+def test_the_survey_changes_nothing(master_world, tmp_path):
+    with flask_app.app_context():
+        before = [(l.id, l.procam_vertical) for l in Lead.query.all()]
+    _run('vertical_master_survey.py', '--out', str(tmp_path / 'm.xlsx'))
+    with flask_app.app_context():
+        after = [(l.id, l.procam_vertical) for l in Lead.query.all()]
+    assert before == after
