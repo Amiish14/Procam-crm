@@ -114,6 +114,61 @@ sender it matched, and the previous owner.
 - **It does not backfill.** The seeding and the unowned-lead fix are
   separate scripts, dry-run by default, applied only on instruction.
 
+## The morning digest
+
+`scripts/send_owner_digests.py`, to run beside the 08:30 brief.
+
+One mail per head, listing every lead a rule gave them, each with
+**Yes, mine** and **Give it to somebody else**. Not one mail per
+lead: at last month's volume that would have been ~380 messages in
+thirty days, nearly all to two people, and the second hundred would
+have gone unread.
+
+Anything unanswered after **48 hours** appears on the backstop's own
+digest. It is *not* reassigned — a head who is on leave should come
+back to their work, not to somebody else having taken it — only
+raised where it will be seen.
+
+Both buttons land on `/owner-confirm`, which lists everything
+waiting on you. Confirming is a POST with a CSRF token: a link that
+changes data on GET is a link a mail scanner can press. Answering
+somebody else's is 403 unless you are an administrator.
+
+## Replacements — `Admin → Replacements`
+
+`admin.employees`, not `admin.email`: this is about who works here,
+and the person who maintains the employee master is the person who
+knows somebody has left.
+
+Only people who have left are offered on the left, only active
+people on the right, and an inactive successor is refused — it would
+move the problem rather than solve it. Every change is audited.
+
+## What the dry runs found
+
+Worth recording, because two of them contradict the brief:
+
+**The match rate did not move — 48% before, 48% after.** The three
+"dead" rules were dead for want of data: **7 of 1,017 accounts have
+a website and none has a GSTIN**. The code was fine; there was
+nothing to match against.
+
+**And 48% was the wrong number to chase.** Of 384 unmapped senders,
+**290 were skipped anyway** — newsletters, `uber.com`,
+`luxuryescapes.com`, `projectcargo-weekly.com`. The real gap is
+**94 messages across 39 domains** that became leads and matched
+nothing: `pandacs.com.cn` (14), `indo-tech.com` (8), `andritz.com`
+(7). Adding those to their accounts' `email_domains` does more than
+any rule — hence `domain_to_account_report.py` and its applier.
+
+**The 28 accounts with no owner need nothing.** Every one is a
+`[merged into #N]` tombstone with zero leads.
+
+**Open leads with an inactive owner: zero.** The replacement map has
+nothing to do today and is insurance. Four of its nine names are not
+on the employee master at all and were refused rather than guessed:
+Suketu Bhupesh Thakkar, Manas Ganguly, Setu Prassan, Laxmi Yadav.
+
 ## Deploy
 
 ```
@@ -163,7 +218,7 @@ people have taught the matcher and is worth keeping even then.
 
 ## Tests
 
-`tests/test_auto_assign.py` — 26, one per rule plus the matching
+`tests/test_auto_assign.py` — 38, one per rule plus the matching
 behaviour: free mail, substring-vs-domain, normalised names,
 ambiguity, learning, replacement chains and cycles, the backstop,
 the audit row, confirmations, and the Workbench tile.

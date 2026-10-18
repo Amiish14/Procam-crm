@@ -1,0 +1,58 @@
+{% extends "mailops/_shell.html" %}
+{% block title %}Confirm the owner — Procam CRM{% endblock %}
+{% block heading %}Confirm the owner{% endblock %}
+{% block strap %}Leads a rule gave you, because the CRM could not place
+the client{% endblock %}
+
+{% block body %}
+{% if message %}
+<div class="mo-card" style="border-color:#86EFAC;background:#F0FDF4">
+  <p class="mo-note" style="margin:0">{{ message }}</p></div>
+{% endif %}
+
+<div class="mo-card">
+  <h3>{{ rows|length }} waiting</h3>
+  <p class="mo-note">These already belong to somebody — the CRM never
+    leaves a lead without an owner. This is asking whether the owner it
+    chose is the right one. Leaving them alone is a real answer; after
+    48 hours they are raised with the CRM administrator, not taken
+    away.</p>
+</div>
+
+{% for r in rows %}
+<div class="mo-card" {% if focus and focus == r.lead.id|string %}style="border-color:#FCD34D;background:#FFFBEB"{% endif %}>
+  <h3 style="margin-bottom:2px">{{ r.lead.company or '(no company)' }}</h3>
+  <p class="mo-note" style="margin:0 0 10px">
+    <a href="{{ url_prefix }}/app?lead={{ r.lead.id }}">#{{ r.lead.id }}</a>
+    · {{ r.lead.procam_vertical or 'no vertical' }}
+    · {{ r.lead.stage or '' }}
+    {% if r.account %}· account {{ r.account.name }}
+    {% else %}· <strong>no account on file</strong>{% endif %}
+    {% if r.waited_days %}· waiting {{ r.waited_days }} day{{ '' if r.waited_days == 1 else 's' }}{% endif %}
+  </p>
+  <p class="mo-note" style="margin:0 0 12px">{{ r.why }}
+    {% if is_admin %}· currently {{ r.confirmation.emp_code }}{% endif %}</p>
+
+  <form method="post" class="mo-row" style="margin:0">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="lead" value="{{ r.lead.id }}">
+    <button type="submit" name="outcome" value="confirmed" class="btn"
+      {% if quick == 'confirm' and focus == r.lead.id|string %}autofocus{% endif %}>
+      Yes, mine</button>
+    <span class="mo-note">or give it to</span>
+    <select name="to">
+      <option value="">— choose somebody —</option>
+      {% for p in people %}
+      <option value="{{ p.emp_code }}">{{ p.name }}{% if p.vertical %} — {{ p.vertical }}{% endif %}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" name="outcome" value="reassigned" class="btn">
+      Reassign</button>
+  </form>
+</div>
+{% else %}
+<div class="mo-card">
+  <p class="mo-note" style="margin:0">Nothing is waiting on you.</p>
+</div>
+{% endfor %}
+{% endblock %}

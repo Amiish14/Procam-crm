@@ -429,3 +429,181 @@ def test_the_workbench_shows_what_is_waiting_to_be_confirmed(world):
 
         board = wb.board(sc, per_page=200)
         assert board['counts']['owner_to_confirm'] == 1
+
+
+# ── the morning digest ───────────────────────────────────────────────
+def _pending_lead(vertical='Freight Forwarding', *, days_ago=0):
+    lead = _lead(procam_vertical=vertical)
+    db.session.commit()
+    auto_assign.assign_for(lead, commit=True)
+    if days_ago:
+        from app.models.assignment import OwnerConfirmation
+        row = OwnerConfirmation.query.filter_by(lead_id=lead.id).first()
+        row.created_at = datetime.utcnow() - timedelta(days=days_ago)
+        db.session.commit()
+    return lead
+
+
+def test_one_digest_per_head_not_one_mail_per_lead(world):
+    """380 messages in 30 days to two people is a folder nobody
+    opens."""
+    from app.models.mailops import EmailOutbox
+    from app.services import owner_digest
+
+    with flask_app.app_context():
+        for _i in range(5):
+            _pending_lead()
+        before = EmailOutbox.query.count()
+        report = owner_digest.run()
+        after = EmailOutbox.query.count()
+
+    assert report['sent'] == 1, 'one head, one mail'
+    assert after - before == 1
+    with flask_app.app_context():
+        row = EmailOutbox.query.order_by(EmailOutbox.id.desc()).first()
+    assert '5 new client' in row.subject
+
+
+def test_the_digest_lists_every_lead_with_both_buttons(world):
+    from app.models.mailops import EmailOutbox
+    from app.services import owner_digest
+
+    with flask_app.app_context():
+        lead = _pending_lead()
+        owner_digest.run()
+        row = EmailOutbox.query.order_by(EmailOutbox.id.desc()).first()
+        lead_id = lead.id
+    assert f'/owner-confirm?lead={lead_id}&amp;do=confirm' in row.html \
+        or f'/owner-confirm?lead={lead_id}&do=confirm' in row.html
+    assert 'Yes, mine' in row.html
+    assert 'Give it to somebody else' in row.html
+
+
+def test_a_head_with_nothing_waiting_gets_no_mail(world):
+    from app.services import owner_digest
+    with flask_app.app_context():
+        report = owner_digest.run()
+    assert report['sent'] == 0
+
+
+def test_nothing_is_sent_with_the_flag_off(world, monkeypatch):
+    from app.services import owner_digest
+    with flask_app.app_context():
+        _pending_lead()
+    monkeypatch.setenv('FEATURE_AUTO_ASSIGN', 'false')
+    flags.cache_clear()
+    with flask_app.app_context():
+        report = owner_digest.run()
+    assert report['sent'] == 0
+    assert 'off' in report['skipped']
+
+
+def test_anything_unanswered_for_two_days_reaches_the_backstop(world):
+    from app.models.mailops import EmailOutbox
+    from app.services import owner_digest
+
+    with flask_app.app_context():
+        _pending_lead(days_ago=3)
+        report = owner_digest.run()
+        rows = EmailOutbox.query.order_by(EmailOutbox.id.desc()).all()
+
+    assert report['escalated'] == 1
+    assert any(r.user_code == BACKSTOP
+               and 'waiting for an owner' in r.subject for r in rows)
+
+
+def test_escalating_does_not_take_the_lead_away(world):
+    """A head on leave should come back to their work, not to
+    somebody else having taken it."""
+    from app.services import owner_digest
+    with flask_app.app_context():
+        lead = _pending_lead(days_ago=3)
+        owner_digest.run()
+        assert db.session.get(Lead, lead.id).assigned_to == HEAD_FF
+
+
+def test_a_fresh_confirmation_is_not_escalated(world):
+    from app.services import owner_digest
+    with flask_app.app_context():
+        _pending_lead(days_ago=1)
+        report = owner_digest.run()
+    assert report['escalated'] == 0
+
+
+def test_answering_takes_it_off_the_next_digest(world):
+    from app.services import owner_digest
+    with flask_app.app_context():
+        lead = _pending_lead()
+        auto_assign.answer(lead.id, outcome='confirmed', by=HEAD_FF)
+        report = owner_digest.run()
+    assert report['sent'] == 0
+
+
+# ── the screens ──────────────────────────────────────────────────────
+def _client(code):
+    c = flask_app.test_client()
+    with c.session_transaction() as s:
+        emp = Employee.query.filter_by(emp_code=code).first()
+        s.update(emp_code=code, name=code,
+                 role=(emp.role if emp else 'user'), sv=0)
+    return c
+
+
+def test_the_confirm_page_shows_me_only_my_own(world):
+    with flask_app.app_context():
+        mine = _pending_lead()
+        other = _lead(procam_vertical='Heavy Transport')
+        db.session.commit()
+        auto_assign.assign_for(other, commit=True)
+        mine_id, other_id = mine.id, other.id
+
+    page = _client(HEAD_FF).get('/owner-confirm').data.decode()
+    # The lead link, not "#id": a small id matches any CSS hex colour
+    # on the page, and this one found #2 inside #2c3b4a.
+    assert f'?lead={mine_id}"' in page
+    assert f'?lead={other_id}"' not in page
+
+
+def test_confirming_from_the_page_closes_it(world):
+    with flask_app.app_context():
+        lead = _pending_lead()
+        lead_id = lead.id
+
+    res = _client(HEAD_FF).post('/owner-confirm',
+                                data={'lead': lead_id,
+                                      'outcome': 'confirmed'})
+    assert res.status_code == 200
+    with flask_app.app_context():
+        assert auto_assign.pending_for(HEAD_FF) == []
+
+
+def test_i_cannot_answer_somebody_elses(world):
+    with flask_app.app_context():
+        lead = _pending_lead()
+        lead_id = lead.id
+    res = _client(REP).post('/owner-confirm',
+                            data={'lead': lead_id, 'outcome': 'confirmed'})
+    assert res.status_code == 403
+    with flask_app.app_context():
+        assert len(auto_assign.pending_for(HEAD_FF)) == 1
+
+
+def test_the_replacement_screen_refuses_an_inactive_successor(world):
+    with flask_app.app_context():
+        emp = Employee.query.filter_by(emp_code=BACKSTOP).first()
+        emp.role, emp.is_super_admin = 'admin', True
+        db.session.commit()
+
+    c = _client(BACKSTOP)
+    res = c.post('/admin/assignment/replacements',
+                 data={'from': LEAVER, 'to': 'AAGONE3'})
+    assert res.status_code in (200, 403)
+    if res.status_code == 200:
+        assert b'not an employee on file' in res.data
+
+    with flask_app.app_context():
+        _emp('AAGONE3', 'Also Departed', active=False)
+        db.session.commit()
+    res = c.post('/admin/assignment/replacements',
+                 data={'from': LEAVER, 'to': 'AAGONE3'})
+    assert b'not active either' in res.data

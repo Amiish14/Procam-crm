@@ -796,3 +796,132 @@ def my_mail_original(row_id):
     name = ''.join(c for c in name if c.isalnum() or c in ' -_()') + '.eml'
     return send_file(path, as_attachment=True, download_name=name,
                      mimetype='message/rfc822')
+
+
+# ── owner confirmation, and the replacement map ──────────────────────
+@bp.route('/owner-confirm', methods=['GET', 'POST'])
+@_signed_in
+def owner_confirm():
+    """Leads a rule assigned to me, for me to keep or pass on.
+
+    The buttons in the morning digest land here. A GET with
+    `do=confirm` is the one-click path; everything else shows the
+    list. Confirming is a POST, because a link that changes data on
+    GET is a link a mail scanner can press.
+    """
+    from app.services import auto_assign, flags, owner_digest
+
+    if not flags.on('FEATURE_AUTO_ASSIGN'):
+        return render_template('mailops/my_mail_off.html'), 200
+
+    me, admin = _me(), _is_admin()
+    message = ''
+
+    if request.method == 'POST':
+        lead_id = int(request.form.get('lead') or 0)
+        outcome = (request.form.get('outcome') or '').strip()
+        to_whom = (request.form.get('to') or '').strip().upper()
+
+        row = _confirmation(lead_id)
+        if row is None:
+            message = 'Nothing is waiting on that lead.'
+        elif row.emp_code != me and not admin:
+            return render_template('access_denied.html',
+                                   need='this lead to be yours'), 403
+        else:
+            ok, why = auto_assign.answer(
+                lead_id, outcome=outcome, by=me,
+                reassign_to=to_whom or None)
+            message = ('Done.' if ok else f'Not done: {why}')
+
+    mine = auto_assign.pending_for(me if not admin else None) \
+        if not admin else owner_digest.pending()
+    rows = owner_digest.rows_for(mine)
+
+    from app import Employee
+    people = (Employee.query
+              .filter(Employee.is_active.is_(True))
+              .order_by(Employee.name).all())
+    return render_template(
+        'mailops/owner_confirm.html', rows=rows, me=me, is_admin=admin,
+        people=people, message=message,
+        focus=(request.args.get('lead') or '').strip(),
+        quick=(request.args.get('do') or '').strip())
+
+
+def _confirmation(lead_id):
+    from app.models.assignment import OwnerConfirmation
+    try:
+        return OwnerConfirmation.query.filter_by(
+            lead_id=lead_id, confirmed_at=None).first()
+    except Exception:
+        from app import db
+        db.session.rollback()
+        return None
+
+
+@bp.route('/admin/assignment/replacements', methods=['GET', 'POST'])
+@access.require('admin.employees')
+def replacements_screen():
+    """Where a departed person's leads go. A table, not code.
+
+    `admin.employees` rather than `admin.email`: this is about who
+    works here, and the person who maintains the employee master is
+    the person who knows somebody has left.
+    """
+    from app import Employee, db
+    from app.models.assignment import OwnerReplacement
+    from app.services import audit
+
+    saved = error = ''
+    if request.method == 'POST':
+        from_code = (request.form.get('from') or '').strip().upper()
+        to_code = (request.form.get('to') or '').strip().upper()
+        remove = request.form.get('remove')
+
+        row = (OwnerReplacement.query.filter_by(from_emp_code=from_code)
+               .first() if from_code else None)
+        if remove and row is not None:
+            db.session.delete(row)
+            db.session.commit()
+            audit.record('assignment.replacement_removed', 'OwnerReplacement',
+                         from_code, actor=_me(),
+                         reason='removed in Admin → Assignment')
+            saved = f'{from_code} removed.'
+        elif not from_code or not to_code:
+            error = 'Both people are needed.'
+        elif from_code == to_code:
+            error = 'Somebody cannot replace themselves.'
+        else:
+            successor = Employee.query.filter_by(emp_code=to_code).first()
+            if successor is None:
+                error = f'{to_code} is not an employee on file.'
+            elif not successor.is_active:
+                error = (f'{successor.name} is not active either — their '
+                         f'leads would need replacing too.')
+            else:
+                was = row.to_emp_code if row is not None else None
+                if row is None:
+                    row = OwnerReplacement(from_emp_code=from_code)
+                    db.session.add(row)
+                row.to_emp_code = to_code
+                row.active = bool(request.form.get('active'))
+                row.note = (request.form.get('note') or '').strip()[:200]
+                row.updated_by = _me()
+                db.session.commit()
+                audit.record('assignment.replacement_changed',
+                             'OwnerReplacement', from_code,
+                             old={'to': was}, new={'to': to_code},
+                             actor=_me(),
+                             reason='changed in Admin → Assignment')
+                saved = f'{from_code} → {to_code} saved.'
+
+    rows = OwnerReplacement.query.order_by(
+        OwnerReplacement.from_emp_code).all()
+    by_code = {e.emp_code: e for e in Employee.query.all()}
+    return render_template(
+        'mailops/replacements.html', rows=rows, by_code=by_code,
+        inactive=[e for e in by_code.values() if not e.is_active],
+        active=sorted([e for e in by_code.values() if e.is_active],
+                      key=lambda e: (e.name or '')),
+        saved=saved, error=error)

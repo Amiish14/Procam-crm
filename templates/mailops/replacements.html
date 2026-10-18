@@ -1,0 +1,83 @@
+{% extends "mailops/_shell.html" %}
+{% block title %}Replacements — Procam CRM{% endblock %}
+{% block heading %}Replacements{% endblock %}
+{% block strap %}Where a departed colleague's leads go{% endblock %}
+
+{% block body %}
+{% if saved %}<div class="mo-card" style="border-color:#86EFAC;background:#F0FDF4">
+  <p class="mo-note" style="margin:0">{{ saved }}</p></div>{% endif %}
+{% if error %}<div class="mo-card" style="border-color:#FCA5A5;background:#FEF2F2">
+  <p class="mo-note" style="margin:0">{{ error }}</p></div>{% endif %}
+
+<div class="mo-card">
+  <h3>Why this is a table</h3>
+  <p class="mo-note">When a lead would be assigned to somebody who has
+    left, it goes to their replacement instead. The list changes
+    whenever somebody leaves, and a deploy is the wrong unit for that —
+    so it lives here rather than in code.</p>
+  <p class="mo-note">Chains are followed: if A was replaced by B and B
+    has since left, B's row applies. A replacement who is not active is
+    refused, because it would only move the problem.</p>
+</div>
+
+<div class="mo-card">
+  <h3>{{ rows|length }} in place</h3>
+  <table class="mo">
+    <tr><th>Who has left</th><th>Their leads go to</th><th>Active</th>
+      <th>Note</th><th></th></tr>
+    {% for r in rows %}
+    {% set left = by_code.get(r.from_emp_code) %}
+    {% set to = by_code.get(r.to_emp_code) %}
+    <tr>
+      <td><code>{{ r.from_emp_code }}</code>
+        {{ (left.name if left else 'not on file') }}
+        {% if left and left.is_active %}
+        <div class="mo-note" style="margin:2px 0">still active — this row
+          does nothing until they leave</div>{% endif %}</td>
+      <td><code>{{ r.to_emp_code }}</code>
+        {{ (to.name if to else 'NOT ON FILE') }}
+        {% if to and not to.is_active %}
+        <div class="mo-note" style="margin:2px 0;color:#B91C1C">this
+          person is not active either</div>{% endif %}</td>
+      <td><span class="mo-pill {{ 'on' if r.active else 'off' }}">
+        {{ 'yes' if r.active else 'no' }}</span></td>
+      <td>{{ r.note or '' }}</td>
+      <td>
+        <form method="post" style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="from" value="{{ r.from_emp_code }}">
+          <button type="submit" name="remove" value="1" class="btn">Remove</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="mo-card">
+  <h3>Add or change one</h3>
+  <form method="post" class="mo-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Who has left
+      <select name="from" required>
+        <option value="">— choose —</option>
+        {% for e in inactive|sort(attribute='name') %}
+        <option value="{{ e.emp_code }}">{{ e.name }} ({{ e.emp_code }})</option>
+        {% endfor %}
+      </select></label>
+    <label>Their leads go to
+      <select name="to" required>
+        <option value="">— choose —</option>
+        {% for e in active %}
+        <option value="{{ e.emp_code }}">{{ e.name }}{% if e.vertical %} — {{ e.vertical }}{% endif %}</option>
+        {% endfor %}
+      </select></label>
+    <label><input type="checkbox" name="active" checked> In force</label>
+    <input type="text" name="note" placeholder="Why" maxlength="200"
+      style="min-width:200px">
+    <button type="submit" class="btn">Save</button>
+  </form>
+  <p class="mo-note">Only people who have left are offered on the left,
+    and only active people on the right.</p>
+</div>
+{% endblock %}
