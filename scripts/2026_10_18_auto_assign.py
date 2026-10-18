@@ -61,6 +61,13 @@ def _find(who):
         return emp.emp_code, f'{emp.emp_code} {emp.name}', (
             '' if emp.is_active else 'NOT ACTIVE')
     rows = Employee.query.filter(Employee.name.ilike(f'%{probe}%')).all()
+    if not rows:
+        # "Venkatesh Althada" is on file as "Venkatesh Ramarao
+        # Althada". A contiguous substring misses every person whose
+        # middle name somebody left out, which is most of them.
+        wanted = {w for w in probe.lower().split() if len(w) > 1}
+        rows = [e for e in Employee.query.all()
+                if wanted and wanted <= set((e.name or '').lower().split())]
     if len(rows) == 1:
         emp = rows[0]
         return emp.emp_code, f'{emp.emp_code} {emp.name}', (
