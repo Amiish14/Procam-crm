@@ -12,7 +12,10 @@ Everything that assigns a lead goes through `assign()`:
 so the validation, the history row and the two notifications cannot be
 skipped by using one path instead of another.
 """
+import logging
 from datetime import datetime
+
+log = logging.getLogger(__name__)
 
 
 def _employee(code):
@@ -62,6 +65,37 @@ REASSIGNMENT_REASONS = (
 #: Returned when a primary PIC is changed with no reason given.
 REASON_REQUIRED = ('Choose a reason for changing the primary PIC — it is '
                    'recorded in the assignment history.')
+
+
+def _teach_the_matcher(lead, actor, note):
+    """A person reassigning a lead is telling us whose customer it is.
+
+    The strongest signal the CRM gets about an account, and until now
+    it was thrown away: the next mail from the same sender matched
+    nothing again and went to the same wrong place.
+
+    Only from a person. An automatic assignment teaching itself is a
+    guess that compounds, so anything the rules did is skipped.
+    """
+    try:
+        if not actor or actor in ('system', 'auto-assign'):
+            return
+        if not getattr(lead, 'company_id', None):
+            return
+        sender = ((getattr(lead, 'email', '') or '')
+                  or (getattr(lead, 'original_email_from', '') or ''))
+        if not sender or '@' not in sender:
+            return
+        from app.services import account_match, flags
+        if not flags.on('FEATURE_AUTO_ASSIGN'):
+            return
+        account_match.learn(sender, lead.company_id, lead_id=lead.id,
+                            actor=actor,
+                            reason=(note or 'reassigned by hand')[:200],
+                            commit=False)
+    except Exception:
+        log.debug('could not learn from the reassignment of lead %s',
+                  getattr(lead, 'id', '?'), exc_info=True)
 
 
 def assign(lead, primary_code=None, secondary_code=None, actor=None,
@@ -149,6 +183,9 @@ def assign(lead, primary_code=None, secondary_code=None, actor=None,
                 'could not invalidate copilot chunks for lead %s', lead.id)
         except Exception:
             pass
+
+    # A person moving a lead is telling us whose customer it is.
+    _teach_the_matcher(lead, actor, note)
 
     return True, None
 

@@ -317,6 +317,8 @@ CONDITIONS = (
      'Came to you in the last two days.'),
     ('high_value', 'High-value priority', G_HIGH_VALUE,
      f'Worth ₹{HIGH_VALUE_INR / 10000000:.0f} crore or more.'),
+    ('owner_to_confirm', 'Owner to confirm', G_NEW,
+     'A rule chose this owner. Nobody has said whether it is right.'),
     ('mail_on_closed', 'New mail on a closed lead', G_TODAY,
      'A message arrived on a lead nobody is working, so nothing would '
      'otherwise put it in front of you.'),

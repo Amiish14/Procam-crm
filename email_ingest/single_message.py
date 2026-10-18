@@ -264,10 +264,40 @@ def auto_assign_owners(lead, sender_email, *, subject='', body=''):
         from app.services import lead_assignment
         from app.services import lead_intake_db as _asdb
 
-        account, _how = _asdb.resolve_account(
-            sender_email, text_for_gstin=f'{subject}\n{body}')
+        # The better matcher first, where it is switched on: five
+        # rules against two, free mail excluded from domain matching,
+        # and whatever a person's corrections have already taught it.
+        account, _how = None, ''
+        try:
+            from app.services import account_match, flags
+            if flags.on('FEATURE_AUTO_ASSIGN'):
+                account, _how = account_match.resolve(
+                    sender_email, company_name=getattr(lead, 'company', ''),
+                    text=f'{subject}\n{body}')
+        except Exception:
+            log.exception('the account matcher failed — falling back')
+            account = None
+        if account is None:
+            account, _how = _asdb.resolve_account(
+                sender_email, text_for_gstin=f'{subject}\n{body}')
+
         primary, secondary = _asdb.owners_for(account)
         if not primary:
+            # No owner on the account, or no account at all. Rather
+            # than the unmapped queue — where a lead sat with nobody
+            # — the rules give it a real owner and ask the head to
+            # confirm it in the morning.
+            try:
+                from app.services import auto_assign
+                decided = auto_assign.assign_for(
+                    lead, account=account, sender_email=sender_email,
+                    actor='system', commit=False)
+                if decided:
+                    log.info('lead %s auto-assigned to %s (%s)', lead.id,
+                             decided['emp_code'], decided['rule'])
+                    return decided['emp_code'], None
+            except Exception:
+                log.exception('auto-assign failed for lead %s', lead.id)
             log.info('lead %s has no configured owner (%s) — unmapped '
                      'account queue', lead.id,
                      account.name if account else 'no account')

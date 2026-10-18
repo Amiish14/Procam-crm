@@ -51,6 +51,9 @@ DEFAULTS = {
     'allowed_email_domains': (
         [], 'Domains an employee address may use, beyond Procam\'s own. '
             'Empty means Procam domains only.'),
+    'auto_assign_backstop': (
+        'DIR12010', 'Who owns a lead when there is no account and no '
+                    'vertical to go on. The floor, not a preference.'),
     'weekly_pack_recipients': (
         [], 'Extra people on the Thursday review pack, beyond the '
             'vertical heads.'),

@@ -162,6 +162,10 @@ def _high_value(item, _ctx):
     return _has(item, 'high_value')
 
 
+def _owner_to_confirm(item, _ctx):
+    return _has(item, 'owner_to_confirm')
+
+
 def _new_mail_on_closed(item, _ctx):
     return _has(item, 'mail_on_closed')
 
@@ -225,6 +229,9 @@ WORKBENCH_FILTERS = (
            tile='New assignments', chip='New assignments'),
     Filter('high_value', _high_value,
            tile='High-value priorities', chip='High-value priorities'),
+    Filter('owner_to_confirm', _owner_to_confirm,
+           tile='Owner to confirm', chip='Owner to confirm',
+           note='A rule chose the owner and nobody has checked it.'),
     Filter('new_mail_on_closed', _new_mail_on_closed,
            tile='New mail on closed lead', chip='New mail on closed lead',
            note='A message arrived on a lead nobody is working.'),

@@ -4902,7 +4902,7 @@ def init_db():
                    'app.models.notification', 'app.models.review',
                    'app.models.mailops', 'app.models.restriction',
                    'app.models.ingest_log', 'app.models.integration',
-                   'app.models.email_admin',
+                   'app.models.email_admin', 'app.models.assignment',
                    'app.models.escalation', 'app.models.intel',
                    'app.directory.models'):
             try:

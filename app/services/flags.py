@@ -20,6 +20,7 @@ rollback a line in the admin screen rather than a revert.
     FEATURE_QUOTE_REPLY_CLASS
                             treat a forwarded offer or client reply as
                             business rather than dropping it
+    FEATURE_AUTO_ASSIGN     give every lead an owner on arrival, by rule
     EMAIL_KILL_SWITCH       stop all outbound CRM email, now, without a
                             deploy or a restart. Nothing is lost: the
                             outbox keeps queueing and the worker holds.
@@ -67,6 +68,8 @@ FLAGS = (
                                'lands on it', False),
     ('FEATURE_QUOTE_REPLY_CLASS', 'Recognise a forwarded Procam offer or a '
                                   'client reply as business', False),
+    ('FEATURE_AUTO_ASSIGN', 'Give every lead an owner automatically, and '
+                            'ask the head to confirm the guesses', False),
     (KILL_SWITCH, 'Stop all outbound CRM email immediately', False),
 )
 

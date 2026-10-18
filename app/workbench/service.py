@@ -475,6 +475,76 @@ def closed_mail_items(sc, *, today=None):
     return out
 
 
+def owner_confirm_items(sc, *, today=None):
+    """Leads a rule assigned, waiting for their head to agree.
+
+    They have a real owner already — the rules never leave a lead
+    with nobody — so this is not a queue of unowned work. It is the
+    list of guesses nobody has checked, which is a different thing
+    and belongs in front of the person who can check them.
+    """
+    from app.services import flags
+
+    today = today or _today()
+    if not flags.on('FEATURE_AUTO_ASSIGN'):
+        return []
+
+    from app import Lead, db
+    from app.access import scope as sc_mod
+    from app.models.assignment import OwnerConfirmation
+
+    try:
+        pending = (OwnerConfirmation.query
+                   .filter(OwnerConfirmation.confirmed_at.is_(None))
+                   .limit(2000).all())
+    except Exception:
+        db.session.rollback()
+        return []
+    if not pending:
+        return []
+
+    by_lead = {p.lead_id: p for p in pending}
+    try:
+        leads = sc_mod.leads(
+            Lead.query.filter(Lead.id.in_(list(by_lead)),
+                              Lead.is_archived.isnot(True)), sc=sc).all()
+    except Exception:
+        db.session.rollback()
+        return []
+
+    out = []
+    for l in leads:
+        row = by_lead.get(l.id)
+        waited = rules.days_between(row.created_at, today) if row else None
+        out.append({
+            'kind': 'lead', 'id': l.id,
+            'group': rules.G_NEW,
+            'priority': rules.P_TODAY,
+            'due': '',
+            'account': l.company or '',
+            'account_id': l.company_id,
+            'title': l.project or l.company or f'Lead #{l.id}',
+            'vertical': l.procam_vertical or '',
+            'stage': l.stage or '',
+            'value_inr': None,
+            'last_activity_days': None, 'quiet_days': None,
+            'next_action': 'Confirm the owner, or reassign',
+            'next_action_date': '',
+            'quote_due': '', 'quote_number': '',
+            'quote_sent_at': '', 'quote_entered_quoted': '',
+            'quote_validity': '',
+            'ageing_days': waited,
+            'assigned_to': l.assigned_to or '',
+            'assigned_name': l.assigned_name or l.assigned_to or '',
+            'data_issues': [],
+            'conditions': ['owner_to_confirm'],
+            'reasons': [f'assigned by rule ({row.rule}) and not yet '
+                        f'confirmed' if row else 'owner not confirmed'],
+            'route': f'/app?lead={l.id}',
+        })
+    return out
+
+
 def task_items(sc, *, today=None):
     """Open task-engine tasks, on the same board as everything else.
 
@@ -665,6 +735,7 @@ def board(sc, *, today=None, group=None, filter_key=None, age='',
     items += account_items(sc, today=today)
     items += task_items(sc, today=today)
     items += closed_mail_items(sc, today=today)
+    items += owner_confirm_items(sc, today=today)
 
     # The scope-wide filters first: everything downstream — counts,
     # chips, ageing, the list — has to see the same population, or
