@@ -164,7 +164,10 @@ def survey(since='2026-09-01', limit=20000):
     """{'recorded': [...], 'review': [...], 'changed_since': [...]}."""
     from app import Lead
 
-    when = datetime.fromisoformat(since)
+    # A date as text or as a datetime: callers have both to hand and
+    # making each one convert is how a script dies on its first run.
+    when = (since if isinstance(since, datetime)
+            else datetime.fromisoformat(str(since)))
     out = {'recorded': [], 'review': [], 'changed_since': []}
     leads = (Lead.query
              .filter(Lead.procam_vertical == TARGET,

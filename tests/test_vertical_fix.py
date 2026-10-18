@@ -77,8 +77,18 @@ def _emp(code, name, *, role='admin', scope=DataScope.ALL, perms=()):
 
 
 def _wipe():
+    from app.models.audit import AuditEvent
+
     ids = [l.id for l in Lead.query.filter(Lead.company.like(TAG + '%'))]
     if ids:
+        # The audit rows go too. SQLite reuses rowids after a delete,
+        # so a lead created by the next test inherits the previous
+        # one's history and the restore reads a rewrite that belongs
+        # to a lead that no longer exists.
+        AuditEvent.query.filter(
+            AuditEvent.entity_type.in_(('Lead', 'lead')),
+            AuditEvent.entity_id.in_([str(i) for i in ids])).delete(
+                synchronize_session=False)
         Lead.query.filter(Lead.id.in_(ids)).delete(synchronize_session=False)
     db.session.commit()
 
@@ -303,8 +313,22 @@ def test_the_account_form_cannot_write_a_vertical_at_all(world):
 
 
 # ── 4. the repair workbook ───────────────────────────────────────────
-def _audit(lead_id, frm, to, *, actor, when):
+def _audit(lead_id, frm, to, *, actor, when, clear=True):
     from app.models.audit import AuditEvent
+
+    # Clear anything already filed against this id first, on the
+    # first row only — a fixture building a history of two changes
+    # must not wipe its own earlier one. The suite
+    # shares one database, other modules delete their leads without
+    # deleting their audit rows, and SQLite reuses rowids — so a lead
+    # created here inherits a stranger's history and the restore
+    # reads a change that belongs to a record that no longer exists.
+    if clear:
+        AuditEvent.query.filter(
+            AuditEvent.entity_type.in_(('Lead', 'lead')),
+            AuditEvent.entity_id == str(lead_id)).delete(
+                synchronize_session=False)
+
     db.session.add(AuditEvent(
         occurred_at=when, actor=actor, action='lead.update',
         entity_type='Lead', entity_id=str(lead_id),
@@ -338,7 +362,8 @@ def damaged(world):
         _audit(made['changed'], 'Customs', va.TARGET,
                actor='EMP3592024', when=base)
         _audit(made['changed'], va.TARGET, 'Project Freight',
-               actor='DIR12010', when=base + timedelta(days=3))
+               actor='DIR12010', when=base + timedelta(days=3),
+               clear=False)
         db.session.commit()
         yield made
 
@@ -406,12 +431,14 @@ def test_the_survey_writes_nothing(damaged):
 def test_the_workbook_has_the_three_sheets(damaged, tmp_path):
     import subprocess
     out = tmp_path / 'repair.xlsx'
+    with flask_app.app_context():
+        url = str(db.engine.url)
     res = subprocess.run(
         [sys.executable, os.path.join(_ROOT, 'scripts',
                                       'vertical_repair_workbook.py'),
          '--out', str(out)],
         cwd=_ROOT, capture_output=True, text=True,
-        env=dict(os.environ, URL_PREFIX=''))
+        env=dict(os.environ, URL_PREFIX='', DATABASE_URL=url))
     assert res.returncode == 0, res.stderr[-800:]
     assert out.exists()
 
@@ -420,3 +447,173 @@ def test_the_workbook_has_the_three_sheets(damaged, tmp_path):
     assert wb.sheetnames == ['About', 'Recorded', 'Review', 'Changed since']
     assert wb['Review'][2][11].value == 'correct vertical'
     assert wb['Recorded'][2][6].value == 'restore_to'
+
+
+# ── Stage B: putting them back ───────────────────────────────────────
+def _run(script, *args):
+    """Run a repair script against the database this process is on.
+
+    The URL comes from the live engine, not from os.environ. Several
+    test modules assign DATABASE_URL at import, so the variable ends
+    up naming whichever module imported last while the engine stays
+    bound to whichever imported first — and a subprocess trusting the
+    variable reads a different database than the fixtures wrote to.
+    """
+    import subprocess
+
+    with flask_app.app_context():
+        url = str(db.engine.url)
+    return subprocess.run(
+        [sys.executable, os.path.join(_ROOT, 'scripts', script), *args],
+        cwd=_ROOT, capture_output=True, text=True,
+        env=dict(os.environ, URL_PREFIX='', DATABASE_URL=url))
+
+
+@pytest.fixture()
+def to_repair(world):
+    """One lead of each kind the restore has to tell apart."""
+    from app.models.email_admin import VerticalAlias
+    from app.services import vertical_audit as va
+
+    base = datetime(2026, 10, 1, 9, 0)
+    with flask_app.app_context():
+        for alias, real in (('Transportation', 'Heavy Transport'),
+                            ('Project Logistics', 'Project Freight')):
+            if not VerticalAlias.query.filter_by(alias=alias).first():
+                db.session.add(VerticalAlias(alias=alias, vertical=real))
+        made = {}
+        for key, was in (('restore', 'Heavy Cargo'),
+                         ('remap', 'Project Logistics'),
+                         ('skip_alias', 'Transportation'),
+                         ('skip_deliberate', 'Project Freight')):
+            lead = Lead(company=TAG + 'B ' + key, assigned_to=ADMIN,
+                        assigned_name=ADMIN, stage='Quoted',
+                        procam_vertical=va.TARGET,
+                        project='customs clearance at Nhava Sheva',
+                        created_at=base, updated_at=datetime.utcnow())
+            db.session.add(lead)
+            db.session.flush()
+            made[key] = lead.id
+            _audit(lead.id, was, va.TARGET, actor='DIR12010', when=base)
+        db.session.commit()
+        yield made
+
+
+def test_the_dry_run_writes_nothing(to_repair):
+    from app.services import vertical_audit as va
+    res = _run('vertical_restore.py', '--check')
+    assert res.returncode == 0, res.stderr[-800:]
+    assert 'DRY RUN' in res.stdout
+    with flask_app.app_context():
+        for lid in to_repair.values():
+            assert db.session.get(Lead, lid).procam_vertical == va.TARGET
+
+
+def test_apply_restores_remaps_and_skips_the_right_ones(to_repair):
+    from app.services import vertical_audit as va
+    res = _run('vertical_restore.py', '--apply')
+    assert res.returncode == 0, res.stderr[-800:]
+    with flask_app.app_context():
+        got = {k: db.session.get(Lead, v).procam_vertical
+               for k, v in to_repair.items()}
+    assert got['restore'] == 'Heavy Cargo'
+    # the dead label becomes what it means, not the label itself
+    assert got['remap'] == 'Project Freight'
+    # an alias of the value it already carries: untouched
+    assert got['skip_alias'] == va.TARGET
+    # the form offered Project Freight, so the defect cannot explain it
+    assert got['skip_deliberate'] == va.TARGET
+
+
+def test_the_four_the_form_offered_are_listed_with_their_exact_value(
+        to_repair):
+    res = _run('vertical_restore.py', '--check')
+    assert 'the defect cannot explain it' in res.stdout
+    assert "'Project Freight'" in res.stdout, \
+        'the stored value must be shown exactly, quoting included'
+
+
+def test_every_written_lead_gets_the_reason_on_its_audit_row(to_repair):
+    from app.models.audit import AuditEvent
+    import scripts.vertical_restore as vr  # noqa: F401  (for REASON)
+
+    _run('vertical_restore.py', '--apply')
+    with flask_app.app_context():
+        rows = (AuditEvent.query
+                .filter(AuditEvent.action == 'lead.vertical_restored')
+                .all())
+        touched = {int(r.entity_id) for r in rows}
+        assert to_repair['restore'] in touched
+        assert to_repair['remap'] in touched
+        assert to_repair['skip_alias'] not in touched
+        assert to_repair['skip_deliberate'] not in touched
+        for r in rows:
+            assert r.reason == ('restored after form defect, '
+                                'CRM-VERTICAL-FIX-01')
+
+
+def test_a_lead_someone_moved_since_is_left_alone(to_repair):
+    with flask_app.app_context():
+        db.session.get(Lead, to_repair['restore']).procam_vertical = \
+            'Sea Freight'
+        db.session.commit()
+    res = _run('vertical_restore.py', '--apply')
+    assert res.returncode == 0
+    with flask_app.app_context():
+        assert db.session.get(Lead, to_repair['restore']).procam_vertical \
+            == 'Sea Freight'
+
+
+def test_running_it_twice_changes_nothing_the_second_time(to_repair):
+    _run('vertical_restore.py', '--apply')
+    with flask_app.app_context():
+        after_one = {k: db.session.get(Lead, v).procam_vertical
+                     for k, v in to_repair.items()}
+    _run('vertical_restore.py', '--apply')
+    with flask_app.app_context():
+        after_two = {k: db.session.get(Lead, v).procam_vertical
+                     for k, v in to_repair.items()}
+    assert after_one == after_two
+
+
+def test_a_failure_part_way_through_rolls_the_whole_thing_back(to_repair):
+    """One transaction means one transaction. A half-applied repair
+    is worse than none: nobody could tell which half."""
+    from app.services import vertical_audit as va
+    from app.services import audit as audit_mod
+
+    calls = {'n': 0}
+    real = audit_mod.record
+
+    def explode(*a, **kw):
+        calls['n'] += 1
+        if calls['n'] == 2:
+            raise RuntimeError('simulated failure part way through')
+        return real(*a, **kw)
+
+    with flask_app.app_context():
+        before = {k: db.session.get(Lead, v).procam_vertical
+                  for k, v in to_repair.items()}
+
+    import scripts.vertical_restore as vr
+    original = vr.main
+    audit_mod.record = explode
+    try:
+        with flask_app.app_context():
+            import sys as _sys
+            argv = _sys.argv
+            _sys.argv = ['vertical_restore.py', '--apply']
+            try:
+                vr.main()
+            except SystemExit as exc:
+                assert exc.code == 1
+            finally:
+                _sys.argv = argv
+    finally:
+        audit_mod.record = real
+        vr.main = original
+
+    with flask_app.app_context():
+        after = {k: db.session.get(Lead, v).procam_vertical
+                 for k, v in to_repair.items()}
+    assert after == before, 'a failed run must leave nothing behind'
