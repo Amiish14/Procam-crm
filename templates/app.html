@@ -2989,10 +2989,21 @@ async function openLd(id){
   })();
   g('ldSub').textContent=(l.project?l.project+' · ':'')+[l.state,l.industry].filter(Boolean).join(' · ');
   const isAdmin=ME.role==='admin';
-  const uOpts=EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('');
+  /* The lead's own owner, always, even when EMPS does not contain
+     them. For anybody without admin.employees that list is active
+     staff only — 29 of 131 — so a lead owned by somebody who has
+     left matched no option, the select fell back to option zero, and
+     saving reassigned the lead to whoever happened to be first. Same
+     defect as the vertical select, same remedy. */
+  const _ownOpt=(code,label)=>(code && !EMPS.some(em=>em.emp_code===code))
+    ? `<option value="${e(code)}" selected>${e(label||code)} — no longer active</option>` : '';
+  const uOpts=_ownOpt(l.assigned_to, l.assigned_name)
+    +EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('');
   // Optional, and blank by default — a secondary is encouraged, never
   // forced, so the picker must open on "nobody".
-  const sOpts='<option value="">— none —</option>'+EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.secondary_owner?' selected':''}>${e(em.name)}</option>`).join('');
+  const sOpts='<option value="">— none —</option>'
+    +_ownOpt(l.secondary_owner, l.secondary_owner_name)
+    +EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.secondary_owner?' selected':''}>${e(em.name)}</option>`).join('');
   g('ldBdy').innerHTML=`
     ${renderEmailSummaryCard(l)}
     ${l.history||l.notes?`<div class="fmg"><label class="fml">Background</label><div class="hist">${e((l.history||l.notes||'').substring(0,400))}</div></div>`:''}
@@ -3013,9 +3024,9 @@ async function openLd(id){
     <div class="fm-s">Contact information</div>
     <div class="fmr"><div class="fmg"><label class="fml">Contact person</label><input class="fmc" id="lPic" value="${e(l.pic||'')}"></div><div class="fmg"><label class="fml">Designation</label><input class="fmc" id="lDes" value="${e(l.designation||'')}"></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="lEm" value="${e(l.email||'')}"></div><div class="fmg"><label class="fml">Phone</label><input class="fmc" id="lPh" value="${e(l.phone||'')}"></div></div>
-    <div class="fmr"><div class="fmg"><label class="fml">Primary PIC</label><select class="fmc" id="lAsgn" ${isAdmin?'':'disabled'}>${uOpts}</select></div><div class="fmg"><label class="fml">Secondary PIC <span style="font-weight:400;color:var(--text-3)">— monitor / backup</span></label><select class="fmc" id="lAsgn2" ${isAdmin?'':'disabled'}>${sOpts}</select></div></div>
+    <div class="fmr"><div class="fmg"><label class="fml">Primary PIC</label><select class="fmc" id="lAsgn" data-was="${e(l.assigned_to||'')}" ${isAdmin?'':'disabled'}>${uOpts}</select></div><div class="fmg"><label class="fml">Secondary PIC <span style="font-weight:400;color:var(--text-3)">— monitor / backup</span></label><select class="fmc" id="lAsgn2" data-was="${e(l.secondary_owner||'')}" ${isAdmin?'':'disabled'}>${sOpts}</select></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">If changing the PIC, why? <span style="font-weight:400;color:var(--text-3)">— recorded in the assignment history</span></label><select class="fmc" id="lReasgn" ${isAdmin?'':'disabled'}>${['','Different geography','Different service vertical','Different customer relationship owner','Capacity / workload','Specialist required','Incorrect automatic assignment','Other'].map(r=>`<option value="${e(r)}">${e(r||'— not changing the PIC —')}</option>`).join('')}</select></div></div>
-    <div class="fmr"><div class="fmg"><label class="fml">Procam vertical</label><select class="fmc" id="lVt">${verticalOptions(l.procam_vertical)}</select>
+    <div class="fmr"><div class="fmg"><label class="fml">Procam vertical</label><select class="fmc" id="lVt" data-was="${e(l.procam_vertical||'')}">${verticalOptions(l.procam_vertical)}</select>
       ${l.vertical_confidence!=null ? `<div style="font-size:11.5px;color:var(--text-3);margin-top:4px">Suggested at intake with <b>${e(l.vertical_confidence)}%</b> confidence${l.vertical_reason?` — ${e(l.vertical_reason)}`:''}</div>` : ''}
     </div></div>
     <div class="fmg" id="lClassExpl" style="display:none"></div>
@@ -3510,6 +3521,14 @@ async function saveLd(){
     secondary_owner:g('lAsgn2')?.value ?? '',
     reassignment_reason:g('lReasgn')?.value || '',
     procam_vertical:g('lVt')?.value,
+    // What each of these selects was rendered with. The server
+    // accepts a change only when the posted value differs from this
+    // — that is the difference between somebody choosing an option
+    // and a select falling back to option zero because the record's
+    // own value was not in the list.
+    procam_vertical_was:g('lVt')?.dataset.was ?? '',
+    assigned_to_was:g('lAsgn')?.dataset.was ?? '',
+    secondary_owner_was:g('lAsgn2')?.dataset.was ?? '',
     followup:g('lFu')?.value,
     // `notes` is deliberately not sent. It is the field that held the
     // original email, and sending it back is what destroyed it. Notes go

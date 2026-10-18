@@ -800,6 +800,77 @@ class NewsItem(db.Model):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+#: Fields a stale or defective form can silently overwrite, and the
+#: key the form sends the rendered value under.
+#: Only `procam_vertical`. The owner fields have the same defect in
+#: the form — see the template — but they are fixed there, not here:
+#: `assigned_to` has callers besides the lead drawer (the triage
+#: screen, the integration API, the assignment scripts), it goes
+#: through `lead_assignment.assign` with its own validation and
+#: reason, and refusing it for want of a `_was` key would break those
+#: callers to guard against a bug none of them has.
+_TOUCH_GUARDED = {
+    'procam_vertical': 'procam_vertical_was',
+}
+
+
+def _drop_untouched(d, lead):
+    """Remove fields the user did not actually change.
+
+    A `<select>` whose options do not contain the record's current
+    value selects option zero, and the page then posts option zero as
+    though somebody had chosen it. That is how 443 leads were moved to
+    Heavy Transport by people editing a follow-up date: the vertical
+    list had four options and the leads carry eleven.
+
+    The form now sends what it was rendered with, as `<field>_was`. A
+    change is accepted only when the posted value differs from that
+    *and* from what is stored — the first says the user touched it,
+    the second says it is a real change.
+
+    Three refusals, each returning a line for the caller to show:
+
+      posted == rendered     nothing was touched; never write.
+      rendered != stored     the page was built from a copy that has
+                             since moved. Writing would silently undo
+                             somebody else's change.
+      no `_was` at all       a page cached from before this guard. We
+                             cannot tell a choice from a default, so
+                             we do not guess.
+
+    Returns a list of warnings. The rest of the save proceeds: losing
+    somebody's whole edit because one select is suspect would be its
+    own bug.
+    """
+    warnings = []
+    for field, was_key in _TOUCH_GUARDED.items():
+        if field not in d:
+            continue
+        posted = (d.get(field) or '')
+        stored = (getattr(lead, field, '') or '')
+        if was_key not in d:
+            if posted != stored:
+                d.pop(field)
+                warnings.append(
+                    f'{field.replace("_", " ")} was not changed: this page '
+                    f'was loaded before the form was corrected. Reload and '
+                    f'try again.')
+            else:
+                d.pop(field)
+            continue
+        was = (d.get(was_key) or '')
+        if posted == was:
+            d.pop(field)                      # untouched
+        elif was != stored:
+            d.pop(field)
+            warnings.append(
+                f'{field.replace("_", " ")} was not changed: somebody else '
+                f'changed it to "{stored}" while this page was open.')
+    for key in _TOUCH_GUARDED.values():
+        d.pop(key, None)
+    return warnings
+
+
 @app.template_global('feature')
 def _feature(name, default=False):
     """Is this feature switch on? For templates.
@@ -2307,6 +2378,10 @@ def api_update_lead(lid):
             entity_id=lead.id)
         if _refusal:
             return _refusal
+    # Drop anything the user did not actually touch, before a single
+    # field is written. See `_drop_untouched`.
+    _touch_warnings = _drop_untouched(d, lead)
+
     fields_map = {
         'company':'company','project':'project','industry':'industry',
         'products':'products','state':'state','city':'city','country':'country',
@@ -2380,6 +2455,11 @@ def api_update_lead(lid):
     # Auto-create/update contact
     _auto_save_contact(lead)
     _announce_lead_change(lead, _was_stage, _was_value)
+    # The save succeeded; anything the guard refused is reported
+    # rather than applied silently, so the user is not left believing
+    # a change went through.
+    if _touch_warnings:
+        return jsonify({'ok': True, 'warnings': _touch_warnings})
     return jsonify({'ok': True})
 
 

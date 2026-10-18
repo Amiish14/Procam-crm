@@ -35,3 +35,7 @@ cookies.txt
 # Data-quality CSVs hold customer data — never commit them
 reports/
 backups/
+# The repair workbook is generated from live data and contains
+# client names. It belongs on the server and in somebody's hands,
+# not in the repository.
+docs/exports/*.xlsx

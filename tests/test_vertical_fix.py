@@ -1,0 +1,422 @@
+"""
+CRM-VERTICAL-FIX-01 — saving a lead must not move its vertical.
+
+The lead edit form offered four verticals. Leads carry eleven. A
+`<select>` whose options do not contain the record's value selects
+option zero, and the page posted option zero as though somebody had
+chosen it. 443 of 4,505 leads are suspected, and the audit trail
+records the rewrites by name and date:
+
+    12204  Renew Power   Freight Forwarding -> Heavy Transport  15 Oct
+    12148  Tmilltd       Customs            -> Heavy Transport  12 Oct
+    12218  Prysmian      Project Freight    -> Heavy Transport  16 Oct
+
+Two defences, because either alone can be defeated:
+
+    the form   renders the record's own value, always, whether or not
+               the master list knows about it;
+    the server accepts a change only when the posted value differs
+               from what the form was rendered with — the difference
+               between a choice and a fallback.
+"""
+import json
+import os
+import sys
+import tempfile
+from datetime import datetime, timedelta
+
+import pytest
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+
+os.environ['URL_PREFIX'] = ''
+os.environ['SESSION_COOKIE_SECURE'] = 'false'
+os.environ.setdefault('SECRET_KEY', 'vertfix-test-secret')
+os.environ.setdefault('ADMIN_INITIAL_PASSWORD', 'VertFixTest12345')
+os.environ.setdefault(
+    'DATABASE_URL',
+    'sqlite:///' + os.path.join(tempfile.mkdtemp(), 'vertfix.db'))
+
+import importlib                                          # noqa: E402
+_main = importlib.import_module('app')
+importlib.import_module('app.models')
+flask_app, db = _main.app, _main.db
+Employee, Lead = _main.Employee, _main.Lead
+flask_app.config['WTF_CSRF_ENABLED'] = False
+
+from app.models.access import AccessProfile, DataScope    # noqa: E402
+
+ADMIN = 'VFADMIN'
+TAG = 'VF '
+
+#: Every vertical a lead actually carries, not the four the form used
+#: to offer. The four were Heavy Transport, Project Freight,
+#: Warehousing and Installation; the other seven are the ones that
+#: were being destroyed.
+ALL_VERTICALS = (
+    'Heavy Transport', 'Project Freight', 'Warehousing', 'Installation',
+    'Freight Forwarding', 'Customs', 'Sea Freight', 'Air Freight',
+    'General Transport', 'Heavy Cargo', 'Other',
+)
+
+
+def _emp(code, name, *, role='admin', scope=DataScope.ALL, perms=()):
+    e = Employee.query.filter_by(emp_code=code).first() or Employee(emp_code=code)
+    e.name, e.is_active, e.must_change_pw = name, True, False
+    e.email = f'{code.lower()}@procamgroup.in'
+    e.role, e.session_version = role, 0
+    e.is_super_admin = (role == 'admin')
+    e.vertical = 'All'
+    db.session.add(e)
+    db.session.flush()
+    AccessProfile.query.filter_by(emp_code=code).delete()
+    db.session.add(AccessProfile(emp_code=code, data_scope=scope,
+                                 perms=list(perms)))
+    return e
+
+
+def _wipe():
+    ids = [l.id for l in Lead.query.filter(Lead.company.like(TAG + '%'))]
+    if ids:
+        Lead.query.filter(Lead.id.in_(ids)).delete(synchronize_session=False)
+    db.session.commit()
+
+
+@pytest.fixture()
+def world():
+    with flask_app.app_context():
+        db.create_all()
+        _wipe()
+        _emp(ADMIN, 'Vertical Fix Admin')
+        made = {}
+        for vertical in ALL_VERTICALS:
+            lead = Lead(company=TAG + vertical, assigned_to=ADMIN,
+                        assigned_name=ADMIN, stage='Quoted',
+                        procam_vertical=vertical,
+                        followup_date=None,
+                        created_at=datetime.utcnow() - timedelta(days=5))
+            db.session.add(lead)
+            db.session.flush()
+            made[vertical] = lead.id
+        db.session.commit()
+        yield made
+        _wipe()
+
+
+def _client(code=ADMIN, role='admin'):
+    c = flask_app.test_client()
+    with c.session_transaction() as s:
+        s.update(emp_code=code, name=code, role=role, vertical='All')
+    return c
+
+
+def _save(lid, body):
+    return _client().put(f'/api/leads/{lid}', data=json.dumps(body),
+                         content_type='application/json')
+
+
+def _vertical(lid):
+    with flask_app.app_context():
+        return db.session.get(Lead, lid).procam_vertical
+
+
+# ── 1. the form fix is live and not behind a flag ────────────────────
+def test_the_form_builds_its_list_from_the_master_not_a_literal():
+    page = open(os.path.join(_ROOT, 'templates', 'app.html'),
+                encoding='utf-8').read()
+    assert 'verticalOptions(l.procam_vertical)' in page
+    # Scoped to the lead form. The same four-item literal also backs
+    # the dashboard's vertical doughnut, which is a display limit —
+    # that chart shows four of the eleven verticals — and not a data
+    # rewrite. Widening this assertion to the whole file would make
+    # it fail for the wrong reason.
+    start = page.index('Procam vertical</label>')
+    form = page[start:start + 400]
+    assert "'Heavy Transport'" not in form, 'the hard-coded list is back'
+    assert 'verticalOptions(' in form
+
+
+def test_the_fix_is_not_behind_a_feature_flag():
+    """It must be on for everyone. A silent data rewrite is not
+    something to roll out gradually."""
+    page = open(os.path.join(_ROOT, 'templates', 'app.html'),
+                encoding='utf-8').read()
+    start = page.index('function verticalOptions(')
+    end = page.index('}', page.index('return list.map', start))
+    body = page[start:end]
+    for marker in ('feature(', 'FEATURE_', 'flags.on'):
+        assert marker not in body, f'{marker} guards the vertical fix'
+
+
+def test_each_select_sends_what_it_was_rendered_with():
+    page = open(os.path.join(_ROOT, 'templates', 'app.html'),
+                encoding='utf-8').read()
+    for sel in ('lVt', 'lAsgn', 'lAsgn2'):
+        assert f'id="{sel}" data-was=' in page, sel
+    for key in ('procam_vertical_was', 'assigned_to_was',
+                'secondary_owner_was'):
+        assert key in page, key
+
+
+# ── 2. editing something else must not move the vertical ─────────────
+@pytest.mark.parametrize('vertical', ALL_VERTICALS)
+def test_editing_an_unrelated_field_leaves_the_vertical_alone(world,
+                                                              vertical):
+    """The exact shape of the bug: the user changes a follow-up date,
+    and the select posts Heavy Transport because the lead's real
+    vertical was not among its options."""
+    lid = world[vertical]
+    res = _save(lid, {
+        'followup': '2026-12-01',
+        'next_action': 'Call the buyer',
+        # what a defective or cached form posts: option zero, with
+        # the rendered value saying it was never touched
+        'procam_vertical': 'Heavy Transport',
+        'procam_vertical_was': 'Heavy Transport',
+    })
+    assert res.status_code == 200
+    assert _vertical(lid) == vertical, (
+        f'{vertical} was rewritten to {_vertical(lid)}')
+    with flask_app.app_context():
+        assert str(db.session.get(Lead, lid).followup_date) == '2026-12-01', \
+            'the edit the user actually made must still be saved'
+
+
+@pytest.mark.parametrize('vertical', ALL_VERTICALS)
+def test_the_corrected_form_posts_the_real_value_and_nothing_moves(world,
+                                                                   vertical):
+    """What the fixed page sends: the lead's own value, untouched."""
+    lid = world[vertical]
+    res = _save(lid, {'next_action': 'Chase',
+                      'procam_vertical': vertical,
+                      'procam_vertical_was': vertical})
+    assert res.status_code == 200
+    assert _vertical(lid) == vertical
+
+
+def test_a_vertical_the_user_really_changed_is_saved(world):
+    lid = world['Freight Forwarding']
+    res = _save(lid, {'procam_vertical': 'Customs',
+                      'procam_vertical_was': 'Freight Forwarding'})
+    assert res.status_code == 200
+    assert _vertical(lid) == 'Customs'
+
+
+def test_a_page_opened_before_someone_else_changed_it_does_not_clobber(world):
+    lid = world['Customs']
+    with flask_app.app_context():
+        db.session.get(Lead, lid).procam_vertical = 'Sea Freight'
+        db.session.commit()
+    res = _save(lid, {'procam_vertical': 'Heavy Transport',
+                      'procam_vertical_was': 'Customs'})
+    assert res.status_code == 200
+    assert _vertical(lid) == 'Sea Freight'
+    assert any('somebody else changed it' in w
+               for w in res.get_json().get('warnings', []))
+
+
+def test_a_cached_page_with_no_rendered_value_is_refused(world):
+    """A page served before this guard cannot tell a choice from a
+    default, so the CRM does not guess."""
+    lid = world['Project Freight']
+    res = _save(lid, {'procam_vertical': 'Heavy Transport'})
+    assert res.status_code == 200
+    assert _vertical(lid) == 'Project Freight'
+    assert any('loaded before the form was corrected' in w
+               for w in res.get_json().get('warnings', []))
+
+
+def test_the_rest_of_the_save_survives_a_refused_vertical(world):
+    lid = world['Heavy Cargo']
+    res = _save(lid, {'procam_vertical': 'Heavy Transport',
+                      'next_action': 'Send the revised offer',
+                      'followup': '2026-11-20'})
+    assert res.status_code == 200
+    with flask_app.app_context():
+        lead = db.session.get(Lead, lid)
+        assert lead.procam_vertical == 'Heavy Cargo'
+        assert lead.next_action == 'Send the revised offer'
+        assert str(lead.followup_date) == '2026-11-20'
+
+
+# ── 3. the same shape on the other selects ───────────────────────────
+def test_the_owner_select_carries_an_owner_who_has_left():
+    """The same defect, fixed in the form rather than the API.
+
+    `lAsgn` has no blank first option, and for anybody without
+    admin.employees `/api/employees` returns active staff only — 29
+    of 131. A lead owned by somebody who has left matched no option,
+    so the select fell back to option zero and saving reassigned the
+    lead to whoever was first.
+
+    Guarded in the template and not on the server because
+    `assigned_to` has other callers — the triage screen, the
+    integration API, the assignment scripts — none of which send a
+    rendered value, and all of which would break.
+    """
+    page = open(os.path.join(_ROOT, 'templates', 'app.html'),
+                encoding='utf-8').read()
+    assert 'const _ownOpt=' in page
+    start = page.index('const _ownOpt=')
+    block = page[start:page.index('const sOpts=', start) + 400]
+    assert 'no longer active' in block
+    assert '_ownOpt(l.assigned_to' in block
+    assert '_ownOpt(l.secondary_owner' in block
+
+
+def test_the_owner_fields_are_not_guarded_on_the_server():
+    """Deliberately. Narrowing this guard to the one field with the
+    proven defect is what keeps the other callers working."""
+    assert set(_main._TOUCH_GUARDED) == {'procam_vertical'}
+
+
+def test_a_real_reassignment_still_works(world):
+    lid = world['Other']
+    with flask_app.app_context():
+        _emp('VFNEW', 'New Owner', role='user')
+        db.session.commit()
+    res = _save(lid, {'assigned_to': 'VFNEW',
+                      'reassignment_reason': 'Different geography'})
+    assert res.status_code == 200
+    with flask_app.app_context():
+        assert db.session.get(Lead, lid).assigned_to == 'VFNEW'
+
+
+def test_the_stage_widget_is_not_a_select_and_cannot_default(world):
+    """`ldPipe` reads its value from the lead, so there is no option
+    zero to fall back to."""
+    page = open(os.path.join(_ROOT, 'templates', 'app.html'),
+                encoding='utf-8').read()
+    assert 'id="ldPipe"' in page
+    assert 'g(\'ldPipe\')?.dataset.stage' in page
+    assert '<select class="fmc" id="lStg"' not in page
+
+
+def test_the_account_form_cannot_write_a_vertical_at_all(world):
+    """api_update_company's field list has no vertical in it, so the
+    account screen cannot reproduce this bug."""
+    import inspect
+    src = inspect.getsource(_main.api_update_company)
+    body = src[src.index("for f in ("):src.index("db.session.commit()")]
+    assert 'vertical' not in body
+
+
+# ── 4. the repair workbook ───────────────────────────────────────────
+def _audit(lead_id, frm, to, *, actor, when):
+    from app.models.audit import AuditEvent
+    db.session.add(AuditEvent(
+        occurred_at=when, actor=actor, action='lead.update',
+        entity_type='Lead', entity_id=str(lead_id),
+        old_value={'procam_vertical': frm},
+        new_value={'procam_vertical': to}))
+
+
+@pytest.fixture()
+def damaged(world):
+    """Three leads, one per population."""
+    from app.services import vertical_audit as va
+
+    base = datetime(2026, 10, 1, 9, 0)
+    with flask_app.app_context():
+        made = {}
+        for key, project in (
+                ('recorded', 'Customs clearance, bill of entry at Nhava Sheva'),
+                ('review', 'FCL shipment, port of loading Shanghai'),
+                ('changed', 'Customs clearance and CHA work')):
+            lead = Lead(company=TAG + key, assigned_to=ADMIN,
+                        assigned_name=ADMIN, stage='Quoted',
+                        procam_vertical=va.TARGET, project=project,
+                        created_at=base, updated_at=datetime.utcnow())
+            db.session.add(lead)
+            db.session.flush()
+            made[key] = lead.id
+
+        _audit(made['recorded'], 'Freight Forwarding', va.TARGET,
+               actor='EMP3592024', when=base)
+        # rewritten, then set again by somebody else afterwards
+        _audit(made['changed'], 'Customs', va.TARGET,
+               actor='EMP3592024', when=base)
+        _audit(made['changed'], va.TARGET, 'Project Freight',
+               actor='DIR12010', when=base + timedelta(days=3))
+        db.session.commit()
+        yield made
+
+
+def test_the_three_populations_are_separated(damaged):
+    from app.services import vertical_audit as va
+    with flask_app.app_context():
+        data = va.survey(since='2026-09-01')
+    ids = {k: [r['lead_id'] for r in data[k]]
+           for k in ('recorded', 'review', 'changed_since')}
+    assert damaged['recorded'] in ids['recorded']
+    assert damaged['review'] in ids['review']
+    assert damaged['changed'] in ids['changed_since']
+    # and never in more than one
+    assert damaged['changed'] not in ids['recorded']
+    assert damaged['recorded'] not in ids['review']
+
+
+def test_a_recorded_restore_is_the_audited_old_value_not_a_guess(damaged):
+    from app.services import vertical_audit as va
+    with flask_app.app_context():
+        data = va.survey(since='2026-09-01')
+    row = next(r for r in data['recorded']
+               if r['lead_id'] == damaged['recorded'])
+    assert row['restore_to'] == 'Freight Forwarding'
+    assert row['rewritten_by'] == 'EMP3592024'
+    # the keywords say Customs; the audit trail says Freight
+    # Forwarding, and the audit trail wins. The disagreement is
+    # reported rather than resolved.
+    assert row['looks_like'] == 'Customs'
+    assert row['agrees'] == 'differs'
+
+
+def test_a_lead_changed_after_the_rewrite_is_excluded(damaged):
+    """Restoring it would undo a decision somebody took since."""
+    from app.services import vertical_audit as va
+    with flask_app.app_context():
+        data = va.survey(since='2026-09-01')
+    row = next(r for r in data['changed_since']
+               if r['lead_id'] == damaged['changed'])
+    assert row['was'] == 'Customs'
+    assert row['changed_to'] == 'Project Freight'
+    assert row['changed_by'] == 'DIR12010'
+
+
+def test_review_rows_carry_the_evidence_and_no_answer(damaged):
+    from app.services import vertical_audit as va
+    with flask_app.app_context():
+        data = va.survey(since='2026-09-01')
+    row = next(r for r in data['review'] if r['lead_id'] == damaged['review'])
+    assert row['looks_like'] == 'Sea Freight'
+    assert row['evidence']
+    assert 'restore_to' not in row, 'the CRM must not invent a restore'
+
+
+def test_the_survey_writes_nothing(damaged):
+    from app.services import vertical_audit as va
+    with flask_app.app_context():
+        before = [(l.id, l.procam_vertical) for l in Lead.query.all()]
+        va.survey(since='2026-09-01')
+        after = [(l.id, l.procam_vertical) for l in Lead.query.all()]
+    assert before == after
+
+
+def test_the_workbook_has_the_three_sheets(damaged, tmp_path):
+    import subprocess
+    out = tmp_path / 'repair.xlsx'
+    res = subprocess.run(
+        [sys.executable, os.path.join(_ROOT, 'scripts',
+                                      'vertical_repair_workbook.py'),
+         '--out', str(out)],
+        cwd=_ROOT, capture_output=True, text=True,
+        env=dict(os.environ, URL_PREFIX=''))
+    assert res.returncode == 0, res.stderr[-800:]
+    assert out.exists()
+
+    from openpyxl import load_workbook
+    wb = load_workbook(out)
+    assert wb.sheetnames == ['About', 'Recorded', 'Review', 'Changed since']
+    assert wb['Review'][2][11].value == 'correct vertical'
+    assert wb['Recorded'][2][6].value == 'restore_to'
