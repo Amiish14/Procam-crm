@@ -42,7 +42,7 @@ import importlib                                          # noqa: E402
 _main = importlib.import_module('app')
 importlib.import_module('app.models')
 flask_app, db = _main.app, _main.db
-Employee, Lead = _main.Employee, _main.Lead
+Employee, Lead, Company = _main.Employee, _main.Lead, _main.Company
 flask_app.config['WTF_CSRF_ENABLED'] = False
 
 from app.models.access import AccessProfile, DataScope    # noqa: E402
@@ -858,3 +858,151 @@ def test_the_survey_changes_nothing(master_world, tmp_path):
     with flask_app.app_context():
         after = [(l.id, l.procam_vertical) for l in Lead.query.all()]
     assert before == after
+
+
+# ── CRM-VERTICAL-MASTER-01 Stage B ───────────────────────────────────
+@pytest.fixture()
+def master_b(world):
+    """A lead on each mapped value, plus one awaiting review."""
+    from app.models.email_admin import VerticalHead
+    import scripts.vertical_master_apply as vm
+
+    with flask_app.app_context():
+        for code, name in (('DIR22010', 'James Francis Xavier'),
+                           ('EMP372011', 'Sanjna Vardhan'),
+                           ('DIR52011', 'Sethupathy Sundaram'),
+                           ('DIR72012', 'Srinivas Marella'),
+                           ('DIR12010', 'Nilesh Kumar Sinha')):
+            _emp(code, name, role='user')
+        if not VerticalHead.query.filter_by(vertical='All').first():
+            db.session.add(VerticalHead(vertical='All', active=True))
+        db.session.flush()
+
+        made = {}
+        for value in vm.MAPPING:
+            lead = Lead(company=TAG + 'MB ' + value, assigned_to=ADMIN,
+                        stage='Quoted', procam_vertical=value,
+                        created_at=datetime.utcnow() - timedelta(days=3),
+                        updated_at=datetime.utcnow())
+            db.session.add(lead)
+            db.session.flush()
+            made[value] = lead.id
+        # one sitting on Heavy Transport with keyword evidence: the
+        # review population, which must not be touched
+        waiting = Lead(company=TAG + 'MB waiting', assigned_to=ADMIN,
+                       stage='Quoted', procam_vertical='Heavy Transport',
+                       project='customs clearance, bill of entry',
+                       created_at=datetime.utcnow() - timedelta(days=3),
+                       updated_at=datetime.utcnow())
+        db.session.add(waiting)
+        db.session.flush()
+        made['_waiting'] = waiting.id
+        db.session.commit()
+        yield made
+
+
+def test_stage_b_dry_run_writes_nothing(master_b):
+    import scripts.vertical_master_apply as vm
+
+    res = _run('vertical_master_apply.py', '--check')
+    assert res.returncode == 0, res.stderr[-900:]
+    assert 'DRY RUN' in res.stdout
+    with flask_app.app_context():
+        for value in vm.MAPPING:
+            assert db.session.get(
+                Lead, master_b[value]).procam_vertical == value
+
+
+def test_stage_b_moves_each_value_to_its_official_vertical(master_b):
+    import scripts.vertical_master_apply as vm
+
+    res = _run('vertical_master_apply.py', '--apply')
+    assert res.returncode == 0, res.stderr[-900:]
+    with flask_app.app_context():
+        for value, target in vm.MAPPING.items():
+            got = db.session.get(Lead, master_b[value]).procam_vertical
+            assert got == target, f'{value} -> {got}, expected {target}'
+
+
+def test_a_lead_awaiting_review_is_never_touched(master_b):
+    _run('vertical_master_apply.py', '--apply')
+    with flask_app.app_context():
+        assert db.session.get(
+            Lead, master_b['_waiting']).procam_vertical == 'Heavy Transport'
+
+
+def test_every_moved_lead_carries_the_master_reason(master_b):
+    from app.models.audit import AuditEvent
+    import scripts.vertical_master_apply as vm
+
+    _run('vertical_master_apply.py', '--apply')
+    with flask_app.app_context():
+        rows = AuditEvent.query.filter_by(
+            action='lead.vertical_mastered').all()
+        touched = {int(r.entity_id) for r in rows}
+        for value in vm.MAPPING:
+            assert master_b[value] in touched
+        assert master_b['_waiting'] not in touched
+        for r in rows:
+            assert r.reason == 'vertical master, CRM-VERTICAL-MASTER-01'
+
+
+def test_the_heads_are_set_and_all_is_removed(master_b):
+    from app.models.email_admin import VerticalHead
+    import scripts.vertical_master_apply as vm
+
+    _run('vertical_master_apply.py', '--apply')
+    with flask_app.app_context():
+        rows = {v.vertical: v.head_emp_code
+                for v in VerticalHead.query.all()}
+        for vertical, code in vm.HEADS.items():
+            assert rows.get(vertical) == code, vertical
+        assert 'All' not in rows, 'an employee grouping, not a service'
+        # Management is the fallback for anything unmapped and had
+        # nobody; without it those notifications reach no one.
+        assert rows['Management'] == 'DIR12010'
+
+
+def test_the_dropdown_becomes_the_official_seven(master_b):
+    import scripts.vertical_master_apply as vm
+
+    _run('vertical_master_apply.py', '--apply')
+    with flask_app.app_context():
+        from app.services import vertical_audit as va
+        va_list = va.acceptable_verticals(for_choice=True)
+    for value in vm.MAPPING:
+        assert value not in va_list, f'{value} is an alias now'
+    for value in ('Heavy Transport', 'Freight Forwarding',
+                  'General Transport', 'Project Freight'):
+        assert value in va_list
+
+
+def test_stage_b_is_idempotent(master_b):
+    _run('vertical_master_apply.py', '--apply')
+    with flask_app.app_context():
+        first = {k: db.session.get(Lead, v).procam_vertical
+                 for k, v in master_b.items()}
+    res = _run('vertical_master_apply.py', '--apply')
+    assert res.returncode == 0
+    with flask_app.app_context():
+        second = {k: db.session.get(Lead, v).procam_vertical
+                  for k, v in master_b.items()}
+    assert first == second
+
+
+def test_blank_verticals_and_accounts_are_left_alone(master_b):
+    with flask_app.app_context():
+        blank = Lead(company=TAG + 'MB blank', assigned_to=ADMIN,
+                     stage='Lost', procam_vertical=None,
+                     created_at=datetime.utcnow() - timedelta(days=3),
+                     updated_at=datetime.utcnow())
+        db.session.add(blank)
+        db.session.commit()
+        blank_id = blank.id
+        accounts_before = [(c.id, c.vertical) for c in Company.query.all()]
+
+    _run('vertical_master_apply.py', '--apply')
+    with flask_app.app_context():
+        assert db.session.get(Lead, blank_id).procam_vertical is None
+        assert [(c.id, c.vertical)
+                for c in Company.query.all()] == accounts_before
