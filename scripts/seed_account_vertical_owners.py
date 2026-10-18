@@ -33,6 +33,11 @@ from app import Company, Employee, Lead, app, db          # noqa: E402
 #: evidence of who serves the account now.
 GOOD_STAGES_EXTRA = ('Won',)
 
+#: Organisational groupings, and the fallback a lead should never be
+#: seeded against. Management owns unmapped notifications; it does
+#: not serve customers.
+NOT_A_SERVICE = ('Management', 'All')
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -65,8 +70,19 @@ def main():
 
         best, skipped = {}, Counter()
         for l in leads:
-            vertical = vh.master_vertical(l.procam_vertical or '')
-            if not vertical or not (l.assigned_to or '').strip():
+            raw = (l.procam_vertical or '').strip()
+            if not raw:
+                # A blank vertical is not a vertical. `master_vertical`
+                # answers Management for anything it cannot place —
+                # the right fallback for routing a notification, and
+                # quite wrong as a fact about who serves an account.
+                # Left as is, it seeded 90 Management rows from leads
+                # that simply have no vertical recorded.
+                skipped['lead has no vertical'] += 1
+                continue
+            vertical = vh.master_vertical(raw)
+            if vertical in NOT_A_SERVICE or not (l.assigned_to or '').strip():
+                skipped['not a service vertical'] += 1
                 continue
             key = (l.company_id, vertical)
             if key in best:
