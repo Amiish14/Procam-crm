@@ -44,18 +44,9 @@ COLUMN = 'correct vertical'
 
 
 def known_verticals():
-    """Every vertical the CRM recognises: managed, aliased, or in use."""
-    out = set()
-    try:
-        from app.models.email_admin import VerticalAlias, VerticalHead
-        out |= {v.vertical for v in VerticalHead.query.all()}
-        out |= {a.alias for a in VerticalAlias.query.all()}
-    except Exception:
-        db.session.rollback()
-    rows = (db.session.query(Lead.procam_vertical)
-            .filter(Lead.procam_vertical.isnot(None)).distinct().all())
-    out |= {v for (v,) in rows if v}
-    return {v for v in out if v}
+    """What a reviewer may choose. The same list the dropdown offers,
+    so the sheet cannot suggest a value this then refuses."""
+    return set(va.acceptable_verticals()) | set(alias_map())
 
 
 def alias_map():
@@ -79,11 +70,19 @@ def read_sheet(path):
     if COLUMN not in header:
         raise SystemExit(f'No "{COLUMN}" column on the {SHEET} sheet. '
                          f'Columns: {", ".join(str(h) for h in header)}')
+    # The full workbook calls it `lead_id`; the per-vertical split
+    # files call it `lead`, because a reader does not need to be told
+    # it is an id. Both are the same column and this reads either.
+    id_col = next((c for c in ('lead_id', 'lead') if c in header), None)
+    if id_col is None:
+        raise SystemExit(f'No lead column on the {SHEET} sheet. '
+                         f'Columns: {", ".join(str(h) for h in header)}')
     out = []
     for row in ws.iter_rows(min_row=3):
         item = dict(zip(header, [c.value for c in row]))
-        if not item.get('lead_id'):
+        if not item.get(id_col):
             continue
+        item['lead_id'] = item[id_col]
         out.append(item)
     return out
 

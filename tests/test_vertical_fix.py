@@ -617,3 +617,102 @@ def test_a_failure_part_way_through_rolls_the_whole_thing_back(to_repair):
         after = {k: db.session.get(Lead, v).procam_vertical
                  for k, v in to_repair.items()}
     assert after == before, 'a failed run must leave nothing behind'
+
+
+# ── the split review files ───────────────────────────────────────────
+def test_the_review_splits_into_one_file_per_suggestion(damaged, tmp_path):
+    res = _run('vertical_review_split.py', '--out-dir', str(tmp_path))
+    assert res.returncode == 0, res.stderr[-800:]
+    made = sorted(p.name for p in tmp_path.glob('vertical_review_*.xlsx'))
+    assert made, res.stdout[-600:]
+    assert any('sea_freight' in n for n in made)
+
+
+def test_each_file_carries_a_dropdown_of_valid_verticals(damaged, tmp_path):
+    from openpyxl import load_workbook
+
+    _run('vertical_review_split.py', '--out-dir', str(tmp_path))
+    path = next(tmp_path.glob('vertical_review_*.xlsx'))
+    wb = load_workbook(path)
+    ws = wb['Review']
+
+    assert [c.value for c in ws[2]] == [
+        'lead', 'client', 'lead title', 'owner', 'confidence',
+        'evidence', 'correct vertical']
+
+    assert 'Verticals' in wb.sheetnames
+    offered = [c.value for c in wb['Verticals']['A'][1:] if c.value]
+    assert 'Sea Freight' in offered and 'Customs' in offered
+    assert 'Management' not in offered, 'not a service a lead can be in'
+    assert 'All' not in offered
+
+    dvs = list(ws.data_validations.dataValidation)
+    assert dvs, 'no dropdown on the answer column'
+    assert dvs[0].type == 'list'
+    assert 'Verticals' in dvs[0].formula1
+
+    # allowBlank is read from the file, not from openpyxl's loader:
+    # the loader drops the flag, so asserting on the object tests a
+    # reader quirk while Excel reads the XML and honours it.
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        sheet = next(n for n in z.namelist()
+                     if n.startswith('xl/worksheets/sheet'))
+        xml = z.read(sheet).decode()
+    i = xml.find('<dataValidation ')
+    assert i != -1, 'no dataValidation element in the file'
+    assert 'allowBlank="1"' in xml[i:i + 400], \
+        'blank must stay a valid answer'
+
+
+def test_high_confidence_rows_come_first(damaged, tmp_path):
+    from openpyxl import load_workbook
+
+    _run('vertical_review_split.py', '--out-dir', str(tmp_path))
+    for path in tmp_path.glob('vertical_review_*.xlsx'):
+        ws = load_workbook(path)['Review']
+        hdr = [c.value for c in ws[2]]
+        col = hdr.index('confidence')
+        seen = [str(r[col].value or '').lower()
+                for r in ws.iter_rows(min_row=3) if r[0].value]
+        ranks = [{'high': 0, 'medium': 1, 'low': 2}.get(c, 3) for c in seen]
+        assert ranks == sorted(ranks), f'{path.name}: {seen}'
+
+
+def test_the_dropdown_offers_exactly_what_the_applier_accepts(damaged):
+    """A sheet that suggests a value the applier then refuses is the
+    worst of both."""
+    from openpyxl import load_workbook  # noqa: F401
+    import importlib
+
+    with flask_app.app_context():
+        from app.services import vertical_audit as va
+        offered = set(va.acceptable_verticals())
+    mod = importlib.import_module('scripts.vertical_apply_review')
+    with flask_app.app_context():
+        accepted = mod.known_verticals()
+    assert offered <= accepted
+
+
+def test_a_filled_in_split_file_applies(damaged, tmp_path):
+    """The whole round trip: split, fill one row in, apply it."""
+    from openpyxl import load_workbook
+    from app.services import vertical_audit as va
+
+    _run('vertical_review_split.py', '--out-dir', str(tmp_path))
+    path = next(p for p in tmp_path.glob('vertical_review_*.xlsx'))
+    wb = load_workbook(path)
+    ws = wb['Review']
+    hdr = [c.value for c in ws[2]]
+    lead_id = ws.cell(row=3, column=hdr.index('lead') + 1).value
+    ws.cell(row=3, column=hdr.index('correct vertical') + 1,
+            value='Sea Freight')
+    # The applier reads a sheet called Review with its own header
+    # shape, so the split file has to be readable by it as it stands.
+    wb.save(path)
+
+    res = _run('vertical_apply_review.py', '--file', str(path),
+               '--by', 'TESTER', '--apply')
+    assert res.returncode == 0, res.stderr[-800:]
+    with flask_app.app_context():
+        assert db.session.get(Lead, lead_id).procam_vertical == 'Sea Freight'

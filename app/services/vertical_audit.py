@@ -190,3 +190,50 @@ def survey(since='2026-09-01', limit=20000):
             **detail})
     out['examined'] = len(leads)
     return out
+
+#: Organisational groupings, not services a lead can be in. Offering
+#: them in a dropdown invites a wrong answer.
+NOT_A_SERVICE = ('All', 'Management', '(none)', '')
+
+
+def acceptable_verticals():
+    """Every vertical a reviewer may choose, in reading order.
+
+    One list, shared by the dropdown the reviewer picks from and the
+    check the applier makes — otherwise the sheet offers a value that
+    is then refused, which is the worst of both.
+
+    Three sources, because each misses something the others have:
+    the managed master; the suggestions this module makes, which must
+    be choosable even when no lead currently carries them; and
+    whatever leads actually hold, which is where the long tail lives.
+    """
+    from app import Lead, db
+
+    out = []
+    try:
+        from app.models.email_admin import VerticalHead
+        out += [v.vertical for v in
+                VerticalHead.query.order_by(VerticalHead.vertical).all()]
+    except Exception:
+        db.session.rollback()
+
+    out += [vertical for vertical, _patterns in HINTS]
+
+    try:
+        rows = (db.session.query(Lead.procam_vertical,
+                                 db.func.count(Lead.id))
+                .filter(Lead.procam_vertical.isnot(None))
+                .group_by(Lead.procam_vertical)
+                .order_by(db.func.count(Lead.id).desc()).all())
+        out += [v for v, _n in rows if v]
+    except Exception:
+        db.session.rollback()
+
+    seen, clean = set(), []
+    for v in out:
+        if v in NOT_A_SERVICE or v in seen:
+            continue
+        seen.add(v)
+        clean.append(v)
+    return clean
