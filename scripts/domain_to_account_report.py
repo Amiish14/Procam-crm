@@ -63,9 +63,16 @@ def _guess(domain, names):
     if len(exact) > 1:
         return None, '', f'{len(exact)} accounts normalise to "{stem}"'
 
-    starts = [c for c, key in names
-              if key and (key.replace(' ', '').startswith(stem)
-                          or stem.startswith(key.replace(' ', '')))]
+    # Both sides must be long enough to mean something. There is an
+    # account on file called "E", and without this every domain
+    # beginning with an e matched it at medium confidence.
+    starts = []
+    for c, key in names:
+        flat = (key or '').replace(' ', '')
+        if len(flat) < 4:
+            continue
+        if flat.startswith(stem) or stem.startswith(flat):
+            starts.append(c)
     if len(starts) == 1:
         return starts[0], 'medium', (
             f'"{stem}" and "{starts[0].name}" start the same')
