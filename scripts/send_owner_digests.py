@@ -29,9 +29,16 @@ def main():
         from app.services import flags, owner_digest
 
         print(f'database: {db.engine.url}')
-        if not flags.on('FEATURE_AUTO_ASSIGN'):
+        live = flags.on('FEATURE_AUTO_ASSIGN')
+        if not live and not args.dry_run:
             print('FEATURE_AUTO_ASSIGN is off — nothing to send.')
             return
+        if not live:
+            # A dry run still counts. Being told only that the flag is
+            # off answers the one question a dry run is not being
+            # asked: what would this do if it ran?
+            print('FEATURE_AUTO_ASSIGN is off — this would send nothing. '
+                  'Counting anyway, so you can see what is waiting.\n')
 
         waiting = owner_digest.pending()
         stale = owner_digest.pending(
