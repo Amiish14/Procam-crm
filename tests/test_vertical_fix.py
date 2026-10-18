@@ -645,6 +645,11 @@ def test_each_file_carries_a_dropdown_of_valid_verticals(damaged, tmp_path):
     assert 'Sea Freight' in offered and 'Customs' in offered
     assert 'Management' not in offered, 'not a service a lead can be in'
     assert 'All' not in offered
+    # Dead labels are not offered: picking Transportation believing
+    # it differs from Heavy Transport is the confusion the alias
+    # table exists to end. The applier still accepts them.
+    assert 'Transportation' not in offered
+    assert 'Project Logistics' not in offered
 
     dvs = list(ws.data_validations.dataValidation)
     assert dvs, 'no dropdown on the answer column'
@@ -687,7 +692,7 @@ def test_the_dropdown_offers_exactly_what_the_applier_accepts(damaged):
 
     with flask_app.app_context():
         from app.services import vertical_audit as va
-        offered = set(va.acceptable_verticals())
+        offered = set(va.acceptable_verticals(for_choice=True))
     mod = importlib.import_module('scripts.vertical_apply_review')
     with flask_app.app_context():
         accepted = mod.known_verticals()

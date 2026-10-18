@@ -47,8 +47,9 @@ RANK = {'high': 0, 'medium': 1, 'low': 2}
 
 
 def valid_verticals():
-    """What the apply script will accept — the same list, not a copy."""
-    return va.acceptable_verticals()
+    """What a reviewer may pick: the list the applier accepts, less
+    the dead labels nobody should choose."""
+    return va.acceptable_verticals(for_choice=True)
 
 
 def slug(value):

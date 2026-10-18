@@ -196,8 +196,16 @@ def survey(since='2026-09-01', limit=20000):
 NOT_A_SERVICE = ('All', 'Management', '(none)', '')
 
 
-def acceptable_verticals():
+def acceptable_verticals(for_choice=False):
     """Every vertical a reviewer may choose, in reading order.
+
+    `for_choice=True` leaves out the dead labels — Transportation,
+    Project Logistics — that the alias table maps onto a current
+    name. The applier still accepts them, because a sheet filled in
+    last week should not stop working; but offering them in a
+    dropdown invites somebody to pick Transportation believing it is
+    distinct from Heavy Transport, which is the confusion the alias
+    table exists to end.
 
     One list, shared by the dropdown the reviewer picks from and the
     check the applier makes — otherwise the sheet offers a value that
@@ -230,9 +238,17 @@ def acceptable_verticals():
     except Exception:
         db.session.rollback()
 
+    dead = set()
+    if for_choice:
+        try:
+            from app.models.email_admin import VerticalAlias
+            dead = {a.alias for a in VerticalAlias.query.all()}
+        except Exception:
+            db.session.rollback()
+
     seen, clean = set(), []
     for v in out:
-        if v in NOT_A_SERVICE or v in seen:
+        if v in NOT_A_SERVICE or v in dead or v in seen:
             continue
         seen.add(v)
         clean.append(v)
