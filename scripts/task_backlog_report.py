@@ -16,9 +16,13 @@ Two rules, from CRM-TASKS-04:
 Rule (a) wins where both apply, because "the lead closed" is the
 truer reason and the one somebody reading the row later can check.
 
-Nothing is written. `--apply` exists and refuses without
-`--i-have-approval`, because this closes thousands of rows and the
-instruction was explicitly to stop and report first.
+`--check` writes nothing. `--apply` refuses without
+`--i-have-approval`, because this closes a thousand rows and the
+first instruction was to report and stop.
+
+Closed rows are marked `Cancelled`, not `Completed` — nobody did
+them. The rule that picked each one goes into `notes`, so a row still
+says why it stopped, and each gets an audit row naming the rule.
 """
 import argparse
 import os
@@ -41,6 +45,17 @@ OLD_DAYS = MONTHS * 30
 REASONS = {
     'lead_closed': 'lead closed',
     'expired': 'expired — lead no longer live',
+}
+
+#: What goes into the task's own notes, so the row explains itself
+#: without anybody having to find this script.
+NOTES = {
+    'lead_closed': ('Closed in the 19 October backlog clean-up: the '
+                    'lead is already Won, Lost, On Hold or Not '
+                    'Interested.'),
+    'expired': ('Closed in the 19 October backlog clean-up: open for '
+                'more than four months on a lead that is no longer '
+                'live.'),
 }
 
 
@@ -75,9 +90,11 @@ def main():
     ap.add_argument('--i-have-approval', action='store_true')
     args = ap.parse_args()
 
+    writing = bool(args.apply and args.i_have_approval)
     with app.app_context():
         print(f'database: {db.engine.url}')
-        print('MODE:     DRY RUN — nothing is written\n')
+        print(f'MODE:     '
+              f'{"APPLY" if writing else "DRY RUN — nothing is written"}\n')
 
         picked, rows, leads = classify()
         by_id = {r.id: r for r in rows}
@@ -119,12 +136,47 @@ def main():
                 print(f'      {n:>5}  {k}')
 
         if args.apply and not args.i_have_approval:
-            print('\n  !! --apply refused. This closes thousands of rows '
+            print('\n  !! --apply refused. This closes a thousand rows '
                   'and the instruction was to report and stop. Re-run '
                   'with --apply --i-have-approval once that approval '
                   'exists.')
             raise SystemExit(2)
-        print('\nDRY RUN ONLY — nothing was written.')
+        if not writing:
+            print('\nDRY RUN ONLY — nothing was written.')
+            return
+
+        from app.services import audit
+        now = datetime.utcnow()
+        try:
+            for tid, rule in picked.items():
+                row = by_id[tid]
+                was = row.status
+                note = NOTES[rule]
+                row.status = TaskInstanceStatus.CANCELLED
+                row.completed_at = now
+                row.notes = ((row.notes + '\n') if row.notes else '') + note
+                audit.record('task.backlog_closed', 'task_instance',
+                             str(row.id), old={'status': was},
+                             new={'status': TaskInstanceStatus.CANCELLED,
+                                  'rule': rule,
+                                  'lead_id': row.entity_id},
+                             actor='CRM-TASKS-04', reason=note[:200])
+            db.session.commit()
+        except Exception as exc:                          # noqa: BLE001
+            db.session.rollback()
+            print(f'\n  !! ROLLED BACK: {type(exc).__name__}: '
+                  f'{str(exc)[:200]}')
+            raise SystemExit(1)
+
+        left = TaskInstance.query.filter(
+            TaskInstance.status.in_(TaskInstanceStatus.OPEN)).count()
+        print(f'\n  {len(picked)} task(s) closed, in one transaction, '
+              f'each with an audit row naming the rule that picked it.')
+        print(f'  open tasks now: {left}')
+        print(f'\n  Of those {left}, the two definitions that can never '
+              f'close account for most — see fault 3 in '
+              f'RELEASE_2026_10_TASKS.md. This clean-up removed the '
+              f'tasks on dead leads; it did not stop more being made.')
 
 
 if __name__ == '__main__':

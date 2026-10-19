@@ -370,6 +370,51 @@ def test_lead_closed_wins_where_both_rules_apply(world):
         'the truer reason, and the one a reader can check'
 
 
+def test_apply_with_approval_actually_closes_them(world):
+    """The gap this fills: the script reported, refused without
+    approval, and — with approval — printed "DRY RUN ONLY" and wrote
+    nothing, because the write path was never built. A refusal test
+    alone could not see that, because refusing was all it ever did.
+    """
+    with flask_app.app_context():
+        picked, _rows, _l = backlog.classify()
+        assert picked, 'fixture must give it something to close'
+        targets = dict(picked)
+
+        import subprocess
+        out = subprocess.run(
+            [sys.executable,
+             os.path.join(_ROOT, 'scripts', 'task_backlog_report.py'),
+             '--apply', '--i-have-approval'],
+            capture_output=True, text=True, cwd=_ROOT,
+            env=dict(os.environ, DATABASE_URL=str(db.engine.url),
+                     PYTHONPATH=_ROOT))
+        assert out.returncode == 0, out.stdout[-3000:] + out.stderr[-2000:]
+        assert 'MODE:     APPLY' in out.stdout
+        assert 'DRY RUN ONLY' not in out.stdout
+
+        db.session.expire_all()
+        for tid, rule in targets.items():
+            row = db.session.get(TaskInstance, tid)
+            assert row.status == TaskInstanceStatus.CANCELLED, \
+                f'#{tid} ({rule}) was reported and not closed'
+            assert row.completed_at is not None
+            assert backlog.NOTES[rule][:40] in (row.notes or '')
+            rows = AuditEvent.query.filter(
+                AuditEvent.action == 'task.backlog_closed',
+                AuditEvent.entity_id == str(tid)).all()
+            assert len(rows) == 1
+            assert rows[0].new_value['rule'] == rule
+
+        # And nothing it did not name.
+        live = db.session.get(TaskInstance, world['tasks']['live'])
+        assert live.status in TaskInstanceStatus.OPEN
+
+        # Twice closes nothing more.
+        again, _r, _l2 = backlog.classify()
+        assert again == {}
+
+
 def test_the_backlog_report_refuses_to_apply_without_approval(world):
     import subprocess
     env = dict(os.environ, DATABASE_URL=str(db.engine.url),
