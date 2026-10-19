@@ -151,6 +151,34 @@ Counts by owner and by task type are in the output. **Nothing is
 written.** `--apply` refuses without `--i-have-approval`, because the
 instruction was to report and stop.
 
+### Measured on production, 19 October, after the merge
+
+```
+open tasks now        3,657
+would close           1,129   all of them "lead closed"
+would remain open     2,528
+```
+
+By task: `lead.qualify` 1,103, `lead.rfq_review` 23,
+`lead.first_contact` 2, `quote.followup` 1.
+By owner, the top five: Sanjna Vardhan 291, James Francis Xavier 269,
+Vijay T V 190, Suranjan Aon 105, Nilesh Kumar Sinha 81 — 19 owners in
+all.
+
+**Rule (b) matched nothing, and not because the data is clean.** The
+oldest task on the system was created on 6 September and is 43 days
+old; the rule needs 120. Nothing is older than two months, so rule
+(b) cannot fire until January. It is not evidence of anything yet.
+
+**And the clean-up does not fix the backlog.** Of the 2,528 that
+would remain, **2,312 are the two definitions that can never close** —
+1,156 `deal.lost.debrief` with no completion state and 1,156
+`competitor.log` waiting on a state that does not exist (fault 3).
+Closing the 1,129 removes the tasks on dead leads; it leaves the ones
+that are structurally immortal, and the engine will keep making more.
+Fault 3 is the fix that matters, and it is still waiting on a
+decision.
+
 ---
 
 ## 5. CRM-AUTOCLOSE-TASKS-01
@@ -211,3 +239,27 @@ already closed rather than closing them by a different route:
 ```
 
 The last one writes nothing and is the report to bring back.
+
+---
+
+## What landed, verified on production
+
+```
+task rows              3,659   (was 7,318)
+.escalated twins           0
+flagged escalated      3,659   escalated_to and escalated_at both set
+audit: merged          3,659
+audit: closed              4
+```
+
+The four named tasks: #1342 and #1283 Cancelled and carrying
+`escalated=True, to=Vertical_Head`; #1541 and #1536 gone, merged into
+those two.
+
+Overdue, now split:
+
+| Viewer | Overdue leads | Overdue tasks |
+|---|---|---|
+| DIR12010 Nilesh Kumar Sinha | 157 | 3,657 |
+| EMP372011 Sanjna Vardhan | 77 | 1,026 |
+| EMP572012 Vijay T V | 17 | 587 |
