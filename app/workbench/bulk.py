@@ -156,6 +156,18 @@ def plan(ids, action, value, sc):
             skipped.append({'id': lid, 'name': lead.company,
                             'reason': 'no follow-up was due'})
             continue
+        # CRM-VALUE-01. A bulk action has nowhere to ask for a value,
+        # so a lead that needs one is skipped with the reason rather
+        # than moved without it. Skipping is the right shape here:
+        # the other forty in the selection should still go through.
+        if action == 'set_stage':
+            from app.services import value_gate
+            if value_gate.check(lead, stored) is not None:
+                skipped.append({
+                    'id': lid, 'name': lead.company,
+                    'reason': f'no estimated value, and {stored} '
+                              f'requires one — open the lead and add it'})
+                continue
         changes.append({'id': lid, 'name': lead.company,
                         'field': ACTIONS[action][2], 'before': before,
                         'after': '' if stored is None else str(stored),

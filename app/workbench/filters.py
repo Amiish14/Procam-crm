@@ -227,6 +227,20 @@ def _in_negotiation(item, _ctx):
             and item.get('stage') in NEGOTIATION_STAGES)
 
 
+def _value_missing(item, _ctx):
+    """Past RFQ with no number on it.
+
+    912 of 945 open leads carry no value of any kind, so every
+    forecast built on this CRM is a floor. This is the subset that
+    can actually be fixed: somebody has asked us for a price, so a
+    value exists in the world and only needs typing in.
+    """
+    from app.services import value_gate
+    return (item.get('kind') == 'lead'
+            and item.get('stage') in value_gate.OPEN_REQUIRES_VALUE
+            and not item.get('value_inr'))
+
+
 def _everything(_item, _ctx):
     return True
 
@@ -324,6 +338,11 @@ WORKBENCH_FILTERS = (
            note='No call, no introduction mail and no meeting, ever.'),
     Filter('in_negotiation', _in_negotiation, overview='In negotiation',
            note='Quoted or under negotiation.'),
+    Filter('value_missing', _value_missing,
+           tile='Value missing', chip='Value missing',
+           note='Open and at RFQ Generated or later with no quoted '
+                'amount and no estimate. The lead cannot move on until '
+                'one is entered.'),
     Filter('everything', _everything, chip='Everything'),
 )
 

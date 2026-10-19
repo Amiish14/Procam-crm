@@ -2659,7 +2659,21 @@ async function rInbox(stage, prefix){
 
 async function advanceLead(id){
   if(!confirm('Advance to next stage?'))return;
-  const r=await api(`/api/leads/${id}/advance`,{method:'POST',body:'{}'});
+  let r=await api(`/api/leads/${id}/advance`,{method:'POST',body:'{}'});
+  // CRM-VALUE-01. This button has no dialog, so when the server
+  // refuses for a missing value it is asked for here and the move
+  // retried once — rather than telling somebody to go and find
+  // another screen.
+  if(r && !r.ok && r.needs === 'estimated_value'){
+    const v = prompt(r.error + '\n\nEstimated value (₹):', '');
+    if(v === null) return;
+    if(!(parseFloat((v||'').replace(/,/g,'')) > 0)){
+      toast('That is not a value — nothing was changed','err'); return;
+    }
+    r = await api(`/api/leads/${id}/advance`,
+                  {method:'POST',
+                   body: JSON.stringify({estimated_value: v})});
+  }
   if(r.ok){toast('Advanced to '+r.stage,'ok');refreshCurrentInbox();rDash();
     if(r.stage==='Quoted'&&r.lead&&(!r.lead.quote_value_inr||!r.lead.quote_date)&&
        confirm('This lead is now Quoted but has no quote value/date — add them now?'))openLd(id);}
@@ -2923,6 +2937,12 @@ let VERTICAL_OPTIONS = [];
    copy of a vocabulary the server owns. The fallbacks are only for a
    first paint before that call lands. */
 let MODE_OPTIONS = ['Sea', 'Air', 'Multimodal'];
+/* Stages that refuse to be entered without a value on the lead.
+   Mirrors app/services/value_gate.REQUIRES_VALUE; the server is what
+   enforces it, this is so the dialog can ask first rather than let
+   the save bounce. */
+const VALUE_STAGES = ['RFQ Generated', 'Quoted', 'Under Negotiation',
+                      'Won'];
 let MODE_VERTICAL = 'Freight Forwarding';
 
 async function loadVerticalOptions(){
@@ -4310,7 +4330,23 @@ function openAdv(lid){
                       <input class="fmc" id="advDate" type="date" value="${today}" style="margin-bottom:.4rem;">
                       <textarea class="fmc" id="advNote" rows="2" placeholder="RFQ reference, scope, due date, remarks…"></textarea>`,
   }[nxt] || `<textarea class="fmc" id="advNote" rows="2" placeholder="Optional note…"></textarea>`;
-  g('advActivity').innerHTML = activity;
+  /* CRM-VALUE-01. From RFQ Generated onward the lead needs a number
+     on it, so the dialog asks here rather than letting the save be
+     refused and making the person start again. Already has one — no
+     question. */
+  const needsValue = VALUE_STAGES.indexOf(nxt) !== -1
+                     && !(l.value_inr > 0) && !(l.quote_value_inr > 0);
+  g('advActivity').innerHTML = activity + (needsValue ? `
+    <div style="margin-top:.5rem;padding:.55rem .6rem;border-radius:6px;
+                background:#FEF3C7;border:1px solid #FCD34D">
+      <label class="fml" style="margin:0 0 .25rem">Estimated value (₹) — required for ${e(nxt)}</label>
+      <input class="fmc" id="advEstVal" type="text" inputmode="decimal"
+             placeholder="Best estimate; it can be corrected later">
+      <div style="font-size:11.5px;color:#92400E;margin-top:.3rem">
+        A lead past RFQ with no number on it is invisible to every
+        forecast. An estimate is better than nothing.
+      </div>
+    </div>` : '');
   document.getElementById('advMod').style.display = 'flex';
 }
 function closeAdv(){ document.getElementById('advMod').style.display='none'; _advLid=null; }
@@ -4321,7 +4357,14 @@ async function confirmAdvance(){
     event_date: (g('advDate')||{}).value || '',
     // v2026-08 — Quoted amount goes with the Quoted transition; server picks it up.
     quoted_amount: (g('advAmt')||{}).value || undefined,
+    estimated_value: (g('advEstVal')||{}).value || undefined,
   };
+  const est = g('advEstVal');
+  if (est && !(parseFloat((est.value||'').replace(/,/g,'')) > 0)) {
+    toast('An estimated value is required for this stage', 'err');
+    est.focus();
+    return;
+  }
   const r = await api(`/api/leads/${_advLid}/advance`, {method:'POST', body: JSON.stringify(body)});
   if (r && r.ok) {
     toast(`Advanced to ${r.stage} ✓`, 'ok');
@@ -4453,7 +4496,14 @@ async function confirmDecide(){
     body.reason = note;
     const val = ((g('decVal')||{}).value || '').trim();
     const hasValue = val || (_decLead && _decLead.value_inr);
-    if (!hasValue && !confirm('Marking Won with no business value — won-value reports will miss it. Continue?')) return;
+    // Was a confirm you could click through, which is how 168 won
+    // deals came to have no value. Won is the one stage where the
+    // number matters most.
+    if (!hasValue) {
+      toast('Won needs a business value — enter it above', 'err');
+      if (g('decVal')) g('decVal').focus();
+      return;
+    }
     if (val && !(g('decVal')||{}).disabled) body.value = val;
   }
   const r = await api(`/api/leads/${_decLid}/decision`, {method:'POST', body: JSON.stringify(body)});

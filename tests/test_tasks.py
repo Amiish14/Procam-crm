@@ -216,7 +216,11 @@ def test_a_lead_that_is_not_closed_keeps_its_tasks(world):
 
 def test_closing_is_audited_per_task(world):
     lid = world['leads']['live']
-    _client(ADMIN).put(f'/api/leads/{lid}', json={'stage': 'Won'})
+    # CRM-VALUE-01: Won needs a value, so one goes with the save.
+    # The gate is tested in test_value_gate.py; here it is a
+    # precondition, not the subject.
+    _client(ADMIN).put(f'/api/leads/{lid}',
+                       json={'stage': 'Won', 'estimated_value': '100000'})
     with flask_app.app_context():
         rows = AuditEvent.query.filter(
             AuditEvent.action == 'task.closed_with_lead',
@@ -549,7 +553,8 @@ def test_a_stage_change_on_the_edit_form_reaches_the_engine(world):
     _app_mod._fire_task_hook = spy
     try:
         _client(ADMIN).put(f'/api/leads/{world["leads"]["live"]}',
-                           json={'stage': 'Quoted'})
+                           json={'stage': 'Quoted',
+                                 'estimated_value': '100000'})
     finally:
         _app_mod._fire_task_hook = real
     assert calls, 'the edit form did not call the task engine'
@@ -709,9 +714,12 @@ def test_an_overlong_debrief_is_refused_not_truncated(world):
 
 
 def test_winning_a_lead_asks_for_none_of_it(world):
+    """Won records no competitor and no debrief — those belong to a
+    loss. It does now need a value (CRM-VALUE-01), which is a
+    different question and tested elsewhere."""
     lid = world['leads']['live']
     r = _client(ADMIN).post(f'/api/leads/{lid}/decision',
-                            json={'outcome': 'Won'})
+                            json={'outcome': 'Won', 'value': '100000'})
     assert r.status_code == 200
     with flask_app.app_context():
         lead = db.session.get(Lead, lid)

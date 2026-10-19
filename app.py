@@ -2471,6 +2471,17 @@ def api_update_lead(lid):
         'website':'website', 'subsidiaries':'subsidiaries', 'relevance':'relevance',
         'next_action':'next_action',
     }
+    # CRM-VALUE-01, before any field is written. The form may be
+    # submitting the value in the same save, which satisfies the gate.
+    if 'stage' in d and (d.get('stage') or '') != (lead.stage or ''):
+        from app.services import value_gate
+        _refused = value_gate.check(lead, d.get('stage'), d)
+        if _refused:
+            db.session.rollback()
+            return jsonify({'error': _refused,
+                            'needs': 'estimated_value',
+                            'stage': d.get('stage')}), 400
+
     for k, v in fields_map.items():
         if k in d:
             setattr(lead, v, d[k])
@@ -2937,6 +2948,15 @@ def api_lead_advance(lid):
         if not nxt:
             return jsonify({'ok': False,
                             'error': f'No next stage from "{lead.stage}"'}), 400
+    # CRM-VALUE-01. Checked before anything is written, so a refused
+    # move leaves no half-finished stage history behind.
+    from app.services import value_gate
+    _refused = value_gate.check(lead, nxt, data)
+    if _refused:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': _refused,
+                        'needs': 'estimated_value',
+                        'stage': nxt}), 400
     _log_stage_change(lead, nxt, note=data.get('note'))
     lead.stage_entered_at = datetime.utcnow()
     # Stamp workflow-specific dates when the corresponding stage is reached
@@ -2953,6 +2973,19 @@ def api_lead_advance(lid):
         lead.meeting_date = lead.meeting_date or today
     elif nxt == 'RFQ Generated':
         lead.rfq_date = lead.rfq_date or today
+    # CRM-VALUE-01. The estimate the dialog asked for has to be
+    # stored, not merely accepted: a gate satisfied by a number that
+    # is then thrown away moves the lead and leaves it valueless,
+    # which is the bug the gate exists to prevent.
+    if data.get('estimated_value') not in (None, ''):
+        from app.services import lead_value as _lv
+        try:
+            _lv.apply_legacy(lead, {'estimated_value':
+                                    data['estimated_value']},
+                             session.get('emp_code'))
+        except _lv.LeadValueError as exc:
+            db.session.rollback()
+            return jsonify({'ok': False, 'error': str(exc)}), 400
     # v2026-08 — capture quoted amount when advancing INTO Quoted
     if nxt == 'Quoted' and data.get('quoted_amount') not in (None, ''):
         from app.services import lead_value
@@ -2987,6 +3020,17 @@ def api_lead_decision(lid):
         return jsonify({'ok': False,
                         'error': f'Outcome must be one of {DECISION_OUTCOMES}'}), 400
     reason = (data.get('reason') or '').strip()
+    # CRM-VALUE-01. Won needs a number most of all: a win with no
+    # value is invisible to every report that matters. Lost, On Hold
+    # and Not Interested are exempt — a deal can be lost before it
+    # was ever priced, and refusing that would trap the record open.
+    from app.services import value_gate
+    _refused = value_gate.check(lead, outcome, data)
+    if _refused:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': _refused,
+                        'needs': 'estimated_value',
+                        'stage': outcome}), 400
     # The Won dialog's business value (₹). It was collected and never sent.
     if outcome == 'Won' and data.get('value') not in (None, ''):
         from app.services import lead_value
