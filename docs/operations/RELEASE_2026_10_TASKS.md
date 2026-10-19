@@ -263,3 +263,46 @@ Overdue, now split:
 | DIR12010 Nilesh Kumar Sinha | 157 | 3,657 |
 | EMP372011 Sanjna Vardhan | 77 | 1,026 |
 | EMP572012 Vijay T V | 17 | 587 |
+
+### After the backlog clean-up was approved and applied
+
+```
+task rows              3,659
+  Escalated (open)     2,528
+  Cancelled            1,131
+audit: backlog_closed  1,129
+audit: merged          3,659
+audit: closed              4
+
+open tasks on a closed lead:  0   (was 2,262)
+```
+
+| Viewer | Overdue leads | Overdue tasks |
+|---|---|---|
+| DIR12010 Nilesh Kumar Sinha | 157 | 2,528 |
+| EMP372011 Sanjna Vardhan | 77 | 719 |
+| EMP572012 Vijay T V | 17 | 397 |
+
+**What remains, and whether it can ever close:**
+
+| Open | Task | Closes on |
+|---|---|---|
+| 1,156 | `deal.lost.debrief` | **nothing — no completion state at all** |
+| 1,156 | `competitor.log` | `Opportunity / Competitor Logged` — **a state that does not exist** |
+| 162 | `lead.qualify` | `Lead / Profile Sent` ✓ |
+| 31 | `lead.rfq_review` | `Lead / Quoted` ✓ |
+| 19 | `lead.first_contact` | `Lead / Call Done` ✓ |
+| 4 | `quote.followup` | `Quote / Won` ✓ |
+
+216 of the 2,528 can close through normal work. **2,312 cannot, and
+a new pair is created every time an opportunity is lost.** Fault 3 is
+the only remaining fix that changes the trend.
+
+### A note on how this shipped
+
+The first `--apply --i-have-approval` run did nothing: the write path
+had never been implemented, and the script printed `DRY RUN ONLY`.
+The test asserted it *refused* without approval, which passed,
+because refusing was all it did. A refusal test and a dry-run test
+both pass against a script with no write path at all. The test now
+runs the real apply and asserts the rows changed.
