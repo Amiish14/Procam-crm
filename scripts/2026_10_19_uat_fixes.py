@@ -43,7 +43,19 @@ OTHER_VERTICAL = 'Other'
 OTHER_HEAD = 'DIR12010'
 
 FOLLOW_UP_COMPLETION = {'entity': 'Company', 'state': 'Worked'}
-RETIRE_DEFINITION = 'project.review'
+
+#: Retired rather than repaired.
+#:
+#: `project.review` has no completion state and never produced an
+#: instance. `account.follow_up_due` was given a working completion
+#: earlier today — the activity route emits `Worked` — and it still
+#: cannot produce a task, because its *start* state is
+#: `Company/'Follow-Up Due'` and that is not one of the twelve
+#: ACCOUNT_DEV_STAGES. A definition that can finish but can never
+#: begin is the same dead weight as one that can begin and never
+#: finish; inventing an account stage to make it fire would be
+#: designing a workflow nobody asked for.
+RETIRE_DEFINITIONS = ('project.review', 'account.follow_up_due')
 
 #: `account.first_contact` completes on 'Contact Made', which is not
 #: one of the twelve ACCOUNT_DEV_STAGES — the real one is 'Contact
@@ -93,13 +105,13 @@ def _plan():
                 f'{(fc.completion_state if fc else None)} -> '
                 f'{FIRST_CONTACT_FIX[1]}'))
 
-    pr = TaskDefinition.query.filter_by(task_key=RETIRE_DEFINITION).first()
-    pr_count = TaskInstance.query.filter_by(
-        task_key=RETIRE_DEFINITION).count()
-    out.append(('task definition', RETIRE_DEFINITION,
-                'already retired' if (pr and not pr.is_active) else
-                'deactivate' if pr else 'MISSING',
-                f'{pr_count} instance(s) ever'))
+    for key in RETIRE_DEFINITIONS:
+        pr = TaskDefinition.query.filter_by(task_key=key).first()
+        pr_count = TaskInstance.query.filter_by(task_key=key).count()
+        out.append(('task definition', key,
+                    'already retired' if (pr and not pr.is_active) else
+                    'deactivate' if pr else 'MISSING',
+                    f'{pr_count} instance(s) ever'))
 
     existing = ClientRestriction.query.filter(
         ClientRestriction.company_name.ilike('%walchand%')).first()
@@ -174,17 +186,19 @@ def main():
                              reason='"Contact Made" is not one of the '
                                     'twelve account stages, so the task '
                                     'could never close.')
-            pr = TaskDefinition.query.filter_by(
-                task_key=RETIRE_DEFINITION).first()
-            if pr is not None and pr.is_active:
-                pr.is_active = False
-                audit.record('task_definition.retired', 'task_definition',
-                             str(pr.id), old={'is_active': True},
-                             new={'is_active': False},
-                             actor=actor,
-                             reason='No completion state and no instances '
-                                    'ever; nobody can say what reviewed '
-                                    'means for it.')
+            for key in RETIRE_DEFINITIONS:
+                pr = TaskDefinition.query.filter_by(task_key=key).first()
+                if pr is not None and pr.is_active:
+                    pr.is_active = False
+                    audit.record('task_definition.retired',
+                                 'task_definition', str(pr.id),
+                                 old={'is_active': True},
+                                 new={'is_active': False,
+                                      'task_key': key},
+                                 actor=actor,
+                                 reason='Retired: it cannot both begin '
+                                        'and finish, and no instance has '
+                                        'ever existed.')
 
             # 3 — the block
             if not ClientRestriction.query.filter(

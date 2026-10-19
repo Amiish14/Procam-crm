@@ -161,8 +161,17 @@ def check_blocks(now):
                              '`caution`, which permits the work once '
                              'acknowledged. Nothing here proves a block '
                              'is enforced.')
-    return c.set(PASS, f'{len(hard)} blocked client(s), nothing created '
-                       f'since the block.')
+    refused_total = sum(r['attempts_refused'] for r in c.rows
+                        if isinstance(r['attempts_refused'], int))
+    if refused_total == 0:
+        return c.set(PERSON,
+                     f'{len(hard)} blocked client(s) and nothing created '
+                     f'since — but the gate has refused nothing, so it '
+                     f'has never been exercised. "No breaches" on a '
+                     f'block added minutes ago is arithmetic, not '
+                     f'evidence. Try saving a lead for one of them.')
+    return c.set(PASS, f'{len(hard)} blocked client(s), {refused_total} '
+                       f'attempt(s) refused, nothing created since.')
 
 
 # ── 2. weekly report ─────────────────────────────────────────────────
@@ -263,16 +272,29 @@ def check_daily(now):
         problems.append(f'report.daily queued nothing on {", ".join(gaps)}')
     if failures:
         problems.append(f'{failures} daily message(s) failed')
-    if enabled and recipients and not timer and admin_rows == 0:
-        problems.append('the admin report is switched on with a recipient '
-                        'and has never sent — there is no timer installed '
-                        'to run it')
-    elif enabled and not recipients:
+    if enabled and not recipients:
         problems.append('the admin report is on with no recipients')
+    elif enabled and not timer:
+        problems.append('the admin report is switched on and no timer is '
+                        'installed to run it')
 
     if problems:
         return c.set(FAIL, '; '.join(problems) + '.')
-    return c.set(PASS, f'{len(days)} working day(s) covered, no failures.')
+
+    # An installed timer is not a delivered report. Until one has
+    # actually been sent, say so — the first version of this check
+    # went green the moment the unit file existed, which is the
+    # difference between scheduling a thing and the thing happening.
+    if enabled and admin_rows == 0:
+        return c.set(PERSON,
+                     f'The brief covered all {len(days)} working day(s). '
+                     f'The admin report is on, has a recipient and now '
+                     f'has a timer (next {timer.split()[0:3] if timer else "?"}), '
+                     f'but nothing has been sent yet — a timer is a '
+                     f'promise, not a delivery. Check again after it '
+                     f'first fires.')
+    return c.set(PASS, f'{len(days)} working day(s) covered, no failures; '
+                       f'{admin_rows} admin report(s) in the window.')
 
 
 # ── 4. email routing ─────────────────────────────────────────────────
@@ -396,8 +418,9 @@ def check_delivery(now):
         return c.set(FAIL, f'No failures, but {len(queued_old)} message(s) '
                            f'have sat in `queued` for over six hours — the '
                            f'worker may not be running.')
-    return c.set(PASS, f'{len(after)} message(s) since 13 Oct, 0 failed, '
-                       f'0 with 554.')
+    return c.set(PASS, f'{len(after)} message(s) since the fix '
+                       f'({str(MIME_FIX)[:16]}), 0 failed, 0 with 554. '
+                       f'{before} hit 554 before it.')
 
 
 # ── 6. vertical guard ────────────────────────────────────────────────
