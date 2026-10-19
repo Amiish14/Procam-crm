@@ -405,7 +405,7 @@ def _historic_554(cutoff):
             oid = int(ev.entity_id)
         except (TypeError, ValueError):
             continue
-        row = EmailOutbox.query.get(oid)
+        row = db.session.get(EmailOutbox, oid)
         if row is not None and row.created_at and row.created_at < cutoff:
             recovered.add(oid)
     return len(ids | recovered), len(recovered - ids)
