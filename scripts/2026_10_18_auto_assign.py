@@ -40,15 +40,23 @@ TABLES = (('sender_account_link', SenderAccountLink),
 #: misspelling fails loudly here rather than silently later.
 REPLACEMENTS = (
     ('Manju Mishra', 'Sanjna Vardhan'),
-    ('Suketu Bhupesh Thakkar', 'Sanjna Vardhan'),
-    ('Manas Ganguly', 'Sanjna Vardhan'),
     ('Venkatesh Althada', 'Vijay T V'),
-    ('Setu Prassan', 'EMP4092026'),
     ('Sumit Mondal', 'EMP4092026'),
     ('Dhanashree Pawar', 'EMP4092026'),
-    ('Laxmi Yadav', 'Laxmi Ram Singh'),
     ('EMP1552018', 'Seema Chattopadhyay'),
 )
+
+#: Named in the original decision and dropped on 18 October: none of
+#: them is on the employee master and none holds a lead, so there is
+#: nothing for a replacement row to do. Kept here rather than
+#: deleted, so that somebody who remembers the names can see they
+#: were considered and why they are absent.
+#:
+#:     Suketu Bhupesh Thakkar, Manas Ganguly, Setu Prassan,
+#:     Laxmi Yadav
+#:
+#: Add them through Admin → Replacements if they turn up under a
+#: spelling the CRM holds.
 
 
 def _find(who):

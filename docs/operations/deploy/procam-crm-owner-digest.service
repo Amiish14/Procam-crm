@@ -1,0 +1,23 @@
+[Unit]
+Description=Procam CRM — owner-confirmation digests
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+# One mail per vertical head listing the leads a rule gave them, each
+# with Confirm and Reassign. Not one mail per lead: at the volume
+# this ran at in October that would have been around 380 messages a
+# month to two people, and the second hundred would have gone unread.
+#
+# Anything unanswered for 48 hours is raised with the backstop as
+# well — raised, not reassigned, because a head on leave should come
+# back to their own work.
+#
+# Does nothing at all while FEATURE_AUTO_ASSIGN is off.
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/send_owner_digests.py
+TimeoutStartSec=900
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,16 @@
+[Unit]
+Description=Procam CRM owner-confirmation digests
+
+[Timer]
+# 08:35 IST — five minutes after the action report, so the two
+# arrive together but the brief lands first. The server runs UTC, so
+# every time in these units is IST minus 5h30.
+#
+# Mon..Sat like the brief: nobody confirms a lead owner on a Sunday,
+# and the 48-hour escalation does not care which day it counts on.
+OnCalendar=Mon..Sat *-*-* 03:05:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
