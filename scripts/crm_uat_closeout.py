@@ -373,6 +373,44 @@ def check_routing(now):
 
 
 # ── 5. mail delivery ─────────────────────────────────────────────────
+def _historic_554(cutoff):
+    """How many messages hit 554 before the fix, counting the ones
+    whose row no longer says so.
+
+    Requeuing a failed message clears `smtp_code`, because the row is
+    going to be tried again and a stale code would describe the last
+    attempt rather than this one. That is right for the queue and
+    wrong for the history: resending the two Alstom notifications
+    erased the only trace in `email_outbox` that they had ever been
+    refused, and this count read 0 where it had read 2.
+
+    The audit trail kept it — `email.requeued` carries
+    `old={'status': 'failed', 'smtp_code': 554}` — so the count is
+    the union of the rows that still say 554 and the rows that used
+    to, deduplicated by outbox id so a row cannot be counted twice.
+    """
+    from app.models.audit import AuditEvent
+    from app.models.mailops import EmailOutbox
+
+    ids = {r.id for r in EmailOutbox.query.filter(
+        EmailOutbox.created_at < cutoff,
+        EmailOutbox.smtp_code == 554).all()}
+    recovered = set()
+    for ev in AuditEvent.query.filter(
+            AuditEvent.entity_type == 'email_outbox').all():
+        old = ev.old_value if isinstance(ev.old_value, dict) else {}
+        if old.get('smtp_code') != 554:
+            continue
+        try:
+            oid = int(ev.entity_id)
+        except (TypeError, ValueError):
+            continue
+        row = EmailOutbox.query.get(oid)
+        if row is not None and row.created_at and row.created_at < cutoff:
+            recovered.add(oid)
+    return len(ids | recovered), len(recovered - ids)
+
+
 #: When `_attach_message` landed (commit caa1634). Not 13 October —
 #: that was the SMTP *sender* fix, and using it here swept in two
 #: failures from the 16th that predate the thing being tested and
@@ -386,9 +424,7 @@ def check_delivery(now):
 
     after = EmailOutbox.query.filter(
         EmailOutbox.created_at >= MIME_FIX).all()
-    before = EmailOutbox.query.filter(
-        EmailOutbox.created_at < MIME_FIX,
-        EmailOutbox.smtp_code == 554).count()
+    before = _historic_554(MIME_FIX)
     failed = [r for r in after if r.status == 'failed']
     five54 = [r for r in after
               if r.smtp_code == 554 or '554' in (r.last_error or '')]
@@ -405,8 +441,9 @@ def check_delivery(now):
           status='', smtp_code='', created='',
           error=f'{len(after)} queued, {len(failed)} failed, '
                 f'{len(five54)} with 554, {len(queued_old)} stuck in '
-                f'queued over 6h · {before} message(s) hit 554 before '
-                f'the fix')
+                f'queued over 6h · {before[0]} message(s) hit 554 before '
+                f'the fix ({before[1]} of them recovered from the audit '
+                f'trail, their row having been cleared on requeue)')
 
     if five54:
         return c.set(FAIL, f'{len(five54)} message(s) still hitting 554 '
@@ -420,7 +457,10 @@ def check_delivery(now):
                            f'worker may not be running.')
     return c.set(PASS, f'{len(after)} message(s) since the fix '
                        f'({str(MIME_FIX)[:16]}), 0 failed, 0 with 554. '
-                       f'{before} hit 554 before it.')
+                       f'{before[0]} hit 554 before it'
+                       + (f', {before[1]} of those only visible in the '
+                          f'audit trail now' if before[1] else '')
+                       + '.')
 
 
 # ── 6. vertical guard ────────────────────────────────────────────────
