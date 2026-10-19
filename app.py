@@ -510,6 +510,24 @@ class Lead(db.Model):
     # buckets. Both nullable so old rows keep working; migration backfills
     # stage_entered_at from updated_at.
     lost_reason      = db.Column(db.String(60))
+    # What the two retired tasks used to ask for. `deal.lost.debrief`
+    # and `competitor.log` were raised on every lost deal, 1,156 each,
+    # and neither could ever be closed — one had no completion state
+    # and the other waited on an opportunity state that does not
+    # exist. Asking the question in the Lost dialog, where the person
+    # already is and already knows the answer, gets it recorded at the
+    # moment it is cheap; a task raised to go and find out later got
+    # 2,312 rows and no answers.
+    lost_to_competitor_id = db.Column(
+        db.Integer, db.ForeignKey('competitor_masters.id'),
+        nullable=True, index=True)
+    debrief_note     = db.Column(db.Text)
+    #: Why a lead was put on hold, in the words of whoever did it. The
+    #: On Hold dialog has always collected this and sent it as
+    #: `remarks`, and the decision route never read it — so the one
+    #: thing that explains a paused deal was discarded at the moment
+    #: somebody took the trouble to type it.
+    hold_note        = db.Column(db.Text)
     stage_entered_at = db.Column(db.DateTime)
     # Tracking
     onboarded_date   = db.Column(db.Date, default=date.today)   # Date entered into system
@@ -627,6 +645,9 @@ class Lead(db.Model):
             'linkedin': self.linkedin or '',
             'stage': self.stage or 'New', 'procam_vertical': self.procam_vertical or '',
             'mode': self.mode or '',
+            'lost_to_competitor_id': self.lost_to_competitor_id,
+            'debrief_note': self.debrief_note or '',
+            'hold_note': self.hold_note or '',
             'assigned_to': self.assigned_to or '', 'assigned_name': self.assigned_name or '',
             'followup': sd(self.followup_date), 'notes': self.notes or '',
             'history': self.history or '',
@@ -2510,18 +2531,22 @@ def api_update_lead(lid):
         if not ok:
             db.session.rollback()
             return jsonify({'error': err}), 400
-    # CRM-AUTOCLOSE-TASKS-01. This route sets `stage` through
-    # `fields_map` and has never called the task engine — which is
-    # one reason nothing has ever closed, since the lead form is how
-    # most people change a stage. Closing the tasks is wired here
-    # directly rather than by firing the whole hook: cancelling work
-    # on a dead lead is what was asked for, and starting to *create*
-    # tasks from a route that never did is a larger change than that.
-    if lead.stage != _was_stage:
-        from app.services import task_autoclose
-        task_autoclose.close_for_lead(lead, actor=session.get('emp_code'))
     lead.updated_at = datetime.utcnow()
     db.session.commit()
+    # CRM-TASKS-02 (fault 2). This route sets `stage` through
+    # `fields_map` and never called the task engine, while the
+    # advance and decision endpoints did — and the form is how most
+    # people change a stage, so the busiest path was the silent one.
+    #
+    # Only on a real stage change. A corrected phone number is not a
+    # state transition, and firing the engine on every save would
+    # raise the same task again on every edit.
+    if lead.stage != _was_stage:
+        _fire_task_hook(lead, 'Lead', _was_stage, lead.stage)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
     # Auto-create/update contact
     _auto_save_contact(lead)
     _announce_lead_change(lead, _was_stage, _was_value)
@@ -2985,6 +3010,32 @@ def api_lead_decision(lid):
     # Lost-Reason chart + /api/dashboard/summary distributions reconcile.
     if outcome in ('Lost', 'Not Interested'):
         lead.lost_reason = reason
+    # What the two retired tasks used to ask. Optional, both of them:
+    # a required field people cannot answer is how 4,738 lost leads
+    # came to have no lost reason at all.
+    _captured = {}
+    if outcome in ('Lost', 'Not Interested'):
+        from app.services import lost_capture
+        try:
+            _captured = lost_capture.apply(lead, data,
+                                           actor=session.get('emp_code'))
+        except lost_capture.LostCaptureError as exc:
+            db.session.rollback()
+            return jsonify({'ok': False, 'error': str(exc)}), 400
+    # On Hold has collected a remark since the dialog was written and
+    # sent it as `remarks`, which this route never read. `remarks` is
+    # still accepted so a page cached before today is not silently
+    # dropped a second time.
+    if outcome == 'On Hold':
+        _hold = (data.get('hold_note') or data.get('remarks') or '').strip()
+        if len(_hold) > 2000:
+            db.session.rollback()
+            return jsonify({'ok': False,
+                            'error': 'Keep the hold note under 2000 '
+                                     'characters.'}), 400
+        if _hold:
+            lead.hold_note = _hold
+            _captured = {'hold_note': _hold}
     # Record when the stage was entered — used by pipeline-ageing buckets.
     lead.stage_entered_at = datetime.utcnow()
     # Also update the linked Opportunity if we have one
@@ -5048,6 +5099,10 @@ def init_db():
             ('task_instances', 'escalated',    _bool_ddl),
             ('task_instances', 'escalated_to', 'VARCHAR(40)'),
             ('task_instances', 'escalated_at', 'TIMESTAMP'),
+            # The Lost dialog captures what the retired tasks asked for
+            ('leads', 'lost_to_competitor_id', 'INTEGER'),
+            ('leads', 'debrief_note',          'TEXT'),
+            ('leads', 'hold_note',             'TEXT'),
             ('leads',         'stage_entered_at', 'TIMESTAMP'),
             ('employees',     'is_vertical_head', _bool_ddl),
             ('employees',     'vertical_head_id', 'INTEGER'),
@@ -5812,6 +5867,10 @@ for _mod_path, _bp_name in [
     ('app.intel.routes',         'intel_bp'),
     ('app.mailops.routes',       'mailops_bp'),
     ('app.restrictions.routes',  'restrictions_bp'),
+    # Finishing a task. Until 19 October there was no way to: every
+    # task route was a GET, and tasks closed only as a side effect of
+    # something else reaching a state. See RELEASE_2026_10_TASKS.md.
+    ('app.tasks.routes',         'tasks_bp'),
     # The TMS integration API. Exempted from CSRF below, because it is
     # authenticated by a bearer token rather than by a session cookie —
     # a CSRF token is a defence against a browser being used as a

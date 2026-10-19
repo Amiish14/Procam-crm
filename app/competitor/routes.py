@@ -116,14 +116,131 @@ def _list_field(v):
 @bp.route('/competitors')
 @_require_auth
 def competitor_list_page():
-    """§6/§19 — Competitors are a filtered view of Company Master.
+    """Who we lose to, how often, and when it last happened.
 
-    competitor_masters was a second company master, which §4 forbids. The
-    list now shows companies classified as Competitor, and each opens the
-    same Company 360 any other route would reach (§87).
+    This used to redirect to `/companies?relationship=Competitor`,
+    on the reasoning that a competitor is a Company classification
+    rather than a second master. That is a defensible design and it
+    was never built: `Company` has no `relationship` column, so the
+    filter matched nothing and the page showed an unfiltered company
+    list. Both competitor tables were empty, so there was nothing to
+    show either way.
+
+    The list is now `competitor_masters`, which is what the Lost
+    dialog writes to, with the two numbers that make it worth
+    opening: how many deals went to each, and when the last one did.
     """
-    from flask import redirect
-    return redirect(_prefixed('/companies?relationship=Competitor'))
+    from flask import render_template
+    return render_template('competitor/list.html',
+                           can_edit=_can_edit())
+
+
+def _can_edit():
+    """Adding, editing and merging the master list is an admin job."""
+    try:
+        from app import _matrix_can
+        return bool(_matrix_can('admin.master'))
+    except Exception:                                     # noqa: BLE001
+        return False
+
+
+def _need_admin():
+    return jsonify(error='Only an administrator may change the '
+                         'competitor list'), 403
+
+
+@bp.route('/api/competitors/summary')
+@_require_auth
+def api_competitor_summary():
+    """The list with its two numbers, worst offender first.
+
+    Counted from `leads.lost_to_competitor_id`, which the Lost dialog
+    writes — not from `opportunity_competitors`, which has no rows
+    and no writer.
+    """
+    from app import Lead
+
+    rows = (CompetitorMaster.query
+            .order_by(CompetitorMaster.name.asc()).all())
+    counts, last_seen = {}, {}
+    for cid, n in (db.session.query(Lead.lost_to_competitor_id,
+                                    func.count())
+                   .filter(Lead.lost_to_competitor_id.isnot(None))
+                   .group_by(Lead.lost_to_competitor_id).all()):
+        counts[cid] = n
+    for cid, when in (db.session.query(
+            Lead.lost_to_competitor_id,
+            func.max(func.coalesce(Lead.stage_entered_at,
+                                   Lead.updated_at)))
+            .filter(Lead.lost_to_competitor_id.isnot(None))
+            .group_by(Lead.lost_to_competitor_id).all()):
+        last_seen[cid] = str(when)[:10] if when else ''
+
+    items = [{'id': r.id, 'name': r.name,
+              'is_active': bool(r.is_active),
+              'website': r.website or '',
+              'country': r.country or '',
+              'lost_count': counts.get(r.id, 0),
+              'last_seen': last_seen.get(r.id, '')}
+             for r in rows]
+    items.sort(key=lambda d: (-d['lost_count'], d['name'].lower()))
+    return jsonify(ok=True, items=items, can_edit=_can_edit(),
+                   total_lost=sum(counts.values()))
+
+
+@bp.route('/api/competitors/<int:cid>/merge', methods=['POST'])
+@_require_auth
+def api_merge_competitor(cid):
+    """Fold one competitor into another and keep the deals.
+
+    The same company arrives spelled three ways — "K+N", "Kuehne
+    Nagel", "Kuehne + Nagel" — because the list fills from a free
+    text box at the moment somebody is losing a deal and is not
+    thinking about spelling. Merging moves the leads first and
+    removes the duplicate second, so no lead is ever left pointing at
+    a competitor that no longer exists.
+    """
+    from app import Lead
+    from app.services import audit
+
+    if not _can_edit():
+        return _need_admin()
+    body = request.get_json(silent=True) or {}
+    try:
+        into_id = int(body.get('into'))
+    except (TypeError, ValueError):
+        return jsonify(error='Which competitor should it merge into?'), 400
+    if into_id == cid:
+        return jsonify(error='That is the same competitor'), 400
+
+    loser = db.session.get(CompetitorMaster, cid)
+    keeper = db.session.get(CompetitorMaster, into_id)
+    if loser is None or keeper is None:
+        return jsonify(error='No such competitor'), 404
+
+    moved = (Lead.query
+             .filter(Lead.lost_to_competitor_id == loser.id)
+             .update({'lost_to_competitor_id': keeper.id},
+                     synchronize_session=False))
+    # The loser's name becomes an alias of the keeper, so a lead
+    # exported last month under the old spelling can still be
+    # recognised and so the same duplicate is not re-created by the
+    # next person who types it.
+    aliases = list(keeper.aliases or [])
+    for name in [loser.name] + list(loser.aliases or []):
+        if name and name not in aliases and name != keeper.name:
+            aliases.append(name)
+    keeper.aliases = aliases
+    audit.record('competitor.merged', 'competitor', str(keeper.id),
+                 old={'merged_id': loser.id, 'merged_name': loser.name},
+                 new={'into_id': keeper.id, 'into_name': keeper.name,
+                      'leads_moved': moved, 'aliases': aliases},
+                 actor=_current_emp_code(),
+                 reason=f'{loser.name} merged into {keeper.name}')
+    db.session.delete(loser)
+    db.session.commit()
+    return jsonify(ok=True, leads_moved=moved,
+                   into={'id': keeper.id, 'name': keeper.name})
 
 
 @bp.route('/competitors/<int:cid>')
@@ -169,6 +286,12 @@ def api_create_competitor():
     name = (payload.get('name') or '').strip()
     if not name:
         return jsonify(error='name required'), 400
+    # Curating the master list is an admin job. The Lost dialog does
+    # not come through here — it names a competitor through
+    # `lost_capture.resolve_competitor`, because adding a name is part
+    # of losing a deal and anybody closing one may do it.
+    if not _can_edit():
+        return _need_admin()
 
     # Dedup by lower-cased name
     existing = CompetitorMaster.query.filter(
@@ -211,6 +334,8 @@ def api_get_competitor(cid):
 @bp.route('/api/competitors/<int:cid>', methods=['PATCH'])
 @_require_auth
 def api_patch_competitor(cid):
+    if not _can_edit():
+        return _need_admin()
     row = CompetitorMaster.query.get_or_404(cid)
     payload = request.get_json(silent=True) or {}
 

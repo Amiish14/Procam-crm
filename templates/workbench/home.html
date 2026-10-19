@@ -262,12 +262,42 @@ function paintRows(d){
       <td class="num">${i.ageing_days==null?'—':i.ageing_days+'d'}</td>
       <td>${esc(i.assigned_name||'—')}</td>
       <td>${whyChips(i)}</td>
-      <td><a class="btn" href="${PREFIX}${esc(i.route)}">Open</a></td>
+      <td>${i.kind === 'task'
+            ? `<button class="btn" onclick="wbTaskDone(${i.id}, this)">Done</button> `
+            : ''}<a class="btn" href="${PREFIX}${esc(i.route)}">Open</a></td>
     </tr>`).join('') : '<tr><td colspan="15" style="padding:26px" class="muted">Nothing needs your attention here. </td></tr>';
   $('wbPager').innerHTML = `${d.total} item(s) · page ${d.page} of ${d.pages} ` +
     (d.page > 1 ? `<button class="btn" onclick="wbLoad(${d.page-1})">Previous</button> ` : '') +
     (d.page < d.pages ? `<button class="btn" onclick="wbLoad(${d.page+1})">Next</button>` : '');
   wbPaintSelection();
+}
+/* Finishing a task from the board. Until 19 October there was no way
+   to finish one at all — every task route was a GET — which is the
+   first of the five reasons nothing had closed since 17 August.
+   The note is optional: asking for one every time is how a Done
+   button becomes a Done-later button. */
+async function wbTaskDone(id, btn){
+  const note = prompt('Mark this task done.\n\nA note, if you want one '
+                      + '(optional — leave blank and press OK):', '');
+  if (note === null) return;               // cancelled
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try{
+    const r = await fetch(PREFIX + '/api/tasks/' + id + '/done', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({note: note})});
+    const d = await r.json().catch(() => null);
+    if (!d || !d.ok) {
+      alert((d && d.error) || 'Could not close that task.');
+      if (btn) { btn.disabled = false; btn.textContent = 'Done'; }
+      return;
+    }
+  }catch(err){
+    alert('Could not close that task.');
+    if (btn) { btn.disabled = false; btn.textContent = 'Done'; }
+    return;
+  }
+  wbLoad(STATE.page);
 }
 function wbFilter(k){
   if (k === 'everything') { STATE.filter = ''; }

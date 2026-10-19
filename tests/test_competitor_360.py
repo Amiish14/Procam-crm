@@ -154,10 +154,34 @@ def test_intelligence_timeline_is_returned(world):
 
 
 # ── §6/§87: one route, one record ────────────────────────────────────
-def test_the_competitor_list_is_a_filtered_view(world):
+def test_the_competitor_list_is_its_own_page(world):
+    """This asserted the redirect to `/companies?relationship=Competitor`
+    until 19 October, and the redirect worked — it just arrived
+    somewhere useless. `Company` has no `relationship` column, so the
+    filter matched nothing and the page showed every company.
+
+    §6/§87 said a competitor is a Company classification rather than a
+    second master, which is a good design that was never built: the
+    column does not exist and both competitor tables were empty. The
+    Lost dialog now writes `leads.lost_to_competitor_id` against
+    `competitor_masters`, so that is what the list shows.
+
+    Rewritten rather than deleted, so the reason the redirect went is
+    on the record next to the rule it came from.
+    """
+    from app import Company
+    assert 'relationship' not in {c.name for c in Company.__table__.columns}, \
+        'the column exists now — the filtered view may be buildable again'
     r = _c().get('/competitors')
-    assert r.status_code == 302
-    assert 'relationship=Competitor' in r.headers['Location']
+    assert r.status_code == 200
+    assert 'Deals lost to them' in r.get_data(as_text=True)
+
+
+def test_a_competitor_still_opens_the_same_company_360(world):
+    """§87 holds for the record itself: the list changed, not what a
+    competitor opens into."""
+    body = _c().get(f'/companies/{world["rival"]}').get_data(as_text=True)
+    assert 'Competitor 360' in body
 
 
 def test_a_competitor_opens_the_same_company_360(world):

@@ -3070,6 +3070,7 @@ async function openLd(id){
       <div style="font-size:11.5px;color:var(--text-3);margin-top:4px">How the freight moves. Leave blank if it is not settled.</div>
     </div></div>
     <div class="fmg" id="lClassExpl" style="display:none"></div>
+    <div class="fmg" id="lTasks" style="display:none"></div>
     <div class="fmr"><div class="fmg"><label class="fml">Next follow-up</label><input type="date" class="fmc" id="lFu" value="${l.followup||''}"></div><div class="fmg"><label class="fml">Onboarded date</label><input class="fmc" value="${l.onboarded_date||'—'}" disabled style="background:var(--surface-2);color:var(--text-3)"></div></div>
     <div class="fmg">
       <label class="fml">Notes / call summary</label>
@@ -3107,6 +3108,7 @@ async function openLd(id){
   ldValueInit(l);
   loadLeadNotes(l.id);
   loadLeadClassification(l.id);
+  loadLeadTasks(l.id);
   syncModeField();
   loadMailTrail(l.id);
   loadRateSourcing(l.id);
@@ -3245,6 +3247,59 @@ async function showNoteHistory(leadId, noteId){
     </div>`;
   }).join('') || '<div style="font-size:12px;color:var(--text-3)">No earlier versions.</div>';
   host.style.display = 'block';
+}
+
+/* The tasks the engine raised on this lead, and the first way anybody
+   has had of finishing one. Until 19 October every task route was a
+   GET: the screens listed work and offered no way to complete it,
+   which is why nothing had closed since 17 August. */
+let _ldTaskLid = null;
+async function loadLeadTasks(id){
+  const host = g('lTasks');
+  if(!host) return;
+  _ldTaskLid = id;
+  let r = null;
+  try { r = await api('/api/tasks?lead=' + id); } catch(err){ r = null; }
+  const rows = (r && r.ok && r.tasks) || [];
+  if(!rows.length){ host.style.display = 'none'; host.innerHTML = ''; return; }
+  const open = rows.filter(t => t.is_open);
+  host.style.display = '';
+  host.innerHTML = `<label class="fml">Tasks on this lead
+      <span style="font-weight:400;color:var(--text-3)">— ${open.length} open of ${rows.length}</span></label>
+    <div style="font-size:12.5px">` + rows.slice(0, 12).map(t => `
+      <div style="display:flex;gap:8px;align-items:center;padding:4px 0;
+                  border-top:1px solid var(--border)">
+        <div style="flex:1">
+          <b>${e(t.task_key.replace(/\./g,' ').replace(/_/g,' '))}</b>
+          ${t.escalated ? `<span class="pill" style="font-size:10.5px">escalated to ${e(t.escalated_to||'—')}</span>` : ''}
+          <div style="color:var(--text-3);font-size:11.5px">
+            ${e(t.status)}${t.due_at?` · due ${e(t.due_at)}`:''}
+            ${t.owner_user_id||t.owner_role?` · ${e(t.owner_user_id||t.owner_role)}`:''}
+          </div>
+        </div>
+        ${t.may_close
+          ? `<button type="button" class="btn btn-ghost btn-sm"
+               onclick="ldTaskDone(${t.id}, this)">Done</button>`
+          : (t.is_open ? '<span style="color:var(--text-3);font-size:11.5px">not yours</span>' : '')}
+      </div>`).join('')
+    + (rows.length > 12 ? `<div style="color:var(--text-3);font-size:11.5px;padding-top:4px">…and ${rows.length-12} more</div>` : '')
+    + '</div>';
+}
+
+async function ldTaskDone(tid, btn){
+  const note = prompt('Mark this task done.\n\nA note, if you want one '
+                      + '(optional — leave blank and press OK):', '');
+  if (note === null) return;
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  const r = await api('/api/tasks/' + tid + '/done',
+                      {method:'POST', body: JSON.stringify({note: note})});
+  if (r && r.ok) {
+    toast(r.already ? 'That task was already closed' : 'Task done ✓', 'ok');
+    if (_ldTaskLid) loadLeadTasks(_ldTaskLid);
+  } else {
+    toast((r && r.error) || 'Could not close that task', 'err');
+    if (btn) { btn.disabled = false; btn.textContent = 'Done'; }
+  }
 }
 
 /* Why the lead exists and why it has its vertical — the intake decision
@@ -4323,19 +4378,50 @@ function pickDec(k, bg){
     html = `<label class="fml">Reason * (required)
       <select class="fmc" id="decReason"><option value="">-- pick --</option>${REASONS.map(r=>`<option>${e(r)}</option>`).join('')}</select></label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;">
-        <label class="fml">Competitor (optional)<input class="fmc" id="decComp" placeholder="Vendor name"></label>
+        <label class="fml">Lost to (competitor, optional)
+          <select class="fmc" id="decComp" onchange="decCompToggle()">
+            <option value="">— not stated —</option>
+            <option value="__new__">+ Add a competitor…</option>
+          </select>
+          <input class="fmc" id="decCompNew" placeholder="Competitor name"
+                 style="display:none;margin-top:4px">
+        </label>
         <label class="fml">Lost Value (₹, optional)<input class="fmc" id="decVal" type="text" inputmode="decimal"></label>
       </div>
-      <label class="fml">Remarks<textarea class="fmc" id="decNote" rows="2" placeholder="Required if reason = Other"></textarea></label>`;
+      <label class="fml">Debrief note (optional)<textarea class="fmc" id="decNote" rows="2" placeholder="What decided it? Required if reason = Other."></textarea></label>`;
   } else if (k === 'On Hold') {
     html = `<label class="fml">Hold Reason<input class="fmc" id="decReason"></label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;">
         <label class="fml">Expected Review Date<input class="fmc" id="decDate" type="date"></label>
         <label class="fml">Next Follow-up Date<input class="fmc" id="decFu"   type="date"></label>
       </div>
-      <label class="fml">Remarks<textarea class="fmc" id="decNote" rows="2"></textarea></label>`;
+      <label class="fml">Remarks<textarea class="fmc" id="decNote" rows="2"
+        placeholder="Why is it on hold, and what would restart it?"></textarea></label>`;
   }
   g('decForm').innerHTML = html;
+  if (k === 'Lost' || k === 'Not Interested') decCompLoad();
+}
+
+/* The competitor list, from the master. It starts empty — nothing has
+   ever written to it — so "+ Add a competitor…" is how it fills, and
+   the server folds a name that already exists back onto the existing
+   row rather than making a second one. */
+async function decCompLoad(){
+  const sel = g('decComp'); if(!sel) return;
+  try{
+    const r = await api('/api/competitors?active_only=1');
+    const items = (r && r.items) || [];
+    sel.innerHTML = '<option value="">— not stated —</option>'
+      + items.map(c=>`<option value="${c.id}">${e(c.name)}</option>`).join('')
+      + '<option value="__new__">+ Add a competitor…</option>';
+  }catch(err){ /* the add-new option alone still works */ }
+}
+function decCompToggle(){
+  const sel = g('decComp'), box = g('decCompNew');
+  if(!sel || !box) return;
+  const adding = sel.value === '__new__';
+  box.style.display = adding ? '' : 'none';
+  if (adding) box.focus(); else box.value = '';
 }
 function closeDec(){ document.getElementById('decMod').style.display='none'; _decLid=null; _decOutcome=''; }
 async function confirmDecide(){
@@ -4347,10 +4433,22 @@ async function confirmDecide(){
     if (!reason) { toast('Reason is required for ' + _decOutcome, 'err'); return; }
     if (reason === 'Other' && !note.trim()) { toast('Remarks required when reason = Other','err'); return; }
     body.reason = reason || note;
-    body.remarks = note;
+    // `remarks` was sent and never read by the server, and the
+    // competitor box was never sent at all — both silently discarded.
+    // They go as the two fields the Lost dialog now actually stores.
+    body.debrief_note = note;
+    const compSel = (g('decComp')||{}).value || '';
+    if (compSel === '__new__') {
+      const fresh = ((g('decCompNew')||{}).value || '').trim();
+      if (fresh) body.lost_to_competitor_name = fresh;
+    } else if (compSel) {
+      body.lost_to_competitor_id = compSel;
+    }
   } else if (_decOutcome === 'On Hold') {
     body.reason = reason || note;
-    body.remarks = note;
+    // Was `remarks`, which the server never read. The remark on a
+    // paused deal is often the only thing that explains it.
+    body.hold_note = note;
   } else if (_decOutcome === 'Won') {
     body.reason = note;
     const val = ((g('decVal')||{}).value || '').trim();

@@ -162,15 +162,17 @@ def _client(code):
 
 
 # ── the investigation, pinned so it cannot silently come back ────────
-def test_no_route_completes_a_task_by_hand():
-    """Fault 1. If somebody adds one, this fails and the finding is
-    stale — which is the point: the report said there is no way to
-    finish a task, and that must stop being true deliberately."""
-    posts = [r for r in flask_app.url_map.iter_rules()
+def test_a_route_now_completes_a_task_by_hand():
+    """Fault 1, fixed. This test used to assert the opposite — that
+    no such route existed — and it was the record of the finding.
+    It is inverted rather than deleted, so the history is legible:
+    the absence was deliberate once, and stopped being so on purpose.
+    """
+    posts = [r.rule for r in flask_app.url_map.iter_rules()
              if 'task' in r.rule.lower()
-             and {'POST', 'PATCH', 'PUT'} & set(r.methods or ())]
-    assert not posts, \
-        f'a task-writing route now exists: {[r.rule for r in posts]}'
+             and 'POST' in set(r.methods or ())]
+    assert '/api/tasks/<int:tid>/done' in posts, \
+        f'no way to finish a task; task POST routes are {posts}'
 
 
 def test_an_escalated_twin_matches_no_definition(world):
@@ -427,3 +429,487 @@ def test_the_backlog_report_refuses_to_apply_without_approval(world):
         capture_output=True, text=True, env=env, cwd=_ROOT)
     assert out.returncode == 2, out.stdout[-2000:]
     assert 'refused' in out.stdout
+
+
+# ── fault 1: the Done button ─────────────────────────────────────────
+def test_the_owner_can_finish_their_own_task(world):
+    tid = world['tasks']['live']
+    r = _client(REP).post(f'/api/tasks/{tid}/done',
+                          json={'note': 'rang them, quote agreed'})
+    assert r.status_code == 200 and r.get_json()['ok']
+    with flask_app.app_context():
+        row = db.session.get(TaskInstance, tid)
+        # Completed, not Cancelled: a person pressing Done did the work.
+        assert row.status == TaskInstanceStatus.COMPLETED
+        assert row.completed_by_id == REP
+        assert row.completed_at is not None
+        assert 'quote agreed' in (row.notes or '')
+
+
+def test_the_note_is_optional(world):
+    tid = world['tasks']['live']
+    r = _client(REP).post(f'/api/tasks/{tid}/done', json={})
+    assert r.status_code == 200
+    with flask_app.app_context():
+        assert db.session.get(Lead, world['leads']['live']) is not None
+        assert (db.session.get(TaskInstance, tid).status
+                == TaskInstanceStatus.COMPLETED)
+
+
+def test_finishing_a_task_is_audited(world):
+    tid = world['tasks']['live']
+    _client(REP).post(f'/api/tasks/{tid}/done', json={'note': 'done it'})
+    with flask_app.app_context():
+        rows = AuditEvent.query.filter(
+            AuditEvent.action == 'task.completed',
+            AuditEvent.entity_id == str(tid)).all()
+    assert len(rows) == 1
+    assert rows[0].actor == REP
+    assert rows[0].new_value['note'] == 'done it'
+
+
+def test_somebody_elses_task_is_refused(world):
+    with flask_app.app_context():
+        other = _emp('TKOTHER', 'Someone Else')
+        db.session.commit()
+    tid = world['tasks']['live']
+    r = _client('TKOTHER').post(f'/api/tasks/{tid}/done', json={})
+    assert r.status_code == 403
+    with flask_app.app_context():
+        assert db.session.get(TaskInstance, tid).status \
+            in TaskInstanceStatus.OPEN
+
+
+def test_an_admin_can_finish_anybodys_task(world):
+    tid = world['tasks']['live']
+    r = _client(ADMIN).post(f'/api/tasks/{tid}/done', json={})
+    assert r.status_code == 200
+    with flask_app.app_context():
+        assert (db.session.get(TaskInstance, tid).status
+                == TaskInstanceStatus.COMPLETED)
+
+
+def test_pressing_done_twice_is_not_an_error(world):
+    """Two people on the same row is ordinary. The second should see
+    the same outcome as the first, not a failure."""
+    tid = world['tasks']['live']
+    first = _client(REP).post(f'/api/tasks/{tid}/done', json={})
+    second = _client(REP).post(f'/api/tasks/{tid}/done', json={})
+    assert first.status_code == 200 and second.status_code == 200
+    assert second.get_json()['already'] is True
+    with flask_app.app_context():
+        rows = AuditEvent.query.filter(
+            AuditEvent.action == 'task.completed',
+            AuditEvent.entity_id == str(tid)).all()
+    assert len(rows) == 1, 'the second press must not write a second row'
+
+
+def test_a_role_owned_task_can_be_cleared_by_somebody(world):
+    """An escalation to Vertical_Head has no named owner. If only its
+    owner could close it, it would belong to nobody."""
+    from app.access import scope as sc_mod
+    from app.tasks.routes import may_close
+    with flask_app.app_context():
+        twin = db.session.get(TaskInstance, world['tasks']['twin'])
+        assert twin.owner_user_id is None and twin.owner_role
+        assert may_close(twin, sc_mod.for_employee(ADMIN), ADMIN, False)
+        # A rep who only sees their own leads may not.
+        assert not may_close(twin, sc_mod.for_employee(REP), REP, False)
+
+
+def test_the_note_has_a_ceiling(world):
+    r = _client(REP).post(f'/api/tasks/{world["tasks"]["live"]}/done',
+                          json={'note': 'x' * 2000})
+    assert r.status_code == 400
+
+
+def test_tasks_on_a_lead_are_listed_with_their_permission(world):
+    body = _client(REP).get(
+        f'/api/tasks?lead={world["leads"]["won"]}').get_json()
+    assert body['ok']
+    keys = {t['task_key'] for t in body['tasks']}
+    assert 'lead.rfq_review' in keys
+    for t in body['tasks']:
+        assert 'may_close' in t and 'is_open' in t
+
+
+# ── fault 2: the edit form fires the engine on a stage change ────────
+def test_a_stage_change_on_the_edit_form_reaches_the_engine(world):
+    """It never did. The advance and decision endpoints fired the
+    hook; the form, which is how most people change a stage, did
+    not."""
+    calls = []
+    import app as _app_mod
+    real = _app_mod._fire_task_hook
+
+    def spy(entity, entity_type, old_state, new_state):
+        calls.append((entity_type, old_state, new_state))
+        return real(entity, entity_type, old_state, new_state)
+
+    _app_mod._fire_task_hook = spy
+    try:
+        _client(ADMIN).put(f'/api/leads/{world["leads"]["live"]}',
+                           json={'stage': 'Quoted'})
+    finally:
+        _app_mod._fire_task_hook = real
+    assert calls, 'the edit form did not call the task engine'
+    assert calls[0][0] == 'Lead'
+    assert calls[0][2] == 'Quoted'
+
+
+def test_editing_any_other_field_raises_nothing(world):
+    """A corrected phone number is not a state transition. Firing on
+    every save would re-raise the same task on every edit."""
+    calls = []
+    import app as _app_mod
+    real = _app_mod._fire_task_hook
+
+    def spy(entity, entity_type, old_state, new_state):
+        calls.append((entity_type, old_state, new_state))
+        return real(entity, entity_type, old_state, new_state)
+
+    _app_mod._fire_task_hook = spy
+    try:
+        _client(ADMIN).put(f'/api/leads/{world["leads"]["live"]}',
+                           json={'city': 'Pune', 'phone': '9999999999'})
+    finally:
+        _app_mod._fire_task_hook = real
+    assert calls == [], f'the engine fired on a non-stage edit: {calls}'
+
+
+def test_a_save_that_resubmits_the_same_stage_raises_nothing(world):
+    calls = []
+    import app as _app_mod
+    real = _app_mod._fire_task_hook
+    _app_mod._fire_task_hook = lambda *a: calls.append(a)
+    try:
+        with flask_app.app_context():
+            stage = db.session.get(Lead, world['leads']['live']).stage
+        _client(ADMIN).put(f'/api/leads/{world["leads"]["live"]}',
+                           json={'stage': stage})
+    finally:
+        _app_mod._fire_task_hook = real
+    assert calls == []
+
+
+# ── fault 3: the Lost dialog asks what the tasks used to ─────────────
+def test_the_two_retired_keys_are_the_two_that_could_never_close():
+    import scripts.retire_lost_tasks as retire
+    assert set(retire.RETIRE) == {'deal.lost.debrief', 'competitor.log'}
+
+
+def test_retiring_deactivates_the_definitions_and_closes_the_rows(world):
+    import scripts.retire_lost_tasks as retire
+    with flask_app.app_context():
+        lead = db.session.get(Lead, world['leads']['live'])
+        for key in retire.RETIRE:
+            db.session.add(TaskDefinition(
+                task_key=key, title=key, module='test',
+                allowed_roles=[], is_active=True))
+            _task(key, lead)
+        db.session.commit()
+
+        defs, rows = retire.targets()
+        assert len(defs) == 2 and len(rows) == 2
+
+        for d in defs:
+            d.is_active = False
+        for r in rows:
+            r.status = TaskInstanceStatus.CANCELLED
+        db.session.commit()
+
+        defs_after, rows_after = retire.targets()
+        assert rows_after == [], 'nothing open should be left'
+        assert all(not d.is_active for d in defs_after)
+        # The lead's own live task is untouched.
+        assert (db.session.get(TaskInstance, world['tasks']['live']).status
+                in TaskInstanceStatus.OPEN)
+
+
+def test_a_new_competitor_name_creates_one_row_not_three(world):
+    from app.models.competitor import CompetitorMaster
+    from app.services import lost_capture
+    with flask_app.app_context():
+        CompetitorMaster.query.filter(
+            CompetitorMaster.name.ilike('TK Rival%')).delete(
+                synchronize_session=False)
+        db.session.commit()
+        a = lost_capture.resolve_competitor(name='TK Rival Ltd', actor=REP)
+        db.session.commit()
+        b = lost_capture.resolve_competitor(name='tk rival ltd', actor=REP)
+        c = lost_capture.resolve_competitor(name='  TK RIVAL LTD ', actor=REP)
+        db.session.commit()
+        assert a.id == b.id == c.id, \
+            'add-new made a second row for a name that already existed'
+        assert CompetitorMaster.query.filter(
+            CompetitorMaster.name.ilike('TK Rival%')).count() == 1
+
+
+def test_resolving_by_id_and_by_nothing(world):
+    from app.services import lost_capture
+    with flask_app.app_context():
+        made = lost_capture.resolve_competitor(name='TK Byid Ltd', actor=REP)
+        db.session.commit()
+        assert lost_capture.resolve_competitor(
+            competitor_id=made.id).id == made.id
+        assert lost_capture.resolve_competitor() is None
+        assert lost_capture.resolve_competitor(name='   ') is None
+        with pytest.raises(lost_capture.LostCaptureError):
+            lost_capture.resolve_competitor(competitor_id=10 ** 9)
+
+
+def test_losing_a_lead_records_the_competitor_and_the_debrief(world):
+    lid = world['leads']['live']
+    r = _client(ADMIN).post(f'/api/leads/{lid}/decision', json={
+        'outcome': 'Lost', 'reason': 'Competition',
+        'lost_to_competitor_name': 'TK Winner Logistics',
+        'debrief_note': 'They were 8% cheaper on the main haul.'})
+    assert r.status_code == 200, r.get_json()
+    with flask_app.app_context():
+        lead = db.session.get(Lead, lid)
+        assert lead.stage == 'Lost'
+        assert lead.lost_reason == 'Competition'
+        assert lead.debrief_note.startswith('They were 8%')
+        from app.models.competitor import CompetitorMaster
+        comp = db.session.get(CompetitorMaster, lead.lost_to_competitor_id)
+        assert comp is not None and comp.name == 'TK Winner Logistics'
+
+
+def test_both_new_fields_are_optional(world):
+    """A required field people cannot answer is how 4,738 lost leads
+    came to have no lost reason at all."""
+    lid = world['leads']['live']
+    r = _client(ADMIN).post(f'/api/leads/{lid}/decision',
+                            json={'outcome': 'Lost', 'reason': 'No Response'})
+    assert r.status_code == 200
+    with flask_app.app_context():
+        lead = db.session.get(Lead, lid)
+        assert lead.stage == 'Lost'
+        assert lead.lost_to_competitor_id is None
+        assert not lead.debrief_note
+
+
+def test_the_lost_reason_is_still_mandatory(world):
+    r = _client(ADMIN).post(f'/api/leads/{world["leads"]["live"]}/decision',
+                            json={'outcome': 'Lost',
+                                  'debrief_note': 'no reason given'})
+    assert r.status_code == 400
+    assert 'reason required' in r.get_json()['error']
+
+
+def test_an_overlong_debrief_is_refused_not_truncated(world):
+    from app.services import lost_capture
+    r = _client(ADMIN).post(f'/api/leads/{world["leads"]["live"]}/decision',
+                            json={'outcome': 'Lost', 'reason': 'Price',
+                                  'debrief_note': 'x' * (lost_capture.MAX_NOTE + 1)})
+    assert r.status_code == 400
+    with flask_app.app_context():
+        assert db.session.get(Lead, world['leads']['live']).stage != 'Lost', \
+            'the decision must not land when its capture was refused'
+
+
+def test_winning_a_lead_asks_for_none_of_it(world):
+    lid = world['leads']['live']
+    r = _client(ADMIN).post(f'/api/leads/{lid}/decision',
+                            json={'outcome': 'Won'})
+    assert r.status_code == 200
+    with flask_app.app_context():
+        lead = db.session.get(Lead, lid)
+        assert lead.lost_to_competitor_id is None and not lead.debrief_note
+
+
+def test_the_dialog_sends_what_it_collects():
+    """The competitor box was collected and never sent, and `remarks`
+    was sent and never read — both silently discarded, like the Won
+    value before them. The page must send the two names the server
+    actually reads."""
+    with open(os.path.join(_ROOT, 'templates', 'app.html')) as fh:
+        page = fh.read()
+    assert 'body.debrief_note' in page
+    assert 'body.lost_to_competitor_name' in page
+    assert 'body.lost_to_competitor_id' in page
+    # Scoped to the Lost branch, which is what was asked for. The
+    # On Hold branch still sends `remarks`, which the server also
+    # does not read — reported, not fixed here, because changing the
+    # On Hold dialog was not part of this work.
+    lost_branch = page.split("_decOutcome === 'Lost'", 1)[-1]
+    lost_branch = lost_branch.split("else if (_decOutcome === 'On Hold')", 1)[0]
+    assert 'body.remarks' not in lost_branch, \
+        'the Lost branch still sends a field nobody reads'
+
+
+# ── On Hold: the remark that was collected and dropped ───────────────
+def test_putting_a_lead_on_hold_stores_the_remark(world):
+    lid = world['leads']['live']
+    r = _client(ADMIN).post(f'/api/leads/{lid}/decision', json={
+        'outcome': 'On Hold', 'reason': 'Awaiting client budget',
+        'hold_note': 'Client CFO signs off in April; call them in March.'})
+    assert r.status_code == 200, r.get_json()
+    with flask_app.app_context():
+        lead = db.session.get(Lead, lid)
+        assert lead.stage == 'On Hold'
+        assert lead.hold_note.startswith('Client CFO')
+
+
+def test_a_page_cached_before_today_still_sends_remarks(world):
+    """`remarks` was the old field name and was silently dropped.
+    Accepting it means a stale tab does not lose the typing twice."""
+    lid = world['leads']['live']
+    r = _client(ADMIN).post(f'/api/leads/{lid}/decision', json={
+        'outcome': 'On Hold', 'reason': 'Paused',
+        'remarks': 'sent by an old page'})
+    assert r.status_code == 200
+    with flask_app.app_context():
+        assert db.session.get(Lead, lid).hold_note == 'sent by an old page'
+
+
+def test_the_hold_note_is_audited(world):
+    lid = world['leads']['live']
+    _client(ADMIN).post(f'/api/leads/{lid}/decision', json={
+        'outcome': 'On Hold', 'reason': 'Paused', 'hold_note': 'why it paused'})
+    with flask_app.app_context():
+        rows = AuditEvent.query.filter(
+            AuditEvent.entity_type == 'lead',
+            AuditEvent.entity_id == str(lid)).all()
+    assert any('hold_note' in (r.new_value or {}) for r in rows), \
+        'the hold note changed and left no audit row'
+
+
+def test_the_hold_note_is_optional(world):
+    lid = world['leads']['live']
+    r = _client(ADMIN).post(f'/api/leads/{lid}/decision',
+                            json={'outcome': 'On Hold', 'reason': 'Paused'})
+    assert r.status_code == 200
+    with flask_app.app_context():
+        assert db.session.get(Lead, lid).stage == 'On Hold'
+
+
+def test_the_on_hold_dialog_sends_what_it_collects():
+    with open(os.path.join(_ROOT, 'templates', 'app.html')) as fh:
+        page = fh.read()
+    hold = page.split("_decOutcome === 'On Hold'", 1)[-1]
+    hold = hold.split("else if (_decOutcome === 'Won')", 1)[0]
+    assert 'body.hold_note' in hold
+    assert 'body.remarks' not in hold, 'still sending a field nobody reads'
+
+
+# ── the competitors page ─────────────────────────────────────────────
+def _competitor(name):
+    from app.models.competitor import CompetitorMaster
+    row = CompetitorMaster(name=name, is_active=True)
+    db.session.add(row)
+    db.session.flush()
+    return row
+
+
+def test_the_competitors_page_is_no_longer_a_dead_redirect(world):
+    """It redirected to /companies?relationship=Competitor, and
+    Company has no `relationship` column, so that filter could never
+    match. It is a page now."""
+    from app import Company
+    assert 'relationship' not in {c.name for c in Company.__table__.columns}
+    r = _client(ADMIN).get('/competitors')
+    assert r.status_code == 200
+    assert b'Competitors' in r.data
+
+
+def test_the_summary_counts_deals_lost_to_each(world):
+    with flask_app.app_context():
+        rival = _competitor('TK Summary Rival')
+        quiet = _competitor('TK Never Won Anything')
+        for key in ('live', 'won'):
+            lead = db.session.get(Lead, world['leads'][key])
+            lead.lost_to_competitor_id = rival.id
+        db.session.commit()
+        rival_id, quiet_id = rival.id, quiet.id
+
+    body = _client(ADMIN).get('/api/competitors/summary').get_json()
+    assert body['ok']
+    by_id = {c['id']: c for c in body['items']}
+    assert by_id[rival_id]['lost_count'] == 2
+    assert by_id[rival_id]['last_seen']
+    assert by_id[quiet_id]['lost_count'] == 0
+    # Worst offender first.
+    counts = [c['lost_count'] for c in body['items']]
+    assert counts == sorted(counts, reverse=True)
+
+
+def test_merging_moves_the_deals_before_removing_the_duplicate(world):
+    from app.models.competitor import CompetitorMaster
+    with flask_app.app_context():
+        keep = _competitor('TK Kuehne Nagel')
+        dupe = _competitor('TK K+N')
+        lead = db.session.get(Lead, world['leads']['live'])
+        lead.lost_to_competitor_id = dupe.id
+        db.session.commit()
+        keep_id, dupe_id, lid = keep.id, dupe.id, lead.id
+
+    r = _client(ADMIN).post(f'/api/competitors/{dupe_id}/merge',
+                            json={'into': keep_id})
+    assert r.status_code == 200, r.get_json()
+    assert r.get_json()['leads_moved'] == 1
+
+    with flask_app.app_context():
+        assert db.session.get(CompetitorMaster, dupe_id) is None
+        keeper = db.session.get(CompetitorMaster, keep_id)
+        assert 'TK K+N' in (keeper.aliases or []), \
+            'the old spelling must survive as an alias'
+        # No lead is left pointing at a competitor that is gone.
+        assert db.session.get(Lead, lid).lost_to_competitor_id == keep_id
+        orphans = Lead.query.filter(
+            Lead.lost_to_competitor_id == dupe_id).count()
+        assert orphans == 0
+
+
+def test_merging_is_audited(world):
+    with flask_app.app_context():
+        keep, dupe = _competitor('TK Keep Co'), _competitor('TK Dupe Co')
+        db.session.commit()
+        keep_id, dupe_id = keep.id, dupe.id
+    _client(ADMIN).post(f'/api/competitors/{dupe_id}/merge',
+                        json={'into': keep_id})
+    with flask_app.app_context():
+        rows = AuditEvent.query.filter(
+            AuditEvent.action == 'competitor.merged',
+            AuditEvent.entity_id == str(keep_id)).all()
+    assert len(rows) == 1
+    assert rows[0].old_value['merged_name'] == 'TK Dupe Co'
+
+
+def test_merging_into_itself_is_refused(world):
+    with flask_app.app_context():
+        c = _competitor('TK Self Merge')
+        db.session.commit()
+        cid = c.id
+    r = _client(ADMIN).post(f'/api/competitors/{cid}/merge', json={'into': cid})
+    assert r.status_code == 400
+
+
+def test_only_an_admin_may_add_edit_or_merge(world):
+    with flask_app.app_context():
+        a, b = _competitor('TK Perm A'), _competitor('TK Perm B')
+        db.session.commit()
+        a_id, b_id = a.id, b.id
+    rep = _client(REP)
+    assert rep.post('/api/competitors',
+                    json={'name': 'TK Sneaky'}).status_code == 403
+    assert rep.patch(f'/api/competitors/{a_id}',
+                     json={'name': 'TK Renamed'}).status_code == 403
+    assert rep.post(f'/api/competitors/{a_id}/merge',
+                    json={'into': b_id}).status_code == 403
+    with flask_app.app_context():
+        from app.models.competitor import CompetitorMaster
+        assert db.session.get(CompetitorMaster, a_id).name == 'TK Perm A'
+
+
+def test_a_rep_can_still_name_a_competitor_while_losing_a_deal(world):
+    """Curating the list is admin work; naming who took your deal is
+    not. The Lost dialog does not come through the admin endpoint."""
+    from app.models.competitor import CompetitorMaster
+    r = _client(REP).post(f'/api/leads/{world["leads"]["live"]}/decision',
+                          json={'outcome': 'Lost', 'reason': 'Competition',
+                                'lost_to_competitor_name': 'TK Rep Named Co'})
+    assert r.status_code == 200, r.get_json()
+    with flask_app.app_context():
+        assert CompetitorMaster.query.filter_by(
+            name='TK Rep Named Co').count() == 1

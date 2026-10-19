@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Competitors — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .cm-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:14px 0 12px; }
+  .cm-bar input { height:34px; border:1px solid #e5e7eb; border-radius:8px; padding:0 10px; font:inherit; }
+  table.cm { width:100%; border-collapse:collapse; background:#fff; font-size:13px; }
+  table.cm th, table.cm td { padding:9px 10px; border-bottom:1px solid #eef0f3; text-align:left; }
+  table.cm th { font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; color:#6b7280; }
+  table.cm td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .cm-none { padding:26px; color:#6b7280; }
+  .cm-note { font-size:12px; color:#6b7280; margin-top:10px; line-height:1.6; }
+  .cm-sel { height:30px; border:1px solid #e5e7eb; border-radius:8px; font:inherit; }
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+
+  <div class="hero">
+    <div>
+      <h1>Competitors</h1>
+      <div class="today" id="cmSub">Who we lose to, how often, and when it last happened.</div>
+    </div>
+    <div><a class="top-back" href="{{ url_for('dashboard') }}">← Dashboard</a></div>
+  </div>
+
+  <div class="cm-bar">
+    <input id="cmQ" placeholder="Search…" oninput="cmPaint()" style="min-width:220px">
+    {% if can_edit %}
+    <input id="cmNew" placeholder="Add a competitor…" style="min-width:220px">
+    <button class="btn" onclick="cmAdd()">Add</button>
+    {% endif %}
+    <button class="btn" onclick="cmLoad()">Refresh</button>
+  </div>
+
+  <table class="cm">
+    <thead><tr>
+      <th>Competitor</th><th class="num">Deals lost to them</th>
+      <th>Last seen</th><th>Country</th>
+      {% if can_edit %}<th>Admin</th>{% endif %}
+    </tr></thead>
+    <tbody id="cmRows"><tr><td colspan="5" class="cm-none">Loading…</td></tr></tbody>
+  </table>
+
+  <div class="cm-note" id="cmFoot"></div>
+</div>
+
+<script>
+const PREFIX = "{{ url_prefix }}";
+const CAN_EDIT = {{ 'true' if can_edit else 'false' }};
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                   .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+let ITEMS = [];
+
+async function cmLoad(){
+  try{
+    const r = await fetch(PREFIX + '/api/competitors/summary',
+                          {credentials:'same-origin'});
+    const d = await r.json();
+    if (!d || !d.ok) throw new Error('load');
+    ITEMS = d.items || [];
+    $('cmFoot').textContent =
+      ITEMS.length + ' competitor(s) · ' + (d.total_lost || 0)
+      + ' deal(s) recorded as lost to one of them. The list fills from the '
+      + 'Lost dialog: when somebody marks a deal lost they can name who '
+      + 'took it, and a new name is added here.';
+  }catch(err){
+    $('cmRows').innerHTML = '<tr><td colspan="5" class="cm-none">'
+      + 'Could not load the competitor list.</td></tr>';
+    return;
+  }
+  cmPaint();
+}
+
+function cmPaint(){
+  const q = ($('cmQ').value || '').trim().toLowerCase();
+  const rows = ITEMS.filter(c => !q || c.name.toLowerCase().includes(q));
+  if (!rows.length){
+    $('cmRows').innerHTML = '<tr><td colspan="5" class="cm-none">'
+      + (ITEMS.length ? 'Nothing matches that.'
+         : 'No competitors recorded yet. One is added the first time '
+           + 'somebody names who took a deal in the Lost dialog.')
+      + '</td></tr>';
+    return;
+  }
+  $('cmRows').innerHTML = rows.map(c => `
+    <tr>
+      <td><a href="${PREFIX}/competitors/${c.id}">${esc(c.name)}</a>
+        ${c.is_active ? '' : '<span class="muted"> · inactive</span>'}</td>
+      <td class="num">${c.lost_count}</td>
+      <td>${esc(c.last_seen || '—')}</td>
+      <td>${esc(c.country || '—')}</td>
+      ${CAN_EDIT ? `<td>
+        <button class="btn" onclick="cmRename(${c.id})">Rename</button>
+        <button class="btn" onclick="cmMerge(${c.id})">Merge…</button>
+      </td>` : ''}
+    </tr>`).join('');
+}
+
+async function cmAdd(){
+  const name = ($('cmNew').value || '').trim();
+  if (!name) return;
+  const r = await fetch(PREFIX + '/api/competitors', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name: name})});
+  const d = await r.json().catch(()=>null);
+  if (!r.ok) { alert((d && d.error) || 'Could not add that.'); return; }
+  if (d && d.created === false) alert('That competitor is already on the list.');
+  $('cmNew').value = '';
+  cmLoad();
+}
+
+async function cmRename(id){
+  const c = ITEMS.find(x => x.id === id); if(!c) return;
+  const name = prompt('Rename this competitor:', c.name);
+  if (name === null) return;
+  if (!name.trim()) { alert('A competitor needs a name.'); return; }
+  const r = await fetch(PREFIX + '/api/competitors/' + id, {
+    method:'PATCH', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name: name.trim()})});
+  if (!r.ok) { const d = await r.json().catch(()=>null);
+               alert((d && d.error) || 'Could not rename that.'); return; }
+  cmLoad();
+}
+
+/* The same company arrives spelled three ways, because the list fills
+   from a text box at the moment somebody is losing a deal and is not
+   thinking about spelling. Merging moves the deals first and removes
+   the duplicate second, so no lead is left pointing at nothing. */
+async function cmMerge(id){
+  const c = ITEMS.find(x => x.id === id); if(!c) return;
+  const others = ITEMS.filter(x => x.id !== id);
+  if (!others.length) { alert('There is nothing to merge it into.'); return; }
+  const list = others.map((x,i) => `${i+1}. ${x.name} (${x.lost_count})`)
+                     .join('\n');
+  const pick = prompt(
+    `Merge "${c.name}" (${c.lost_count} deal(s)) INTO which competitor?\n\n`
+    + `"${c.name}" will be removed and its deals moved. Its name is kept `
+    + `as an alias.\n\nType a number:\n\n` + list);
+  if (pick === null) return;
+  const n = parseInt(pick, 10);
+  if (!(n >= 1 && n <= others.length)) { alert('Not one of the numbers.'); return; }
+  const into = others[n-1];
+  if (!confirm(`Merge "${c.name}" into "${into.name}"?\n\n`
+               + `${c.lost_count} deal(s) will move. This cannot be undone `
+               + `from the screen.`)) return;
+  const r = await fetch(PREFIX + '/api/competitors/' + id + '/merge', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({into: into.id})});
+  const d = await r.json().catch(()=>null);
+  if (!r.ok || !d || !d.ok) {
+    alert((d && d.error) || 'Could not merge those.'); return;
+  }
+  alert(`Merged. ${d.leads_moved} deal(s) moved to ${d.into.name}.`);
+  cmLoad();
+}
+
+cmLoad();
+</script>
+</body>
+</html>

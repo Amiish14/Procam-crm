@@ -40,6 +40,12 @@ WATCH = {
         'archive_reason': 'lead.archive_change',
         'procam_vertical': 'lead.update',
         'mode': 'lead.update',
+        # What the Lost and On Hold dialogs capture. Watched so
+        # the change carries an audit row like any other field:
+        # these are the only record of why a deal ended.
+        'lost_to_competitor_id': 'lead.update',
+        'debrief_note': 'lead.update',
+        'hold_note': 'lead.update',
         'company_id': 'lead.update',
         'company': 'lead.update',
         'estimated_value_inr': 'lead.update',
