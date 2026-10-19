@@ -913,3 +913,95 @@ def test_a_rep_can_still_name_a_competitor_while_losing_a_deal(world):
     with flask_app.app_context():
         assert CompetitorMaster.query.filter_by(
             name='TK Rep Named Co').count() == 1
+
+
+# ── every definition must be able to finish ─────────────────────────
+class _Def:
+    """A definition that is not in the database.
+
+    The live catalogue is seeded by a migration, so the test database
+    has none — a check that reads the table passes against nothing,
+    which is how two immortal definitions survived every green run
+    for two months. These are made up on purpose.
+    """
+
+    def __init__(self, key, start, completion, is_active=True):
+        self.task_key, self.is_active = key, is_active
+        self.start_state, self.completion_state = start, completion
+
+
+def test_the_rule_catches_a_definition_with_no_completion_state():
+    from app.services import task_health
+    bad = _Def('deal.lost.debrief',
+               {'entity': 'Opportunity', 'state': 'Lost'}, None)
+    found = task_health.problems([bad])
+    assert found and found[0][1] == 'no completion state'
+
+
+def test_the_rule_catches_a_state_nothing_emits():
+    """The dangerous kind: the field is filled in and it still cannot
+    close. `competitor.log` looked fine for two months."""
+    from app.services import task_health
+    bad = _Def('account.first_contact',
+               {'entity': 'Company', 'state': 'Target Identified'},
+               {'entity': 'Company', 'state': 'Contact Made'})
+    found = task_health.problems([bad])
+    assert found, 'a completion state outside the vocabulary passed'
+    assert found[0][1] == 'unreachable completion state'
+    assert 'Contact Made' in found[0][2]
+
+
+def test_the_rule_passes_a_definition_that_works():
+    from app.services import task_health
+    good = _Def('lead.qualify',
+                {'entity': 'Lead', 'state': 'New'},
+                {'entity': 'Lead', 'state': 'Profile Sent'})
+    assert task_health.problems([good]) == []
+
+
+def test_worked_counts_as_reachable_because_the_route_emits_it():
+    from app.services import task_health
+    fu = _Def('account.follow_up_due',
+              {'entity': 'Company', 'state': 'Relationship Development'},
+              {'entity': 'Company', 'state': 'Worked'})
+    assert task_health.problems([fu]) == []
+
+
+def test_a_retired_definition_is_not_judged():
+    """Retiring one is the fix, so it must not keep failing the build."""
+    from app.services import task_health
+    dead = _Def('project.review', {'entity': 'Lead', 'state': 'New'},
+                None, is_active=False)
+    assert task_health.problems([dead]) == []
+
+
+def test_an_unknown_entity_is_left_alone_not_guessed_at():
+    from app.services import task_health
+    rfq = _Def('rfq.review', {'entity': 'RFQ', 'state': 'Received'},
+               {'entity': 'RFQ', 'state': 'Rate Sourcing'})
+    assert task_health.problems([rfq]) == []
+
+
+def test_whatever_is_in_this_database_obeys_the_rule(world):
+    """And the live catalogue, where there is one. The test database
+    has no definitions, so this is a no-op here by design — the real
+    catalogue is checked against production by
+    `scripts/crm_uat_closeout.py`, item 8."""
+    from app.services import task_health
+    with flask_app.app_context():
+        rows = TaskDefinition.query.all()
+        found = task_health.problems(rows)
+    assert not found, '\n  '.join(f'{k}: {kind} — {why}'
+                                   for k, kind, why in found)
+
+
+def test_logging_an_account_activity_tells_the_task_engine(world):
+    """`account.follow_up_due` could never close because nothing ever
+    said the account had been worked. The activity route says it now."""
+    with open(os.path.join(_ROOT, 'presales', 'routes.py')) as fh:
+        src = fh.read()
+    after = src.split('def api_accounts_activity_create', 1)[-1]
+    after = after.split('def api_accounts_activity_list', 1)[0]
+    assert 'on_state_change' in after, \
+        'logging an activity no longer tells the task engine'
+    assert "'Worked'" in after

@@ -2,8 +2,11 @@
 Description=Procam CRM administrators' report — 08:30 IST, Mon-Sat
 
 [Timer]
-# 03:00 UTC = 08:30 IST, alongside the action brief.
-OnCalendar=Mon..Sat *-*-* 03:05:00
+# 03:10 UTC = 08:40 IST. Beside the action brief (03:00), and ten
+# minutes after it rather than on top of the owner digest, which also
+# fires at 03:05 and mails one message per owner. Two report jobs
+# competing for the same SQLite file is a queue nobody asked for.
+OnCalendar=Mon..Sat *-*-* 03:10:00
 Persistent=true
 RandomizedDelaySec=180
 

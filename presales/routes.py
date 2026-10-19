@@ -419,6 +419,28 @@ def api_accounts_activity_create(aid):
         next_action_at  = nxt_date,
     )
     db.session.commit()
+    # The account has been worked: somebody logged a call, a meeting
+    # or a note, and may have set the next action date. That is what
+    # closes `account.follow_up_due`, which until 19 October had no
+    # completion state at all and so could never close — the same
+    # defect that left 2,312 immortal tasks on the board.
+    #
+    # `Worked` is not an account *stage* and is not meant to be: the
+    # twelve stages in ACCOUNT_DEV_STAGES describe where a
+    # relationship has got to, and this says only that somebody
+    # touched it today. The task engine matches on the string, so a
+    # state outside the stage vocabulary is how you say "this
+    # happened" without pretending the relationship moved.
+    try:
+        from app.services.task_engine import on_state_change as _osc
+        _osc(c, 'Company', getattr(c, 'dev_stage', None), 'Worked',
+             triggered_by=emp)
+        db.session.commit()
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
     return jsonify(ok=True, id=row.id), 201
 
 

@@ -344,3 +344,135 @@ def test_a_non_ascii_subject_leaves_as_rfc_2047():
     head = bytes(msg).split(b'\r\n\r\n', 1)[0]
     head.decode('ascii')           # raises if anything 8-bit got out
     assert b'=?utf-8?' in head
+
+
+# ── the two messages Exchange refused on 16 October ──────────────────
+#
+# Lead 12208, Alstom. A forwarded RFP captured as a 15.1 MB `.eml`
+# plus the ten documents extracted from it. Both notifications came
+# back
+#
+#     554 5.6.0 Invalid message content when handling MIME exception
+#
+# because `add_attachment(bytes, maintype='message', subtype='rfc822')`
+# base64-encodes the part, and RFC 2046 §5.2.1 forbids any encoding on
+# a message/rfc822 body but 7bit, 8bit or binary.
+#
+# They failed on 16 October at 04:31 and the fix landed on the 17th at
+# 18:24, so they were never evidence of a hole in it — which is worth
+# writing down, because a closeout check that used the wrong fix date
+# reported them as a live failure three days later.
+#
+# These tests are built from that message's actual shape: the same
+# eleven attachments, the same sizes, the same order.
+ALSTOM_DOCS = (
+    ('SCC financial template_Alstom.xlsx', 50677,
+     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+    ('Job description_CJB_WH.pdf', 209263, 'application/pdf'),
+    ('Ethics and Sustainable Development Charter.pdf', 381260, 'application/pdf'),
+    ('EHS Requirements for Critical Contractors.pdf', 585138, 'application/pdf'),
+    ('About Alstom Appendix 11.1.pdf', 8569054, 'application/pdf'),
+    ('Warehouse Operations Manpower_Service_Agreement.pdf', 291610, 'application/pdf'),
+    ('Sricity Intercart Transport RFQ_C.pdf', 319588, 'application/pdf'),
+    ('SOW Document Manpower_CJB.pdf', 254379, 'application/pdf'),
+    ('SOW  Manpower Contract - Sri City.pdf', 348195, 'application/pdf'),
+    ('image001.png', 22542, 'image/png'),
+)
+ALSTOM_EML_BYTES = 15163296
+ALSTOM_EML_NAME = ('FW RFP - Warehouse Operations Manpower services - '
+                   'Coimbatore  Sri City.eml')
+
+
+def _alstom_attachments(eml_size=ALSTOM_EML_BYTES):
+    """The eleven attachments of lead 12208, original first — which is
+    the order the caller passed and the order `_attach` must not keep."""
+    eml = (b'From: buyer@alstom.com\r\n'
+           b'To: leads@procamgroup.in\r\n'
+           b'Subject: FW RFP - Warehouse Operations Manpower\r\n'
+           b'MIME-Version: 1.0\r\n'
+           b'Content-Type: text/plain\r\n\r\n')
+    eml += b'x' * max(0, eml_size - len(eml))
+    out = [{'filename': ALSTOM_EML_NAME, 'content': eml,
+            'content_type': 'message/rfc822'}]
+    for name, size, ctype in ALSTOM_DOCS:
+        out.append({'filename': name, 'content': b'\x01' * size,
+                    'content_type': ctype})
+    return out
+
+
+def _build_alstom(attachments):
+    from email.message import EmailMessage
+    from app.services import mailer
+    msg = EmailMessage()
+    msg['Subject'] = 'Lead assigned to you — Alstom'
+    msg['From'] = 'tms@procamgroup.in'
+    msg['To'] = 'srinivas.m@procamgroup.in'
+    msg.set_content('A lead has been assigned to you.')
+    msg.add_alternative('<p>A lead has been assigned to you.</p>',
+                        subtype='html')
+    mailer._attach(msg, attachments, subject='Lead assigned to you — Alstom')
+    return msg
+
+
+def test_no_rfc822_part_is_ever_base64():
+    """The 554 itself. RFC 2046 §5.2.1 allows only 7bit, 8bit or
+    binary on a message/rfc822 body, and Exchange enforces it."""
+    msg = _build_alstom(_alstom_attachments())
+    for part in msg.walk():
+        if part.get_content_type() == 'message/rfc822':
+            cte = (part.get('Content-Transfer-Encoding') or '7bit').lower()
+            assert cte in ('7bit', '8bit', 'binary'), (
+                f'a message/rfc822 part is {cte}-encoded — this is the '
+                f'exact shape Exchange refused with 554 5.6.0')
+
+
+def test_the_real_documents_travel_and_the_bulky_original_does_not():
+    """What the budget is for.
+
+    The original `.eml` contains every one of these documents inside
+    itself, so attaching both sends each twice — and at 15.1 MB the
+    copy is larger than the ten originals together. Before the sort,
+    it went first and seven of the ten real documents were dropped in
+    its favour.
+    """
+    msg = _build_alstom(_alstom_attachments())
+    names = [p.get_filename() for p in msg.walk() if p.get_filename()]
+    for doc, _size, _ctype in ALSTOM_DOCS:
+        assert doc in names, f'{doc} was dropped — it is what the lead is'
+    assert ALSTOM_EML_NAME not in names, (
+        'the 15.1 MB original consumed the budget again')
+
+
+def test_a_small_original_still_travels():
+    """The rule is the budget, not a ban. An `.eml` that fits is worth
+    having: it is the customer's own words."""
+    atts = _alstom_attachments(eml_size=40_000)
+    msg = _build_alstom(atts)
+    names = [p.get_filename() for p in msg.walk() if p.get_filename()]
+    assert ALSTOM_EML_NAME in names
+    for doc, _size, _ctype in ALSTOM_DOCS:
+        assert doc in names
+
+
+def test_the_built_message_stays_under_the_budget():
+    msg = _build_alstom(_alstom_attachments())
+    from app.services import mailer
+    raw = msg.as_bytes()
+    # Base64 adds about a third; the budget counts raw bytes, so the
+    # wire size is larger. It must still be something Exchange takes.
+    assert len(raw) < 20 * 1024 * 1024, (
+        f'{len(raw)} bytes on the wire is too much to rely on')
+
+
+def test_an_eml_that_will_not_parse_goes_as_a_file():
+    """Truncated captures exist. They must not take the whole message
+    down with them."""
+    from email.message import EmailMessage
+    from app.services import mailer
+    msg = EmailMessage()
+    msg.set_content('x')
+    kind = mailer._attach_message(msg, b'not a message at all',
+                                  'broken.eml')
+    assert kind == 'application/octet-stream'
+    names = [p.get_filename() for p in msg.walk() if p.get_filename()]
+    assert 'broken.eml' in names
