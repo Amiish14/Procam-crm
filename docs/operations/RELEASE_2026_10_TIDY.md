@@ -112,6 +112,71 @@ The six keys that must now be equal:
 | `awaiting_quote` | `rfqs_awaiting_quote` |
 | `in_negotiation` | `in_negotiation` |
 
+### What the agreement exposed
+
+Making the two screens agree made a third problem visible, and it is
+bigger than either of them.
+
+`task_items()` read **at most 500** task rows, and the board counts
+what it reads. Tasks sort due-date first and every open task on this
+system is overdue, so the cap was consumed entirely by overdue tasks
+and the Overdue tile read **exactly 500 for every viewer** — an admin
+with 7,318 overdue tasks and a rep with 587 saw the same number, and
+it belonged to neither of them. A tile reporting a limit as though it
+were a count is worse than no tile: it is confidently wrong and
+nothing on the screen says so.
+
+The ceiling is now 20,000, and `board()` returns `truncated` when it
+is reached, so a limit can never again be presented as an answer.
+Measured cost on production: an admin's warm board goes from about 90
+ms to about 230 ms; a rep's from 28 ms to 40 ms.
+
+**Measured on production, 19 October, after the deploy:**
+
+| Viewer | Scope | Open leads | Overdue before | Overdue after |
+|---|---|---|---|---|
+| DIR12010 Nilesh Kumar Sinha | company | 955 | 146 | 657 → 7,475 uncapped |
+| EMP372011 Sanjna Vardhan | vertical | 451 | 77 | 577 → 1,103 uncapped |
+| EMP572012 Vijay T V | own | 77 | 17 | 517 → 604 uncapped |
+
+The other five tiles moved by single digits and every one of them now
+equals the number of rows behind it, checked for all three viewers.
+
+Overdue is the exception, and it is not the tiles' fault: 97% of it is
+the task engine. See **the 7,318 tasks** below.
+
+---
+
+## The 7,318 tasks
+
+Found while checking the tiles. Not fixed here — it needs a decision,
+not a patch.
+
+* **7,318 open task instances. Every one overdue. None ever closed** —
+  the oldest due date is 17 August and the closed count is zero.
+* **Every task exists twice.** Each key appears as an exact pair:
+  `lead.qualify` 1,265 and `lead.qualify.escalated` 1,265;
+  `deal.lost.debrief` 1,156 and its `.escalated` twin 1,156;
+  `competitor.log` the same. 3,659 tasks, doubled.
+* **All 7,318 carry the status `Escalated`.** Nothing is in a working
+  state.
+
+So the Overdue tile on both screens is 97% task-engine noise. The
+tiles are now honest about it, which is the most that can be done from
+here — the number is true and useless at the same time.
+
+Two things to decide, in this order:
+
+1. **Why has nothing ever been closed?** Either the task engine
+   generates work nobody was told about, or closing a task does not
+   write back. Worth answering before anything else, because every
+   other number about tasks depends on it.
+2. **Should the escalated twin be a separate row?** An escalation that
+   doubles the row count makes every task count twice what it is.
+
+Until both are settled, read Overdue on the Workbench as "leads plus
+the task backlog" rather than as sales pendency.
+
 ---
 
 ## 3. Mode — Sea / Air / Multimodal

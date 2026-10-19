@@ -537,3 +537,41 @@ def test_no_check_the_vertical_before_saving_warning_exists():
                             f'{text[max(0, m.start()-40):m.end()+20]!r}')
     assert not hits, 'a "check the vertical before saving" warning:\n  ' \
                      + '\n  '.join(hits)
+
+
+# ── the cap that was reading as a count ──────────────────────────────
+def test_the_task_ceiling_is_a_safety_stop_not_a_page_size():
+    """It used to be 500, and the board counts what it reads.
+
+    Every open task on production is overdue and tasks sort due-date
+    first, so the Overdue tile read exactly 500 for every viewer: an
+    admin with 7,318 overdue tasks and a rep with 587 saw the same
+    number, and it belonged to neither of them. The ceiling has to sit
+    well above any real workload, and the board has to say when it is
+    reached rather than present a limit as an answer.
+    """
+    assert wb.TASK_CEILING >= 20000
+
+
+def test_the_board_says_when_it_truncated(world):
+    with flask_app.app_context():
+        d = wb.board(sc_mod.for_employee(ADMIN), per_page=1)
+    assert d['truncated'] is False, \
+        'nothing here is near the ceiling, so nothing should be flagged'
+
+
+def test_a_truncated_board_is_flagged_rather_than_quietly_short(
+        world, monkeypatch):
+    monkeypatch.setattr(wb, 'TASK_CEILING', 0)
+    monkeypatch.setattr(
+        wb, 'task_items',
+        lambda sc, today=None: [{'kind': 'task', 'id': -1, 'group': 'x',
+                                 'priority': 4, 'due': '', 'account': '',
+                                 'account_id': None, 'title': 't',
+                                 'vertical': '', 'stage': '',
+                                 'value_inr': None, 'ageing_days': 0,
+                                 'assigned_to': '', 'conditions': [],
+                                 'last_activity_days': None}])
+    with flask_app.app_context():
+        d = wb.board(sc_mod.for_employee(ADMIN), per_page=1)
+    assert d['truncated'] is True

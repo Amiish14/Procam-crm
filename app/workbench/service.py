@@ -581,6 +581,20 @@ def owner_confirm_items(sc, *, today=None):
     return out
 
 
+#: The most task rows one board build will read. It is a safety stop,
+#: not a page size: the board counts what it reads, so a limit that
+#: bites turns every count into an understatement.
+#:
+#: It used to be 500, which bit hard. Tasks sort due-date first and
+#: every open task on this system is overdue, so the Overdue tile read
+#: exactly 500 for every viewer — an admin with 7,318 overdue tasks and
+#: a rep with 587 both saw 500, and neither number was theirs. A tile
+#: that reports a limit as though it were a count is worse than no
+#: tile, because it is confidently wrong and nothing on the screen says
+#: so. `board()` now reports `truncated` when this is reached.
+TASK_CEILING = 20000
+
+
 def task_items(sc, *, today=None):
     """Open task-engine tasks, on the same board as everything else.
 
@@ -597,7 +611,8 @@ def task_items(sc, *, today=None):
         codes = sc.codes or set()
         q = q.filter(TaskInstance.owner_user_id.in_(codes or {''}))
     out = []
-    for t in q.order_by(TaskInstance.due_at.asc().nullslast()).limit(500):
+    for t in q.order_by(TaskInstance.due_at.asc().nullslast()
+                        ).limit(TASK_CEILING):
         overdue = bool(t.due_at and t.due_at < now)
         due_today = bool(t.due_at and not overdue
                          and t.due_at.date() == today)
@@ -769,7 +784,9 @@ def board(sc, *, today=None, group=None, filter_key=None, age='',
     today = today or _today()
     items, _rfq_ageing = lead_items(sc, today=today, include_quiet=True)
     items += account_items(sc, today=today)
-    items += task_items(sc, today=today)
+    tasks = task_items(sc, today=today)
+    truncated = len(tasks) >= TASK_CEILING
+    items += tasks
     items += closed_mail_items(sc, today=today)
     items += owner_confirm_items(sc, today=today)
 
@@ -853,6 +870,10 @@ def board(sc, *, today=None, group=None, filter_key=None, age='',
         'per_page': per_page,
         'pages': max(1, (total + per_page - 1) // per_page),
         'multi_membership': True,
+        #: True when the task ceiling was reached, so every count below
+        #: is a floor rather than an answer. The screen says so instead
+        #: of presenting a limit as a number.
+        'truncated': truncated,
         'quote_ageing': {
             'population': ageing['population'],
             'estimated': ageing['estimated'],
