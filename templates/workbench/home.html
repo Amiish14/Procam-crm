@@ -282,10 +282,11 @@ async function wbTaskDone(id, btn){
   if (note === null) return;               // cancelled
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   try{
-    const r = await fetch(PREFIX + '/api/tasks/' + id + '/done', {
-      method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({note: note})});
+    // postJson, not a bare fetch: this page is outside the app shell
+    // and carries no fetch wrapper, so a write without the CSRF
+    // token is rejected with a 400 before the view runs and the
+    // button silently does nothing.
+    const r = await postJson('/api/tasks/' + id + '/done', {note: note});
     const d = await r.json().catch(() => null);
     if (!d || !d.ok) {
       alert((d && d.error) || 'Could not close that task.');

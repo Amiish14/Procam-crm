@@ -59,6 +59,22 @@ const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
                    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 let ITEMS = [];
 
+/* This page is served outside the main app shell, which carries its
+   own fetch wrapper, so every write here has to send the CSRF token
+   itself. Without it CSRFProtect rejects the POST with a 400 before
+   the view runs, and the button appears to do nothing at all. */
+function csrfToken(){
+  const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+function writeJson(path, body, method){
+  return fetch(PREFIX + path, {
+    method: method || 'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json',
+             'X-CSRFToken': csrfToken()},
+    body: JSON.stringify(body)});
+}
+
 async function cmLoad(){
   try{
     const r = await fetch(PREFIX + '/api/competitors/summary',
@@ -107,10 +123,7 @@ function cmPaint(){
 async function cmAdd(){
   const name = ($('cmNew').value || '').trim();
   if (!name) return;
-  const r = await fetch(PREFIX + '/api/competitors', {
-    method:'POST', credentials:'same-origin',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({name: name})});
+  const r = await writeJson('/api/competitors', {name: name});
   const d = await r.json().catch(()=>null);
   if (!r.ok) { alert((d && d.error) || 'Could not add that.'); return; }
   if (d && d.created === false) alert('That competitor is already on the list.');
@@ -123,10 +136,8 @@ async function cmRename(id){
   const name = prompt('Rename this competitor:', c.name);
   if (name === null) return;
   if (!name.trim()) { alert('A competitor needs a name.'); return; }
-  const r = await fetch(PREFIX + '/api/competitors/' + id, {
-    method:'PATCH', credentials:'same-origin',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({name: name.trim()})});
+  const r = await writeJson('/api/competitors/' + id,
+                            {name: name.trim()}, 'PATCH');
   if (!r.ok) { const d = await r.json().catch(()=>null);
                alert((d && d.error) || 'Could not rename that.'); return; }
   cmLoad();
@@ -153,10 +164,8 @@ async function cmMerge(id){
   if (!confirm(`Merge "${c.name}" into "${into.name}"?\n\n`
                + `${c.lost_count} deal(s) will move. This cannot be undone `
                + `from the screen.`)) return;
-  const r = await fetch(PREFIX + '/api/competitors/' + id + '/merge', {
-    method:'POST', credentials:'same-origin',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({into: into.id})});
+  const r = await writeJson('/api/competitors/' + id + '/merge',
+                            {into: into.id});
   const d = await r.json().catch(()=>null);
   if (!r.ok || !d || !d.ok) {
     alert((d && d.error) || 'Could not merge those.'); return;
