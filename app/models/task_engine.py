@@ -126,6 +126,18 @@ class TaskInstance(db.Model):
 
     notes = db.Column(db.Text, nullable=True)
 
+    # Escalation. It used to be a second row: the SLA sweeper created
+    # a twin with task_key '<key>.escalated' owned by the escalation
+    # role, which doubled every task count and could never be closed —
+    # '<key>.escalated' matches no TaskDefinition, and tasks only close
+    # by matching one. An escalation is a thing that happened to a
+    # task, not a second task, so it is three columns on the original.
+    escalated = db.Column(db.Boolean, nullable=False, default=False,
+                          index=True)
+    #: The role it was escalated to, from TaskDefinition.escalation_role.
+    escalated_to = db.Column(db.String(40), nullable=True, index=True)
+    escalated_at = db.Column(db.DateTime, nullable=True)
+
     # Blocked/Waiting metadata
     block_reason = db.Column(db.Text, nullable=True)
     waiting_from_user_id = db.Column(db.String(20),
@@ -176,6 +188,10 @@ class TaskInstance(db.Model):
             'completed_at':   str(self.completed_at)[:16] if self.completed_at else '',
             'notes':          self.notes or '',
             'is_overdue':     self.is_overdue,
+            'escalated':      bool(self.escalated),
+            'escalated_to':   self.escalated_to or '',
+            'escalated_at':   (str(self.escalated_at)[:16]
+                               if self.escalated_at else ''),
         }
 
     def __repr__(self):

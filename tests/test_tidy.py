@@ -189,6 +189,8 @@ def test_overview_tiles_equal_the_workbench_counts(world, code):
     assert body['ok']
     p = body['pending']
     assert p['overdue'] == counts['overdue']
+    assert p['overdue_leads'] == counts['overdue_leads']
+    assert p['overdue_tasks'] == counts['overdue_tasks']
     assert p['due_today'] == counts['due_today']
     assert p['untouched_3d'] == counts['quiet_3d']
     assert p['never_actioned'] == counts['never_actioned']

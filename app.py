@@ -2269,6 +2269,16 @@ def _fire_task_hook(entity, entity_type, old_state, new_state):
         emp = Employee.query.filter_by(emp_code=session.get('emp_code')).first() \
               if session.get('emp_code') else None
         _osc(entity, entity_type, old_state, new_state, triggered_by=emp)
+        # CRM-AUTOCLOSE-TASKS-01. No task definition names Won, Lost,
+        # On Hold or Not Interested as a completion state, so a lead
+        # reaching the end of its life closed nothing behind it —
+        # 2,262 of 2,694 open lead tasks sat on a lead that was
+        # already closed. In the caller's transaction, so the close
+        # and the tasks that close with it land together.
+        if entity_type == 'Lead':
+            from app.services import task_autoclose
+            task_autoclose.close_for_lead(
+                entity, actor=session.get('emp_code'))
     except Exception:
         try:
             app.logger.exception('task_engine hook failed for %s#%s %s→%s',
@@ -2500,6 +2510,16 @@ def api_update_lead(lid):
         if not ok:
             db.session.rollback()
             return jsonify({'error': err}), 400
+    # CRM-AUTOCLOSE-TASKS-01. This route sets `stage` through
+    # `fields_map` and has never called the task engine — which is
+    # one reason nothing has ever closed, since the lead form is how
+    # most people change a stage. Closing the tasks is wired here
+    # directly rather than by firing the whole hook: cancelling work
+    # on a dead lead is what was asked for, and starting to *create*
+    # tasks from a route that never did is a larger change than that.
+    if lead.stage != _was_stage:
+        from app.services import task_autoclose
+        task_autoclose.close_for_lead(lead, actor=session.get('emp_code'))
     lead.updated_at = datetime.utcnow()
     db.session.commit()
     # Auto-create/update contact
@@ -3833,7 +3853,13 @@ def api_my_work():
         'as_of': str(today),
         'pending': {
             'open_leads':      _count(mine),
+            # `overdue` stays as the two added together, so anything
+            # reading this payload from before the split keeps working.
+            # The tiles below show the two separately, because 97% of
+            # the combined number was the task backlog.
             'overdue':         _counts.get('overdue', 0),
+            'overdue_leads':   _counts.get('overdue_leads', 0),
+            'overdue_tasks':   _counts.get('overdue_tasks', 0),
             'due_today':       _counts.get('due_today', 0),
             'untouched_3d':    _counts.get('quiet_3d', 0),
             'never_actioned':  _counts.get('never_actioned', 0),
@@ -5018,6 +5044,10 @@ def init_db():
             ('leads',         'lost_reason',      'VARCHAR(60)'),
             # CRM-TIDY-01 — Sea / Air / Multimodal on forwarding leads
             ('leads',         'mode',             'VARCHAR(20)'),
+            # Escalation folded onto the task instead of a second row
+            ('task_instances', 'escalated',    _bool_ddl),
+            ('task_instances', 'escalated_to', 'VARCHAR(40)'),
+            ('task_instances', 'escalated_at', 'TIMESTAMP'),
             ('leads',         'stage_entered_at', 'TIMESTAMP'),
             ('employees',     'is_vertical_head', _bool_ddl),
             ('employees',     'vertical_head_id', 'INTEGER'),

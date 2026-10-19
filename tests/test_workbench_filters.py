@@ -426,6 +426,8 @@ def test_every_registry_key_has_a_tile_a_chip_or_an_overview_tile(world):
     # them are reachable only from the Overview panel, which is a
     # surface like the other two, not an exception to this rule.
     for f in wf.WORKBENCH_FILTERS:
+        if f.key in wf.LEGACY_KEYS:
+            continue              # kept for old links; shown nowhere
         assert f.tile or f.chip or f.overview, \
             f'{f.key} is reachable from nowhere'
 

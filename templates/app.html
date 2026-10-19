@@ -6717,13 +6717,14 @@ async function loadMyWork(){
      of them: a label written here and a label written there is how
      "Idle 3+ days" came to mean three days on this panel and seven on
      the Workbench. */
-  const tones = {overdue:'bad', due_today:'warn', quiet_3d:'warn',
+  const tones = {overdue_leads:'bad', overdue_tasks:'warn',
+                 due_today:'warn', quiet_3d:'warn',
                  never_actioned:'warn', rfqs_awaiting_quote:'warn',
                  in_negotiation:''};
   g('mwTiles').innerHTML =
       (d.tiles||[]).map(t=>mwTile(
          t.label, t.count,
-         (t.count ? (tones[t.key]||'') : (t.key==='overdue'?'good':'')),
+         (t.count ? (tones[t.key]||'') : (t.key==='overdue_leads'?'good':'')),
          t.note || '', t.key)).join('')
     + mwTile('Needs review', p.needs_review||0, (p.needs_review?'warn':''),
              'Email leads with no contact address extracted')

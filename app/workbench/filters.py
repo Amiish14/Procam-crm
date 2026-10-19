@@ -114,6 +114,23 @@ def _overdue(item, ctx):
     return False
 
 
+def _overdue_leads(item, ctx):
+    """Overdue, and about a lead or the account behind one.
+
+    Split from `overdue` on 19 October. The combined number was 7,475
+    for an admin against 146 overdue leads: 97% of it was the task
+    engine, which had 7,318 open tasks, none ever closed. One tile
+    cannot answer both "how far behind is my pipeline" and "how big
+    is the task backlog", and while it tried, it answered neither.
+    """
+    return item.get('kind') != 'task' and _overdue(item, ctx)
+
+
+def _overdue_tasks(item, ctx):
+    """Overdue, and a task-engine task."""
+    return item.get('kind') == 'task' and _overdue(item, ctx)
+
+
 def _action_today(item, ctx):
     return _due_today(item, ctx) or _overdue(item, ctx)
 
@@ -248,9 +265,21 @@ class Filter:
 WORKBENCH_FILTERS = (
     Filter('due_today', _due_today, tile='Due today', overview='Due today',
            note='A follow-up, task or account action dated today.'),
-    Filter('overdue', _overdue, tile='Overdue', overview='Overdue',
-           note='Any date that has passed on something still open — a '
-                'follow-up, a quote past its validity, an account action.'),
+    # `overdue` keeps no tile and no chip. It is still a filter, so a
+    # bookmark or a link saved before the split lands somewhere
+    # sensible rather than on an error — see LEGACY_KEYS.
+    Filter('overdue', _overdue,
+           note='Everything overdue, leads and tasks together. Split '
+                'into two tiles on 19 October; kept so older links '
+                'still work.'),
+    Filter('overdue_leads', _overdue_leads,
+           tile='Overdue leads', overview='Overdue leads',
+           note='Any date that has passed on a lead or account still '
+                'open — a follow-up, a quote past its validity, an '
+                'account action.'),
+    Filter('overdue_tasks', _overdue_tasks,
+           tile='Overdue tasks', overview='Overdue tasks',
+           note='Task-engine tasks past their SLA.'),
     Filter('action_today', _action_today, chip='Action required today',
            note='Everything with a date of today or earlier.'),
     Filter('quotations', _quotations, chip='Quotations'),
@@ -312,8 +341,15 @@ CHIP_KEYS = ('everything',) + tuple(
 #: because a filter was inserted above it is a change nobody asked
 #: for. A key here without an `overview` label is a mistake, and the
 #: test suite says so.
-OVERVIEW_KEYS = ('overdue', 'due_today', 'quiet_3d', 'never_actioned',
-                 'rfqs_awaiting_quote', 'in_negotiation')
+OVERVIEW_KEYS = ('overdue_leads', 'overdue_tasks', 'due_today',
+                 'quiet_3d', 'never_actioned', 'rfqs_awaiting_quote',
+                 'in_negotiation')
+
+#: Keys that deliberately carry no tile, chip or Overview label. They
+#: stay in the registry so a link saved before a split still resolves;
+#: nothing on any screen offers them. Anything else without a surface
+#: is unreachable by accident, and the suite says so.
+LEGACY_KEYS = ('overdue',)
 
 
 def get(key):
