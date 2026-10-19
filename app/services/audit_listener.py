@@ -39,6 +39,7 @@ WATCH = {
         'is_archived': 'lead.archive_change',
         'archive_reason': 'lead.archive_change',
         'procam_vertical': 'lead.update',
+        'mode': 'lead.update',
         'company_id': 'lead.update',
         'company': 'lead.update',
         'estimated_value_inr': 'lead.update',

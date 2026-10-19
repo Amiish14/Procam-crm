@@ -90,6 +90,7 @@ def api_workbench():
         vertical=(request.args.get('vertical') or '').strip(),
         stage=(request.args.get('stage') or '').strip(),
         owner=(request.args.get('owner') or '').strip(),
+        mode=(request.args.get('mode') or '').strip(),
         page=request.args.get('page', 1),
         per_page=request.args.get('per_page', 50),
         sort=(request.args.get('sort') or 'priority').strip())
@@ -138,11 +139,14 @@ def api_filters():
     leads" over a chip called "Stale opportunities" and to send a
     click somewhere that listed different rows.
     """
+    from app.services import lead_mode
     from app.workbench import filters as wf
     return jsonify(ok=True, filters=[
         {'key': k, 'tile': tile, 'chip': chip, 'note': note}
         for k, tile, chip, note in wf.describe()],
-        tiles=list(wf.TILE_KEYS), chips=list(wf.CHIP_KEYS))
+        tiles=list(wf.TILE_KEYS), chips=list(wf.CHIP_KEYS),
+        overview=list(wf.OVERVIEW_KEYS),
+        modes=list(lead_mode.MODES), mode_vertical=lead_mode.VERTICAL)
 
 
 def _refused(exc):

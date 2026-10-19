@@ -474,6 +474,15 @@ class Lead(db.Model):
     # Pipeline
     stage            = db.Column(db.String(40), default='New Opportunity', index=True)
     procam_vertical  = db.Column(db.String(60))
+    # How the freight moves. Only Freight Forwarding asks for it — the
+    # vertical used to carry the answer, back when Sea Freight and Air
+    # Freight were verticals of their own and a forwarding job had to be
+    # filed as one or the other. CRM-VERTICAL-MASTER-01 folded both into
+    # Freight Forwarding, which is right (it is one team and one P&L) and
+    # lost the distinction, which was not. It comes back here, where a
+    # job can also be Multimodal — something the old pair of verticals
+    # could not say at all.
+    mode             = db.Column(db.String(20))
     assigned_to      = db.Column(db.String(100), index=True)   # emp_code — primary PIC
     assigned_name    = db.Column(db.String(100))
     # Secondary PIC — a monitor/backup, not a co-owner. Mirrors the
@@ -617,6 +626,7 @@ class Lead(db.Model):
             'email2': self.email2 or '', 'phone2': self.phone2 or '',
             'linkedin': self.linkedin or '',
             'stage': self.stage or 'New', 'procam_vertical': self.procam_vertical or '',
+            'mode': self.mode or '',
             'assigned_to': self.assigned_to or '', 'assigned_name': self.assigned_name or '',
             'followup': sd(self.followup_date), 'notes': self.notes or '',
             'history': self.history or '',
@@ -812,6 +822,29 @@ class NewsItem(db.Model):
 _TOUCH_GUARDED = {
     'procam_vertical': 'procam_vertical_was',
 }
+
+
+def _lead_mode_mod():
+    from app.services import lead_mode
+    return lead_mode
+
+
+def _lead_mode_for(vertical, value):
+    """The mode to store for a lead in this vertical.
+
+    Blank unless the vertical asks for one, so a lead reclassified out
+    of Freight Forwarding does not keep a Sea/Air answer that nothing
+    on the screen shows any more. The change is audited like any other
+    field, so the old value is recoverable.
+
+    An unrecognised value stores blank rather than itself: the field is
+    a dropdown of three and anything else arrived from a stale client
+    or a bad import.
+    """
+    from app.services import lead_mode
+    if not lead_mode.applies_to(vertical):
+        return None
+    return lead_mode.normalise(value)
 
 
 def _drop_untouched(d, lead):
@@ -2044,7 +2077,7 @@ def _apply_dashboard_filters(q, args):
 
     Recognised query-string params:
       from_date, to_date, vertical, industry, state, stage, pic,
-      opp_stage, source, lost_reason, ageing_bucket
+      opp_stage, source, lost_reason, ageing_bucket, mode
     """
     from sqlalchemy import and_
     _stage = (args.get('stage') or '').strip()
@@ -2055,6 +2088,7 @@ def _apply_dashboard_filters(q, args):
     _oppst = (args.get('opp_stage') or '').strip()
     _src   = (args.get('source') or '').strip()
     _lost  = (args.get('lost_reason') or '').strip()
+    _mode  = (args.get('mode') or '').strip()
     _age   = (args.get('ageing_bucket') or '').strip()
     _from  = (args.get('from_date') or '').strip()
     _to    = (args.get('to_date') or '').strip()
@@ -2067,6 +2101,10 @@ def _apply_dashboard_filters(q, args):
     if _oppst: q = q.filter(Lead.opp_stage == _oppst)
     if _src:   q = q.filter(Lead.source == _src)
     if _lost:  q = q.filter(Lead.lost_reason == _lost)
+    # Sea / Air / Multimodal. Only Freight Forwarding leads carry one,
+    # so filtering by it narrows to that vertical by implication
+    # rather than by an extra clause nobody asked for.
+    if _mode:  q = q.filter(Lead.mode == _mode)
     # v2026-08 — scope=mailbox filters to leads that came in via the
     # mailbox ingest (leads@procamgroup.in). Historical imports and
     # manual entries are hidden. scope=all (or unset) = everything.
@@ -2276,6 +2314,8 @@ def api_create_lead():
         linkedin        = d.get('linkedin',''),
         stage           = d.get('stage','New'),
         procam_vertical = d.get('procam_vertical',''),
+        mode            = _lead_mode_for(d.get('procam_vertical', ''),
+                                         d.get('mode')),
         assigned_to     = assigned_to,
         assigned_name   = d.get('assigned_name', emp.name if emp else ''),
         notes           = d.get('notes',''),
@@ -2403,6 +2443,16 @@ def api_update_lead(lid):
     for k, v in fields_map.items():
         if k in d:
             setattr(lead, v, d[k])
+
+    # Mode is not in `fields_map` because it is not a free-text field
+    # and because it depends on another one: the vertical decides
+    # whether it is asked at all. It is recomputed whenever either the
+    # mode or the vertical is submitted, so moving a lead out of
+    # Freight Forwarding clears it in the same save.
+    if 'mode' in d or 'procam_vertical' in d:
+        lead.mode = _lead_mode_for(
+            d.get('procam_vertical', lead.procam_vertical),
+            d.get('mode', lead.mode))
 
     # An older client (or a cached page) may still send `notes`. Rather
     # than ignore it — which loses what the user typed — file it as a
@@ -3488,7 +3538,7 @@ _SUMMARY_COLUMNS = (
     'stage', 'intro_mail_date', 'phone_call_date', 'meeting_date', 'rfq_date',
     'opp_number', 'cost_million', 'estimated_value_inr', 'quoted_amount_inr',
     'followup_date', 'updated_at', 'industry',
-    'procam_vertical', 'state', 'source', 'lost_reason', 'assigned_to',
+    'procam_vertical', 'mode', 'state', 'source', 'lost_reason', 'assigned_to',
     'assigned_name', 'stage_entered_at', 'created_at',
 )
 
@@ -3567,6 +3617,11 @@ def _dashboard_summary_payload(leads, allowed_codes, today):
     stages_dist    = _dist(lambda l: l.stage)
     industry_dist  = {k: v for k, v in _dist(lambda l: l.industry).items() if k != '—'}
     vertical_dist  = {k: v for k, v in _dist(lambda l: l.procam_vertical).items() if k != '—'}
+    # Freight Forwarding only. Reported as its own breakdown rather
+    # than folded into the vertical one: Sea and Air used to be
+    # verticals and showing them beside the seven again would
+    # reinstate exactly the confusion CRM-VERTICAL-MASTER-01 ended.
+    mode_dist      = {k: v for k, v in _dist(lambda l: l.mode).items() if k != '—'}
     state_dist     = {k: v for k, v in _dist(lambda l: l.state).items() if k != '—'}
     source_dist    = _dist(lambda l: l.source)
     lost_reason_dist = {k: v for k, v in _dist(
@@ -3640,6 +3695,8 @@ def _dashboard_summary_payload(leads, allowed_codes, today):
     # ── Available filter option lists (for the filter bar dropdowns) ──
     options = {
         'verticals':  sorted({l.procam_vertical for l in leads if l.procam_vertical}),
+        'modes':         list(_lead_mode_mod().MODES),
+        'mode_vertical': _lead_mode_mod().VERTICAL,
         'industries': sorted({l.industry for l in leads if l.industry}),
         'states':     sorted({l.state for l in leads if l.state}),
         'stages':     STAGES_ALL,
@@ -3663,6 +3720,7 @@ def _dashboard_summary_payload(leads, allowed_codes, today):
             'stages': stages_dist,
             'industries': industry_dist,
             'verticals': vertical_dist,
+            'modes': mode_dist,
             'states': state_dist,
             'sources': source_dist,
             'lost_reasons': lost_reason_dist,
@@ -3683,12 +3741,39 @@ def api_my_work():
     kpi_targets framework: that one scores appraisals over a period, while
     this answers "what do I need to act on today". Admins and vertical
     heads see their whole scope; an individual sees only their own leads.
+
+    CRM-TIDY-01 — the five pendency tiles used to be five SQL queries
+    written here, beside five predicates written in
+    `app.workbench.filters` that meant almost but not quite the same
+    things. "Overdue" here was `followup_date < today`; on the
+    Workbench it was any date gone by on anything still open, so a
+    quote the customer had been sitting on past its validity counted
+    on one screen and not the other. Two screens, two numbers, one
+    question, and no way to tell which to believe.
+
+    They now come from the registry, through the same `board()` the
+    Workbench draws. Clicking a tile opens the Workbench on that
+    filter and finds exactly that many rows, because it is the same
+    predicate over the same population.
+
+    `open_leads`, `needs_review`, the month-to-date figures and the
+    stage breakdown stay as queries: none of them is a Workbench view,
+    and inventing registry keys so that they could be would be the
+    same mistake in the other direction.
     """
-    from datetime import timedelta as _td
+    from app.access import scope as _sc_mod
+    from app.workbench import filters as _wf
+    from app.workbench import service as _wb
 
     scoped, _codes = _scope_for_current_session()
     today = date.today()
     mine = scoped.filter(Lead.stage.notin_(STAGES_TERMINAL))
+
+    #: One board build, shared by every tile below. per_page=1 because
+    #: this endpoint wants the counts, not the page — the list it
+    #: returns is its own, ordered by follow-up date.
+    _board = _wb.board(_sc_mod.current(), per_page=1)
+    _counts = _board['counts']
 
     def _count(q):
         try:
@@ -3696,29 +3781,14 @@ def api_my_work():
         except Exception:                                        # noqa: BLE001
             return 0
 
-    # ── Pendency buckets ──────────────────────────────────────────────
-    # v2026-09-13 — "untouched" used to mean `updated_at` older than
-    # three days, which counts a typo fix as contact with a customer and
-    # counts an email sent this morning as nothing. It now reads
-    # app.services.contact, the one definition the Copilot also uses, so
-    # this tile and "what needs my attention today" cannot report
-    # different numbers on the same screen.
-    from app.services import contact as _contact
-    _touched = _contact.contacted_since(datetime.utcnow() - _td(days=3))
-    untouched = (mine.filter(~Lead.id.in_(_touched)) if _touched
-                 else mine)
+    # Still a query: the list below is ordered by follow-up date and
+    # has to come off the database, and these two are the rows it
+    # draws from.
     overdue   = mine.filter(Lead.followup_date.isnot(None),
                             Lead.followup_date < today)
     due_today = mine.filter(Lead.followup_date == today)
-    # RFQ raised but no quote sent yet.
-    awaiting_quote = mine.filter(Lead.stage == 'RFQ Generated')
-    # Quoted / negotiating — the money already on the table.
-    in_negotiation = mine.filter(Lead.stage.in_(['Quoted', 'Under Negotiation']))
-    # Never actioned at all: no call, no mail, no meeting logged.
-    never_touched = mine.filter(Lead.phone_call_date.is_(None),
-                                Lead.intro_mail_date.is_(None),
-                                Lead.meeting_date.is_(None))
-    # Email leads still needing a human to fill in the contact.
+    # Email leads still needing a human to fill in the contact. Not a
+    # Workbench view — it is an inbox chore, not a sales one.
     needs_review = scoped.filter(Lead.source == 'email',
                                  db.or_(Lead.email.is_(None), Lead.email == ''))
 
@@ -3763,14 +3833,19 @@ def api_my_work():
         'as_of': str(today),
         'pending': {
             'open_leads':      _count(mine),
-            'overdue':         _count(overdue),
-            'due_today':       _count(due_today),
-            'untouched_3d':    _count(untouched),
-            'never_actioned':  _count(never_touched),
-            'awaiting_quote':  _count(awaiting_quote),
-            'in_negotiation':  _count(in_negotiation),
+            'overdue':         _counts.get('overdue', 0),
+            'due_today':       _counts.get('due_today', 0),
+            'untouched_3d':    _counts.get('quiet_3d', 0),
+            'never_actioned':  _counts.get('never_actioned', 0),
+            'awaiting_quote':  _counts.get('rfqs_awaiting_quote', 0),
+            'in_negotiation':  _counts.get('in_negotiation', 0),
             'needs_review':    _count(needs_review),
         },
+        #: The tiles, labelled and keyed from the registry, so the
+        #: screen stops holding its own list of them. Each `key` is a
+        #: Workbench filter: `/my-work?filter=<key>` lists exactly
+        #: `count` rows for this viewer.
+        'tiles': _wf.overview_tiles(_counts),
         'done': {
             'won_mtd': _count(won_mtd),
             'new_mtd': _count(new_mtd),
@@ -3839,6 +3914,13 @@ def api_dashboard_options():
         'stages':     STAGES_ALL,
         'lost_reasons': LOST_REASONS,
         'pic':        pic_list,
+        # Served rather than written into the page, for the same
+        # reason the vertical list is: a second copy of a vocabulary
+        # is a copy that goes stale. `mode_vertical` is the one
+        # vertical that asks for a mode — the screen reads it instead
+        # of hard-coding 'Freight Forwarding'.
+        'modes':         list(_lead_mode_mod().MODES),
+        'mode_vertical': _lead_mode_mod().VERTICAL,
     })
 
 
@@ -4934,6 +5016,8 @@ def init_db():
             ('opportunities', 'won_project_at',   'TIMESTAMP'),
             # Dashboard v2 (Phase 1-3)
             ('leads',         'lost_reason',      'VARCHAR(60)'),
+            # CRM-TIDY-01 — Sea / Air / Multimodal on forwarding leads
+            ('leads',         'mode',             'VARCHAR(20)'),
             ('leads',         'stage_entered_at', 'TIMESTAMP'),
             ('employees',     'is_vertical_head', _bool_ddl),
             ('employees',     'vertical_head_id', 'INTEGER'),

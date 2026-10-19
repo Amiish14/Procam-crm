@@ -117,6 +117,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:va
 .krow{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:20px}
 .kpi{background:var(--card);border-radius:var(--r-lg);border:1px solid var(--border);padding:20px 24px;box-shadow:var(--sh-1);transition:border-color .15s}
 .kpi:hover{border-color:var(--ink-2)}
+/* A pendency tile that links to the Workbench. It has to look
+   exactly like the tiles beside it — an anchor brings a browser
+   default colour and underline with it — and read as clickable. */
+a.kpi.mw-link{display:block;text-decoration:none;color:inherit;cursor:pointer}
+a.kpi.mw-link:hover{border-color:var(--ink-2);box-shadow:var(--sh-2,var(--sh-1))}
+a.kpi.mw-link:focus-visible{outline:2px solid var(--ink-2);outline-offset:2px}
 .kl{font-size:var(--t-xs);font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.08em}
 .kv{font-family:var(--font-num);font-size:var(--t-num);font-weight:700;color:var(--ink);line-height:1.05;letter-spacing:-.02em;margin-top:8px;font-variant-numeric:tabular-nums}
 .ks{font-size:11.5px;color:var(--text-2);margin-top:6px;font-weight:400}
@@ -2912,13 +2918,45 @@ function renderEmailSummaryCard(l){
    selected, even when it is not on the list — a value nobody
    recognises is a data question, not a licence to overwrite it. */
 let VERTICAL_OPTIONS = [];
+/* Sea / Air / Multimodal, and the one vertical that asks for them.
+   Both come from /api/dashboard/options so the page holds no second
+   copy of a vocabulary the server owns. The fallbacks are only for a
+   first paint before that call lands. */
+let MODE_OPTIONS = ['Sea', 'Air', 'Multimodal'];
+let MODE_VERTICAL = 'Freight Forwarding';
 
 async function loadVerticalOptions(){
   try{
     const opt = await api('/api/dashboard/options');
     if (opt && Array.isArray(opt.verticals) && opt.verticals.length)
       VERTICAL_OPTIONS = opt.verticals;
+    if (opt && Array.isArray(opt.modes) && opt.modes.length)
+      MODE_OPTIONS = opt.modes;
+    if (opt && opt.mode_vertical) MODE_VERTICAL = opt.mode_vertical;
   }catch(err){ /* the select still offers the lead's own value */ }
+}
+
+function modeOptions(current){
+  const cur = (current == null ? '' : String(current));
+  const list = [''].concat(MODE_OPTIONS);
+  if (cur && list.indexOf(cur) === -1) list.push(cur);
+  return list.map(function(v){
+    return '<option value="' + e(v) + '"' + (v === cur ? ' selected' : '')
+         + '>' + e(v || '— not stated —') + '</option>';
+  }).join('');
+}
+
+/* Mode belongs to one vertical. Hiding the row elsewhere is not
+   decoration: a Sea/Air answer on a Heavy Transport lead means
+   nothing, and the server clears it on save, so showing the control
+   would be offering a choice that does not stick. */
+function syncModeField(){
+  const row = g('lModeRow'), vt = g('lVt');
+  if (!row || !vt) return;
+  const shown = (vt.value || '').trim().toLowerCase()
+              === (MODE_VERTICAL || '').trim().toLowerCase();
+  row.style.display = shown ? '' : 'none';
+  if (!shown && g('lMode')) g('lMode').value = '';
 }
 
 function verticalOptions(current){
@@ -3026,8 +3064,10 @@ async function openLd(id){
     <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="lEm" value="${e(l.email||'')}"></div><div class="fmg"><label class="fml">Phone</label><input class="fmc" id="lPh" value="${e(l.phone||'')}"></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Primary PIC</label><select class="fmc" id="lAsgn" data-was="${e(l.assigned_to||'')}" ${isAdmin?'':'disabled'}>${uOpts}</select></div><div class="fmg"><label class="fml">Secondary PIC <span style="font-weight:400;color:var(--text-3)">— monitor / backup</span></label><select class="fmc" id="lAsgn2" data-was="${e(l.secondary_owner||'')}" ${isAdmin?'':'disabled'}>${sOpts}</select></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">If changing the PIC, why? <span style="font-weight:400;color:var(--text-3)">— recorded in the assignment history</span></label><select class="fmc" id="lReasgn" ${isAdmin?'':'disabled'}>${['','Different geography','Different service vertical','Different customer relationship owner','Capacity / workload','Specialist required','Incorrect automatic assignment','Other'].map(r=>`<option value="${e(r)}">${e(r||'— not changing the PIC —')}</option>`).join('')}</select></div></div>
-    <div class="fmr"><div class="fmg"><label class="fml">Procam vertical</label><select class="fmc" id="lVt" data-was="${e(l.procam_vertical||'')}">${verticalOptions(l.procam_vertical)}</select>
+    <div class="fmr"><div class="fmg"><label class="fml">Procam vertical</label><select class="fmc" id="lVt" data-was="${e(l.procam_vertical||'')}" onchange="syncModeField()">${verticalOptions(l.procam_vertical)}</select>
       ${l.vertical_confidence!=null ? `<div style="font-size:11.5px;color:var(--text-3);margin-top:4px">Suggested at intake with <b>${e(l.vertical_confidence)}%</b> confidence${l.vertical_reason?` — ${e(l.vertical_reason)}`:''}</div>` : ''}
+    </div><div class="fmg" id="lModeRow" style="display:none"><label class="fml">Mode <span style="font-weight:400;color:var(--text-3)">— optional</span></label><select class="fmc" id="lMode">${modeOptions(l.mode)}</select>
+      <div style="font-size:11.5px;color:var(--text-3);margin-top:4px">How the freight moves. Leave blank if it is not settled.</div>
     </div></div>
     <div class="fmg" id="lClassExpl" style="display:none"></div>
     <div class="fmr"><div class="fmg"><label class="fml">Next follow-up</label><input type="date" class="fmc" id="lFu" value="${l.followup||''}"></div><div class="fmg"><label class="fml">Onboarded date</label><input class="fmc" value="${l.onboarded_date||'—'}" disabled style="background:var(--surface-2);color:var(--text-3)"></div></div>
@@ -3067,6 +3107,7 @@ async function openLd(id){
   ldValueInit(l);
   loadLeadNotes(l.id);
   loadLeadClassification(l.id);
+  syncModeField();
   loadMailTrail(l.id);
   loadRateSourcing(l.id);
 }
@@ -3521,6 +3562,7 @@ async function saveLd(){
     secondary_owner:g('lAsgn2')?.value ?? '',
     reassignment_reason:g('lReasgn')?.value || '',
     procam_vertical:g('lVt')?.value,
+    mode:g('lMode')?.value || '',
     // What each of these selects was rendered with. The server
     // accepts a change only when the posted value differs from this
     // — that is the difference between somebody choosing an option
@@ -6641,13 +6683,22 @@ window.onunhandledrejection = function(e){
 init().catch(err=>console.error('init() failed:', err));
 
 /* ═══ MY WORK — per-employee pendency panel (v2026-09-02) ═══ */
-function mwTile(label, n, tone, hint){
+/* `filter` is a key from app/workbench/filters.py. A tile that
+   carries one is a link to the Workbench on that filter, and it will
+   list exactly the number shown — same predicate, same population,
+   one build. A tile without one (Won this month, Open leads) is a
+   figure, not a view, and stays unclickable rather than linking
+   somewhere that shows a different number. */
+function mwTile(label, n, tone, hint, filter){
   const colour = tone === 'bad'  ? 'var(--red)'
                : tone === 'warn' ? '#B7791F'
                : tone === 'good' ? '#2F855A' : 'var(--ink)';
-  return `<div class="kpi" title="${e(hint||'')}">
-    <div class="kl">${e(label)}</div>
-    <div class="kv" style="color:${colour}">${n}</div></div>`;
+  const body = `<div class="kl">${e(label)}</div>
+    <div class="kv" style="color:${colour}">${n}</div>`;
+  if(!filter) return `<div class="kpi" title="${e(hint||'')}">${body}</div>`;
+  const href = crmUrl('/my-work?filter=' + encodeURIComponent(filter));
+  return `<a class="kpi mw-link" href="${e(href)}"
+     title="${e(hint||'')} — opens the Workbench">${body}</a>`;
 }
 
 async function loadMyWork(){
@@ -6661,19 +6712,19 @@ async function loadMyWork(){
   g('mwSub').textContent =
     '· ' + (d.scope === 'team' ? 'across your team' : 'your leads');
 
+  /* The six Workbench tiles, labelled and counted by the server from
+     app/workbench/filters.py. The page no longer holds its own list
+     of them: a label written here and a label written there is how
+     "Idle 3+ days" came to mean three days on this panel and seven on
+     the Workbench. */
+  const tones = {overdue:'bad', due_today:'warn', quiet_3d:'warn',
+                 never_actioned:'warn', rfqs_awaiting_quote:'warn',
+                 in_negotiation:''};
   g('mwTiles').innerHTML =
-      mwTile('Overdue', p.overdue||0, (p.overdue?'bad':'good'),
-             'Follow-up date has passed')
-    + mwTile('Due today', p.due_today||0, (p.due_today?'warn':''),
-             'Follow-up scheduled for today')
-    + mwTile('Idle 3+ days', p.untouched_3d||0, (p.untouched_3d?'warn':''),
-             'Open leads with no update in over 3 days')
-    + mwTile('Never actioned', p.never_actioned||0, (p.never_actioned?'warn':''),
-             'No call, intro mail or meeting logged yet')
-    + mwTile('Awaiting quote', p.awaiting_quote||0, (p.awaiting_quote?'warn':''),
-             'RFQ generated but not yet quoted')
-    + mwTile('In negotiation', p.in_negotiation||0, '',
-             'Quoted or under negotiation')
+      (d.tiles||[]).map(t=>mwTile(
+         t.label, t.count,
+         (t.count ? (tones[t.key]||'') : (t.key==='overdue'?'good':'')),
+         t.note || '', t.key)).join('')
     + mwTile('Needs review', p.needs_review||0, (p.needs_review?'warn':''),
              'Email leads with no contact address extracted')
     + mwTile('Won this month', done.won_mtd||0, 'good', 'Closed Won since the 1st')

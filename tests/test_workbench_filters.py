@@ -421,9 +421,13 @@ def test_the_registry_is_served_so_the_page_invents_no_labels(world):
     assert {f['key'] for f in d['filters']} == set(wf.KEYS)
 
 
-def test_every_registry_key_has_a_tile_or_a_chip(world):
+def test_every_registry_key_has_a_tile_a_chip_or_an_overview_tile(world):
+    # A filter nothing shows is a filter nobody can reach. Three of
+    # them are reachable only from the Overview panel, which is a
+    # surface like the other two, not an exception to this rule.
     for f in wf.WORKBENCH_FILTERS:
-        assert f.tile or f.chip, f'{f.key} is reachable from nowhere'
+        assert f.tile or f.chip or f.overview, \
+            f'{f.key} is reachable from nowhere'
 
 
 def test_a_predicate_that_trips_does_not_empty_the_view(world):

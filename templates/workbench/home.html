@@ -64,6 +64,7 @@
     {% endif %}
     <input id="wbQ" placeholder="Search account or project…" oninput="wbDebounce()" style="min-width:220px;flex:1">
     <select id="wbVertical" onchange="wbLoad(1)"><option value="">All verticals</option></select>
+    <select id="wbMode" onchange="wbLoad(1)" title="Freight Forwarding only"><option value="">Any mode</option></select>
     <select id="wbStage" onchange="wbLoad(1)"><option value="">All stages</option></select>
     <select id="wbSort" onchange="wbLoad(1)">
       <option value="priority">Most urgent first</option>
@@ -125,7 +126,13 @@ const TEAM = {{ 'true' if team else 'false' }};
    leads" ended up over a chip called "Stale opportunities", showing a
    different number, and opening a third set of rows. */
 const TILE_CLASS = {overdue:'danger', quotes_due:'warn'};
-let STATE = {filter:'', age:'', page:1, sel:new Set(), rows:[], token:null};
+/* `?filter=` opens the board on one view. The Overview panel's
+   pendency tiles link here with it, and they are counted from the
+   same registry, so the number on the tile is the number of rows
+   that come back. `?mode=` narrows to Sea / Air / Multimodal. */
+const _wbArgs = new URLSearchParams(location.search);
+let STATE = {filter:(_wbArgs.get('filter')||''), age:'', page:1,
+             sel:new Set(), rows:[], token:null};
 const $ = id => document.getElementById(id);
 /* This page is served outside the main app shell, which carries its own
    fetch wrapper, so every write here has to send the CSRF token itself. */
@@ -148,6 +155,7 @@ function params(page){
   if (STATE.age) p.set('age', STATE.age);
   if ($('wbQ').value.trim()) p.set('q', $('wbQ').value.trim());
   if ($('wbVertical').value) p.set('vertical', $('wbVertical').value);
+  if ($('wbMode') && $('wbMode').value) p.set('mode', $('wbMode').value);
   if ($('wbStage').value) p.set('stage', $('wbStage').value);
   p.set('sort', $('wbSort').value);
   p.set('page', page || 1);
@@ -193,6 +201,22 @@ function fillFilters(d){
   $('wbVertical').innerHTML = '<option value="">All verticals</option>' + verts.map(v=>`<option>${esc(v)}</option>`).join('');
   $('wbStage').innerHTML = '<option value="">All stages</option>' + stages.map(v=>`<option>${esc(v)}</option>`).join('');
   $('wbVertical').dataset.filled = '1';
+  /* From the server's vocabulary rather than from the rows on screen:
+     a board with no Air job on it should still offer Air, or the
+     filter can only find what is already visible. */
+  const ms = $('wbMode');
+  if (ms && !ms.dataset.filled) {
+    ms.dataset.filled = '1';
+    fetch(PREFIX + '/api/workbench/filters', {credentials:'same-origin'})
+      .then(r => r.json()).then(f => {
+        if (!f || !f.ok || !Array.isArray(f.modes)) return;
+        ms.innerHTML = '<option value="">Any mode</option>'
+          + f.modes.map(m=>`<option>${esc(m)}</option>`).join('');
+        ms.title = (f.mode_vertical || 'Freight Forwarding') + ' only';
+        const want = _wbArgs.get('mode');
+        if (want) { ms.value = want; }
+      }).catch(() => {});
+  }
   if (TEAM && $('wbWho') && !$('wbWho').dataset.filled) {
     fetch(PREFIX + '/api/workbench/people', {credentials:'same-origin'})
       .then(r => r.json()).then(p => {
@@ -229,7 +253,7 @@ function paintRows(d){
       <td>${esc(i.account||'—')}</td>
       <td><a href="${PREFIX}${esc(i.route)}">${esc(i.title === i.account ? (i.stage || i.kind) : i.title)}</a>
           <div class="muted" style="font-size:11.5px">${esc(i.kind)}</div></td>
-      <td>${esc(i.vertical||'—')}</td>
+      <td>${esc(i.vertical||'—')}${i.mode?`<div class="muted" style="font-size:11.5px">${esc(i.mode)}</div>`:''}</td>
       <td>${esc(i.stage||'—')}</td>
       <td class="num">${money(i.value_inr)}</td>
       <td class="num">${i.last_activity_days==null?'never':i.last_activity_days+'d'}</td>

@@ -54,6 +54,18 @@ AWAITING_QUOTE_STAGE = 'RFQ Generated'
 #: A quote is "due" this many days out.
 QUOTE_DUE_WINDOW_DAYS = 1
 
+#: Stages that mean a quote is on the table and the customer is talking.
+#: Narrower than QUOTE_STAGES, which includes leads not yet quoted.
+NEGOTIATION_STAGES = ('Quoted', 'Under Negotiation')
+
+#: "Idle" on the Overview panel has always meant three days, while the
+#: Workbench's own `idle` condition means seven and `stale` means
+#: thirty. Three thresholds for one idea is the smaller version of the
+#: disagreement this registry exists to end, so the Overview's three
+#: days is kept — it is the number people have been reading — and it
+#: now lives here with the other two instead of in a route.
+QUIET_DAYS = 3
+
 
 def _has(item, *conditions):
     got = item.get('conditions') or ()
@@ -174,6 +186,30 @@ def _account_development(item, _ctx):
     return _has(item, 'account_quiet', 'account_next_action')
 
 
+def _quiet_3d(item, _ctx):
+    """Nothing said to this customer for three days or more.
+
+    Reads `last_activity_days`, which `app.services.contact` works out
+    from calls, mail and meetings — not `updated_at`, which counts a
+    typo fix as contact with a customer.
+    """
+    if item.get('kind') != 'lead':
+        return False
+    days = item.get('last_activity_days')
+    return days is None or days >= QUIET_DAYS
+
+
+def _never_actioned(item, _ctx):
+    """No call, no introduction mail, no meeting — ever."""
+    return item.get('kind') == 'lead' and bool(item.get('never_actioned'))
+
+
+def _in_negotiation(item, _ctx):
+    """Quoted or under negotiation: money already on the table."""
+    return (item.get('kind') == 'lead'
+            and item.get('stage') in NEGOTIATION_STAGES)
+
+
 def _everything(_item, _ctx):
     return True
 
@@ -188,11 +224,17 @@ class Filter:
     two different measurements of two different things.
     """
 
-    __slots__ = ('key', 'tile', 'chip', 'predicate', 'note')
+    __slots__ = ('key', 'tile', 'chip', 'overview', 'predicate', 'note')
 
-    def __init__(self, key, predicate, *, tile=None, chip=None, note=''):
+    def __init__(self, key, predicate, *, tile=None, chip=None,
+                 overview=None, note=''):
         self.key, self.predicate = key, predicate
         self.tile, self.chip, self.note = tile, chip, note
+        #: The label the Overview / Sales Intelligence panel shows, when
+        #: that panel has a tile for this view. Three of them have no
+        #: Workbench tile and exist only there; the rest carry both
+        #: labels so the two screens cannot drift apart again.
+        self.overview = overview
 
     def matches(self, item, ctx):
         try:
@@ -204,13 +246,17 @@ class Filter:
 
 
 WORKBENCH_FILTERS = (
-    Filter('due_today', _due_today, tile='Due today'),
-    Filter('overdue', _overdue, tile='Overdue'),
+    Filter('due_today', _due_today, tile='Due today', overview='Due today',
+           note='A follow-up, task or account action dated today.'),
+    Filter('overdue', _overdue, tile='Overdue', overview='Overdue',
+           note='Any date that has passed on something still open — a '
+                'follow-up, a quote past its validity, an account action.'),
     Filter('action_today', _action_today, chip='Action required today',
            note='Everything with a date of today or earlier.'),
     Filter('quotations', _quotations, chip='Quotations'),
     Filter('rfqs_awaiting_quote', _rfqs_awaiting_quote,
-           tile='RFQs awaiting quote'),
+           tile='RFQs awaiting quote', overview='Awaiting quote',
+           note='RFQ generated and no quote sent yet.'),
     Filter('quotes_due', _quotes_due, tile='Quotes due'),
     Filter('followups_due', _followups_due,
            tile='Customer follow-up', chip='Customer follow-up'),
@@ -237,6 +283,18 @@ WORKBENCH_FILTERS = (
            note='A message arrived on a lead nobody is working.'),
     Filter('account_development', _account_development,
            chip='Account development'),
+    # Three views the Overview panel has always shown and the Workbench
+    # never had. They were five ad-hoc queries in `/api/my-work`, which
+    # is how "Idle 3+ days" came to mean something the Workbench had no
+    # word for. They carry no tile and no chip: the Workbench is not
+    # getting three new tiles, it is getting three filters its sibling
+    # screen can link to.
+    Filter('quiet_3d', _quiet_3d, overview='Idle 3+ days',
+           note='Nothing said to the customer for three days or more.'),
+    Filter('never_actioned', _never_actioned, overview='Never actioned',
+           note='No call, no introduction mail and no meeting, ever.'),
+    Filter('in_negotiation', _in_negotiation, overview='In negotiation',
+           note='Quoted or under negotiation.'),
     Filter('everything', _everything, chip='Everything'),
 )
 
@@ -248,6 +306,14 @@ TILE_KEYS = tuple(f.key for f in WORKBENCH_FILTERS if f.tile)
 #: The order the chips appear in. "Everything" leads, as it does today.
 CHIP_KEYS = ('everything',) + tuple(
     f.key for f in WORKBENCH_FILTERS if f.chip and f.key != 'everything')
+#: The order the Overview / Sales Intelligence tiles appear in. Spelt
+#: out rather than taken from registry order, because this is the
+#: order people have been reading since September and a tile moving
+#: because a filter was inserted above it is a change nobody asked
+#: for. A key here without an `overview` label is a mistake, and the
+#: test suite says so.
+OVERVIEW_KEYS = ('overdue', 'due_today', 'quiet_3d', 'never_actioned',
+                 'rfqs_awaiting_quote', 'in_negotiation')
 
 
 def get(key):
@@ -282,3 +348,17 @@ def describe():
     """[(key, tile label, chip label, note)] for the docs generator."""
     return [(f.key, f.tile or '', f.chip or '', f.note)
             for f in WORKBENCH_FILTERS]
+
+
+def overview_tiles(counts):
+    """The Overview panel's tiles, labelled and counted from here.
+
+    The panel used to hold its own five SQL queries. Two of them
+    answered a question the Workbench also answered, differently:
+    Overdue was `followup_date < today` there and "any date that has
+    passed on something still open" here, so one screen said 643 and
+    the other said rather more. They are now one number with one name.
+    """
+    return [{'key': k, 'label': BY_KEY[k].overview,
+             'count': counts.get(k, 0), 'note': BY_KEY[k].note}
+            for k in OVERVIEW_KEYS]

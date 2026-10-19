@@ -41,6 +41,10 @@ _LEAD_COLUMNS = (
     'next_action', 'estimated_value_inr', 'quoted_amount_inr', 'cost_million',
     'quote_date', 'quote_validity_date', 'quote_no', 'rfq_date', 'opp_number',
     'created_at', 'updated_at', 'stage_entered_at', 'is_archived',
+    # For the Overview panel's "Never actioned" and for the Mode
+    # column on Freight Forwarding leads. Both are read by filter
+    # predicates, so they have to travel with the item.
+    'phone_call_date', 'intro_mail_date', 'meeting_date', 'mode',
 )
 
 
@@ -251,8 +255,30 @@ def _primary_group(conditions):
     return rules.G_DATA
 
 
-def lead_items(sc, *, today=None):
-    """Every lead that needs attention, as action items."""
+#: The group a lead with nothing outstanding is filed under. It is
+#: deliberately not one of `rules.GROUPS`: those are the eight headings
+#: the Workbench lists under, and a lead with nothing wrong belongs in
+#: none of them. It exists so the two screens count the same leads —
+#: see `lead_items(include_quiet=...)`.
+G_NOTHING_OUTSTANDING = 'nothing_outstanding'
+
+
+def lead_items(sc, *, today=None, include_quiet=False):
+    """Every lead that needs attention, as action items.
+
+    `include_quiet` keeps the leads that trip no condition at all. The
+    Workbench used to drop them, which was right while it was the only
+    reader: a lead contacted on Monday with a follow-up booked for
+    Friday needs nothing. It became wrong when the Overview panel
+    started counting the same leads from its own SQL, because
+    "In negotiation" and "Idle 3+ days" both include perfectly healthy
+    leads and the board could not see them. Both screens now build
+    from the same list.
+
+    A quiet lead matches no chip but `Everything`, so the only count
+    it changes on the Workbench is that one — which is the count that
+    was wrong to exclude it.
+    """
     from app.services import lead_value
     today = today or _today()
     leads = _lead_rows(sc)
@@ -307,14 +333,15 @@ def lead_items(sc, *, today=None):
             conds.append('newly_assigned')
         if rules.is_high_value(l):
             conds.append('high_value')
-        if not conds:
+        if not conds and not include_quiet:
             continue
         due, priority = _priority_and_due(conds, l, today, rfq)
         value = lead_value.value_inr(l)
         items.append({
             'kind': 'lead',
             'id': l.id,
-            'group': _primary_group(conds),
+            'group': (_primary_group(conds) if conds
+                      else G_NOTHING_OUTSTANDING),
             'priority': priority,
             'due': due,
             'account': l.company or '',
@@ -342,6 +369,9 @@ def lead_items(sc, *, today=None):
                 (l.stage_entered_at or l.updated_at or l.created_at), today),
             'assigned_to': l.assigned_to or '',
             'assigned_name': l.assigned_name or l.assigned_to or '',
+            'mode': getattr(l, 'mode', None) or '',
+            'never_actioned': not (l.phone_call_date or l.intro_mail_date
+                                   or l.meeting_date),
             'data_issues': hygiene.get(l.id, []),
             'conditions': conds,
             'reasons': [rules.CONDITION_LABELS.get(c, c) for c in conds],
@@ -465,6 +495,9 @@ def closed_mail_items(sc, *, today=None):
             'ageing_days': rules.days_between(when, today),
             'assigned_to': l.assigned_to or '',
             'assigned_name': l.assigned_name or l.assigned_to or '',
+            'mode': getattr(l, 'mode', None) or '',
+            'never_actioned': not (l.phone_call_date or l.intro_mail_date
+                                   or l.meeting_date),
             'data_issues': [],
             'conditions': ['mail_on_closed'],
             'reasons': [f'{n} message{"" if n == 1 else "s"} received while '
@@ -536,6 +569,9 @@ def owner_confirm_items(sc, *, today=None):
             'ageing_days': waited,
             'assigned_to': l.assigned_to or '',
             'assigned_name': l.assigned_name or l.assigned_to or '',
+            'mode': getattr(l, 'mode', None) or '',
+            'never_actioned': not (l.phone_call_date or l.intro_mail_date
+                                   or l.meeting_date),
             'data_issues': [],
             'conditions': ['owner_to_confirm'],
             'reasons': [f'assigned by rule ({row.rule}) and not yet '
@@ -715,8 +751,8 @@ def _sort_key(item):
 
 
 def board(sc, *, today=None, group=None, filter_key=None, age='',
-          search='', vertical='', stage='', owner='', page=1, per_page=50,
-          sort='priority'):
+          search='', vertical='', stage='', owner='', mode='', page=1,
+          per_page=50, sort='priority'):
     """The whole Workbench: one counts object, a filtered page of
     items, and the quote-ageing buckets.
 
@@ -731,7 +767,7 @@ def board(sc, *, today=None, group=None, filter_key=None, age='',
     from app.workbench import filters as wf
 
     today = today or _today()
-    items, _rfq_ageing = lead_items(sc, today=today)
+    items, _rfq_ageing = lead_items(sc, today=today, include_quiet=True)
     items += account_items(sc, today=today)
     items += task_items(sc, today=today)
     items += closed_mail_items(sc, today=today)
@@ -747,6 +783,8 @@ def board(sc, *, today=None, group=None, filter_key=None, age='',
         items = [r for r in items if r['stage'] == stage]
     if owner:
         items = [r for r in items if r['assigned_to'] == owner]
+    if mode:
+        items = [r for r in items if r.get('mode') == mode]
     if search:
         s_ = search.lower()
         items = [r for r in items
