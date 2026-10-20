@@ -257,3 +257,103 @@ def test_an_unknown_account_is_an_error_not_a_silent_skip(seeded):
 def test_a_malformed_pair_is_refused(bad):
     out = _run('--set-alias', bad)
     assert out.returncode != 0, f'{bad!r} was accepted'
+
+
+# ── part 4: one action per junk account ──────────────────────────────
+@pytest.fixture
+def junk():
+    """A junk account beside the real one its domain belongs to."""
+    with flask_app.app_context():
+        for l in Lead.query.filter(Lead.source == 'ffjunk').all():
+            db.session.delete(l)
+        for c in Company.query.filter(
+                Company.created_by == 'ffjunk').all():
+            db.session.delete(c)
+        db.session.commit()
+
+        real = Company(name='Oyaso Shipping Limited', is_active=True,
+                       created_by='ffjunk', email_domains=['oyaso.com'])
+        mail = Company(name='Mail', is_active=True, created_by='ffjunk',
+                       email_domains=['mail.oyaso.com'])
+        lone = Company(name='Sales', is_active=True, created_by='ffjunk',
+                       email_domains=[])
+        db.session.add_all([real, mail, lone])
+        db.session.flush()
+        db.session.add(Lead(
+            source='ffjunk', company='Oyaso', company_id=mail.id,
+            stage='New', procam_vertical='Freight Forwarding',
+            email='shipper@mail.oyaso.com'))
+        db.session.commit()
+        yield {'real': real.id, 'mail': mail.id, 'lone': lone.id}
+
+
+def _row(rows, cid):
+    return next(r for r in rows if r['account'].id == cid)
+
+
+def test_a_subdomain_account_merges_into_the_domain_it_belongs_to(junk):
+    with flask_app.app_context():
+        rows = hyg.junk_plan()
+        r = _row(rows, junk['mail'])
+        assert r['action'] == 'merge'
+        assert r['target'].id == junk['real']
+
+
+def test_an_account_with_nothing_to_go_on_is_left_alone(junk):
+    with flask_app.app_context():
+        r = _row(hyg.junk_plan(), junk['lone'])
+        assert r['action'] == 'leave'
+        assert r['to'] == ''
+
+
+def test_propose_writes_nothing(junk):
+    out = _run('--propose-junk')
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert 'DRY RUN' in out.stdout
+    with flask_app.app_context():
+        assert db.session.get(Company, junk['mail']).is_active
+        assert Lead.query.filter_by(
+            source='ffjunk').first().company_id == junk['mail']
+
+
+def test_apply_junk_moves_the_leads_and_keeps_the_old_account(junk):
+    out = _run('--apply-junk', '--actor', 'DIR12010')
+    assert out.returncode == 0, out.stderr[-3000:]
+    with flask_app.app_context():
+        lead = Lead.query.filter_by(source='ffjunk').first()
+        assert lead.company_id == junk['real'], 'the lead did not move'
+        old = db.session.get(Company, junk['mail'])
+        assert old is not None, 'audit rows point at this id'
+        assert old.is_active is False
+        real = db.session.get(Company, junk['real'])
+        assert 'mail.oyaso.com' in (real.email_domains or []), \
+            'the domain must follow the leads or the next mail '\
+            'rebuilds the junk account'
+        from app.models.audit import AuditEvent
+        assert AuditEvent.query.filter_by(
+            action='company.merged',
+            entity_id=str(junk['mail'])).count() == 1
+    again = _run('--apply-junk')
+    assert '0 renamed, 0 merged' in again.stdout, 'not idempotent'
+
+
+@pytest.mark.parametrize('line,is_signature', [
+    ('TRT International LTD.', True),
+    ('Toshiba Logistics India Pvt Ltd', True),
+    ('Mitsubishi Electric Corporation', True),
+    ('View our company presentation', False),
+    ('We are eager to have a long term cooperation with your '
+     'esteemed company', False),
+    ('Company Overview and Business Activities', False),
+])
+def test_a_legal_form_ends_a_signature_it_does_not_decorate_prose(
+        line, is_signature):
+    """"company" appears in sentences; "Pvt Ltd" ends a sign-off."""
+    assert bool(hyg.SIG_LEGAL.search(line)) is is_signature
+
+
+def test_a_mail_platform_never_names_the_client():
+    """usatrt.ccsend.com would otherwise make an account "Ccsend"."""
+    assert 'ccsend.com' in hyg.MAIL_PLATFORMS
+    assert 'onmicrosoft.com' in hyg.MAIL_PLATFORMS
+    assert hyg.registrable('usatrt.ccsend.com') == 'ccsend.com'

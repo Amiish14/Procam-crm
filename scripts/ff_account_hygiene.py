@@ -100,6 +100,27 @@ SIG_SUFFIX = re.compile(
     r'corporation|company)\b', re.IGNORECASE)
 
 
+#: "company" and "corporation" appear in prose — "View our company
+#: presentation" is not a company name. A legal form at the end of a
+#: line is what marks a signature, so the strong test anchors there.
+SIG_LEGAL = re.compile(
+    r'(?:pvt\.?\s*ltd\.?|private\s+limited|limited|ltd\.?|llp|llc|'
+    r'inc\.?|gmbh|b\.?v\.?|s\.?r\.?l\.?|corporation|co\.?,?\s*ltd\.?)'
+    r'\.?\s*$', re.IGNORECASE)
+
+#: Domains that send mail on somebody else's behalf. Their label is
+#: never the client: ccsend.com is Constant Contact, onmicrosoft.com
+#: is a Microsoft tenant, ariba.com is SAP's procurement network —
+#: the Ariba leads on this system are really Jindal Stainless.
+MAIL_PLATFORMS = {
+    'ccsend.com', 'onmicrosoft.com', 'ariba.com', 'brevosend.com',
+    'sendgrid.net', 'mailchimp.com', 'mcsv.net', 'rsgsv.net',
+    'mailgun.org', 'amazonses.com', 'sparkpostmail.com',
+    'createsend.com', 'cmail19.com', 'hubspot.com', 'constantcontact.com',
+    'outlook.com', 'protection.outlook.com', 'mimecast.com',
+}
+
+
 # ── 3. accounts for the unmatched ────────────────────────────────────
 def _name_from_domain(domain):
     """`coscon.com` -> `Coscon`. The fallback, not the preference."""
@@ -230,6 +251,205 @@ def domain_label_accounts():
             out.append((c, '; '.join(why), counts_open[c.id],
                         counts_all[c.id]))
     return sorted(out, key=lambda r: (-r[3], (r[0].name or '').lower()))
+
+
+def junk_evidence(account):
+    """What this account's own leads say it is."""
+    leads = Lead.query.filter(Lead.company_id == account.id).all()
+    typed, senders, sigs = Counter(), Counter(), Counter()
+    for l in leads:
+        name = (l.company or '').strip()
+        if name and company_match.norm(name) != \
+                company_match.norm(account.name):
+            typed[name] += 1
+        for addr in (l.email, l.original_email_from):
+            d = account_match.domain_of(
+                account_match.normalise_address(addr))
+            if d and not account_match.is_free_mail(d):
+                senders[d] += 1
+        for n in _signature_names(l.original_email_body):
+            sigs[n] += 1
+    return {'leads': leads, 'typed': typed, 'senders': senders,
+            'signatures': sigs}
+
+
+def junk_plan():
+    """One action per junk account: rename, merge, or leave.
+
+    Merging moves every lead, contact and quote onto another
+    account, and renaming changes what the masking redacts, so each
+    row has to carry the evidence it was decided on. Where the
+    evidence does not reach, the action is "leave" — an account with
+    a silly name and no leads costs nothing, and a wrong merge costs
+    a client's history.
+    """
+    junk = domain_label_accounts()
+    junk_ids = {c.id for c, _w, _o, _a in junk}
+
+    # Everything that is not itself junk, indexed for lookup.
+    others, by_domain, by_name = [], defaultdict(list), {}
+    for c in Company.query.filter(Company.is_active.isnot(False)).all():
+        if c.id in junk_ids:
+            continue
+        others.append(c)
+        by_name.setdefault(company_match.norm(c.name), c)
+        for d in (c.email_domains or []):
+            reg = registrable(d)
+            if reg:
+                by_domain[reg].append(c)
+
+    rows = []
+    for c, why, open_n, all_n in junk:
+        ev = junk_evidence(c)
+        alias = next(iter(c.aliases or []), None)
+        regs = {registrable(d) for d in ev['senders']} | {
+            registrable(d) for d in (c.email_domains or [])}
+        regs.discard('')
+
+        # Nothing hangs off it, so there is nothing to merge and no
+        # evidence to rename it from. A silly name with no leads
+        # costs nothing; a wrong guess written into the master data
+        # costs somebody an afternoon.
+        if not all_n:
+            rows.append({'account': c, 'why': why, 'open': open_n,
+                         'leads': all_n, 'action': 'leave', 'to': '',
+                         'reason': 'no leads, so nothing says what it '
+                                   'should be called',
+                         'evidence': ev, 'target': None})
+            continue
+
+        target = None
+        for reg in sorted(regs):
+            for cand in by_domain.get(reg, []):
+                target = cand
+                break
+            if target:
+                break
+
+        typed_name = None
+        for name, _n in ev['typed'].most_common():
+            if ff_privacy.variants(name):
+                typed_name = name
+                break
+        if typed_name and not target:
+            hit = by_name.get(company_match.norm(typed_name))
+            if hit is not None:
+                target = hit
+
+        # A signature with a legal form at the end of it is a
+        # company naming itself. It beats the domain label, which is
+        # only ever a guess: tlog.sbs-group.com gives "Sbs Group"
+        # while the mail is signed Toshiba Logistics India Pvt Ltd.
+        signed = []
+        for name, _k in ev['signatures'].most_common():
+            if not SIG_LEGAL.search(name):
+                continue
+            if any(company_match.norm(name) == company_match.norm(x)
+                   for x in signed):
+                continue
+            signed.append(name)
+
+        if target is not None:
+            action, to, reason = ('merge', target.name,
+                                  f'another account already holds '
+                                  f'{sorted(regs)[0] if regs else "this domain"}')
+        elif alias:
+            action, to, reason = ('rename', alias,
+                                  'the alias already researched for '
+                                  'this account')
+        elif typed_name:
+            action, to, reason = ('rename', typed_name,
+                                  f'what the sender typed on '
+                                  f'{ev["typed"][typed_name]} lead(s)')
+        elif len(signed) == 1:
+            action, to, reason = ('rename', signed[0],
+                                  'the only company that signs the '
+                                  'mail on this account')
+        elif len(signed) > 1:
+            action, to, reason = ('leave', '',
+                                  f'{len(signed)} different companies '
+                                  f'sign the mail here — a person has '
+                                  f'to say which is the client')
+        else:
+            label = None
+            for reg in sorted(regs):
+                if reg in MAIL_PLATFORMS:
+                    continue
+                cand = _name_from_domain(reg)
+                if cand and ff_privacy.variants(cand) and \
+                        company_match.norm(cand) != \
+                        company_match.norm(c.name):
+                    label = cand
+                    break
+            if label:
+                action, to, reason = ('rename', label,
+                                      f'the company part of '
+                                      f'{sorted(regs)[0]}')
+            else:
+                action, to, reason = ('leave', '',
+                                      'the domain belongs to a mail '
+                                      'platform, not a company'
+                                      if regs & MAIL_PLATFORMS
+                                      else 'no lead, name or domain '
+                                           'says what it should be')
+        rows.append({'account': c, 'why': why, 'open': open_n,
+                     'leads': all_n, 'action': action, 'to': to,
+                     'reason': reason, 'evidence': ev,
+                     'target': target if action == 'merge' else None})
+    return rows
+
+
+def apply_junk(rows, *, actor='FF-LINK-01'):
+    """Carry out the renames and merges. Caller commits."""
+    from app.services import audit
+
+    renamed, merged = [], []
+    for r in rows:
+        c, to = r['account'], r['to']
+        if r['action'] == 'rename':
+            old = c.name
+            if company_match.norm(old) == company_match.norm(to):
+                continue
+            c.name = to[:200]
+            audit.record('company.renamed', 'company', str(c.id),
+                         old={'name': old}, new={'name': c.name},
+                         actor=actor,
+                         reason=f'"{old}" was {r["why"]}; renamed from '
+                                f'{r["reason"]}.')
+            renamed.append((c, old, c.name))
+        elif r['action'] == 'merge':
+            target = r['target']
+            if target is None or target.id == c.id:
+                continue
+            moved = 0
+            for l in Lead.query.filter(Lead.company_id == c.id).all():
+                l.company_id = target.id
+                moved += 1
+                audit.record('lead.account_linked', 'lead', str(l.id),
+                             old={'company_id': c.id, 'account': c.name},
+                             new={'company_id': target.id,
+                                  'account': target.name},
+                             actor=actor,
+                             reason=f'"{c.name}" was {r["why"]}; '
+                                    f'merged into {target.name}.')
+            # Deactivated, not deleted: the id is referenced from
+            # audit rows that have to keep resolving.
+            c.is_active = False
+            domains = list(target.email_domains or [])
+            for d in (c.email_domains or []):
+                if d not in domains:
+                    domains.append(d)
+            target.email_domains = domains
+            audit.record('company.merged', 'company', str(c.id),
+                         old={'name': c.name, 'is_active': True},
+                         new={'merged_into': target.id,
+                              'account': target.name,
+                              'leads_moved': moved},
+                         actor=actor,
+                         reason=f'"{c.name}" was {r["why"]}; '
+                                f'{r["reason"]}.')
+            merged.append((c, target, moved))
+    return renamed, merged
 
 
 # ── 5. evidence for the four short names ─────────────────────────────
@@ -423,21 +643,78 @@ def main():
                     metavar='ID=NAME',
                     help='write an alias by hand, repeatable')
     ap.add_argument('--actor', default='FF-LINK-01')
+    ap.add_argument('--propose-junk', dest='propose_junk',
+                    action='store_true',
+                    help='part 4 as one action per account, read-only')
+    ap.add_argument('--apply-junk', dest='apply_junk',
+                    action='store_true',
+                    help='carry out those renames and merges')
     args = ap.parse_args()
     writes = [a for a in (args.apply, args.apply_aliases,
-                          args.set_alias) if a]
-    if len(writes) + bool(args.check) != 1:
+                          args.set_alias, args.apply_junk) if a]
+    if len(writes) + bool(args.check) + bool(args.propose_junk) != 1:
         raise SystemExit(
-            'Choose exactly one: --check, --apply, '
-            '--apply-aliases or --set-alias.')
+            'Choose exactly one: --check, --propose-junk, --apply, '
+            '--apply-aliases, --set-alias or --apply-junk.')
 
     with app.app_context():
         print(f'database: {db.engine.url}')
         mode = ('APPLY (part 3 only)' if args.apply
                 else 'APPLY (aliases only)' if args.apply_aliases
                 else 'APPLY (aliases by hand)' if args.set_alias
+                else 'APPLY (renames and merges)' if args.apply_junk
                 else 'DRY RUN — nothing is written')
         print(f'MODE:     {mode}\n')
+
+        if args.propose_junk or args.apply_junk:
+            rows = junk_plan()
+            counts = Counter(r['action'] for r in rows)
+            print(f'=== one action per junk account ({len(rows)}) — '
+                  f'{dict(counts)}\n')
+            for r in rows:
+                c, ev = r['account'], r['evidence']
+                arrow = f' -> {r["to"]}' if r['to'] else ''
+                print(f'  #{c.id:<6} {(c.name or "")[:16]:<16} '
+                      f'{r["open"]:>2} open / {r["leads"]:>2} leads   '
+                      f'{r["action"].upper()}{arrow}')
+                print(f'          because {r["reason"]}')
+                typed = ', '.join(f'{n} (x{k})' for n, k
+                                  in ev['typed'].most_common(3))
+                print(f'          typed by senders: {typed or "nothing"}')
+                send = ', '.join(f'{d} (x{k})' for d, k
+                                 in ev['senders'].most_common(3))
+                print(f'          sender domains:   {send or "none"}')
+                if ev['signatures']:
+                    print('          signatures:       '
+                          + '; '.join(n for n, _ in
+                                      ev['signatures'].most_common(2)))
+                print()
+
+            if args.propose_junk:
+                print('DRY RUN — nothing written. `--apply-junk` '
+                      'carries these out: a rename changes the name '
+                      'only; a merge moves the leads, folds the '
+                      'domains in and deactivates the old account '
+                      'rather than deleting it, so audit rows still '
+                      'resolve.')
+                return
+
+            renamed, merged = apply_junk(rows, actor=args.actor)
+            try:
+                db.session.commit()
+            except Exception as exc:                      # noqa: BLE001
+                db.session.rollback()
+                print(f'  !! ROLLED BACK: {type(exc).__name__}: '
+                      f'{str(exc)[:200]}')
+                raise SystemExit(1)
+            print(f'  {len(renamed)} renamed, {len(merged)} merged, '
+                  f'each with an audit row naming {args.actor}.')
+            for c, old_name, new_name in renamed:
+                print(f'    #{c.id:<6} {old_name} -> {new_name}')
+            for c, target, moved in merged:
+                print(f'    #{c.id:<6} {c.name} -> #{target.id} '
+                      f'{target.name} ({moved} lead(s) moved)')
+            return
 
         if args.set_alias:
             # Straight to the point: the surveys below take a while
