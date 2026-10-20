@@ -3,12 +3,26 @@ venv/
 env/
 *.db
 *.db.bak*
+# A copy of the database is a copy of the database whatever it is
+# called. procam_crm.db.safe-backup matched neither rule above.
+*.db-backup
+*.db.safe-backup
+*.sqlite
+*.sqlite3
 *.sqlite3.bak*
 *.sqlite3
 __pycache__/
 *.pyc
 *.pyo
-.env
+# Every .env, not just the bare one. A dated backup such as
+# .env.backup-2026-10-06-132059 is as full of live secrets as the
+# original, and the exact-match rule here let two of them sit
+# untracked in the working tree on the server until a pull tripped
+# over them.
+.env*
+# The two committed samples carry no secrets and stay visible.
+!.env.example
+!.env.example.*
 .DS_Store
 *.egg-info/
 dist/
