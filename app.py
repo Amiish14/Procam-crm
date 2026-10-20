@@ -5159,6 +5159,7 @@ def init_db():
             ('leads',         'value_source',     'VARCHAR(24)'),
             ('leads',         'value_confirmed',  'BOOLEAN'),
             ('quotes',        'terms_version_id', 'INTEGER'),
+            ('ff_handover_packs', 'client_po_number', 'VARCHAR(60)'),
             ('contacts',      'state',            'VARCHAR(80)'),
             ('opportunities', 'won_project_ref',  'VARCHAR(60)'),
             ('opportunities', 'won_project_at',   'TIMESTAMP'),

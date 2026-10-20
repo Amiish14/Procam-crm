@@ -282,6 +282,13 @@ class FfHandoverPack(db.Model):
     #: forwarding, and the only way to point at the exact mail later.
     confirmation_message_id = db.Column(db.String(400), index=True)
     confirmation_note = db.Column(db.Text)
+    #: The customer's own purchase-order number, where they issue
+    #: one. The TMS keeps it beside Procam's number and never uses
+    #: it as one: `tally_po_number` on a Handover Pack,
+    #: `client_po_number` on a typed order. On a forwarding job
+    #: there is usually no PO document at all, which is why the
+    #: confirmation email above is captured instead.
+    client_po_number = db.Column(db.String(60))
 
     #: Draft / Ready / Delivered. `Delivered` is never set by this
     #: release: nothing sends the pack anywhere yet.

@@ -17,32 +17,37 @@ What this does not do
     flag flipped would be the worst possible way to find a mistake
     in the format.
 
-A caution about the format
-    FF-COMMS-02 is not in this repository and neither is any sample
-    of the Excel pack the TMS accepts. The structure below is
-    derived from what the CRM holds and from the shape of the two
-    payloads the TMS is already sent (`lead.won`, `quote.won`):
-    flat, `crm_`-prefixed identifiers. Every field is listed in
-    `INVENTED` so the differences from the real format can be found
-    and corrected in one place rather than hunted through the code.
+The format is the TMS's, not ours
+    `docs/tms_import_formats.md`, Part A, copied from Procam LR at
+    commit c8e6e85. The pack emits exactly the field names the
+    reader knows — `app/services/tms_intake.PART_A_FIELDS` — because
+    a name it does not recognise is dropped without a word, which is
+    the quiet way to lose a value.
+
+    Until that document arrived this module carried an `INVENTED`
+    list of field names it had made up. The list is gone; what
+    replaces it is `CANNOT_SUPPLY`, which is the opposite thing —
+    fields the format defines that the CRM has no column for, named
+    so a person can fill them in before importing rather than
+    discovering them at the far end.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime
 from decimal import Decimal
 
 from app import db
+from app.services import tms_intake
 
-#: Fields this release invented because the real pack format was not
-#: available. Checked by a test, so the list cannot rot.
-INVENTED = (
-    'shipment.mode', 'shipment.incoterm', 'shipment.client_party',
-    'shipment.chargeable', 'charges[].charge_group',
-    'charges[].cost_inr', 'charges[].vendor', 'confirmation.message_id',
-    'totals.margin_inr',
-)
+#: What the CRM cannot answer, and what the TMS reads and drops.
+#: Kept as module names because callers and tests referred to
+#: `INVENTED`; these say something true instead.
+CANNOT_SUPPLY = tms_intake.CANNOT_SUPPLY
+READ_AND_DROPPED = tms_intake.READ_AND_DROPPED
+
 
 PACK_DIR = os.path.join('docs', 'exports', 'ff_handover')
 
@@ -109,75 +114,138 @@ def mark_won(quote, *, actor=None):
 
 
 def build_payload(quote, *, pack=None, lead=None, account=None,
-                  rfq=None):
-    """The TMS payload, built and returned. Never sent."""
-    from app.models.ff import FfHandoverPack, RateRequest
-    from app.models.quote import QuoteLine
-    from app.services import ff_rates
+                  rfq=None, gst_treatment=None):
+    """The Handover Pack, in the TMS's Part A field names.
+
+    Flat, because the reader is flat: one field name, one value,
+    whether it arrives as JSON or as column A and column B of a
+    sheet. Anything the CRM cannot answer is left out rather than
+    sent empty — a blank cell is "not in the pack", and for a
+    required field the import refuses having created nothing, which
+    is the outcome we want over a job pointing the wrong way.
+    """
+    from app.models.ff import FfHandoverPack
+    from app.services import quote_terms
 
     pack = pack or FfHandoverPack.query.filter_by(
         quote_id=quote.id).first()
-    lines = (QuoteLine.query.filter_by(quote_id=quote.id)
-             .order_by(QuoteLine.line_no.asc()).all())
+    lead, account, rfq = _resolve(quote, lead, account, rfq)
+    vertical = quote_terms.vertical_of(quote)
 
-    charges = []
-    for ln in lines:
-        vendor = None
-        if ln.source_rate_request_id:
-            rr = db.session.get(RateRequest, ln.source_rate_request_id)
-            vendor = rr.vendor_name if rr else None
-        charges.append({
-            'line_no': ln.line_no,
-            'service': ln.service or '',
-            'description': ln.description or '',
-            'charge_group': ln.charge_group or 'other',
-            'sell_inr': float(ln.line_total or 0),
-            'cost_inr': (float(ln.cost_inr)
-                         if ln.cost_inr is not None else None),
-            'vendor': vendor,
-        })
-
-    margin = ff_rates.margin_summary(quote)
-    return {
-        'event': 'ff.handover',
-        'crm_quote_id': quote.id,
-        'crm_lead_id': getattr(quote, 'lead_id', None),
-        'crm_account_id': getattr(quote, 'account_id', None),
-        'crn': getattr(quote, 'crn', '') or '',
-        'quote_number': getattr(quote, 'quote_number', '') or '',
-        'shipment': {
-            'mode': getattr(lead, 'mode', None) or '',
-            'incoterm': getattr(quote, 'incoterm', None) or '',
-            'client_party': getattr(quote, 'client_party', None) or '',
-            'origin': getattr(rfq, 'origin', None) or '',
-            'destination': getattr(rfq, 'destination', None) or '',
-            'cargo': getattr(rfq, 'cargo', None) or '',
-        },
-        'customer': {
-            'name': (getattr(account, 'name', None)
-                     or getattr(lead, 'company', None) or ''),
-            'crm_account_id': getattr(account, 'id', None),
-        },
-        'confirmation': {
-            'received_at': (str(pack.confirmed_at)[:19]
-                            if pack and pack.confirmed_at else ''),
-            'from': (pack.confirmed_by_email if pack else ''),
-            'subject': (pack.confirmation_subject if pack else ''),
-            'message_id': (pack.confirmation_message_id if pack else ''),
-        },
-        'charges': charges,
-        'totals': {
-            'sell_inr': margin['sell_inr'],
-            'cost_inr': margin['cost_inr'],
-            'margin_inr': margin['margin_inr'],
-            'currency': getattr(quote, 'currency', None) or 'INR',
-            'margin_reliable': margin['reliable'],
-        },
-        'built_at': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
-        'format_note': ('Derived from CRM data; FF-COMMS-02 was not '
-                        'available. Invented fields are listed in '
-                        'app/services/ff_handover.INVENTED.'),
+    fields = {
+        'reference': (getattr(quote, 'crn', None)
+                      or getattr(quote, 'quote_number', None)),
+        # Selects the client at the far end by name, case-insensitive,
+        # against clients.name. A pack never creates a customer, so a
+        # name that does not match is a refusal, not a new row.
+        'customer': (getattr(account, 'name', None)
+                     or getattr(lead, 'company', None)),
+        'mode': tms_intake.mode_for(getattr(lead, 'mode', None)),
+        'direction': tms_intake.direction_for(
+            getattr(rfq, 'origin', None),
+            getattr(rfq, 'destination', None)),
+        'incoterm': getattr(quote, 'incoterm', None),
+        'quote_reference': getattr(quote, 'quote_number', None),
+        # The customer's own number, kept beside Procam's and never
+        # used as it. On a forwarding job the confirmation email is
+        # usually the only instruction, so this is often absent.
+        'tally_po_number': (getattr(pack, 'client_po_number', None)
+                            if pack is not None else None),
+        # `po_value` at the far end, and 0 when absent — so it has
+        # to be the real figure. `total_amount` is only right once
+        # the quote has been recalculated, and a pack built from a
+        # quote nobody recalculated would hand the TMS a zero-value
+        # order. The lines are the fact; the header is a cache.
+        'sell_value': _sell_value(quote),
+        # Read and dropped by the TMS today; sent because it is in
+        # the format and because a figure without its currency is
+        # the thing their own gap list warns about.
+        'currency': getattr(quote, 'currency', None) or 'INR',
+        # The route as two free-text boxes is all the CRM holds, so
+        # the names go and the codes cannot.
+        'pol_name': getattr(rfq, 'origin', None),
+        'pod_name': getattr(rfq, 'destination', None),
+        # The TMS is adding this; until then it hard-codes 'FCM'.
+        'gst_treatment': tms_intake.gst_treatment_for(
+            vertical, override=gst_treatment),
     }
+    # `is_dangerous` is never written: it is truthiness at the far
+    # end, so any value at all means dangerous and the only way to
+    # say no is to leave the field out.
+    return tms_intake.prune(fields)
+
+
+def payload_problems(fields):
+    """What would stop this pack importing, said here instead.
+
+    The TMS refuses in a fixed order and leaves nothing behind, so
+    none of this is dangerous — but finding out from a rejection
+    after somebody has filled in a workbook is a wasted afternoon.
+    """
+    problems = []
+    for name in tms_intake.missing_required(fields):
+        problems.append(_why_missing(name, fields))
+    for name in tms_intake.unknown_fields(fields):
+        problems.append(f'{name}: not a field the reader knows; it '
+                        f'would be ignored without a word')
+    return problems
+
+
+def _why_missing(name, fields):
+    if name == 'direction':
+        return ('direction: the CRM does not record import or '
+                'export, and the route was not recognisable enough '
+                'to tell — fill it in as EXPORT, IMPORT or '
+                'CROSS_TRADE')
+    if name == 'mode':
+        return ('mode: the TMS takes SEA or AIR only. A Multimodal '
+                'lead has to be sent as whichever leg the job is '
+                'filed under')
+    if name == 'customer':
+        return ('customer: must match a name on the TMS client '
+                'register exactly; a pack never creates one')
+    return f'{name}: required, and the CRM has no value for it'
+
+
+def _resolve(quote, lead, account, rfq):
+    """Fill in what the caller did not pass.
+
+    `customer` is required and selects the client at the far end, so
+    a pack built by a caller that happened not to hand us the
+    account would be refused for a name the CRM knew all along.
+    """
+    from app import Company, Lead
+    from app.models.rfq import RFQ
+
+    if lead is None and getattr(quote, 'lead_id', None):
+        lead = db.session.get(Lead, quote.lead_id)
+    if account is None:
+        if getattr(quote, 'account_id', None):
+            account = db.session.get(Company, quote.account_id)
+        elif lead is not None and lead.company_id:
+            account = db.session.get(Company, lead.company_id)
+    if rfq is None and getattr(quote, 'rfq_id', None):
+        rfq = db.session.get(RFQ, quote.rfq_id)
+    return lead, account, rfq
+
+
+def _sell_value(quote):
+    from app.services import ff_rates
+
+    total = _number(getattr(quote, 'total_amount', None))
+    if total:
+        return total
+    summary = ff_rates.margin_summary(quote)
+    return summary['sell_inr'] or None
+
+
+def _number(value):
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def build_pack(quote, *, actor=None, lead=None, account=None, rfq=None,
@@ -193,7 +261,15 @@ def build_pack(quote, *, actor=None, lead=None, account=None, rfq=None,
 
     payload = build_payload(quote, pack=pack, lead=lead,
                             account=account, rfq=rfq)
-    path = _write_xlsx(payload, quote, out_dir=out_dir)
+    problems = payload_problems(payload)
+    to_fill = [(f, _fill_note(f)) for f in tms_intake.CANNOT_SUPPLY]
+    for p in problems:
+        field = p.split(':', 1)[0]
+        to_fill.insert(0, (field, p))
+    path = _write_xlsx(payload, quote, out_dir=out_dir,
+                       to_fill=to_fill,
+                       extra_sheets=(('Charges (not imported)',
+                                      _charge_rows(quote)),))
     pack.payload_json = json.dumps(payload, indent=2, default=str)
     pack.file_path = path
     pack.built_at = datetime.utcnow()
@@ -202,94 +278,134 @@ def build_pack(quote, *, actor=None, lead=None, account=None, rfq=None,
     return pack, payload, path
 
 
-def _write_xlsx(payload, quote, *, out_dir=None):
+#: Why the CRM has nothing to put in each one. Short, because it is
+#: read in a spreadsheet cell by somebody filling a form in.
+_FILL_NOTES = {
+    'shipper_name': 'the CRM records an account and a contact, not '
+                    'a shipper and a consignee',
+    'consignee_name': 'as above — and on an import the consignee is '
+                      'usually our own client',
+    'carrier_name': 'known only once a rate is chosen; the chosen '
+                    'vendor is on the Charges sheet',
+    'overseas_agent_name': 'as above',
+    'pol_code': 'UN/LOCODE for sea, IATA for air. The CRM holds the '
+                'port as free text only, on the Shipment sheet',
+    'pod_code': 'as above',
+    'etd': 'no sailing or flight is booked at quotation',
+    'eta': 'as above',
+    'incoterm_place': 'the CRM records the Incoterm, not the named '
+                      'place that completes it',
+    'customer_code': 'the TMS client code is not held in the CRM',
+}
+
+
+def _fill_note(field):
+    if field in _FILL_NOTES:
+        return _FILL_NOTES[field]
+    if field in ('hs_code', 'package_count', 'package_kind',
+                 'gross_weight_kg', 'volume_cbm', 'container_count',
+                 'dg_class', 'un_number'):
+        return ('cargo detail: quoted from the enquiry, never '
+                'stored as figures — take it from the booking')
+    return 'the CRM has no column for this'
+
+
+def _charge_rows(quote):
+    """The priced lines, for a person to read. The TMS reader
+    ignores this sheet: none of its column A values is a field name,
+    which is deliberate — a sheet that answered a field twice would
+    override the Shipment sheet."""
+    from app.models.ff import RateRequest
+    from app.models.quote import QuoteLine
+
+    rows = [('Line', 'Service', 'Charge group', 'Description',
+             'Sell (INR)', 'Cost (INR)', 'Vendor')]
+    for ln in (QuoteLine.query.filter_by(quote_id=quote.id)
+               .order_by(QuoteLine.line_no.asc()).all()):
+        vendor = ''
+        if ln.source_rate_request_id:
+            rr = db.session.get(RateRequest, ln.source_rate_request_id)
+            vendor = rr.vendor_name if rr else ''
+        rows.append((ln.line_no, ln.service or '',
+                     ln.charge_group or '', ln.description or '',
+                     float(ln.line_total or 0),
+                     float(ln.cost_inr) if ln.cost_inr is not None
+                     else '', vendor))
+    return rows
+
+
+def _write_xlsx(payload, quote, *, out_dir=None, title=None,
+                to_fill=(), extra_sheets=()):
+    """The pack, as a workbook the TMS reader can take as it stands.
+
+    Column A is the field name and column B the value, which is the
+    whole of the reader's contract. Two things about it decide the
+    layout here:
+
+    - It walks **every sheet** and keeps any row whose column A is a
+      name it knows, and where a name appears twice the **last
+      sheet wins**. So the fields are written on exactly one sheet,
+      and no other sheet may put a field name in column A. The
+      "To fill in" sheet therefore lists its names in column *B*
+      behind a label — a sheet listing them in A with an empty B
+      would blank every value, because a blank cell is absent.
+    - A blank cell is absent, not empty, so a field we have no
+      answer for is simply not written.
+    """
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill
+    from openpyxl.styles import Alignment, Font, PatternFill
 
     root = out_dir or os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__)))), PACK_DIR)
     os.makedirs(root, exist_ok=True)
-    name = (payload.get('crn') or payload.get('quote_number')
+    name = (payload.get('reference') or payload.get('quote_number')
             or f'quote-{quote.id}')
-    # Two payload shapes share this writer: a forwarding handover
-    # carries a `shipment` block, a job handover carries `job`. The
-    # charges sheet is identical for both, which is the half worth
-    # not duplicating.
-    detail = payload.get('shipment') or payload.get('job') or {}
-    is_job = 'job' in payload
-    prefix = 'job_handover' if is_job else 'ff_handover'
-    path = os.path.join(root, f'{prefix}_{name}.xlsx')
+    safe = re.sub(r'[^A-Za-z0-9._-]+', '_', str(name)).strip('_')
+    path = os.path.join(root, f'ff_handover_{safe}.xlsx')
 
     wb = Workbook()
-    ws = wb.active
-    ws.title = 'Handover'
     head = Font(bold=True, color='FFFFFF')
     fill = PatternFill('solid', fgColor='1F2937')
+    wrap = Alignment(wrap_text=True, vertical='top')
 
-    ws.append([(f'{detail.get("vertical") or "Job"} handover pack')
-               if is_job else 'Freight Forwarding handover pack'])
-    ws['A1'].font = Font(bold=True, size=14)
-    ws.append([payload['format_note']])
-    ws.append([])
-    if is_job:
-        specific = (
-            ('Vertical', detail.get('vertical', '')),
-            ('Job type', detail.get('job_type', '')),
-            ('From', detail.get('site_from', '')),
-            ('To', detail.get('site_to', '')),
-            ('Scope', detail.get('scope', '')),
-            ('Cargo', detail.get('cargo', '')),
-            ('Start by', detail.get('start_by', '')),
-        )
-    else:
-        specific = (
-            ('Mode', detail.get('mode', '')),
-            ('Incoterm', detail.get('incoterm', '')),
-            ('Client is', detail.get('client_party', '')),
-            ('Origin', detail.get('origin', '')),
-            ('Destination', detail.get('destination', '')),
-            ('Cargo', detail.get('cargo', '')),
-        )
-    for label, value in (
-            ('CRN', payload['crn']),
-            ('Quote', payload['quote_number']),
-            ('Customer', payload['customer']['name']),
-    ) + specific + (
-            ('Confirmed at', payload['confirmation']['received_at']),
-            ('Confirmed by', payload['confirmation']['from']),
-            ('Confirmation subject', payload['confirmation']['subject']),
-            ('Message-Id', payload['confirmation']['message_id'])):
-        ws.append([label, value])
-        ws.cell(ws.max_row, 1).font = Font(bold=True)
-    ws.column_dimensions['A'].width = 24
-    ws.column_dimensions['B'].width = 60
+    ws = wb.active
+    ws.title = 'Shipment'
+    for field in tms_intake.PART_A_FIELDS + ('gst_treatment',):
+        if field in payload:
+            ws.append([field, payload[field]])
+    ws.column_dimensions['A'].width = 22
+    ws.column_dimensions['B'].width = 52
 
-    cs = wb.create_sheet('Charges')
-    cs.append(['Line', 'Service', 'Charge group', 'Description',
-               'Sell (INR)', 'Cost (INR)', 'Margin (INR)', 'Vendor'])
-    for cell in cs[1]:
-        cell.font, cell.fill = head, fill
-    for c in payload['charges']:
-        sell = c['sell_inr'] or 0
-        cost = c['cost_inr']
-        cs.append([c['line_no'], c['service'], c['charge_group'],
-                   c['description'], sell, cost,
-                   (sell - cost) if cost is not None else '',
-                   c['vendor'] or ''])
-    t = payload['totals']
-    cs.append([])
-    cs.append(['', 'TOTAL', '', '', t['sell_inr'], t['cost_inr'],
-               t['margin_inr'], ''])
-    cs.cell(cs.max_row, 2).font = Font(bold=True)
-    if not t['margin_reliable']:
-        cs.append([])
-        cs.append(['', 'Some lines carry no cost — the margin above is '
-                       'overstated by whatever they cost.'])
-        cs.cell(cs.max_row, 2).font = Font(bold=True, color='B45309')
-    for i, w in enumerate((7, 26, 18, 40, 14, 14, 14, 24), start=1):
-        cs.column_dimensions[cs.cell(1, i).column_letter].width = w
-    cs.freeze_panes = 'A2'
+    if to_fill:
+        fs = wb.create_sheet('To fill in')
+        fs.append(['Before importing, add these on the Shipment '
+                   'sheet. They are in column B here on purpose: a '
+                   'field name in column A of any sheet is read, '
+                   'and the last sheet wins, so listing them there '
+                   'would wipe what is already filled.'])
+        fs.cell(1, 1).alignment = wrap
+        fs.column_dimensions['A'].width = 18
+        fs.column_dimensions['B'].width = 30
+        fs.column_dimensions['C'].width = 60
+        fs.append([])
+        fs.append(['Fill in:', 'field', 'note'])
+        for cell in fs[3]:
+            cell.font, cell.fill = head, fill
+        for field, note in to_fill:
+            fs.append(['', field, note])
+            fs.cell(fs.max_row, 3).alignment = wrap
+
+    for sheet_name, rows in extra_sheets:
+        es = wb.create_sheet(sheet_name[:28])
+        for i, row in enumerate(rows):
+            es.append(list(row))
+            if i == 0:
+                for cell in es[1]:
+                    cell.font, cell.fill = head, fill
+        for col, width in (('A', 8), ('B', 26), ('C', 20),
+                           ('D', 40), ('E', 14), ('F', 14)):
+            es.column_dimensions[col].width = width
 
     wb.save(path)
     return path

@@ -298,13 +298,14 @@ def test_the_pack_carries_the_charges_and_the_margin(world, tmp_path):
             rfq=db.session.get(RFQ, world['rfq']),
             out_dir=str(tmp_path))
         db.session.commit()
-    assert len(payload['charges']) == 2
-    assert payload['totals']['sell_inr'] == 150000.0
-    assert payload['totals']['cost_inr'] == 115000.0
-    assert payload['totals']['margin_inr'] == 35000.0
-    assert payload['crn'] == 'PWL-C26-000009'
-    assert payload['shipment']['incoterm'] == 'FOB'
-    assert payload['shipment']['mode'] == 'Sea'
+    # Part A is flat and carries the shipment, not the charges —
+    # the TMS prices the job from its own vendor orders, and the
+    # priced lines ride along on a sheet its reader ignores.
+    assert payload['reference'] == 'PWL-C26-000009'
+    assert payload['incoterm'] == 'FOB'
+    assert payload['mode'] == 'SEA', 'the TMS takes SEA, not Sea'
+    assert payload['sell_value'] == 150000.0
+    assert payload['currency'] == 'INR'
     assert os.path.exists(path)
 
 
@@ -317,8 +318,16 @@ def test_the_pack_records_the_message_id(world, tmp_path):
         db.session.commit()
         _p, payload, _f = ff_handover.build_pack(
             q, actor=ADMIN, out_dir=str(tmp_path))
-    assert payload['confirmation']['message_id'] == \
-        '<proof@northstarmills.com>'
+    # The confirmation is evidence on our side; Part A has no field
+    # for it, so it stays on the pack row rather than being invented
+    # into the payload.
+    assert 'confirmation' not in payload
+    with flask_app.app_context():
+        from app.models.ff import FfHandoverPack
+        row = FfHandoverPack.query.filter_by(quote_id=_p.quote_id
+                                             ).first()
+        assert row.confirmation_message_id == \
+            '<proof@northstarmills.com>'
 
 
 def test_an_unreliable_margin_is_declared_in_the_pack(world, tmp_path):
@@ -331,9 +340,14 @@ def test_an_unreliable_margin_is_declared_in_the_pack(world, tmp_path):
         ff_handover.capture_confirmation(q, email='b@x.com',
                                          subject='go')
         db.session.commit()
-        _p, payload, _f = ff_handover.build_pack(
+        _p, payload, path = ff_handover.build_pack(
             q, actor=ADMIN, out_dir=str(tmp_path))
-    assert payload['totals']['margin_reliable'] is False
+    # The margin is not a Part A field. It is on the charges sheet,
+    # which the reader ignores and a person reads.
+    assert 'totals' not in payload
+    from openpyxl import load_workbook
+    wb = load_workbook(path)
+    assert 'Charges (not imported)' in wb.sheetnames
 
 
 def test_nothing_is_sent_to_the_tms(world, tmp_path, monkeypatch):
@@ -362,13 +376,18 @@ def test_the_handover_module_does_not_import_notify_tms():
         'ff_handover can reach the TMS')
 
 
-def test_the_invented_fields_are_listed(world):
-    """FF-COMMS-02 was not available. The fields this release made up
-    are enumerated so they can be corrected in one place rather than
-    hunted through the code."""
-    assert ff_handover.INVENTED
-    assert 'shipment.incoterm' in ff_handover.INVENTED
-    assert 'confirmation.message_id' in ff_handover.INVENTED
+def test_nothing_is_invented_any_more(world):
+    """The real format arrived. What replaces the INVENTED list is
+    its opposite: fields the format defines that the CRM has no
+    column for, so a person fills them rather than discovering them
+    at the far end."""
+    assert not hasattr(ff_handover, 'INVENTED')
+    assert 'shipper_name' in ff_handover.CANNOT_SUPPLY
+    assert 'pol_code' in ff_handover.CANNOT_SUPPLY
+    # And nothing in CANNOT_SUPPLY is a name we made up.
+    from app.services import tms_intake
+    for field in ff_handover.CANNOT_SUPPLY:
+        assert field in tms_intake.PART_A_FIELDS
 
 
 def test_the_payload_says_where_the_format_came_from(world, tmp_path):
@@ -379,7 +398,10 @@ def test_the_payload_says_where_the_format_came_from(world, tmp_path):
         db.session.commit()
         _p, payload, _f = ff_handover.build_pack(
             q, actor=ADMIN, out_dir=str(tmp_path))
-    assert 'FF-COMMS-02' in payload['format_note']
+    # There is no format_note any more: every key in the payload is
+    # a field the reader knows, and a note would be one it does not.
+    from app.services import tms_intake
+    assert not tms_intake.unknown_fields(payload)
 
 
 def test_the_payload_is_stored_so_it_can_be_reviewed(world, tmp_path):
@@ -392,7 +414,8 @@ def test_the_payload_is_stored_so_it_can_be_reviewed(world, tmp_path):
             q, actor=ADMIN, out_dir=str(tmp_path))
         db.session.commit()
         stored = json.loads(pack.payload_json)
-    assert stored['event'] == 'ff.handover'
+    assert stored['reference'] == 'PWL-C26-000009'
+    assert stored['customer']
 
 
 # ── the flag ─────────────────────────────────────────────────────────

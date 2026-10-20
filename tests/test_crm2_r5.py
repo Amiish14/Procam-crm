@@ -98,29 +98,38 @@ def test_there_is_no_second_copy_of_the_machinery(absent):
         f'{absent} is a second copy of something ff_* already does'
 
 
-def test_the_job_handover_reuses_the_pack_writer():
-    """Two payload shapes, one sheet writer. The charges half is
-    identical and is the half worth not duplicating."""
+def test_the_two_packs_no_longer_share_a_writer():
+    """They did, while both were CRM-shaped. The real formats are
+    not alike: Part A is consumed by a reader, one field name per
+    row, and Part B is typed into three screens by a person. One
+    writer would have to be wrong for one of its two readers."""
     src = open(os.path.join(_ROOT, 'app', 'services',
                             'job_handover.py')).read()
-    assert 'ff_handover._write_xlsx' in src
-    assert 'from openpyxl' not in src
+    assert 'ff_handover._write_xlsx' not in src
+    assert 'Type into the TMS' in src
 
 
-def test_the_job_payload_says_what_it_invented():
-    """No TMS Job import contract exists on this system."""
-    assert job_handover.INVENTED
-    assert 'job.job_type' in job_handover.INVENTED
+def test_the_job_payload_invents_nothing_now():
+    """The contract arrived: docs/tms_import_formats.md, Part B.
+    What replaces INVENTED is CANNOT_SUPPLY — real field names the
+    CRM has no column for."""
+    assert not hasattr(job_handover, 'INVENTED')
+    assert 'procam_gst_reg_id' in job_handover.CANNOT_SUPPLY
+    assert job_handover.THEIRS_TO_NUMBER == (
+        'code', 'pcn_job_no', 'po_number')
 
 
 @pytest.mark.parametrize('vertical,job_type', [
-    ('General Transport', 'ROAD'),
-    ('Heavy Transport', 'ODC'),
-    ('Installation', 'INSTALL'),
-    ('Warehousing', 'WAREHOUSE'),
-    ('Something Else', 'GENERAL'),
+    ('General Transport', 'Road'),
+    ('Heavy Transport', 'Road'),
+    ('Project Freight', 'Sea'),
+    ('Installation', 'Installation'),
+    ('Warehousing', 'Warehouse'),
+    ('Something Else', 'Road'),
 ])
 def test_a_job_type_per_vertical(vertical, job_type):
+    """ROAD, ODC, INSTALL and GENERAL were mine. These are the
+    values the TMS's own worked examples use."""
     assert job_handover.job_type_for(vertical) == job_type
 
 
