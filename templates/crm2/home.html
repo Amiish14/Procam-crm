@@ -52,6 +52,24 @@
       border-radius:2px; margin-right:5px; vertical-align:-1px; }
   .ck-note { font-size:12px; color:#6b7280; margin-top:10px;
       line-height:1.6; }
+  .ck-work { display:grid; gap:12px; margin-top:18px;
+      grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); }
+  .ck-panel { background:#fff; border:1px solid #e5e7eb;
+      border-radius:10px; padding:13px 15px; }
+  .ck-panel h2 { font-size:13px; margin:0 0 9px; letter-spacing:.01em; }
+  .ck-panel h2 span { color:#9ca3af; font-weight:500; }
+  .ck-item { display:flex; gap:9px; align-items:baseline;
+      padding:6px 0; border-top:1px solid #f3f4f6; font-size:13px; }
+  .ck-item:first-of-type { border-top:0; }
+  .ck-item b { font-weight:600; flex:1; }
+  .ck-item em { font-style:normal; font-size:11.5px; color:#6b7280; }
+  .ck-late { color:#DC2626; font-weight:600; }
+  .ck-empty { font-size:12.5px; color:#9ca3af; padding:5px 0; }
+  .ck-confirm { border:1px solid #059669; background:#fff;
+      color:#047857; border-radius:7px; padding:3px 10px;
+      font:inherit; font-size:12px; cursor:pointer; }
+  .ck-confirm:hover { background:#ECFDF5; }
+  .ck-confirm[disabled] { opacity:.5; cursor:default; }
   .ck-strip { display:flex; gap:3px; align-items:center; flex-wrap:wrap; }
   .ck-step { font-size:10.5px; padding:2px 7px; border-radius:999px;
       border:1px solid #e5e7eb; color:#9ca3af; background:#fff; }
@@ -79,6 +97,8 @@
   </div>
 
   <div class="ck-tiles" id="tiles"></div>
+
+  <div class="ck-work" id="work"></div>
 
   <div class="ck-map" id="map"></div>
   <div class="ck-key">
@@ -151,7 +171,80 @@ function bar(r){
     + seg(r.grey, 'ck-grey') + '</div>';
 }
 
+/* My work ----------------------------------------------------------- */
+function panel(title, total, rows, render){
+  const more = total > rows.length
+    ? ' <span>' + rows.length + ' of ' + total + '</span>'
+    : (total ? ' <span>' + total + '</span>' : '');
+  const body = rows.length
+    ? rows.map(render).join('')
+    : '<div class="ck-empty">Nothing here.</div>';
+  return '<div class="ck-panel"><h2>' + esc(title) + more + '</h2>'
+    + body + '</div>';
+}
+
+function leadRow(i){
+  return '<div class="ck-item"><b>' + esc(i.title) + '</b>'
+    + '<em>' + esc(i.stage || '') + '</em></div>';
+}
+
+function lateRow(i){
+  return '<div class="ck-item"><b>' + esc(i.title) + '</b>'
+    + '<em class="ck-late">' + esc(i.due || i.next_action_date || '')
+    + '</em></div>';
+}
+
+function taskRow(t){
+  return '<div class="ck-item"><b>' + esc(t.title) + '</b>'
+    + '<em' + (t.overdue ? ' class="ck-late"' : '') + '>'
+    + esc(t.why || t.task_key) + '</em></div>';
+}
+
+function confirmRow(i){
+  const n = i.value_inr == null ? ''
+    : Number(i.value_inr).toLocaleString('en-IN');
+  return '<div class="ck-item" data-lead="' + i.id + '">'
+    + '<b>' + esc(i.title) + '</b><em>' + n + '</em>'
+    + '<button class="ck-confirm" data-confirm="' + i.id
+    + '">Confirm</button></div>';
+}
+
+async function drawWork(){
+  let d;
+  try { d = await jget('/api/crm2/my-work'); } catch (e) { return; }
+  const w = d.work;
+  document.getElementById('work').innerHTML =
+      panel('My next action', w.next_action_total, w.next_action, leadRow)
+    + panel('Overdue leads', w.overdue_leads_total, w.overdue_leads,
+            lateRow)
+    + panel('Overdue tasks', w.overdue_tasks_total, w.overdue_tasks,
+            taskRow)
+    + panel('Escalated to me', w.escalated_total, w.escalated, taskRow)
+    + panel('Confirm value', w.to_confirm_total, w.to_confirm,
+            confirmRow);
+}
+
+document.getElementById('work').addEventListener('click', async ev => {
+  const btn = ev.target.closest('[data-confirm]');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = 'Confirming…';
+  try {
+    const r = await fetch(crmUrl + '/api/crm2/leads/'
+      + btn.dataset.confirm + '/confirm-value',
+      {method:'POST', credentials:'same-origin',
+       headers:{'Content-Type':'application/json'}, body:'{}'});
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'failed');
+    btn.closest('.ck-item').remove();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Confirm';
+  }
+});
+
 (async function(){
+  drawWork();
   let d;
   try { d = await jget('/api/crm2/cockpit'); }
   catch (e) {

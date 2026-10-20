@@ -6,6 +6,8 @@ CRM 2.0: the cockpit, global search and the stage map.
     GET  /api/crm2/search?q=              one box, every record type
     GET  /api/crm2/pipeline               the admin map, stage by stage
     GET  /api/crm2/leads/<id>/stage-map   one lead's line
+    GET  /api/crm2/my-work                next action, overdue, escalated
+    POST /api/crm2/leads/<id>/confirm-value   the owner agrees
 
 All behind FEATURE_CRM2. With the flag off every route 404s and no
 existing screen changes — the cockpit is a new page beside the old
@@ -37,10 +39,17 @@ PER_KIND = 8
 MIN_QUERY = 2
 
 
-def _on():
+def _on(emp_code=None):
+    """On, and on for this person.
+
+    While CRM 2.0 is being reviewed the flag is limited to the people
+    reviewing it, so the cockpit exists for them and 404s for
+    everybody else. The limit narrows and never grants: a flag that
+    is off is off for all.
+    """
     from app.services import flags
     try:
-        return bool(flags.on('FEATURE_CRM2'))
+        return bool(flags.on_for('FEATURE_CRM2', emp_code))
     except Exception:                                     # noqa: BLE001
         return False
 
@@ -50,11 +59,13 @@ def _crm2(f):
     per record, exactly as the Workbench scopes them."""
     @wraps(f)
     def wrap(*a, **kw):
-        if not _on():
+        emp = session.get('emp_code')
+        if not _on(emp):
             # 404, not 403: from outside, an unbuilt feature should
-            # look like it does not exist.
+            # look like it does not exist — and somebody outside the
+            # review group should not learn that it exists either.
             return jsonify(ok=False, error='Not found'), 404
-        if not session.get('emp_code'):
+        if not emp:
             return jsonify(ok=False, error='Not authenticated'), 401
         return f(*a, **kw)
     return wrap
@@ -198,3 +209,86 @@ def api_pipeline():
                    total=sum(r['total'] for r in rows),
                    stuck=sum(r['red'] for r in rows),
                    unknown=sum(r['grey'] for r in rows))
+
+
+# ── R3: one person's work, from the engines that already decide it ───
+@bp.route('/api/crm2/my-work')
+@_crm2
+def api_my_work():
+    """What now, what is late, what has been pushed at me.
+
+    Every number here is fetched from an engine that already exists —
+    the Workbench's own item list and the task engine's escalation
+    columns. The cockpit adds the arrangement and nothing else. A
+    second opinion about "overdue" is exactly how this CRM ended up
+    with 7,318 open tasks and a twin row for each escalation.
+    """
+    from app.services import cockpit
+
+    emp = session.get('emp_code')
+    return jsonify(ok=True, work=cockpit.for_person(
+        sc_mod.current(), emp))
+
+
+@bp.route('/api/crm2/leads/<int:lid>/confirm-value', methods=['POST'])
+@_crm2
+def api_confirm_value(lid):
+    """The owner agrees with a figure copied from the opportunity,
+    or replaces it.
+
+    118 open leads carry a value copied from the opportunity row
+    beside them, marked unconfirmed. Until somebody says the number
+    is right it is evidence, not a forecast, so the lead stays on the
+    Value missing tile and this is the button that takes it off.
+    """
+    from app import Lead, db
+    from app.services import audit
+
+    emp = session.get('emp_code')
+    lead = sc_mod.leads(Lead.query.filter(Lead.id == lid),
+                        sc=sc_mod.current()).first()
+    if lead is None:
+        return jsonify(ok=False, error='Not found'), 404
+
+    body = request.get_json(silent=True) or {}
+    was = (float(lead.estimated_value_inr)
+           if lead.estimated_value_inr else None)
+    amount = body.get('estimated_value')
+    if amount not in (None, ''):
+        try:
+            amount = float(amount)
+        except (TypeError, ValueError):
+            return jsonify(ok=False,
+                           error='That is not a number.'), 400
+        if amount <= 0:
+            return jsonify(
+                ok=False,
+                error='A value has to be more than nothing.'), 400
+        lead.estimated_value_inr = amount
+        lead.value_source = 'owner'
+    elif was is None:
+        return jsonify(
+            ok=False,
+            error='There is no figure to confirm. Enter one.'), 400
+
+    lead.value_confirmed = True
+    audit.record('lead.value_confirmed', 'lead', str(lead.id),
+                 old={'estimated_value_inr': was,
+                      'value_confirmed': False},
+                 new={'estimated_value_inr':
+                      float(lead.estimated_value_inr),
+                      'value_source': lead.value_source,
+                      'value_confirmed': True},
+                 actor=emp,
+                 reason=('confirmed as it stood' if amount in (None, '')
+                         else 'replaced with the owner\'s own figure'))
+    db.session.commit()
+    try:
+        from app.workbench import service as wb
+        wb.hygiene_cache_clear()
+    except Exception:                                     # noqa: BLE001
+        pass
+    return jsonify(ok=True, lead_id=lead.id,
+                   estimated_value=float(lead.estimated_value_inr),
+                   value_source=lead.value_source,
+                   value_confirmed=True)

@@ -175,6 +175,88 @@ def on(name, default=None):
     return bool(default)
 
 
+#: A flag can be limited to named people while it is being looked
+#: at. Stored beside the flag as `flag.<NAME>.only`, a list of
+#: employee codes.
+ONLY_SUFFIX = '.only'
+
+
+def only_for(name):
+    """Employee codes this flag is limited to, or () for everybody."""
+    import json
+
+    try:
+        from app.models.integration import AppSetting
+        row = AppSetting.query.filter_by(
+            key='flag.' + name + ONLY_SUFFIX).first()
+    except Exception:                                     # noqa: BLE001
+        return ()
+    if row is None:
+        return ()
+    try:
+        codes = json.loads(row.value_json)
+    except Exception:                                     # noqa: BLE001
+        codes = []
+    if isinstance(codes, str):
+        codes = [codes]
+    return tuple(sorted({str(c).strip().upper()
+                         for c in (codes or []) if str(c).strip()}))
+
+
+def on_for(name, emp_code, default=None):
+    """Is this flag on *for this person*?
+
+    A flag that is off is off for everybody — the limit narrows, it
+    never grants. That ordering matters: a reviewer list left behind
+    on a flag somebody later turned off must not quietly switch it
+    back on for them.
+    """
+    if not on(name, default):
+        return False
+    codes = only_for(name)
+    if not codes:
+        return True
+    return bool(emp_code) and str(emp_code).strip().upper() in codes
+
+
+def limit_to(name, codes, *, actor=None):
+    """Limit a flag to these people, or pass nothing to lift it."""
+    import json
+
+    from app import db
+    from app.models.integration import AppSetting
+
+    if name not in DEFAULTS:
+        raise ValueError(f'unknown flag {name!r}')
+    clean = sorted({str(c).strip().upper() for c in (codes or [])
+                    if str(c).strip()})
+    key = 'flag.' + name + ONLY_SUFFIX
+    was = only_for(name)
+    row = AppSetting.query.filter_by(key=key).first()
+    if not clean:
+        if row is not None:
+            db.session.delete(row)
+    else:
+        if row is None:
+            row = AppSetting(key=key)
+            db.session.add(row)
+        row.value_json = json.dumps(clean)
+        row.updated_by = actor
+    db.session.commit()
+    cache_clear()
+
+    try:
+        from app.services import audit
+        audit.record('flag.limited', 'AppSetting', key,
+                     old={'only': list(was)}, new={'only': clean},
+                     actor=actor,
+                     reason=(f'limited to {", ".join(clean)}' if clean
+                             else 'limit lifted — everyone sees it'))
+    except Exception:                                     # noqa: BLE001
+        pass
+    return tuple(clean)
+
+
 def source_of(name):
     """Where the current answer came from, for the admin screen.
 
@@ -253,5 +335,16 @@ def mail_stopped():
 
 
 def all_flags():
-    """[(name, description, state, source)] for the admin screen."""
+    """[(name, description, state, source)] for the admin screen.
+
+    Four items, not five: three call sites and a template unpack
+    this, and a flag screen that 500s is a worse outcome than one
+    that does not mention the reviewer list. `all_limits()` carries
+    that separately.
+    """
     return [(n, d, on(n), source_of(n)) for n, d, _s in FLAGS]
+
+
+def all_limits():
+    """{NAME: (codes…)} for the flags that are limited to people."""
+    return {n: only_for(n) for n, _d, _s in FLAGS if only_for(n)}

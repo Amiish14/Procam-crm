@@ -234,11 +234,27 @@ def _value_missing(item, _ctx):
     forecast built on this CRM is a floor. This is the subset that
     can actually be fixed: somebody has asked us for a price, so a
     value exists in the world and only needs typing in.
+
+    118 of them were answered by copying the figure from the
+    opportunity row beside the lead. Those leave the tile only when
+    an owner confirms them: a copied figure is enough for the lead
+    to move on and not enough to forecast with, and if confirming
+    were optional the distinction would last about a week.
     """
     from app.services import value_gate
-    return (item.get('kind') == 'lead'
-            and item.get('stage') in value_gate.OPEN_REQUIRES_VALUE
-            and not item.get('value_inr'))
+    if item.get('kind') != 'lead':
+        return False
+    if item.get('stage') not in value_gate.OPEN_REQUIRES_VALUE:
+        return False
+    return (not item.get('value_inr')
+            or item.get('value_confirmed') is False)
+
+
+def needs_confirming(item):
+    """On the tile because nobody has agreed with the number, rather
+    than because there is no number."""
+    return bool(item.get('value_inr')) and \
+        item.get('value_confirmed') is False
 
 
 def _everything(_item, _ctx):
@@ -341,8 +357,9 @@ WORKBENCH_FILTERS = (
     Filter('value_missing', _value_missing,
            tile='Value missing', chip='Value missing',
            note='Open and at RFQ Generated or later with no quoted '
-                'amount and no estimate. The lead cannot move on until '
-                'one is entered.'),
+                'amount and no estimate — or with a figure copied '
+                'from the opportunity that nobody has confirmed. '
+                'Confirm it, or type a better one.'),
     Filter('everything', _everything, chip='Everything'),
 )
 

@@ -39,6 +39,7 @@ _LEAD_COLUMNS = (
     'id', 'company', 'company_id', 'project', 'stage', 'procam_vertical',
     'assigned_to', 'assigned_name', 'secondary_owner', 'followup_date',
     'next_action', 'estimated_value_inr', 'quoted_amount_inr', 'cost_million',
+    'value_source', 'value_confirmed',
     'quote_date', 'quote_validity_date', 'quote_no', 'rfq_date', 'opp_number',
     'created_at', 'updated_at', 'stage_entered_at', 'is_archived',
     # For the Overview panel's "Never actioned" and for the Mode
@@ -350,6 +351,12 @@ def lead_items(sc, *, today=None, include_quiet=False):
             'vertical': l.procam_vertical or '',
             'stage': l.stage or '',
             'value_inr': float(value) if value is not None else None,
+            'value_source': l.value_source or '',
+            # None means nobody has been asked — the ordinary case for
+            # a figure an owner typed. False means somebody must look.
+            # The other item kinds carry neither, and the tile only
+            # ever looks at leads.
+            'value_confirmed': l.value_confirmed,
             'last_activity_days': contacted_days,
             'quiet_days': idle_days,
             'next_action': l.next_action or '',

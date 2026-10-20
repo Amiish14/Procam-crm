@@ -556,6 +556,12 @@ class Lead(db.Model):
     opportunity_value_num = db.Column(db.Numeric(15, 2), nullable=True)
     opportunity_fx_rate   = db.Column(db.Numeric(12, 4), nullable=True)
     value_basis           = db.Column(db.String(20), nullable=True)
+    #: Where the number came from, and whether a person has agreed
+    #: with it. A figure copied from the opportunity beside the lead
+    #: is better than nothing and is not the same as one its owner
+    #: typed — the tile keeps asking until somebody says so.
+    value_source          = db.Column(db.String(24), nullable=True)
+    value_confirmed       = db.Column(db.Boolean, nullable=True)
     quote_no              = db.Column(db.String(40), nullable=True)
     quote_value_num       = db.Column(db.Numeric(15, 2), nullable=True)
     quote_fx_rate         = db.Column(db.Numeric(12, 4), nullable=True)
@@ -5148,6 +5154,8 @@ def init_db():
         _adds = [
             ('companies',     'state',            'VARCHAR(80)'),
             ('companies',     'aliases',          'JSON'),
+            ('leads',         'value_source',     'VARCHAR(24)'),
+            ('leads',         'value_confirmed',  'BOOLEAN'),
             ('contacts',      'state',            'VARCHAR(80)'),
             ('opportunities', 'won_project_ref',  'VARCHAR(60)'),
             ('opportunities', 'won_project_at',   'TIMESTAMP'),

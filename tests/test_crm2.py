@@ -161,6 +161,26 @@ def world():
         yield {'mine': mine.id, 'theirs': theirs.id, 'acct': acct.id}
 
 
+def _post(client, url, payload=None):
+    """POST the way the page does, with a token.
+
+    Not by turning CSRF off for this module: the Confirm button is a
+    write, and a write without a token has silently done nothing six
+    times in this codebase. If the token handling here is wrong, the
+    button is wrong, and the test should say so.
+    """
+    from flask import session as flask_session
+    from flask_wtf.csrf import generate_csrf
+
+    with flask_app.test_request_context():
+        token = generate_csrf()
+        raw = flask_session['csrf_token']
+    with client.session_transaction() as s:
+        s['csrf_token'] = raw
+    return client.post(url, json=payload or {},
+                       headers={'X-CSRFToken': token})
+
+
 def _client(emp='CRM2A'):
     c = flask_app.test_client()
     with c.session_transaction() as s:
@@ -428,3 +448,216 @@ def test_the_overlap_report_joins_on_opp_number_too():
         reached = {l.id for _o, l, _k in s['matched']}
         assert lid in reached, 'matched only by opp_number, and missed'
         assert s['by_key']['opp_number'] >= 1
+
+
+# ── 2: the flag, limited to the people reviewing it ──────────────────
+def test_a_limited_flag_is_on_for_them_and_absent_for_everyone_else(
+        armed, world):
+    with flask_app.app_context():
+        flags.limit_to('FEATURE_CRM2', ['CRM2A'], actor='TEST')
+        try:
+            assert flags.on_for('FEATURE_CRM2', 'CRM2A')
+            assert not flags.on_for('FEATURE_CRM2', 'CRM2S')
+            assert flags.only_for('FEATURE_CRM2') == ('CRM2A',)
+            assert _client('CRM2A').get('/api/crm2/cockpit'
+                                        ).status_code == 200
+            assert _client('CRM2S').get('/api/crm2/cockpit'
+                                        ).status_code == 404
+        finally:
+            flags.limit_to('FEATURE_CRM2', [], actor='TEST')
+        assert flags.on_for('FEATURE_CRM2', 'CRM2S'), 'limit not lifted'
+
+
+def test_a_limit_narrows_and_never_grants():
+    """A reviewer list left behind on a flag somebody later turned
+    off must not switch it back on for them."""
+    with flask_app.app_context():
+        flags.cache_clear()
+        flags.limit_to('FEATURE_CRM2', ['CRM2A'], actor='TEST')
+        try:
+            assert not flags.on('FEATURE_CRM2')
+            assert not flags.on_for('FEATURE_CRM2', 'CRM2A')
+        finally:
+            flags.limit_to('FEATURE_CRM2', [], actor='TEST')
+
+
+def test_all_flags_still_unpacks_as_four():
+    """Three call sites and a template unpack this."""
+    for row in flags.all_flags():
+        assert len(row) == 4
+
+
+# ── 1: a copied value keeps asking ───────────────────────────────────
+@pytest.fixture
+def copied():
+    with flask_app.app_context():
+        for l in Lead.query.filter(Lead.source == 'crm2v').all():
+            db.session.delete(l)
+        db.session.commit()
+        lead = Lead(source='crm2v', company='Copied Value Co',
+                    stage='RFQ Generated', assigned_to='CRM2S',
+                    estimated_value_inr=250000,
+                    value_source='opportunity', value_confirmed=False)
+        typed = Lead(source='crm2v', company='Typed Value Co',
+                     stage='RFQ Generated', assigned_to='CRM2S',
+                     estimated_value_inr=400000)
+        db.session.add_all([lead, typed])
+        db.session.commit()
+        yield {'copied': lead.id, 'typed': typed.id}
+
+
+def test_an_unconfirmed_value_stays_on_the_tile(copied):
+    from app.workbench import filters as wbf
+    item = {'kind': 'lead', 'stage': 'RFQ Generated',
+            'value_inr': 250000.0, 'value_confirmed': False}
+    assert wbf.BY_KEY['value_missing'].predicate(item, {})
+    assert wbf.needs_confirming(item)
+
+
+def test_a_value_somebody_typed_does_not(copied):
+    from app.workbench import filters as wbf
+    item = {'kind': 'lead', 'stage': 'RFQ Generated',
+            'value_inr': 400000.0, 'value_confirmed': None}
+    assert not wbf.BY_KEY['value_missing'].predicate(item, {})
+    assert not wbf.needs_confirming(item)
+
+
+def test_no_value_at_all_is_still_the_main_case():
+    from app.workbench import filters as wbf
+    item = {'kind': 'lead', 'stage': 'Quoted', 'value_inr': None,
+            'value_confirmed': None}
+    assert wbf.BY_KEY['value_missing'].predicate(item, {})
+    assert not wbf.needs_confirming(item), 'nothing to confirm'
+
+
+def test_an_unconfirmed_value_still_lets_the_lead_move():
+    """It is a number. The gate asked for a number."""
+    from app.services import value_gate
+
+    class _L:
+        stage = 'RFQ Generated'
+        estimated_value_inr = 250000
+        quoted_amount_inr = None
+        value_confirmed = False
+    assert value_gate.check(_L(), 'Quoted', {}) in (None, True, '') \
+        or not value_gate.check(_L(), 'Quoted', {})
+
+
+def test_confirming_takes_it_off_the_tile(armed, copied):
+    c = _client('CRM2S')
+    r = _post(c, f'/api/crm2/leads/{copied["copied"]}'
+                 f'/confirm-value')
+    assert r.status_code == 200, r.get_data(as_text=True)[:400]
+    with flask_app.app_context():
+        lead = db.session.get(Lead, copied['copied'])
+        assert lead.value_confirmed is True
+        assert lead.value_source == 'opportunity', \
+            'confirming does not change where it came from'
+        from app.models.audit import AuditEvent
+        assert AuditEvent.query.filter_by(
+            action='lead.value_confirmed',
+            entity_id=str(lead.id)).count() == 1
+
+
+def test_confirming_with_a_better_figure_records_the_owner(armed,
+                                                           copied):
+    c = _client('CRM2S')
+    r = _post(c, f'/api/crm2/leads/{copied["copied"]}'
+                 f'/confirm-value', {'estimated_value': 900000})
+    assert r.status_code == 200
+    with flask_app.app_context():
+        lead = db.session.get(Lead, copied['copied'])
+        assert float(lead.estimated_value_inr) == 900000
+        assert lead.value_source == 'owner'
+
+
+def test_confirming_nothing_is_refused(armed, world):
+    c = _client()
+    r = _post(c, f'/api/crm2/leads/{world["theirs"]}'
+                 f'/confirm-value')
+    assert r.status_code == 400
+    assert 'no figure' in r.get_json()['error']
+
+
+def test_confirming_is_scoped(armed, copied):
+    with flask_app.app_context():
+        other = Lead(source='crm2v', company='Not Yours Co',
+                     stage='RFQ Generated', assigned_to='CRM2A',
+                     estimated_value_inr=1, value_confirmed=False)
+        db.session.add(other)
+        db.session.commit()
+        oid = other.id
+    assert _post(_client('CRM2S'),
+                 f'/api/crm2/leads/{oid}/confirm-value'
+                 ).status_code == 404
+
+
+# ── 3: R3 reads the engines, it does not become one ──────────────────
+def test_the_cockpit_imports_no_engine_of_its_own():
+    """The last second opinion about tasks created a twin row per
+    task and doubled every count. This one asks."""
+    src = open(os.path.join(_ROOT, 'app', 'services',
+                            'cockpit.py')).read()
+    for banned in ('TaskDefinition(', 'db.session.add(',
+                   'db.session.commit('):
+        assert banned not in src, \
+            f'cockpit.py should read, not write or define: {banned}'
+    assert 'lead_items' in src and 'TaskInstance' in src
+
+
+def test_my_work_answers_the_three_questions(armed, world):
+    body = _client('CRM2S').get('/api/crm2/my-work').get_json()
+    assert body['ok']
+    w = body['work']
+    for key in ('next_action', 'overdue_leads', 'overdue_tasks',
+                'escalated', 'to_confirm'):
+        assert key in w
+        assert key + '_total' in w
+
+
+def test_my_work_is_one_persons_book_not_the_whole_one(armed, world):
+    """An admin's scope is everything; a cockpit of 945 leads is a
+    report, not a cockpit."""
+    from app.services import cockpit
+    from app.access import scope as sc_mod
+    with flask_app.app_context():
+        wide = sc_mod.for_employee('CRM2A')
+        narrow = cockpit.mine_only(wide, 'CRM2S')
+        assert narrow.codes == {'CRM2S'}
+        assert wide.codes is None or wide.codes != {'CRM2S'}
+
+
+def test_an_escalated_task_reaches_the_person_it_went_to(armed, world):
+    from app.models.task_engine import TaskInstance
+    with flask_app.app_context():
+        t = TaskInstance(
+            task_key='crm2.test', entity_type='lead',
+            entity_id=world['mine'], entity_display='Escalated thing',
+            owner_user_id='CRM2S', status='Escalated',
+            escalated=True, escalated_to='admin.triage',
+            escalated_at=datetime.utcnow())
+        db.session.add(t)
+        db.session.commit()
+        tid = t.id
+    body = _client('CRM2S').get('/api/crm2/my-work').get_json()
+    assert tid in [r['id'] for r in body['work']['escalated']]
+    with flask_app.app_context():
+        db.session.delete(db.session.get(TaskInstance, tid))
+        db.session.commit()
+
+
+def test_the_limit_script_turns_it_on_for_one_person():
+    out = _run('crm2_flag_limit.py', '--on', '--only', 'DIR12010',
+               '--actor', 'TEST')
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert 'visible to: DIR12010' in out.stdout
+    try:
+        with flask_app.app_context():
+            flags.cache_clear()
+            assert flags.on_for('FEATURE_CRM2', 'DIR12010')
+            assert not flags.on_for('FEATURE_CRM2', 'SOMEONE')
+    finally:
+        _run('crm2_flag_limit.py', '--off', '--lift', '--actor', 'TEST')
+        with flask_app.app_context():
+            flags.cache_clear()
+    assert not flags.on('FEATURE_CRM2')
