@@ -8,6 +8,8 @@ FF-COMMS-01 R2 and R3 — references, templates.
   ff_crn_sequences     the counter behind <BU>-<C|T><FY>-<NNNNNN>
   ff_email_templates   FF-ENQ, FF-RFQ, FF-QUOTE, FF-REMIND,
                        FF-CONFIRM, FF-BD
+  ff_handover_packs    the customer's confirmation, which is the PO
+                       on a forwarding job, and the pack built from it
 
 The CRN columns on leads, rfqs and quotes shipped with R1 and are
 already in place; this adds the two tables and seeds the templates.
@@ -31,7 +33,8 @@ from sqlalchemy import inspect, text                      # noqa: E402
 
 from app import app, db                                   # noqa: E402
 
-TABLES = ('ff_crn_sequences', 'ff_email_templates')
+TABLES = ('ff_crn_sequences', 'ff_email_templates',
+          'ff_handover_packs')
 
 
 def main():
@@ -42,7 +45,8 @@ def main():
     args = ap.parse_args()
 
     with app.app_context():
-        from app.models.ff import CrnSequence, FfEmailTemplate
+        from app.models.ff import (CrnSequence, FfEmailTemplate,
+                                   FfHandoverPack)
         from app.services import ff_templates
 
         print(f'database: {db.engine.url}')
@@ -73,13 +77,15 @@ def main():
         if args.down:
             if not args.yes:
                 raise SystemExit('--down needs --yes.')
-            for model in (FfEmailTemplate, CrnSequence):
+            for model in (FfHandoverPack, FfEmailTemplate,
+                          CrnSequence):
                 if model.__tablename__ in have:
                     model.__table__.drop(db.engine)
                     print(f'  dropped {model.__tablename__}')
             return
 
-        for model in (CrnSequence, FfEmailTemplate):
+        for model in (CrnSequence, FfEmailTemplate,
+                      FfHandoverPack):
             if model.__tablename__ in have:
                 print(f'  {model.__tablename__} already present.')
                 continue

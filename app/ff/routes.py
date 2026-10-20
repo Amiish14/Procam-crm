@@ -80,6 +80,20 @@ def _refuse(exc):
     return jsonify(ok=False, error=str(exc)), 400
 
 
+# ── R5: the screens ──────────────────────────────────────────────────
+@bp.route('/ff')
+@_gated
+def ff_home():
+    """Enquiry, rate grid, quote builder and the CRN thread.
+
+    One page with four panels rather than four pages: the work is
+    one job seen from four angles, and a forwarder moves between
+    them a dozen times before a quote goes out.
+    """
+    from flask import render_template
+    return render_template('ff/home.html')
+
+
 # ── R2: references ───────────────────────────────────────────────────
 @bp.route('/api/ff/crn/next')
 @_gated
@@ -237,6 +251,85 @@ def api_send_caps():
         recipients_left_today=outbox.day_room(),
         bd_per_day=outbox.max_bd_per_day(),
         bd_left_today=outbox.day_room(bd=True))
+
+
+# ── R5: chargeable weight ────────────────────────────────────────────
+@bp.route('/api/ff/chargeable-weight', methods=['POST'])
+@_gated
+def api_chargeable_weight():
+    from app.services import ff_weight
+    body = request.get_json(silent=True) or {}
+    try:
+        return jsonify(ok=True, **ff_weight.chargeable(
+            body.get('mode'),
+            cbm=body.get('cbm'), gross_kg=body.get('gross_kg'),
+            length_cm=body.get('length_cm'),
+            width_cm=body.get('width_cm'),
+            height_cm=body.get('height_cm'),
+            volume_cbm=body.get('volume_cbm'),
+            pieces=body.get('pieces') or 1,
+            divisor=body.get('divisor') or ff_weight.AIR_DIVISOR_DEFAULT))
+    except ff_weight.WeightError as exc:
+        return _refuse(exc)
+
+
+# ── R4: the confirmation is the purchase order ───────────────────────
+@bp.route('/api/ff/quotes/<int:quote_id>/confirmation', methods=['POST'])
+@_gated
+def api_capture_confirmation(quote_id):
+    from app.models.quote import Quote
+    from app.services import ff_handover
+
+    quote = db.session.get(Quote, quote_id)
+    if quote is None:
+        return jsonify(ok=False, error='Not found'), 404
+    body = request.get_json(silent=True) or {}
+    try:
+        pack = ff_handover.capture_confirmation(
+            quote, email=body.get('email'),
+            subject=body.get('subject'),
+            message_id=body.get('message_id'),
+            note=(body.get('note') or '').strip() or None,
+            actor=_me())
+        if body.get('mark_won'):
+            ff_handover.mark_won(quote, actor=_me())
+    except ff_handover.HandoverError as exc:
+        db.session.rollback()
+        return _refuse(exc)
+    db.session.commit()
+    return jsonify(ok=True, pack=pack.to_dict(), quote_status=quote.status)
+
+
+@bp.route('/api/ff/quotes/<int:quote_id>/handover', methods=['POST'])
+@_gated
+def api_build_handover(quote_id):
+    """Build the pack and the payload. Sends nothing anywhere.
+
+    The TMS is deliberately not called: the format was derived from
+    CRM data because FF-COMMS-02 was not available, and a release
+    that started posting to production the moment a flag flipped is
+    the worst way to discover a mistake in it.
+    """
+    from app.models.quote import Quote
+    from app.models.rfq import RFQ
+    from app.services import ff_handover
+
+    quote = db.session.get(Quote, quote_id)
+    if quote is None:
+        return jsonify(ok=False, error='Not found'), 404
+    rfq = db.session.get(RFQ, quote.rfq_id) if quote.rfq_id else None
+    account, lead = _client_of(rfq)
+    try:
+        pack, payload, path = ff_handover.build_pack(
+            quote, actor=_me(), lead=lead, account=account, rfq=rfq)
+    except ff_handover.HandoverError as exc:
+        db.session.rollback()
+        return _refuse(exc)
+    db.session.commit()
+    return jsonify(ok=True, pack=pack.to_dict(), payload=payload,
+                   file=path, sent_to_tms=False,
+                   note='The payload was built and stored. Nothing was '
+                        'sent to the TMS.')
 
 
 @bp.route('/api/ff/charge-groups')

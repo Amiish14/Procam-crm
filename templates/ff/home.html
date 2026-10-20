@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{% include "_csrf_fetch.html" %}
+<title>Freight Forwarding — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .ff-tabs { display:flex; gap:6px; margin:14px 0 16px; flex-wrap:wrap; }
+  .ff-tabs button { border:1px solid #e5e7eb; background:#fff; border-radius:999px;
+      padding:7px 15px; cursor:pointer; font:inherit; font-size:13px; }
+  .ff-tabs button[aria-pressed="true"] { background:#111827; color:#fff; border-color:#111827; }
+  .ff-panel { display:none; } .ff-panel.on { display:block; }
+  .ff-card { background:#fff; border:1px solid #e5e7eb; border-radius:10px;
+      padding:16px 18px; margin-bottom:14px; }
+  .ff-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; }
+  .ff-grid label { font-size:11.5px; color:#6b7280; font-weight:600;
+      text-transform:uppercase; letter-spacing:.04em; display:block; }
+  .ff-grid input, .ff-grid select { width:100%; height:34px; border:1px solid #e5e7eb;
+      border-radius:8px; padding:0 10px; font:inherit; }
+  table.ff { width:100%; border-collapse:collapse; background:#fff; font-size:13px; }
+  table.ff th, table.ff td { padding:8px 10px; border-bottom:1px solid #eef0f3; text-align:left; }
+  table.ff th { font-size:11.5px; text-transform:uppercase; color:#6b7280; letter-spacing:.04em; }
+  table.ff td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .ff-note { font-size:12px; color:#6b7280; margin-top:8px; line-height:1.6; }
+  .ff-warn { background:#FEF3C7; border:1px solid #FCD34D; color:#92400E;
+      border-radius:8px; padding:10px 12px; font-size:12.5px; margin-top:10px; }
+  .ff-bad { background:#FEE2E2; border:1px solid #FCA5A5; color:#991B1B;
+      border-radius:8px; padding:10px 12px; font-size:12.5px; margin-top:10px; }
+  .ff-out { font-size:22px; font-weight:800; font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+  <div class="hero">
+    <div><h1>Freight Forwarding</h1>
+      <div class="today">Enquiry, rates, quotation and the thread behind one reference.</div></div>
+    <div><a class="top-back" href="{{ url_for('dashboard') }}">← Dashboard</a></div>
+  </div>
+
+  <div class="ff-tabs" role="tablist">
+    <button aria-pressed="true"  onclick="ffTab('enq')">Enquiry &amp; chargeable weight</button>
+    <button aria-pressed="false" onclick="ffTab('rates')">Rate grid</button>
+    <button aria-pressed="false" onclick="ffTab('quote')">Quote builder</button>
+    <button aria-pressed="false" onclick="ffTab('thread')">CRN thread</button>
+  </div>
+
+  <!-- ── enquiry + calculator ─────────────────────────────────── -->
+  <div class="ff-panel on" id="p-enq">
+    <div class="ff-card">
+      <h3 style="margin:0 0 10px">Chargeable weight</h3>
+      <div class="ff-grid">
+        <div><label for="cwMode">Mode</label>
+          <select id="cwMode" onchange="cwSwap()">
+            <option>Sea</option><option>Air</option><option>Multimodal</option>
+          </select></div>
+        <div><label for="cwGross">Gross weight (kg)</label>
+          <input id="cwGross" type="text" inputmode="decimal"></div>
+        <div class="cw-sea"><label for="cwCbm">Volume (CBM)</label>
+          <input id="cwCbm" type="text" inputmode="decimal"></div>
+        <div class="cw-air" style="display:none"><label for="cwL">Length (cm)</label>
+          <input id="cwL" type="text" inputmode="decimal"></div>
+        <div class="cw-air" style="display:none"><label for="cwW">Width (cm)</label>
+          <input id="cwW" type="text" inputmode="decimal"></div>
+        <div class="cw-air" style="display:none"><label for="cwH">Height (cm)</label>
+          <input id="cwH" type="text" inputmode="decimal"></div>
+        <div class="cw-air" style="display:none"><label for="cwP">Pieces</label>
+          <input id="cwP" type="text" inputmode="numeric" value="1"></div>
+      </div>
+      <div style="margin-top:12px"><button class="btn" onclick="cwGo()">Calculate</button></div>
+      <div id="cwOut"></div>
+      <div class="ff-note">
+        Sea is billed on W/M — whichever is greater, the cubic metres or
+        the tonnes. Air is the greater of the gross and the volumetric
+        weight at 1:6000, rounded up to the next half kilo. Both round
+        up: a carrier does not round in our favour.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── rate grid ────────────────────────────────────────────── -->
+  <div class="ff-panel" id="p-rates">
+    <div class="ff-card">
+      <div class="ff-grid" style="max-width:420px">
+        <div><label for="rgLine">Sourcing line id</label>
+          <input id="rgLine" type="text" inputmode="numeric"></div>
+      </div>
+      <div style="margin-top:10px"><button class="btn" onclick="rgLoad()">Show replies</button></div>
+      <div id="rgOut" style="margin-top:12px"></div>
+    </div>
+  </div>
+
+  <!-- ── quote builder ────────────────────────────────────────── -->
+  <div class="ff-panel" id="p-quote">
+    <div class="ff-card">
+      <div class="ff-grid" style="max-width:420px">
+        <div><label for="qbId">Quote id</label>
+          <input id="qbId" type="text" inputmode="numeric"></div>
+      </div>
+      <div style="margin-top:10px"><button class="btn" onclick="qbLoad()">Show margin</button></div>
+      <div id="qbOut" style="margin-top:12px"></div>
+    </div>
+  </div>
+
+  <!-- ── CRN thread ───────────────────────────────────────────── -->
+  <div class="ff-panel" id="p-thread">
+    <div class="ff-card">
+      <div class="ff-grid" style="max-width:520px">
+        <div><label for="thSubject">Reply subject</label>
+          <input id="thSubject" placeholder="RE: [PWL-T26-000014] rate"></div>
+        <div><label for="thFrom">From address</label>
+          <input id="thFrom" placeholder="rates@carrier.com"></div>
+      </div>
+      <label class="ff-note" for="thBody">Reply body</label>
+      <textarea id="thBody" rows="4" style="width:100%;border:1px solid #e5e7eb;border-radius:8px;padding:8px"></textarea>
+      <div style="margin-top:10px"><button class="btn" onclick="thGo()">Match and read</button></div>
+      <div id="thOut" style="margin-top:12px"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const PREFIX = "{{ url_prefix }}";
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                   .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const money = v => (v==null||v==='') ? '—'
+  : '₹ ' + Number(v).toLocaleString('en-IN', {maximumFractionDigits:0});
+
+function ffTab(which){
+  ['enq','rates','quote','thread'].forEach((k,i)=>{
+    $('p'+'-'+k).classList.toggle('on', k===which);
+    document.querySelectorAll('.ff-tabs button')[i]
+      .setAttribute('aria-pressed', k===which ? 'true':'false');
+  });
+}
+function cwSwap(){
+  const air = $('cwMode').value === 'Air';
+  document.querySelectorAll('.cw-air').forEach(e=>e.style.display = air?'':'none');
+  document.querySelectorAll('.cw-sea').forEach(e=>e.style.display = air?'none':'');
+}
+async function post(path, body){
+  const r = await fetch(PREFIX + path, {method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  return {ok: r.ok, data: await r.json().catch(()=>null)};
+}
+async function cwGo(){
+  const mode = $('cwMode').value;
+  const {data} = await post('/api/ff/chargeable-weight', {
+    mode: mode, gross_kg: $('cwGross').value, cbm: $('cwCbm').value,
+    length_cm: $('cwL').value, width_cm: $('cwW').value,
+    height_cm: $('cwH').value, pieces: $('cwP').value || 1});
+  if(!data || !data.ok){
+    $('cwOut').innerHTML = `<div class="ff-bad">${esc((data&&data.error)||'Could not calculate.')}</div>`;
+    return;
+  }
+  $('cwOut').innerHTML =
+    `<div style="margin-top:12px"><div class="ff-out">${data.chargeable} ${esc(data.unit)}</div>
+     <div class="ff-note">${esc(data.explain)}</div></div>`;
+}
+async function rgLoad(){
+  const id = ($('rgLine').value||'').trim();
+  if(!id) return;
+  const r = await fetch(PREFIX + '/api/ff/lines/' + id + '/compare',
+                        {credentials:'same-origin'});
+  const d = await r.json().catch(()=>null);
+  if(!d || !d.ok){ $('rgOut').innerHTML = `<div class="ff-bad">Not found.</div>`; return; }
+  if(!d.ranked.length){
+    $('rgOut').innerHTML = `<div class="ff-note">No replies yet. ${d.waiting} vendor(s) still to answer.</div>`;
+    return;
+  }
+  $('rgOut').innerHTML = `<table class="ff"><thead><tr>
+      <th>#</th><th>Vendor</th><th class="num">Rate (INR)</th><th class="num">Over cheapest</th>
+      <th class="num">Transit</th><th>Valid to</th><th>Notes</th></tr></thead><tbody>` +
+    d.ranked.map(row => `<tr>
+      <td>${row.rank}</td>
+      <td>${esc(row.rate.vendor_name)}
+        ${row.is_cheapest?'<span class="pill success">cheapest</span>':''}
+        ${row.is_fastest?'<span class="pill success">fastest</span>':''}
+        ${row.rate.chosen?'<span class="pill">chosen</span>':''}</td>
+      <td class="num">${money(row.rate.amount_inr)}</td>
+      <td class="num">${row.over_cheapest_inr ? '+'+money(row.over_cheapest_inr) : '—'}</td>
+      <td class="num">${row.rate.transit_days==null?'—':row.rate.transit_days+'d'}</td>
+      <td>${esc(row.rate.validity_until||'—')}</td>
+      <td>${row.flags.map(f=>`<span class="pill warn">${esc(f)}</span>`).join(' ')||''}</td>
+    </tr>`).join('') + `</tbody></table>
+    <div class="ff-note">${d.replied} replied, ${d.waiting} still awaited.
+      Choosing a dearer rate asks for one line of reason — it is the
+      answer to the question somebody asks three months from now.</div>`;
+}
+async function qbLoad(){
+  const id = ($('qbId').value||'').trim();
+  if(!id) return;
+  const r = await fetch(PREFIX + '/api/ff/quotes/' + id + '/margin',
+                        {credentials:'same-origin'});
+  const d = await r.json().catch(()=>null);
+  if(!d || !d.ok){ $('qbOut').innerHTML = `<div class="ff-bad">Not found.</div>`; return; }
+  const m = d.margin;
+  const pct = m.margin_pct==null ? '—' : m.margin_pct.toFixed(1) + '%';
+  let html = `<div class="ff-grid">
+      <div><label>Sell</label><div class="ff-out">${money(m.sell_inr)}</div></div>
+      <div><label>Cost</label><div class="ff-out">${money(m.cost_inr)}</div></div>
+      <div><label>Margin</label><div class="ff-out">${money(m.margin_inr)} <span style="font-size:14px">${pct}</span></div></div>
+    </div>`;
+  if(!m.reliable){
+    html += `<div class="ff-warn"><b>This margin is overstated.</b> ${esc(m.note)}
+      A line nobody has costed is not profit.</div>`;
+  } else if(m.margin_inr <= 0){
+    html += `<div class="ff-bad"><b>This quote is at or below cost.</b>
+      Selling at ${money(m.sell_inr)} against ${money(m.cost_inr)}.</div>`;
+  }
+  if(d.not_billable_lines && d.not_billable_lines.length){
+    html += `<div class="ff-note" style="margin-top:12px"><b>Under ${esc(d.incoterm)},
+      with the client as ${esc(d.client_party)}, these lines fall to the other
+      party and are shown rather than dropped:</b><ul>` +
+      d.not_billable_lines.map(l=>`<li>${esc(l.service)} — ${esc(l.charge_group)} — ${money(l.line_total)}</li>`).join('') +
+      `</ul></div>`;
+  }
+  $('qbOut').innerHTML = html;
+}
+async function thGo(){
+  const {data} = await post('/api/ff/inbound/match', {
+    subject: $('thSubject').value, from: $('thFrom').value,
+    body: $('thBody').value});
+  if(!data || !data.ok){ $('thOut').innerHTML = `<div class="ff-bad">Could not match.</div>`; return; }
+  const s = data.suggested || {};
+  $('thOut').innerHTML =
+    `<div class="${data.matched ? 'ff-note' : 'ff-warn'}">
+       <b>${data.matched ? 'Filed against rate request #'+data.rate_request_id
+                         : 'Not filed'}</b>
+       ${data.confidence && data.confidence!=='none' ? ' ('+esc(data.confidence)+')' : ''}
+       <div>${esc(data.reason||'')}</div></div>
+     <table class="ff" style="margin-top:12px"><thead><tr>
+       <th>Read from the reply</th><th>Value</th><th>Words it came from</th></tr></thead><tbody>
+       <tr><td>Amount</td><td>${s.amount==null?'—':esc(s.amount)+' '+esc(s.currency||'')}</td><td>${esc(s.amount_text||'—')}</td></tr>
+       <tr><td>Transit</td><td>${s.transit_days==null?'—':esc(s.transit_days)+' days'}</td><td>${esc(s.transit_text||'—')}</td></tr>
+       <tr><td>Validity</td><td>${esc(s.validity_until||'—')}</td><td>${esc(s.validity_text||'—')}</td></tr>
+     </tbody></table>
+     <div class="ff-note">Suggestions only — nothing has been saved.
+       ${(s.notes||[]).map(n=>esc(n)).join(' ')}</div>`;
+}
+cwSwap();
+</script>
+</body>
+</html>

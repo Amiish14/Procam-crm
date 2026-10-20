@@ -250,3 +250,78 @@ class FfEmailTemplate(db.Model):
 
     def __repr__(self):
         return f'<FfEmailTemplate {self.code} ({self.audience})>'
+
+
+class FfHandoverPack(db.Model):
+    """What operations is given when a forwarding job is confirmed.
+
+    FF-COMMS-01 R4. The customer's confirmation email *is* the
+    purchase order on a forwarding job — there is rarely a PO
+    document — so the message itself is captured: who sent it, when,
+    its subject and its Message-Id. "The client confirmed" without
+    those four is hearsay, and it is the thing argued about when a
+    shipment goes wrong.
+
+    The pack holds both artefacts: the Excel file operations reads,
+    and the payload the TMS would be sent. The payload is *stored,
+    not sent*. Nothing here calls the production TMS.
+    """
+
+    __tablename__ = 'ff_handover_packs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey('quotes.id'),
+                         nullable=False, index=True)
+    crn = db.Column(db.String(24), index=True)
+
+    # ── the confirmation, which is the PO ────────────────────────────
+    confirmed_at = db.Column(db.DateTime)
+    confirmed_by_email = db.Column(db.String(320))
+    confirmation_subject = db.Column(db.String(400))
+    #: RFC-5322 Message-Id. The one identifier that survives
+    #: forwarding, and the only way to point at the exact mail later.
+    confirmation_message_id = db.Column(db.String(400), index=True)
+    confirmation_note = db.Column(db.Text)
+
+    #: Draft / Ready / Delivered. `Delivered` is never set by this
+    #: release: nothing sends the pack anywhere yet.
+    status = db.Column(db.String(16), default='Draft', nullable=False,
+                       index=True)
+
+    #: The TMS payload, as it would be sent. Kept so it can be read,
+    #: diffed and approved before anything is wired to the live
+    #: system.
+    payload_json = db.Column(db.Text)
+    file_path = db.Column(db.Text)
+
+    built_at = db.Column(db.DateTime)
+    built_by = db.Column(db.String(20))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow,
+                           onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        import json
+        payload = None
+        if self.payload_json:
+            try:
+                payload = json.loads(self.payload_json)
+            except Exception:                             # noqa: BLE001
+                payload = None
+        return {
+            'id': self.id, 'quote_id': self.quote_id,
+            'crn': self.crn or '', 'status': self.status,
+            'confirmed_at': (str(self.confirmed_at)[:19]
+                             if self.confirmed_at else ''),
+            'confirmed_by_email': self.confirmed_by_email or '',
+            'confirmation_subject': self.confirmation_subject or '',
+            'confirmation_message_id': self.confirmation_message_id or '',
+            'confirmation_note': self.confirmation_note or '',
+            'file_path': self.file_path or '',
+            'built_at': str(self.built_at)[:19] if self.built_at else '',
+            'built_by': self.built_by or '',
+            'payload': payload,
+        }
+
+    def __repr__(self):
+        return f'<FfHandoverPack quote={self.quote_id} {self.status}>'
