@@ -213,3 +213,47 @@ def test_two_write_flags_at_once_are_refused():
     out = _run('--apply', '--apply-aliases')
     assert out.returncode != 0
     assert 'exactly one' in (out.stderr + out.stdout)
+
+
+# ── names a person supplies ──────────────────────────────────────────
+def test_set_alias_writes_what_a_person_typed(seeded):
+    """No corroboration: "Ril" is Reliance because somebody knew."""
+    out = _run('--set-alias', f'{seeded}=Reliance Industries Limited',
+               '--actor', 'DIR12010')
+    assert out.returncode == 0, out.stderr[-3000:]
+    assert 'APPLY (aliases by hand)' in out.stdout
+    with flask_app.app_context():
+        acct = db.session.get(Company, seeded)
+        assert 'Reliance Industries Limited' in (acct.aliases or [])
+        from app.models.audit import AuditEvent
+        row = AuditEvent.query.filter_by(
+            action='company.alias_added',
+            entity_id=str(acct.id)).order_by(
+                AuditEvent.id.desc()).first()
+        assert row.actor == 'DIR12010'
+        assert 'by hand' in (row.reason or ''), \
+            'the audit row must say nobody corroborated this'
+    again = _run('--set-alias', f'{seeded}=Reliance Industries Limited')
+    assert '0 alias(es) written' in again.stdout
+    assert 'already had that alias' in again.stdout
+
+
+def test_a_hand_alias_does_not_disturb_the_corroborated_one(seeded):
+    _run('--apply-aliases')
+    _run('--set-alias', f'{seeded}=Some Other Name')
+    with flask_app.app_context():
+        aliases = db.session.get(Company, seeded).aliases or []
+        assert any('EXPO FREIGHT' in a for a in aliases)
+        assert 'Some Other Name' in aliases
+
+
+def test_an_unknown_account_is_an_error_not_a_silent_skip(seeded):
+    out = _run('--set-alias', '99999=Nobody Ltd')
+    assert out.returncode != 0
+    assert 'do not exist' in out.stdout
+
+
+@pytest.mark.parametrize('bad', ['886', '886=', 'eight=Name'])
+def test_a_malformed_pair_is_refused(bad):
+    out = _run('--set-alias', bad)
+    assert out.returncode != 0, f'{bad!r} was accepted'

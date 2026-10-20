@@ -359,25 +359,58 @@ def alias_plan(rows=None):
     return take, leave
 
 
-def apply_aliases(take, *, actor='FF-LINK-01'):
-    """Write the corroborated names. Caller commits."""
+def add_alias(c, name, why, *, actor='FF-LINK-01'):
+    """One alias, once. Returns True if it was new."""
     from app.services import audit
 
-    written = []
-    for c, name, rule, _n in take:
-        existing = list(c.aliases or [])
-        if any(company_match.norm(a) == company_match.norm(name)
-               for a in existing):
+    existing = list(c.aliases or [])
+    if any(company_match.norm(a) == company_match.norm(name)
+           for a in existing):
+        return False
+    c.aliases = existing + [name]
+    audit.record('company.alias_added', 'company', str(c.id),
+                 old={'aliases': existing},
+                 new={'aliases': c.aliases},
+                 actor=actor,
+                 reason=f'"{c.name}" is too short for the vendor '
+                        f'masking to redact; {why}.')
+    return True
+
+
+def apply_aliases(take, *, actor='FF-LINK-01'):
+    """Write the corroborated names. Caller commits."""
+    return [(c, name) for c, name, rule, _n in take
+            if add_alias(c, name, rule, actor=actor)]
+
+
+def set_aliases(pairs, *, actor='FF-LINK-01'):
+    """Write names a person supplied. Caller commits.
+
+    No corroboration: that rule exists to stop the script guessing
+    from a mail signature, and a name typed by the person who owns
+    the data is not a guess. The audit reason says which it was, so
+    the two can be told apart later — "Ril" is Reliance because
+    somebody knew, not because anything in the mail said so.
+    """
+    written, missing = [], []
+    for raw in pairs:
+        if '=' not in raw:
+            raise SystemExit(f'--set-alias wants ID=NAME, got {raw!r}')
+        sid, name = raw.split('=', 1)
+        name = name.strip()
+        try:
+            c = db.session.get(Company, int(sid.strip()))
+        except ValueError:
+            raise SystemExit(f'--set-alias wants a numeric id, '
+                             f'got {sid!r}')
+        if c is None:
+            missing.append((sid.strip(), name))
             continue
-        c.aliases = existing + [name]
-        audit.record('company.alias_added', 'company', str(c.id),
-                     old={'aliases': existing},
-                     new={'aliases': c.aliases},
-                     actor=actor,
-                     reason=f'"{c.name}" is too short for the vendor '
-                            f'masking to redact; {rule}.')
-        written.append((c, name))
-    return written
+        if not name:
+            raise SystemExit(f'--set-alias got an empty name for #{sid}')
+        if add_alias(c, name, 'supplied by hand', actor=actor):
+            written.append((c, name))
+    return written, missing
 
 
 def main():
@@ -386,18 +419,58 @@ def main():
     ap.add_argument('--apply', action='store_true')
     ap.add_argument('--apply-aliases', dest='apply_aliases',
                     action='store_true')
+    ap.add_argument('--set-alias', dest='set_alias', action='append',
+                    metavar='ID=NAME',
+                    help='write an alias by hand, repeatable')
+    ap.add_argument('--actor', default='FF-LINK-01')
     args = ap.parse_args()
-    writes = [a for a in (args.apply, args.apply_aliases) if a]
+    writes = [a for a in (args.apply, args.apply_aliases,
+                          args.set_alias) if a]
     if len(writes) + bool(args.check) != 1:
         raise SystemExit(
-            'Choose exactly one: --check, --apply or --apply-aliases.')
+            'Choose exactly one: --check, --apply, '
+            '--apply-aliases or --set-alias.')
 
     with app.app_context():
         print(f'database: {db.engine.url}')
         mode = ('APPLY (part 3 only)' if args.apply
                 else 'APPLY (aliases only)' if args.apply_aliases
+                else 'APPLY (aliases by hand)' if args.set_alias
                 else 'DRY RUN — nothing is written')
         print(f'MODE:     {mode}\n')
+
+        if args.set_alias:
+            # Straight to the point: the surveys below take a while
+            # and say nothing about a name somebody already knows.
+            written, missing = set_aliases(args.set_alias,
+                                           actor=args.actor)
+            try:
+                db.session.commit()
+            except Exception as exc:                      # noqa: BLE001
+                db.session.rollback()
+                print(f'  !! ROLLED BACK: {type(exc).__name__}: '
+                      f'{str(exc)[:200]}')
+                raise SystemExit(1)
+            print(f'  {len(written)} alias(es) written, each with an '
+                  f'audit row naming {args.actor}.')
+            for c, name in written:
+                print(f'    #{c.id:<6} {c.name:<8} -> {name}')
+            already = (len(args.set_alias) - len(written)
+                       - len(missing))
+            if already:
+                print(f'  {already} already had that alias.')
+            if missing:
+                print(f'\n  !! {len(missing)} account(s) do not exist:')
+                for sid, name in missing:
+                    print(f'    #{sid} ({name})')
+                raise SystemExit(1)
+            for c, _name in written:
+                if ff_privacy.variants(c.name):
+                    continue
+                print(f'  #{c.id} {c.name}: the masking still cannot '
+                      f'redact the account name itself — the alias is '
+                      f'what protects it.')
+            return
 
         # ── 3 ────────────────────────────────────────────────────────
         plan = unmatched_plan()
