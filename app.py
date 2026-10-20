@@ -998,6 +998,11 @@ class Company(db.Model):
     # `website` is a marketing URL and a group may send from several
     # domains, so mail-domain matching gets its own list.
     email_domains          = db.Column(db.JSON, default=list)
+    #: Other names this company trades under. The vendor masking
+    #: redacts every one of them, which is the whole point: an
+    #: account called "Efl" cannot be redacted out of a mail (two
+    #: letters of signal), but "Expo Freight Private Limited" can.
+    aliases                = db.Column(db.JSON, default=list)
     # §13 path 5 — the GST / customer master. Exact where a name match is
     # a guess, so it is checked before the fuzzy one.
     gstin                  = db.Column(db.String(15), nullable=True, index=True)
@@ -5142,6 +5147,7 @@ def init_db():
         _bool_ddl  = 'INTEGER DEFAULT 0' if _is_sqlite else 'BOOLEAN DEFAULT FALSE'
         _adds = [
             ('companies',     'state',            'VARCHAR(80)'),
+            ('companies',     'aliases',          'JSON'),
             ('contacts',      'state',            'VARCHAR(80)'),
             ('opportunities', 'won_project_ref',  'VARCHAR(60)'),
             ('opportunities', 'won_project_at',   'TIMESTAMP'),

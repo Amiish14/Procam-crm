@@ -270,17 +270,134 @@ def short_name_evidence(accounts=None):
     return out
 
 
+#: Words that carry no signal in an initialism. "Zenith (Tianjin)
+#: International Logistics" is ZTI to its own staff, so the legal
+#: form goes and everything else stays.
+LEGAL_FORMS = {
+    'pvt', 'private', 'ltd', 'limited', 'llc', 'llp', 'inc', 'co',
+    'corp', 'company', 'corporation', 'gmbh', 'srl', 'bv', 'nv',
+    'plc', 'ag', 'sa', 'spa', 'as', 'oy', 'ab', 'kk', 'pte', 'sdn',
+    'bhd', 'incorporated', 'the', 'of', 'and',
+}
+
+
+def _sig_words(name):
+    out = []
+    for raw in re.split(r'[^A-Za-z&]+', name or ''):
+        if not raw:
+            continue
+        if raw == '&':
+            out.append('&')
+        elif raw.lower() not in LEGAL_FORMS:
+            out.append(raw)
+    return out
+
+
+def corroborates(account_name, signature_name):
+    """Does this signature name belong to *this* account?
+
+    A signature is whatever sat at the bottom of a thread, which is
+    very often not the account: #886 Ril's signature is PROCAM's own,
+    and #990 Vie's is Siemens Healthcare, the shipper. Writing either
+    one in as an alias would tell the masking to redact the wrong
+    company and leave the right one exposed — worse than no alias,
+    because it would look done.
+
+    So the signature has to account for the name already on the
+    record. Returns the rule that fired, or None.
+    """
+    short = (account_name or '').strip()
+    if not short:
+        return None
+    words = _sig_words(signature_name)
+    if not words:
+        return None
+    if short.lower() in [w.lower() for w in words]:
+        return 'the account name is a word in the signature'
+    def initials(ws):
+        # "Dun & Bradstreet" is DnB to its customers and DB in a
+        # filename, so both spellings count.
+        yield ''.join('n' if w == '&' else w[0] for w in ws)
+        yield ''.join(w[0] for w in ws if w != '&')
+
+    if any(i.lower() == short.lower() for i in initials(words)):
+        return 'the account name is the initials of the signature'
+    # A legal name usually carries more than the initialism does:
+    # "Dun & Bradstreet Information Services India Pvt Ltd" is DnB
+    # from its first three words. A leading run counts, but only for
+    # three letters or more — two initials off the front of any two
+    # words is a coincidence waiting to happen.
+    if len(short) >= 3:
+        for n in range(2, len(words)):
+            if any(i.lower() == short.lower()
+                   for i in initials(words[:n])):
+                return ('the account name is the initials the '
+                        'signature opens with')
+    return None
+
+
+def alias_plan(rows=None):
+    """[(account, name, rule, n_seen)] and the ones with no answer."""
+    take, leave = [], []
+    for row in (rows if rows is not None else short_name_evidence()):
+        c = row['account']
+        if c.name in (c.aliases or []):
+            pass
+        hits = []
+        for name, n in row['signatures'].most_common():
+            rule = corroborates(c.name, name)
+            if rule:
+                hits.append((name, rule, n))
+        if hits:
+            # The longest corroborated name is the legal one:
+            # "EXPO FREIGHT PRIVATE LIMITED (EFL GLOBAL - INDIA)"
+            # over "EFL GLOBAL".
+            name, rule, n = max(hits, key=lambda h: len(h[0]))
+            take.append((c, name, rule, n))
+        else:
+            leave.append(row)
+    return take, leave
+
+
+def apply_aliases(take, *, actor='FF-LINK-01'):
+    """Write the corroborated names. Caller commits."""
+    from app.services import audit
+
+    written = []
+    for c, name, rule, _n in take:
+        existing = list(c.aliases or [])
+        if any(company_match.norm(a) == company_match.norm(name)
+               for a in existing):
+            continue
+        c.aliases = existing + [name]
+        audit.record('company.alias_added', 'company', str(c.id),
+                     old={'aliases': existing},
+                     new={'aliases': c.aliases},
+                     actor=actor,
+                     reason=f'"{c.name}" is too short for the vendor '
+                            f'masking to redact; {rule}.')
+        written.append((c, name))
+    return written
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--check', action='store_true')
     ap.add_argument('--apply', action='store_true')
+    ap.add_argument('--apply-aliases', dest='apply_aliases',
+                    action='store_true')
     args = ap.parse_args()
-    if args.apply == args.check:
-        raise SystemExit('Choose one: --check or --apply.')
+    writes = [a for a in (args.apply, args.apply_aliases) if a]
+    if len(writes) + bool(args.check) != 1:
+        raise SystemExit(
+            'Choose exactly one: --check, --apply or --apply-aliases.')
 
     with app.app_context():
         print(f'database: {db.engine.url}')
-        print(f'MODE:     {"APPLY (part 3 only)" if args.apply else "DRY RUN — nothing is written"}\n')
+        mode = ('APPLY (part 3 only)' if args.apply
+                else 'APPLY (aliases only)' if args.apply_aliases
+                else 'DRY RUN — nothing is written')
+        print(f'MODE:     {mode}\n')
 
         # ── 3 ────────────────────────────────────────────────────────
         plan = unmatched_plan()
@@ -309,6 +426,7 @@ def main():
 
         # ── 5 ────────────────────────────────────────────────────────
         shorts = short_name_evidence()
+        take, leave = alias_plan(shorts)
         print(f'\n=== 5. accounts too short for the masking '
               f'({len(shorts)})')
         for row in shorts:
@@ -328,11 +446,46 @@ def main():
                     print(f'         {n:>3}x  {name}')
             else:
                 print('      names in signatures: none found')
+            chosen = {c.id: (n, r) for c, n, r, _ in take}.get(c.id)
+            if chosen:
+                print(f'      ALIAS -> {chosen[0]}')
+                print(f'              ({chosen[1]})')
+            else:
+                print('      ALIAS -> none; no signature accounts for '
+                      'the name on the record')
+
+        print(f'\n  {len(take)} of {len(shorts)} have a corroborated '
+              f'legal name; {len(leave)} need one by hand:')
+        for row in leave:
+            c = row['account']
+            uncorroborated = ', '.join(
+                n for n, _ in row['signatures'].most_common(3)) or 'none'
+            print(f'    #{c.id:<6} {(c.name or ""):<8} '
+                  f'domains: {", ".join(row["declared_domains"]) or "none"}'
+                  f'  |  signatures seen: {uncorroborated[:90]}')
 
         if args.check:
             print('\nDRY RUN — nothing written. `--apply` creates the '
-                  'part 3 accounts and links their leads; parts 4 and '
-                  '5 never write.')
+                  'part 3 accounts and links their leads; '
+                  '`--apply-aliases` writes the part 5 aliases; '
+                  'part 4 never writes.')
+            return
+
+        if args.apply_aliases:
+            written = apply_aliases(take)
+            try:
+                db.session.commit()
+            except Exception as exc:                      # noqa: BLE001
+                db.session.rollback()
+                print(f'\n  !! ROLLED BACK: {type(exc).__name__}: '
+                      f'{str(exc)[:200]}')
+                raise SystemExit(1)
+            print(f'\n  {len(written)} alias(es) written, each with an '
+                  f'audit row.')
+            for c, name in written:
+                print(f'    #{c.id:<6} {c.name:<8} -> {name}')
+            print(f'  {len(leave)} account(s) still need a name by hand.')
+            print('  Parts 3 and 4 changed nothing.')
             return
 
         made, skipped = create_accounts(plan)
