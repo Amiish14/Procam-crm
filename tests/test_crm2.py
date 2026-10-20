@@ -390,3 +390,41 @@ def test_the_overlap_report_has_no_apply():
     assert out.returncode == 0, out.stderr[-2000:]
     assert 'READ ONLY' in out.stdout
     assert 'opportunities' in out.stdout
+
+
+def test_the_overlap_report_joins_on_opp_number_too():
+    """The first version joined on `lead_id` alone and called 9,522
+    of 9,540 rows orphan history. `lead_id` is null on almost every
+    row; `opp_number` matches a lead 9,524 times. A bucket that
+    depends on the join has to try both keys."""
+    with flask_app.app_context():
+        Opportunity = _main.Opportunity
+        for o in Opportunity.query.filter(
+                Opportunity.opp_number.like('CRM2T-%')).all():
+            db.session.delete(o)
+        for l in Lead.query.filter(Lead.source == 'crm2o').all():
+            db.session.delete(l)
+        db.session.commit()
+
+        lead = Lead(source='crm2o', company='Numbered Co', stage='Quoted',
+                    opp_number='CRM2T-0001')
+        db.session.add(lead)
+        db.session.flush()
+        # No lead_id at all — the shape 9,522 production rows have.
+        db.session.add(Opportunity(opp_number='CRM2T-0001',
+                                   title='Numbered', stage='Qualified',
+                                   lead_id=None, value_inr=250000))
+        db.session.commit()
+        lid = lead.id
+
+        import importlib.util as _u
+        spec = _u.spec_from_file_location(
+            'overlap', os.path.join(_ROOT, 'scripts',
+                                    'crm2_opportunity_overlap.py'))
+        mod = _u.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        s = mod.survey()
+
+        reached = {l.id for _o, l, _k in s['matched']}
+        assert lid in reached, 'matched only by opp_number, and missed'
+        assert s['by_key']['opp_number'] >= 1
