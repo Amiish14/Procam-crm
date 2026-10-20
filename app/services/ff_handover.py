@@ -212,7 +212,14 @@ def _write_xlsx(payload, quote, *, out_dir=None):
     os.makedirs(root, exist_ok=True)
     name = (payload.get('crn') or payload.get('quote_number')
             or f'quote-{quote.id}')
-    path = os.path.join(root, f'ff_handover_{name}.xlsx')
+    # Two payload shapes share this writer: a forwarding handover
+    # carries a `shipment` block, a job handover carries `job`. The
+    # charges sheet is identical for both, which is the half worth
+    # not duplicating.
+    detail = payload.get('shipment') or payload.get('job') or {}
+    is_job = 'job' in payload
+    prefix = 'job_handover' if is_job else 'ff_handover'
+    path = os.path.join(root, f'{prefix}_{name}.xlsx')
 
     wb = Workbook()
     ws = wb.active
@@ -220,20 +227,35 @@ def _write_xlsx(payload, quote, *, out_dir=None):
     head = Font(bold=True, color='FFFFFF')
     fill = PatternFill('solid', fgColor='1F2937')
 
-    ws.append(['Freight Forwarding handover pack'])
+    ws.append([(f'{detail.get("vertical") or "Job"} handover pack')
+               if is_job else 'Freight Forwarding handover pack'])
     ws['A1'].font = Font(bold=True, size=14)
     ws.append([payload['format_note']])
     ws.append([])
+    if is_job:
+        specific = (
+            ('Vertical', detail.get('vertical', '')),
+            ('Job type', detail.get('job_type', '')),
+            ('From', detail.get('site_from', '')),
+            ('To', detail.get('site_to', '')),
+            ('Scope', detail.get('scope', '')),
+            ('Cargo', detail.get('cargo', '')),
+            ('Start by', detail.get('start_by', '')),
+        )
+    else:
+        specific = (
+            ('Mode', detail.get('mode', '')),
+            ('Incoterm', detail.get('incoterm', '')),
+            ('Client is', detail.get('client_party', '')),
+            ('Origin', detail.get('origin', '')),
+            ('Destination', detail.get('destination', '')),
+            ('Cargo', detail.get('cargo', '')),
+        )
     for label, value in (
             ('CRN', payload['crn']),
             ('Quote', payload['quote_number']),
             ('Customer', payload['customer']['name']),
-            ('Mode', payload['shipment']['mode']),
-            ('Incoterm', payload['shipment']['incoterm']),
-            ('Client is', payload['shipment']['client_party']),
-            ('Origin', payload['shipment']['origin']),
-            ('Destination', payload['shipment']['destination']),
-            ('Cargo', payload['shipment']['cargo']),
+    ) + specific + (
             ('Confirmed at', payload['confirmation']['received_at']),
             ('Confirmed by', payload['confirmation']['from']),
             ('Confirmation subject', payload['confirmation']['subject']),

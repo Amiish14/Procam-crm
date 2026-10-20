@@ -5128,6 +5128,8 @@ def init_db():
                    # After rfq and quote: ff_rate_requests points at
                    # both rfqs and rate_sourcing_lines.
                    'app.models.ff',
+                   # After quote: both tables point at quotes.id.
+                   'app.models.quote_terms',
                    'app.directory.models'):
             try:
                 __import__(_m)
@@ -5156,6 +5158,7 @@ def init_db():
             ('companies',     'aliases',          'JSON'),
             ('leads',         'value_source',     'VARCHAR(24)'),
             ('leads',         'value_confirmed',  'BOOLEAN'),
+            ('quotes',        'terms_version_id', 'INTEGER'),
             ('contacts',      'state',            'VARCHAR(80)'),
             ('opportunities', 'won_project_ref',  'VARCHAR(60)'),
             ('opportunities', 'won_project_at',   'TIMESTAMP'),

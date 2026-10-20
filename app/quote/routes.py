@@ -183,6 +183,19 @@ def quote_print_page(qid):
     return render_template('quote/print.html', quote=quote, lines=lines)
 
 
+def _esc(text):
+    """Terms are free text and reportlab reads markup.
+
+    A clause containing "Rates & charges" or "< 24 hours" would
+    otherwise raise inside doc.build and the PDF would 500 — on the
+    one page a client sees.
+    """
+    return (str(text or '')
+            .replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;'))
+
+
 @bp.route('/quotes/<int:qid>/pdf')
 @_require_auth
 def quote_pdf(qid):
@@ -263,6 +276,41 @@ def quote_pdf(qid):
         story.append(Paragraph(f'<b>Exclusions:</b> {quote.exclusions}', b))
     if quote.remarks:
         story.append(Paragraph(f'<b>Remarks:</b> {quote.remarks}', b))
+
+    # CRM 2.0 R5 — the terms the quote is made under, printed with
+    # it. Behind FEATURE_CRM2: with the flag off this PDF is byte for
+    # byte what it was, which is what makes the rollback a switch.
+    try:
+        from app.services import flags
+        show_terms = flags.on_for('FEATURE_CRM2',
+                                  session.get('emp_code'))
+    except Exception:                                     # noqa: BLE001
+        show_terms = False
+    if show_terms:
+        from app.services import quote_terms as qt
+        printed = qt.for_print(quote)
+        if printed['special']:
+            story.append(Spacer(1, 4 * mm))
+            story.append(Paragraph('<b>Special conditions</b>', b))
+            for c in printed['special']:
+                story.append(Paragraph(
+                    f'{c["seq"]}. {_esc(c["text"])}', b))
+        std = printed['standard']
+        story.append(Spacer(1, 4 * mm))
+        if std['missing']:
+            # Said out loud rather than printed blank: a quote that
+            # silently carries no terms is the one argued about.
+            story.append(Paragraph(
+                f'<b>Standard terms:</b> none published for '
+                f'{_esc(printed["vertical"])}. This quote carries no '
+                f'standard terms.', b))
+        else:
+            story.append(Paragraph(
+                f'<b>{_esc(std["title"])}</b> '
+                f'(v{std["version"]})', b))
+            for para in (std['body'] or '').split('\n'):
+                if para.strip():
+                    story.append(Paragraph(_esc(para.strip()), b))
 
     doc.build(story)
     buf.seek(0)

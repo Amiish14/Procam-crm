@@ -64,6 +64,9 @@ class Quote(db.Model):
     #: FF-COMMS-01 R2, carried from the enquiry.
     crn           = db.Column(db.String(24), index=True)
 
+    #: The standard-terms version this quote printed under. Set
+    #: once, never moved: the client has that wording in their hand.
+    terms_version_id = db.Column(db.Integer, nullable=True)
     incoterm      = db.Column(db.String(8))
     client_party  = db.Column(db.String(12))
 

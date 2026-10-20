@@ -191,15 +191,25 @@ def _client(emp='CRM2A'):
 
 @pytest.fixture
 def armed():
-    """The flag on, for this test only."""
+    """The flag on, for this test only.
+
+    The stored row is cleared first, not just the environment. The
+    database beats the environment by design — that is the whole
+    point of moving flags out of .env — so a test that turned the
+    flag off through the admin path leaves a row that silently
+    outranks `FEATURE_CRM2=1` here, and every test after it 404s.
+    """
     with flask_app.app_context():
-        was = flags.on('FEATURE_CRM2')
+        flags.clear('FEATURE_CRM2', actor='TEST')
+        flags.limit_to('FEATURE_CRM2', [], actor='TEST')
         os.environ['FEATURE_CRM2'] = '1'
         flags.cache_clear()
         yield
         os.environ.pop('FEATURE_CRM2', None)
+        flags.clear('FEATURE_CRM2', actor='TEST')
+        flags.limit_to('FEATURE_CRM2', [], actor='TEST')
         flags.cache_clear()
-        assert flags.on('FEATURE_CRM2') == was
+        assert not flags.on('FEATURE_CRM2')
 
 
 @pytest.mark.parametrize('path', [
@@ -657,7 +667,11 @@ def test_the_limit_script_turns_it_on_for_one_person():
             assert flags.on_for('FEATURE_CRM2', 'DIR12010')
             assert not flags.on_for('FEATURE_CRM2', 'SOMEONE')
     finally:
-        _run('crm2_flag_limit.py', '--off', '--lift', '--actor', 'TEST')
+        # clear(), not --off: --off writes a `false` row, and a
+        # stored row outranks the environment for every test after
+        # this one.
         with flask_app.app_context():
+            flags.limit_to('FEATURE_CRM2', [], actor='TEST')
+            flags.clear('FEATURE_CRM2', actor='TEST')
             flags.cache_clear()
     assert not flags.on('FEATURE_CRM2')
