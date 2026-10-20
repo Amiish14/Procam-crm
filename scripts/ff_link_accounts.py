@@ -256,10 +256,6 @@ def main():
               f'{buckets.get(NONE, 0)} unmatched were not touched.')
 
 
-if __name__ == '__main__':
-    main()
-
-
 def _write_review(rows):
     """The rows a person has to judge, as a sheet they can fill in."""
     from openpyxl import Workbook
@@ -315,8 +311,12 @@ def _write_review(rows):
     # openpyxl writes `allowBlank="0"` if the camelCase spelling is
     # used; snake_case is the real parameter. Getting this wrong
     # produces a sheet that refuses every empty cell.
+    # `ws.max_row` is the header row when there is nothing to judge,
+    # and `H5:H4` is backwards — openpyxl raises rather than writes
+    # it. An empty sheet is the normal end state of this exercise,
+    # so it has to come out readable.
     ws.add_data_validation(dv)
-    dv.add(f'H5:H{ws.max_row}')
+    dv.add(f'H5:H{max(ws.max_row, 5)}')
 
     for col, w in (('A', 8), ('B', 36), ('C', 32), ('D', 16),
                    ('E', 22), ('F', 34), ('G', 12), ('H', 36)):
@@ -324,3 +324,7 @@ def _write_review(rows):
     ws.freeze_panes = 'A5'
     wb.save(out)
     return out
+
+
+if __name__ == '__main__':
+    main()

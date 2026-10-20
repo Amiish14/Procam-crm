@@ -106,3 +106,32 @@ def test_unprotectable_names_are_asked_of_the_masking_rule():
     v = ff_privacy.variants('Tata Steel Limited')
     assert 'Tata Steel' in v and 'Tata' in v
     assert 'Steel' not in v
+
+
+def test_export_review_actually_writes_a_sheet():
+    """`--export-review` raised NameError in production.
+
+    `_write_review` was defined below the `if __name__` block, so the
+    module called `main()` while the name was still unbound. Every
+    test here imported the module and exercised `survey()`, which
+    proved the matching and never once ran the script as a script.
+    So this one runs it the way a person does, in a subprocess, and
+    opens what comes out.
+    """
+    import subprocess
+    out = subprocess.run(
+        [sys.executable, os.path.join(_ROOT, 'scripts',
+                                      'ff_link_accounts.py'),
+         '--export-review'],
+        capture_output=True, text=True, cwd=_ROOT,
+        env={**os.environ, 'PYTHONPATH': _ROOT})
+    assert out.returncode == 0, out.stderr[-2000:]
+    path = [ln.strip() for ln in out.stdout.splitlines()
+            if ln.strip().endswith('.xlsx')]
+    assert path, f'no workbook named in the output:\n{out.stdout[-2000:]}'
+    from openpyxl import load_workbook
+    ws = load_workbook(path[-1]).active
+    header = [c.value for c in ws[4]]
+    assert 'correct account' in [str(h or '').lower() for h in header], \
+        f'the column a person fills in is missing: {header}'
+    os.remove(path[-1])
