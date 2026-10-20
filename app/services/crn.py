@@ -156,3 +156,59 @@ def subject_tag(crn):
     `Re: Fwd: [PWL-T26-000014] ...` still parses.
     """
     return f'[{crn}]'
+
+
+# ── where the numbers attach ─────────────────────────────────────────
+#: The business unit a Freight Forwarding enquiry is stamped with.
+#:
+#: Nilesh's example is `PWL-C26-000001`. The client-restriction
+#: register holds `PLPL` and `PWLPL`, neither of which is `PWL`, so
+#: one of the three is shorthand and the CRM cannot tell which. The
+#: default follows the example and is a setting rather than a
+#: constant, because changing it after numbers are issued means
+#: reissuing them.
+DEFAULT_BU = 'PWL'
+
+
+def default_bu():
+    try:
+        from app.services import admin_settings
+        raw = (admin_settings.get('ff_business_unit') or '').strip()
+        if raw:
+            return raw.upper()
+    except Exception:                                     # noqa: BLE001
+        pass
+    import os
+    return (os.environ.get('FF_BUSINESS_UNIT') or DEFAULT_BU).upper()
+
+
+def ensure_for_lead(lead, *, bu=None, actor=None):
+    """Give an enquiry its customer reference, once.
+
+    Idempotent: a lead that already has one keeps it. Re-stamping
+    would hand the same job two references and make the thread
+    unfindable from the older one.
+    """
+    if getattr(lead, 'crn', None):
+        return lead.crn
+    unit = (bu or getattr(lead, 'business_unit', None)
+            or default_bu())
+    lead.business_unit = unit
+    lead.crn = allocate(unit, CUSTOMER)
+    return lead.crn
+
+
+def ensure_for_rfq(rfq, *, lead=None, bu=None):
+    """Carry the customer reference onto an RFQ and give it a vendor one.
+
+    Both, because they answer different questions: `crn` says which
+    enquiry this belongs to, `vendor_crn` is the only reference a
+    carrier ever sees.
+    """
+    if lead is not None and not rfq.crn:
+        rfq.crn = getattr(lead, 'crn', None)
+    unit = (bu or (parse(rfq.crn)['bu'] if rfq.crn else None)
+            or default_bu())
+    if not rfq.vendor_crn:
+        rfq.vendor_crn = allocate(unit, VENDOR)
+    return rfq.crn, rfq.vendor_crn

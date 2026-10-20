@@ -185,3 +185,68 @@ class CrnSequence(db.Model):
     def __repr__(self):
         return (f'<CrnSequence {self.bu}-{self.kind}{self.fy} '
                 f'at {self.last_serial}>')
+
+
+#: Who an email is for, and therefore whether the client may be
+#: named in it. `vendor` is the one that matters: those go through
+#: the redaction and the leak check in app/services/ff_privacy.py.
+AUDIENCE_VENDOR = 'vendor'
+AUDIENCE_CUSTOMER = 'customer'
+AUDIENCE_INTERNAL = 'internal'
+AUDIENCES = (AUDIENCE_VENDOR, AUDIENCE_CUSTOMER, AUDIENCE_INTERNAL)
+
+
+class FfEmailTemplate(db.Model):
+    """A freight-forwarding email, editable by an administrator.
+
+    In the database rather than in the repository because the wording
+    is the business's, not the code's: a sentence that reads wrong to
+    a carrier should be fixable by the person who noticed, on the day
+    they noticed, without a deploy.
+
+    `audience` is not decoration. A template marked `vendor` is
+    rendered through the redaction and refused if the client's name
+    survives; one marked `customer` is not. Mislabel it and either a
+    client gets a letter addressed to nobody, or a vendor learns who
+    the client is.
+    """
+
+    __tablename__ = 'ff_email_templates'
+
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(16), unique=True, nullable=False,
+                     index=True)
+    name = db.Column(db.String(120), nullable=False)
+    audience = db.Column(db.String(12), nullable=False,
+                         default=AUDIENCE_INTERNAL)
+
+    subject = db.Column(db.String(300), nullable=False)
+    body_html = db.Column(db.Text, nullable=False)
+    body_text = db.Column(db.Text)
+
+    #: What the body may refer to, listed for whoever edits it. Not
+    #: enforced: a template that mentions an unknown field renders it
+    #: blank, which is better than refusing to send the mail.
+    placeholders = db.Column(db.JSON, default=list)
+
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    updated_by = db.Column(db.String(20))
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow,
+                           onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'code': self.code, 'name': self.name,
+            'audience': self.audience, 'subject': self.subject,
+            'body_html': self.body_html or '',
+            'body_text': self.body_text or '',
+            'placeholders': list(self.placeholders or []),
+            'is_active': bool(self.is_active),
+            'updated_by': self.updated_by or '',
+            'updated_at': (str(self.updated_at)[:19]
+                           if self.updated_at else ''),
+        }
+
+    def __repr__(self):
+        return f'<FfEmailTemplate {self.code} ({self.audience})>'

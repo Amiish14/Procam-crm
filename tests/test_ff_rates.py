@@ -102,6 +102,20 @@ def world():
         db.session.commit()
         yield {'rfq': rfq.id, 'ocean': ocean.id, 'customs': customs.id,
                'quote': quote.id}
+        # Clean up after, not only before: the last module to run
+        # otherwise leaves its rows in a database every other module
+        # shares.
+        RateRequest.query.delete()
+        QuoteLine.query.filter(QuoteLine.service.like(TAG + '%')).delete(
+            synchronize_session=False)
+        RateSourcingLine.query.filter(
+            RateSourcingLine.service.like(TAG + '%')).delete(
+                synchronize_session=False)
+        RFQ.query.filter(RFQ.subject.like(TAG + '%')).delete(
+            synchronize_session=False)
+        Quote.query.filter(Quote.subject.like(TAG + '%')).delete(
+            synchronize_session=False)
+        db.session.commit()
 
 
 def _line(world_, key='ocean'):

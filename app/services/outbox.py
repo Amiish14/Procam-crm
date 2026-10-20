@@ -54,6 +54,22 @@ BACKOFF_MINUTES = (2, 5, 15, 30, 60)
 #: own traffic. `EMAIL_MAX_PER_MINUTE` overrides it.
 DEFAULT_MAX_PER_MINUTE = 20
 
+#: Recipients a day, across everything. Microsoft 365 caps a mailbox
+#: at 10,000 recipients in 24 hours; 3,000 is the number the business
+#: set, well under it, and a queue that goes over does not fail —
+#: it waits. A held message is a message that arrives tomorrow; a
+#: rejected one is a message nobody ever sees.
+DEFAULT_MAX_RECIPIENTS_PER_DAY = 3000
+
+#: Business-development mail only. A hundred a day is a sales limit,
+#: not a technical one: it is the point past which cold mail from one
+#: domain starts being filed as bulk, and the reputation it costs is
+#: paid by every other message the CRM sends.
+DEFAULT_MAX_BD_PER_DAY = 100
+
+#: Event keys that count as business development.
+BD_EVENT_PREFIXES = ('ff.bd', 'bd.', 'campaign.')
+
 #: A row stuck in `sending` for longer than this was claimed by a
 #: worker that died. Returned to the queue by the next pass.
 STUCK_MINUTES = 30
@@ -227,6 +243,100 @@ def max_per_minute():
     except (TypeError, ValueError):
         value = DEFAULT_MAX_PER_MINUTE
     return value
+
+
+def _setting(name, env, default):
+    import os
+    raw = None
+    try:
+        from app.services import admin_settings
+        raw = admin_settings.get(name)
+    except Exception:
+        raw = None
+    if raw in (None, ''):
+        raw = os.environ.get(env)
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def max_recipients_per_day():
+    return _setting('email_max_recipients_per_day',
+                    'EMAIL_MAX_RECIPIENTS_PER_DAY',
+                    DEFAULT_MAX_RECIPIENTS_PER_DAY)
+
+
+def max_bd_per_day():
+    return _setting('email_max_bd_per_day', 'EMAIL_MAX_BD_PER_DAY',
+                    DEFAULT_MAX_BD_PER_DAY)
+
+
+def is_bd(event_key):
+    key = (event_key or '').lower()
+    return any(key.startswith(p) for p in BD_EVENT_PREFIXES)
+
+
+def _recipients_of(row):
+    """How many addresses one row puts a message in front of.
+
+    Counted rather than taken as one: a digest to twelve people on
+    CC is twelve recipients to Microsoft, and a cap that counts it as
+    one is a cap that does not hold.
+    """
+    total = 0
+    for field in (row.to_addr, row.cc_addr):
+        for part in (field or '').replace(';', ',').split(','):
+            if part.strip():
+                total += 1
+    return total
+
+
+def recipients_today(now=None, *, bd_only=False):
+    """Recipients already sent to since midnight UTC."""
+    from app.models.mailops import EmailOutbox
+
+    now = now or datetime.utcnow()
+    midnight = datetime(now.year, now.month, now.day)
+    try:
+        rows = (EmailOutbox.query
+                .filter(EmailOutbox.status == 'sent',
+                        EmailOutbox.sent_at >= midnight).all())
+    except Exception:
+        return 0
+    if bd_only:
+        rows = [r for r in rows if is_bd(r.event_key)]
+    return sum(_recipients_of(r) for r in rows)
+
+
+def day_room(now=None, *, bd=False):
+    """Recipients still allowed today. None means no limit."""
+    limit = max_bd_per_day() if bd else max_recipients_per_day()
+    if limit is None or limit <= 0:
+        return None
+    return max(0, limit - recipients_today(now, bd_only=bd))
+
+
+def may_send(row, now=None):
+    """(True, '') or (False, why) for one queued row.
+
+    Held, not failed. A message over the cap is sent tomorrow; one
+    marked failed is one somebody has to notice and requeue, and
+    nobody ever does.
+    """
+    need = _recipients_of(row)
+    room = day_room(now)
+    if room is not None and need > room:
+        return False, (f'daily recipient cap reached '
+                       f'({max_recipients_per_day()}); holding '
+                       f'{need} recipient(s) until tomorrow')
+    if is_bd(row.event_key):
+        bd_room = day_room(now, bd=True)
+        if bd_room is not None and need > bd_room:
+            return False, (f'business-development cap reached '
+                           f'({max_bd_per_day()} a day); holding until '
+                           f'tomorrow')
+    return True, ''
 
 
 def sent_in_last_minute(now=None):
@@ -475,16 +585,29 @@ def send_group(rows, now=None, send=None):
     return False
 
 
-def _requeue(rows, now, reason):
-    """Return claimed rows to the queue without spending an attempt."""
+def _requeue(rows, now, reason, *, not_before=None):
+    """Return claimed rows to the queue without spending an attempt.
+
+    `not_before` overrides the two-minute default. A per-minute
+    throttle wants to try again shortly; a *daily* cap does not —
+    retrying every two minutes until midnight is a worker spinning
+    on a wall, and it fills the log with the same line four hundred
+    times.
+    """
     from app import db
     for row in rows:
         row.status = 'queued'
         row.claimed_by = None
         row.claimed_at = None
         row.last_error = (reason or '')[:500]
-        row.not_before = now + timedelta(minutes=2)
+        row.not_before = not_before or (now + timedelta(minutes=2))
     db.session.commit()
+
+
+def next_day(now=None):
+    """Midnight UTC after `now` — when a daily cap lifts."""
+    now = now or datetime.utcnow()
+    return datetime(now.year, now.month, now.day) + timedelta(days=1)
 
 
 def run_once(limit=CLAIM_LIMIT, now=None, send=None, use_lease=True):
@@ -525,6 +648,17 @@ def run_once(limit=CLAIM_LIMIT, now=None, send=None, use_lease=True):
             if room is not None and report['groups'] >= room:
                 _requeue(group, now, 'held back by the per-minute throttle')
                 report['held'] = report.get('held', 0) + len(group)
+                continue
+            # The daily caps: recipients across everything, and
+            # business-development mail on its own. Held rather than
+            # failed — a message over the cap goes tomorrow, while a
+            # failed one waits for somebody to notice, and nobody
+            # ever does.
+            allowed, why = may_send(group[0], now)
+            if not allowed:
+                _requeue(group, now, why, not_before=next_day(now))
+                report['held'] = report.get('held', 0) + len(group)
+                report['capped'] = why
                 continue
             report['groups'] += 1
             if send_group(group, now=now, send=send):

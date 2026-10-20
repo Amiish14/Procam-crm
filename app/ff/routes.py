@@ -80,6 +80,165 @@ def _refuse(exc):
     return jsonify(ok=False, error=str(exc)), 400
 
 
+# ── R2: references ───────────────────────────────────────────────────
+@bp.route('/api/ff/crn/next')
+@_gated
+def api_crn_peek():
+    """What the next reference would be, without taking it."""
+    from app.services import crn as crn_svc
+    bu = (request.args.get('bu') or crn_svc.default_bu()).strip().upper()
+    kind = (request.args.get('kind') or crn_svc.CUSTOMER).strip().upper()
+    try:
+        return jsonify(ok=True, bu=bu, kind=kind,
+                       fy=crn_svc.financial_year(),
+                       next=crn_svc.peek(bu, kind))
+    except crn_svc.CrnError as exc:
+        return _refuse(exc)
+
+
+@bp.route('/api/ff/leads/<int:lead_id>/crn', methods=['POST'])
+@_gated
+def api_assign_crn(lead_id):
+    """Stamp an enquiry with its customer reference. Once."""
+    from app.access import scope as sc_mod
+    from app import Lead
+    from app.services import crn as crn_svc
+
+    lead = sc_mod.leads().filter(Lead.id == lead_id).first()
+    if lead is None:
+        return jsonify(ok=False, error='Not found'), 404
+    body = request.get_json(silent=True) or {}
+    existing = lead.crn
+    try:
+        crn = crn_svc.ensure_for_lead(
+            lead, bu=(body.get('bu') or '').strip().upper() or None,
+            actor=_me())
+    except crn_svc.CrnError as exc:
+        db.session.rollback()
+        return _refuse(exc)
+    db.session.commit()
+    return jsonify(ok=True, crn=crn, already_had=bool(existing))
+
+
+# ── R3: what a vendor is allowed to see ──────────────────────────────
+@bp.route('/api/ff/rates/<int:rate_id>/vendor-view')
+@_gated
+def api_vendor_view(rate_id):
+    """Exactly what was sent to the carrier, client removed.
+
+    The same function builds the email, so this screen cannot show
+    an unmasked version that somebody then screenshots into a reply.
+    """
+    from app.models.ff import RateRequest
+    from app.models.rfq import RFQ
+    from app.services import ff_privacy
+
+    req = db.session.get(RateRequest, rate_id)
+    line = _line(req.line_id) if req else None
+    if req is None or line is None:
+        return jsonify(ok=False, error='Not found'), 404
+    rfq = db.session.get(RFQ, req.rfq_id)
+    account, lead = _client_of(rfq)
+    return jsonify(ok=True, vendor_sees=ff_privacy.vendor_view(
+        req, line=line, rfq=rfq, account=account, lead=lead))
+
+
+def _client_of(rfq):
+    """(account, lead) behind an RFQ — what must not reach a vendor."""
+    from app import Company, Lead
+    if rfq is None:
+        return None, None
+    lead = db.session.get(Lead, rfq.lead_id) if rfq.lead_id else None
+    account = (db.session.get(Company, rfq.account_id)
+               if rfq.account_id else
+               (db.session.get(Company, lead.company_id)
+                if lead is not None and lead.company_id else None))
+    return account, lead
+
+
+@bp.route('/api/ff/inbound/match', methods=['POST'])
+@_gated
+def api_inbound_match():
+    """Which rate request a vendor reply answers, and what it says.
+
+    Returns suggestions. Nothing is written: a parser confident
+    enough to save a rate unattended will book a job at the wrong
+    price eventually.
+    """
+    from app.services import ff_inbound
+
+    body = request.get_json(silent=True) or {}
+    result = ff_inbound.link((body.get('subject') or ''),
+                             (body.get('from') or ''),
+                             body=(body.get('body') or ''))
+    out = result.to_dict()
+    out['suggested'] = ff_inbound.extract(body.get('body') or '')
+    sug = out['suggested']
+    if sug.get('validity_until'):
+        sug['validity_until'] = str(sug['validity_until'])
+    return jsonify(ok=True, **out)
+
+
+@bp.route('/api/ff/templates')
+@_gated
+def api_templates():
+    from app.models.ff import FfEmailTemplate
+    rows = FfEmailTemplate.query.order_by(
+        FfEmailTemplate.code.asc()).all()
+    return jsonify(ok=True, templates=[r.to_dict() for r in rows])
+
+
+@bp.route('/api/ff/templates/<code>', methods=['PATCH'])
+@_gated
+def api_edit_template(code):
+    """Admins reword the mail. The audience is not theirs to change.
+
+    Flipping a template from customer to vendor, or back, changes
+    whether the client's name is stripped out of it — that is a
+    confidentiality decision, not a wording one, and it is not
+    something to do from an edit box.
+    """
+    from app.models.ff import FfEmailTemplate
+    from app import _matrix_can
+
+    if not _matrix_can('admin.master'):
+        return jsonify(ok=False,
+                       error='Only an administrator may edit these'), 403
+    tpl = FfEmailTemplate.query.filter_by(code=code.upper()).first()
+    if tpl is None:
+        return jsonify(ok=False, error='No such template'), 404
+    body = request.get_json(silent=True) or {}
+    for field in ('subject', 'body_html', 'body_text', 'name'):
+        if field in body:
+            setattr(tpl, field, body[field])
+    if 'is_active' in body:
+        tpl.is_active = bool(body['is_active'])
+    if 'audience' in body and body['audience'] != tpl.audience:
+        return jsonify(
+            ok=False,
+            error='The audience decides whether the client is masked '
+                  'out of this mail. Changing it is a confidentiality '
+                  'decision and is not editable here.'), 400
+    tpl.updated_by = _me()
+    db.session.commit()
+    return jsonify(ok=True, template=tpl.to_dict())
+
+
+@bp.route('/api/ff/send-caps')
+@_gated
+def api_send_caps():
+    """What is left of today's allowance."""
+    from app.services import outbox
+    return jsonify(
+        ok=True,
+        per_minute=outbox.max_per_minute(),
+        per_minute_left=outbox.throttle_room(),
+        recipients_per_day=outbox.max_recipients_per_day(),
+        recipients_left_today=outbox.day_room(),
+        bd_per_day=outbox.max_bd_per_day(),
+        bd_left_today=outbox.day_room(bd=True))
+
+
 @bp.route('/api/ff/charge-groups')
 @_gated
 def api_charge_groups():
