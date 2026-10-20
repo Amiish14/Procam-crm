@@ -12,9 +12,15 @@ Three jobs, one read and two of them read-only for good.
      failing that a name derived from the email domain. `--apply`
      writes these and nothing else.
 
-  4. List the accounts whose name is a domain label — Mail, Asia,
-     Coscon — with how many leads hang off each. **Nothing is
-     changed.** Merging or renaming an account moves every lead,
+  4. List the accounts whose name is a mail-system word (Mail,
+     Asia, Info) or was taken from a *subdomain* rather than a
+     company — with how many leads hang off each. **Nothing is
+     changed.**
+
+     "The name matches its own domain" was the first rule here and
+     it was wrong: it flagged 297 accounts including NTPC, RITES and
+     AGUNSA, because most companies' domains are their names. A list
+     that long and that wrong is a list nobody reads. Merging or renaming an account moves every lead,
      contact and quote attached to it, and which of two names is
      the real company is not a thing to infer.
 
@@ -48,6 +54,43 @@ DOMAIN_LABELS = {
     'docs', 'ops', 'operations', 'accounts', 'billing', 'finance',
     'marketing', 'hr', 'care', 'help', 'desk', 'inbox', 'crm',
 }
+
+#: Two-part public suffixes. `ntpc.co.in` has three labels and no
+#: subdomain: `co.in` is the suffix, `ntpc` is the company. Without
+#: this list every Indian, British, Japanese and Brazilian company
+#: reads as a mail host — which is what the first version of this
+#: check did, flagging NTPC, ISGEC and Hyundai Rotem as junk.
+PUBLIC_SUFFIX_2 = {
+    'co.in', 'net.in', 'org.in', 'gen.in', 'firm.in', 'ind.in',
+    'co.uk', 'org.uk', 'me.uk', 'ltd.uk', 'plc.uk',
+    'com.au', 'net.au', 'org.au', 'com.br', 'net.br', 'com.cn',
+    'net.cn', 'org.cn', 'co.jp', 'or.jp', 'ne.jp', 'co.kr', 'or.kr',
+    'com.my', 'com.sg', 'com.tr', 'com.tw', 'com.hk', 'com.mx',
+    'com.ar', 'co.za', 'co.nz', 'com.pk', 'com.bd', 'com.vn',
+    'com.ph', 'com.sa', 'com.eg', 'co.id', 'com.ua', 'co.th',
+}
+
+
+def registrable(domain):
+    """`mail.oyaso.com` -> `oyaso.com`; `ntpc.co.in` -> `ntpc.co.in`.
+
+    Only as good as the suffix list above, which is the common
+    cases rather than the whole Public Suffix List — getting this
+    wrong in the safe direction means a junk account is missed, not
+    that a real one is condemned.
+    """
+    parts = [p for p in (domain or '').lower().split('.') if p]
+    if len(parts) < 3:
+        return '.'.join(parts)
+    if '.'.join(parts[-2:]) in PUBLIC_SUFFIX_2:
+        return '.'.join(parts[-3:])
+    return '.'.join(parts[-2:])
+
+
+def is_subdomain(domain):
+    d = (domain or '').lower().strip('.')
+    return bool(d) and d != registrable(d)
+
 
 #: A legal suffix at the end of a line is the strongest sign that
 #: the line is a company name in a signature.
@@ -168,13 +211,20 @@ def domain_label_accounts():
         why = []
         if len(toks) == 1 and toks[0].lower() in DOMAIN_LABELS:
             why.append('a mail-system or place word, not a company')
-        # The data-driven tell: the name is the first label of one of
-        # its own domains, which is what an auto-creation looks like.
+        # "The name matches its own domain" is NOT a junk signal —
+        # most companies' domains are their names, and that rule
+        # flagged NTPC, RITES, AGUNSA and 290 others. The real tell
+        # is a name taken from a *subdomain*: mail.oyaso.com gave an
+        # account called "Mail" and asia.meap.com gave "Asia", while
+        # agunsa.com giving "Agunsa" is simply correct.
         for d in (c.email_domains or []):
+            if not is_subdomain(d):
+                continue
             label = _name_from_domain(d)
             if label and company_match.norm(label) == \
                     company_match.norm(name):
-                why.append(f'the first label of its own domain {d}')
+                why.append(f'taken from the subdomain of {d}, which '
+                           f'names a mail host rather than a company')
                 break
         if why:
             out.append((c, '; '.join(why), counts_open[c.id],
