@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{% include "_csrf_fetch.html" %}
+<title>Cockpit — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .ck-search { position:relative; margin:14px 0 18px; }
+  .ck-search input { width:100%; height:44px; border:1px solid #e5e7eb;
+      border-radius:10px; padding:0 14px; font:inherit; font-size:15px; }
+  .ck-hits { position:absolute; z-index:40; left:0; right:0; top:48px;
+      background:#fff; border:1px solid #e5e7eb; border-radius:10px;
+      box-shadow:0 10px 30px rgba(17,24,39,.10); overflow:hidden;
+      display:none; }
+  .ck-hits.on { display:block; }
+  .ck-hit { display:flex; gap:10px; align-items:baseline; padding:9px 13px;
+      border-bottom:1px solid #f3f4f6; text-decoration:none; color:inherit; }
+  .ck-hit:hover { background:#f9fafb; }
+  .ck-kind { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
+      color:#6b7280; min-width:62px; font-weight:700; }
+  .ck-hit b { font-weight:600; }
+  .ck-hit span { color:#6b7280; font-size:12.5px; }
+  .ck-tiles { display:grid; gap:10px;
+      grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
+  .ck-tile { background:#fff; border:1px solid #e5e7eb; border-radius:10px;
+      padding:13px 15px; }
+  .ck-tile b { display:block; font-size:25px; font-weight:800;
+      font-variant-numeric:tabular-nums; line-height:1.25; }
+  .ck-tile span { font-size:12px; color:#6b7280; }
+  .ck-map { background:#fff; border:1px solid #e5e7eb; border-radius:10px;
+      padding:4px 0; margin-top:16px; }
+  .ck-row { display:grid; grid-template-columns:150px 1fr 74px;
+      gap:12px; align-items:center; padding:9px 16px;
+      border-bottom:1px solid #f3f4f6; }
+  .ck-row:last-child { border-bottom:0; }
+  .ck-name { font-size:13px; font-weight:600; }
+  .ck-name em { display:block; font-style:normal; font-size:11.5px;
+      color:#9ca3af; font-weight:400; }
+  .ck-bar { display:flex; height:16px; border-radius:4px; overflow:hidden;
+      background:#f3f4f6; }
+  .ck-bar i { display:block; }
+  .ck-green { background:#059669; } .ck-orange { background:#D97706; }
+  .ck-red { background:#DC2626; } .ck-grey { background:#D1D5DB; }
+  .ck-n { text-align:right; font-variant-numeric:tabular-nums;
+      font-size:13px; font-weight:600; }
+  .ck-key { display:flex; gap:14px; flex-wrap:wrap; font-size:12px;
+      color:#6b7280; margin:10px 2px 0; }
+  .ck-key i { display:inline-block; width:10px; height:10px;
+      border-radius:2px; margin-right:5px; vertical-align:-1px; }
+  .ck-note { font-size:12px; color:#6b7280; margin-top:10px;
+      line-height:1.6; }
+  .ck-strip { display:flex; gap:3px; align-items:center; flex-wrap:wrap; }
+  .ck-step { font-size:10.5px; padding:2px 7px; border-radius:999px;
+      border:1px solid #e5e7eb; color:#9ca3af; background:#fff; }
+  .ck-step.done { background:#F3F4F6; color:#4B5563; }
+  .ck-step.current { color:#fff; border-color:transparent; font-weight:700; }
+  .ck-step.current.green { background:#059669; }
+  .ck-step.current.orange { background:#D97706; }
+  .ck-step.current.red { background:#DC2626; }
+  .ck-step.current.grey { background:#9CA3AF; }
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+  <div class="hero">
+    <div><h1>Cockpit</h1>
+      <div class="today">One landing page, one search box, and where the
+        work is stuck.</div></div>
+  </div>
+
+  <div class="ck-search">
+    <input id="q" placeholder="Search leads, accounts and contacts…"
+           autocomplete="off" aria-label="Search everything">
+    <div class="ck-hits" id="hits"></div>
+  </div>
+
+  <div class="ck-tiles" id="tiles"></div>
+
+  <div class="ck-map" id="map"></div>
+  <div class="ck-key">
+    <span><i class="ck-green"></i>within target</span>
+    <span><i class="ck-orange"></i>past target</span>
+    <span><i class="ck-red"></i>more than twice the target</span>
+    <span><i class="ck-grey"></i>no stage date on record</span>
+  </div>
+  <div class="ck-note" id="note"></div>
+</div>
+
+<script>
+/* Named crmUrl, not P: the prefix guard in
+   tests/test_url_prefix_links.py reads helper bodies for
+   this name, and a helper it cannot see prefixing is a
+   page that renders and loads nothing. */
+const crmUrl = "{{ url_prefix }}";
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function jget(u){
+  const r = await fetch(crmUrl + u, {headers:{'Accept':'application/json'}});
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+/* Search ------------------------------------------------------------ */
+let timer = null;
+const box = document.getElementById('q');
+const hits = document.getElementById('hits');
+
+box.addEventListener('input', () => {
+  clearTimeout(timer);
+  timer = setTimeout(run, 180);   /* a keystroke is not a query */
+});
+box.addEventListener('blur', () => setTimeout(() =>
+  hits.classList.remove('on'), 150));
+
+async function run(){
+  const q = box.value.trim();
+  if (q.length < 2){ hits.classList.remove('on'); return; }
+  let d;
+  try { d = await jget('/api/crm2/search?q=' + encodeURIComponent(q)); }
+  catch (e) { return; }
+  if (!d.results.length){
+    hits.innerHTML = '<div class="ck-hit"><span>Nothing matches “'
+      + esc(q) + '”.</span></div>';
+  } else {
+    hits.innerHTML = d.results.map(r =>
+      '<a class="ck-hit" href="' + esc(r.url || '#') + '">'
+      + '<span class="ck-kind">' + esc(r.kind) + '</span>'
+      + '<b>' + esc(r.title) + '</b>'
+      + '<span>' + esc(r.detail) + '</span></a>').join('');
+  }
+  hits.classList.add('on');
+}
+
+/* Cockpit ----------------------------------------------------------- */
+function tile(n, label){
+  return '<div class="ck-tile"><b>' + n + '</b><span>'
+    + esc(label) + '</span></div>';
+}
+
+function bar(r){
+  const t = r.total || 1;
+  const seg = (n, cls) => n ? '<i class="' + cls + '" style="width:'
+    + (n * 100 / t).toFixed(2) + '%"></i>' : '';
+  return '<div class="ck-bar">' + seg(r.green, 'ck-green')
+    + seg(r.orange, 'ck-orange') + seg(r.red, 'ck-red')
+    + seg(r.grey, 'ck-grey') + '</div>';
+}
+
+(async function(){
+  let d;
+  try { d = await jget('/api/crm2/cockpit'); }
+  catch (e) {
+    document.getElementById('note').textContent =
+      'The cockpit could not be loaded.';
+    return;
+  }
+  const c = d.cockpit;
+  document.getElementById('tiles').innerHTML =
+      tile(c.open_leads, 'open leads')
+    + tile(c.needing_attention, 'need attention')
+    + tile(c.value_missing, 'no estimated value')
+    + tile(c.unowned, 'no owner')
+    + tile(c.unlinked, 'no account');
+
+  document.getElementById('map').innerHTML = c.pipeline.map(r =>
+    '<div class="ck-row"><div class="ck-name">' + esc(r.stage)
+    + '<em>' + (r.oldest ? 'oldest ' + r.oldest + ' days'
+                         : 'no ages known') + '</em></div>'
+    + bar(r) + '<div class="ck-n">' + r.total + '</div></div>').join('');
+
+  if (c.stage_dates_missing){
+    document.getElementById('note').textContent =
+      c.stage_dates_missing + ' of ' + c.open_leads + ' open leads have '
+      + 'no stage date, so their timing is unknown rather than green. '
+      + 'scripts/crm2_backfill_stage_entered.py fills these from the '
+      + 'audit trail.';
+  }
+})();
+</script>
+</body>
+</html>

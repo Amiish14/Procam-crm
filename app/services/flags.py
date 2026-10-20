@@ -24,6 +24,9 @@ rollback a line in the admin screen rather than a revert.
                             treat a forwarded offer or client reply as
                             business rather than dropping it
     FEATURE_AUTO_ASSIGN     give every lead an owner on arrival, by rule
+    FEATURE_CRM2            the CRM 2.0 cockpit, global search and stage
+                            map. Off: the routes 404 and nothing on the
+                            existing screens changes.
     EMAIL_KILL_SWITCH       stop all outbound CRM email, now, without a
                             deploy or a restart. Nothing is lost: the
                             outbox keeps queueing and the worker holds.
@@ -73,6 +76,15 @@ FLAGS = (
                                   'client reply as business', False),
     ('FEATURE_AUTO_ASSIGN', 'Give every lead an owner automatically, and '
                             'ask the head to confirm the guesses', False),
+    # FEATURE_FF_CRM was documented in this module from the day it was
+    # written and never listed here, so `_stored()` skipped its row and
+    # the admin screen could not turn it on — only the environment
+    # could, which is the thing moving flags into the database was
+    # meant to end. Listing it changes no behaviour while it is off.
+    ('FEATURE_FF_CRM', 'The freight-forwarding rate, quote and '
+                       'communication hub (FF-COMMS-01)', False),
+    ('FEATURE_CRM2', 'CRM 2.0: the cockpit, global search and the '
+                     'stage map', False),
     (KILL_SWITCH, 'Stop all outbound CRM email immediately', False),
 )
 

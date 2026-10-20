@@ -71,6 +71,10 @@ _GATES = (
     # through the lead on the RFQ.
     (re.compile(r"@_gated\b"), 'FEATURE_FF_CRM, then signed in; '
                                'records by scope'),
+    # CRM 2.0, the same shape: the switch first, then the session,
+    # then the Access Matrix per record.
+    (re.compile(r"@_crm2\b"), 'FEATURE_CRM2, then signed in; '
+                              'records by scope'),
     (re.compile(r"session\.get\('emp_code'\)|_current_emp_code\(\)|"
                 r"'emp_code' not in session"), 'signed in (checked inline)'),
     (re.compile(r"require_auth|_login_required|_require_login|_authed\(\)"),

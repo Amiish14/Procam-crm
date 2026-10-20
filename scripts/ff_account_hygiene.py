@@ -481,7 +481,7 @@ def apply_junk(rows, *, actor='FF-LINK-01'):
                 was = l.stage
                 l.stage = d.get('lead_stage', 'Lost')
                 l.lost_reason = d.get('lost_reason')
-                audit.record('lead.stage_changed', 'lead', str(l.id),
+                audit.record('lead.stage_change', 'lead', str(l.id),
                              old={'stage': was},
                              new={'stage': l.stage,
                                   'lost_reason': l.lost_reason},

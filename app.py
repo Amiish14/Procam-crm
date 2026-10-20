@@ -5950,6 +5950,10 @@ for _mod_path, _bp_name in [
     # Freight forwarding rates and quoting. Every route answers 404
     # while FEATURE_FF_CRM is off.
     ('app.ff.routes',            'ff_bp'),
+    # CRM 2.0: the cockpit, global search and the stage map. Every
+    # route answers 404 while FEATURE_CRM2 is off, and nothing on the
+    # existing screens changes while it is.
+    ('app.crm2.routes',          'crm2_bp'),
     # The TMS integration API. Exempted from CSRF below, because it is
     # authenticated by a bearer token rather than by a session cookie —
     # a CSRF token is a defence against a browser being used as a
