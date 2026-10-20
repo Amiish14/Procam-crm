@@ -253,6 +253,40 @@ def domain_label_accounts():
     return sorted(out, key=lambda r: (-r[3], (r[0].name or '').lower()))
 
 
+#: What Nilesh decided on 2026-10-20, having read the proposal the
+#: rule produced. These are not exceptions to the rule so much as
+#: the places where a person knows something the data does not: MEAP
+#: is Mitsubishi Electric Asia Pacific, ccsend.com is a mail host
+#: with TRT International behind it, and marineinsight.com is a
+#: newsletter nobody ever sold anything to.
+#:
+#: Kept here rather than passed on the command line because each one
+#: is several decisions at once — a rename plus an alias, a merge
+#: plus a rename of the target — and a shell line that long is a
+#: thing nobody can check before running it.
+DECISIONS = {
+    661: {'action': 'rename', 'to': 'Mitsubishi Electric Asia Pacific',
+          'alias': 'Mitsubishi Electric Corporation',
+          'why': 'MEAP is Mitsubishi Electric Asia Pacific; the mail '
+                 'is signed Mitsubishi Electric Corporation'},
+    985: {'action': 'rename', 'to': 'TRT International Ltd',
+          'why': 'ccsend.com sends the mail; TRT International signs '
+                 'it'},
+    849: {'action': 'merge', 'into': 1031,
+          'add_domains': ['delpagroup.com'],
+          'why': 'the same Delpa, reached on a second domain'},
+    892: {'action': 'merge', 'into': 749,
+          'then_rename': 'Hapag-Lloyd India Pvt Ltd',
+          'why': 'sales.hlag.com is Hapag-Lloyd, and "Hlag" is no '
+                 'better a name than "Sales"'},
+    762: {'action': 'retire', 'dev_stage': 'Dormant',
+          'lead_stage': 'Lost',
+          'lost_reason': 'Others: newsletter, not a client',
+          'why': 'marineinsight.com is a maritime newsletter, not a '
+                 'client'},
+}
+
+
 def junk_evidence(account):
     """What this account's own leads say it is."""
     leads = Lead.query.filter(Lead.company_id == account.id).all()
@@ -392,31 +426,83 @@ def junk_plan():
                                       if regs & MAIL_PLATFORMS
                                       else 'no lead, name or domain '
                                            'says what it should be')
-        rows.append({'account': c, 'why': why, 'open': open_n,
-                     'leads': all_n, 'action': action, 'to': to,
-                     'reason': reason, 'evidence': ev,
-                     'target': target if action == 'merge' else None})
+        row = {'account': c, 'why': why, 'open': open_n,
+               'leads': all_n, 'action': action, 'to': to,
+               'reason': reason, 'evidence': ev,
+               'target': target if action == 'merge' else None}
+        rows.append(_decided(row))
     return rows
+
+
+def _decided(row):
+    """A person's decision replaces the rule's, and says so."""
+    d = DECISIONS.get(row['account'].id)
+    if not d:
+        return row
+    row['action'] = d['action']
+    row['decision'] = d
+    row['reason'] = f'{d["why"]} (decided by hand)'
+    if d['action'] == 'merge':
+        row['target'] = db.session.get(Company, d['into'])
+        row['to'] = (row['target'].name if row['target']
+                     else f'#{d["into"]} — MISSING')
+    elif d['action'] == 'rename':
+        row['to'] = d['to']
+        row['target'] = None
+    else:
+        row['to'] = ''
+        row['target'] = None
+    return row
 
 
 def apply_junk(rows, *, actor='FF-LINK-01'):
     """Carry out the renames and merges. Caller commits."""
     from app.services import audit
 
-    renamed, merged = [], []
+    renamed, merged, retired = [], [], []
     for r in rows:
         c, to = r['account'], r['to']
+        d = r.get('decision') or {}
+        if r['action'] == 'retire':
+            # Not a client and never was. The lead closes with its
+            # tasks, the account stops appearing in the live lists,
+            # and nothing is renamed to a name it never had.
+            from app.services import task_autoclose
+            before = c.dev_stage
+            c.dev_stage = d.get('dev_stage', 'Dormant')
+            audit.record('company.retired', 'company', str(c.id),
+                         old={'dev_stage': before},
+                         new={'dev_stage': c.dev_stage},
+                         actor=actor, reason=d.get('why', ''))
+            closed = 0
+            for l in Lead.query.filter(Lead.company_id == c.id).all():
+                if (l.stage or '') in STAGES_TERMINAL:
+                    continue
+                was = l.stage
+                l.stage = d.get('lead_stage', 'Lost')
+                l.lost_reason = d.get('lost_reason')
+                audit.record('lead.stage_changed', 'lead', str(l.id),
+                             old={'stage': was},
+                             new={'stage': l.stage,
+                                  'lost_reason': l.lost_reason},
+                             actor=actor, reason=d.get('why', ''))
+                task_autoclose.close_for_lead(l, actor)
+                closed += 1
+            retired.append((c, closed))
+            continue
         if r['action'] == 'rename':
             old = c.name
-            if company_match.norm(old) == company_match.norm(to):
-                continue
-            c.name = to[:200]
-            audit.record('company.renamed', 'company', str(c.id),
-                         old={'name': old}, new={'name': c.name},
-                         actor=actor,
-                         reason=f'"{old}" was {r["why"]}; renamed from '
-                                f'{r["reason"]}.')
-            renamed.append((c, old, c.name))
+            if company_match.norm(old) != company_match.norm(to):
+                c.name = to[:200]
+                audit.record('company.renamed', 'company', str(c.id),
+                             old={'name': old}, new={'name': c.name},
+                             actor=actor,
+                             reason=f'"{old}" was {r["why"]}; renamed '
+                                    f'from {r["reason"]}.')
+                renamed.append((c, old, c.name))
+            if d.get('alias'):
+                add_alias(c, d['alias'], 'the other name it trades '
+                                         'under', actor=actor)
         elif r['action'] == 'merge':
             target = r['target']
             if target is None or target.id == c.id:
@@ -436,20 +522,39 @@ def apply_junk(rows, *, actor='FF-LINK-01'):
             # audit rows that have to keep resolving.
             c.is_active = False
             domains = list(target.email_domains or [])
-            for d in (c.email_domains or []):
-                if d not in domains:
-                    domains.append(d)
+            for dom in (c.email_domains or []):
+                if dom not in domains:
+                    domains.append(dom)
+            for extra in d.get('add_domains', []):
+                if extra not in domains:
+                    domains.append(extra)
             target.email_domains = domains
             audit.record('company.merged', 'company', str(c.id),
                          old={'name': c.name, 'is_active': True},
                          new={'merged_into': target.id,
                               'account': target.name,
-                              'leads_moved': moved},
+                              'leads_moved': moved,
+                              'domains': domains},
                          actor=actor,
                          reason=f'"{c.name}" was {r["why"]}; '
                                 f'{r["reason"]}.')
             merged.append((c, target, moved))
-    return renamed, merged
+            # The target can be as badly named as the thing merged
+            # into it — "Hlag" is no better than "Sales".
+            if d.get('then_rename') and company_match.norm(
+                    target.name) != company_match.norm(
+                        d['then_rename']):
+                was = target.name
+                target.name = d['then_rename'][:200]
+                audit.record('company.renamed', 'company',
+                             str(target.id),
+                             old={'name': was},
+                             new={'name': target.name},
+                             actor=actor,
+                             reason=f'{r["reason"]} — the account '
+                                    f'merged into was named no better.')
+                renamed.append((target, was, target.name))
+    return renamed, merged, retired
 
 
 # ── 5. evidence for the four short names ─────────────────────────────
@@ -699,7 +804,8 @@ def main():
                       'resolve.')
                 return
 
-            renamed, merged = apply_junk(rows, actor=args.actor)
+            renamed, merged, retired = apply_junk(
+                rows, actor=args.actor)
             try:
                 db.session.commit()
             except Exception as exc:                      # noqa: BLE001
@@ -708,12 +814,16 @@ def main():
                       f'{str(exc)[:200]}')
                 raise SystemExit(1)
             print(f'  {len(renamed)} renamed, {len(merged)} merged, '
-                  f'each with an audit row naming {args.actor}.')
+                  f'{len(retired)} retired, each with an audit row '
+                  f'naming {args.actor}.')
             for c, old_name, new_name in renamed:
                 print(f'    #{c.id:<6} {old_name} -> {new_name}')
             for c, target, moved in merged:
                 print(f'    #{c.id:<6} {c.name} -> #{target.id} '
                       f'{target.name} ({moved} lead(s) moved)')
+            for c, closed in retired:
+                print(f'    #{c.id:<6} {c.name} -> {c.dev_stage} '
+                      f'({closed} lead(s) closed)')
             return
 
         if args.set_alias:

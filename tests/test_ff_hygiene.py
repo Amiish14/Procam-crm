@@ -357,3 +357,82 @@ def test_a_mail_platform_never_names_the_client():
     assert 'ccsend.com' in hyg.MAIL_PLATFORMS
     assert 'onmicrosoft.com' in hyg.MAIL_PLATFORMS
     assert hyg.registrable('usatrt.ccsend.com') == 'ccsend.com'
+
+
+# ── decisions a person made over the rule ────────────────────────────
+def test_every_decision_names_an_account_that_exists():
+    """A typo'd id would silently decide nothing."""
+    with flask_app.app_context():
+        for cid, d in hyg.DECISIONS.items():
+            assert d.get('why'), f'#{cid} has no reason recorded'
+            assert d['action'] in ('rename', 'merge', 'retire')
+            if d['action'] == 'merge':
+                assert d.get('into') != cid, 'merged into itself'
+
+
+def test_a_decision_overrides_the_rule_and_says_so(junk):
+    """The merge the rule found is replaced by the rename asked for."""
+    with flask_app.app_context():
+        hyg.DECISIONS[junk['mail']] = {
+            'action': 'rename', 'to': 'Oyaso Lines',
+            'alias': 'Oyaso Shipping', 'why': 'because Nilesh said so'}
+        try:
+            r = _row(hyg.junk_plan(), junk['mail'])
+            assert r['action'] == 'rename'
+            assert r['to'] == 'Oyaso Lines'
+            assert 'decided by hand' in r['reason']
+        finally:
+            del hyg.DECISIONS[junk['mail']]
+
+
+def test_retire_closes_the_lead_and_leaves_the_name_alone(junk):
+    """In-process, not a subprocess: DECISIONS is module state and a
+    child process would read the production table, whose ids mean
+    nothing in a test database. Same two functions either way."""
+    with flask_app.app_context():
+        name_before = db.session.get(Company, junk['mail']).name
+        hyg.DECISIONS[junk['mail']] = {
+            'action': 'retire', 'dev_stage': 'Dormant',
+            'lead_stage': 'Lost',
+            'lost_reason': 'Others: newsletter, not a client',
+            'why': 'a newsletter, not a client'}
+        try:
+            rows = hyg.junk_plan()
+            renamed, merged, retired = hyg.apply_junk(
+                rows, actor='DIR12010')
+            db.session.commit()
+        finally:
+            del hyg.DECISIONS[junk['mail']]
+
+        c = db.session.get(Company, junk['mail'])
+        assert c.name == name_before, 'a retired account keeps its name'
+        assert c.dev_stage == 'Dormant'
+        assert c.is_active, 'retired is not merged away'
+        lead = Lead.query.filter_by(source='ffjunk').first()
+        assert lead.stage == 'Lost'
+        assert lead.lost_reason == 'Others: newsletter, not a client'
+        assert lead.company_id == junk['mail']
+        assert [c.id for c, _n in retired] == [junk['mail']]
+
+
+def test_a_merge_can_rename_the_account_it_merged_into(junk):
+    """"Hlag" is no better a name than "Sales"."""
+    with flask_app.app_context():
+        hyg.DECISIONS[junk['mail']] = {
+            'action': 'merge', 'into': junk['real'],
+            'add_domains': ['oyaso.co.in'],
+            'then_rename': 'Oyaso Lines Limited',
+            'why': 'the same company on two domains'}
+        try:
+            renamed, merged, _ = hyg.apply_junk(hyg.junk_plan(),
+                                                actor='DIR12010')
+            db.session.commit()
+        finally:
+            del hyg.DECISIONS[junk['mail']]
+
+        real = db.session.get(Company, junk['real'])
+        assert real.name == 'Oyaso Lines Limited'
+        assert 'oyaso.co.in' in (real.email_domains or [])
+        assert 'mail.oyaso.com' in (real.email_domains or [])
+        assert Lead.query.filter_by(
+            source='ffjunk').first().company_id == junk['real']
