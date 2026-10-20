@@ -36,6 +36,12 @@ class RFQ(db.Model):
     project_id     = db.Column(db.Integer, db.ForeignKey('projects.id'),
                                nullable=True, index=True)
 
+    #: FF-COMMS-01 R2. `crn` is the customer-side reference carried
+    #: from the enquiry; `vendor_crn` is the T-series number, and is
+    #: the only reference that ever reaches a carrier or agent.
+    crn            = db.Column(db.String(24), index=True)
+    vendor_crn     = db.Column(db.String(24), unique=True, index=True)
+
     subject        = db.Column(db.String(240), nullable=False)
     description    = db.Column(db.Text)
 
@@ -64,6 +70,8 @@ class RFQ(db.Model):
         d = {
             'id':             self.id,
             'rfq_number':     self.rfq_number,
+            'crn':            self.crn or '',
+            'vendor_crn':     self.vendor_crn or '',
             'lead_id':        self.lead_id,
             'opportunity_id': self.opportunity_id,
             'account_id':     self.account_id,
@@ -154,6 +162,14 @@ class RateSourcingLine(db.Model):
     remarks             = db.Column(db.Text)
     attachment_path     = db.Column(db.Text)
 
+    # FF-COMMS-01 R1.
+    #: Own CHA at Chennai and Mumbai, a partner everywhere else. It
+    #: changes who gets asked for a rate, so it belongs to the leg
+    #: and not to the quote.
+    cha_mode            = db.Column(db.String(12))
+    #: Which bucket the sell line built from this leg belongs to.
+    charge_group        = db.Column(db.String(24), index=True)
+
     created_by_id       = db.Column(db.String(20))
     created_at          = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at          = db.Column(db.DateTime, default=datetime.utcnow,
@@ -180,6 +196,8 @@ class RateSourcingLine(db.Model):
             'rate_currency':       self.rate_currency or '',
             'rate_validity_until': str(self.rate_validity_until) if self.rate_validity_until else '',
             'remarks':             self.remarks or '',
+            'cha_mode':            self.cha_mode or '',
+            'charge_group':        self.charge_group or '',
             'created_by_id':       self.created_by_id or '',
             'created_at':          str(self.created_at)[:19] if self.created_at else '',
             'updated_at':          str(self.updated_at)[:19] if self.updated_at else '',

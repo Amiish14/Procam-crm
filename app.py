@@ -483,6 +483,11 @@ class Lead(db.Model):
     # job can also be Multimodal — something the old pair of verticals
     # could not say at all.
     mode             = db.Column(db.String(20))
+    # FF-COMMS-01 R2. The customer-side reference, allocated once at
+    # enquiry and carried to every RFQ, quote and subject line after
+    # it. The vendor side gets its own number — see app/services/crn.
+    crn              = db.Column(db.String(24), unique=True, index=True)
+    business_unit    = db.Column(db.String(5), index=True)
     assigned_to      = db.Column(db.String(100), index=True)   # emp_code — primary PIC
     assigned_name    = db.Column(db.String(100))
     # Secondary PIC — a monitor/backup, not a co-owner. Mirrors the
@@ -645,6 +650,8 @@ class Lead(db.Model):
             'linkedin': self.linkedin or '',
             'stage': self.stage or 'New', 'procam_vertical': self.procam_vertical or '',
             'mode': self.mode or '',
+            'crn': self.crn or '',
+            'business_unit': self.business_unit or '',
             'lost_to_competitor_id': self.lost_to_competitor_id,
             'debrief_note': self.debrief_note or '',
             'hold_note': self.hold_note or '',
@@ -5107,6 +5114,9 @@ def init_db():
                    'app.models.ingest_log', 'app.models.integration',
                    'app.models.email_admin', 'app.models.assignment',
                    'app.models.escalation', 'app.models.intel',
+                   # After rfq and quote: ff_rate_requests points at
+                   # both rfqs and rate_sourcing_lines.
+                   'app.models.ff',
                    'app.directory.models'):
             try:
                 __import__(_m)
@@ -5143,6 +5153,22 @@ def init_db():
             ('task_instances', 'escalated',    _bool_ddl),
             ('task_instances', 'escalated_to', 'VARCHAR(40)'),
             ('task_instances', 'escalated_at', 'TIMESTAMP'),
+            # FF-COMMS-01 R2 — the client reference number
+            ('leads',               'crn',                   'VARCHAR(24)'),
+            ('leads',               'business_unit',         'VARCHAR(5)'),
+            ('rfqs',                'crn',                   'VARCHAR(24)'),
+            ('rfqs',                'vendor_crn',            'VARCHAR(24)'),
+            ('quotes',              'crn',                   'VARCHAR(24)'),
+            # FF-COMMS-01 R1 — charge groups, cost and the CHA mode
+            ('quote_lines',         'charge_group',          'VARCHAR(24)'),
+            ('quote_lines',         'cost_amount',           'NUMERIC(15,2)'),
+            ('quote_lines',         'cost_currency',         'VARCHAR(6)'),
+            ('quote_lines',         'cost_inr',              'NUMERIC(15,2)'),
+            ('quote_lines',         'source_rate_request_id', 'INTEGER'),
+            ('quotes',              'incoterm',              'VARCHAR(8)'),
+            ('quotes',              'client_party',          'VARCHAR(12)'),
+            ('rate_sourcing_lines', 'cha_mode',              'VARCHAR(12)'),
+            ('rate_sourcing_lines', 'charge_group',          'VARCHAR(24)'),
             # The Lost dialog captures what the retired tasks asked for
             ('leads', 'lost_to_competitor_id', 'INTEGER'),
             ('leads', 'debrief_note',          'TEXT'),
@@ -5915,6 +5941,9 @@ for _mod_path, _bp_name in [
     # task route was a GET, and tasks closed only as a side effect of
     # something else reaching a state. See RELEASE_2026_10_TASKS.md.
     ('app.tasks.routes',         'tasks_bp'),
+    # Freight forwarding rates and quoting. Every route answers 404
+    # while FEATURE_FF_CRM is off.
+    ('app.ff.routes',            'ff_bp'),
     # The TMS integration API. Exempted from CSRF below, because it is
     # authenticated by a bearer token rather than by a session cookie —
     # a CSRF token is a defence against a browser being used as a

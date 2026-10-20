@@ -64,6 +64,13 @@ _GATES = (
     # "or is named in the master this screen is about".
     (re.compile(r"@_head_view\b"), 'admin.email, or a vertical head (read '
                                    'only)'),
+    # Freight forwarding (FF-COMMS-01). Its own decorator because it
+    # carries two checks that no permission expresses together: the
+    # feature switch, which makes the route 404 while FEATURE_FF_CRM
+    # is off, and then the session. The records behind it are scoped
+    # through the lead on the RFQ.
+    (re.compile(r"@_gated\b"), 'FEATURE_FF_CRM, then signed in; '
+                               'records by scope'),
     (re.compile(r"session\.get\('emp_code'\)|_current_emp_code\(\)|"
                 r"'emp_code' not in session"), 'signed in (checked inline)'),
     (re.compile(r"require_auth|_login_required|_require_login|_authed\(\)"),

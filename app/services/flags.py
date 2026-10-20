@@ -14,6 +14,9 @@ rollback a line in the admin screen rather than a revert.
     FEATURE_WEEKLY_PACK     the Thursday review pack and the Friday
                             freeze
     FEATURE_REPLY_CAPTURE   file replies on the thread against the lead
+    FEATURE_FF_CRM          the freight-forwarding rate, quote and
+                            communication hub (FF-COMMS-01). Off: the
+                            tables exist and nothing reads them.
     FEATURE_MY_MAIL         the My Mail page
     FEATURE_FORWARD_RECEIPT a receipt to whoever forwarded the mail
     FEATURE_REOPEN_ON_MAIL  reopen a closed lead that receives client mail

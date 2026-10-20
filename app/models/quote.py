@@ -58,6 +58,15 @@ class Quote(db.Model):
     lost_at         = db.Column(db.DateTime)
     lost_reason     = db.Column(db.String(200))
 
+    #: FF-COMMS-01 R1. The Incoterm, and which side of the shipment
+    #: our client is on. Both are needed: the same term bills the
+    #: opposite half depending on the answer.
+    #: FF-COMMS-01 R2, carried from the enquiry.
+    crn           = db.Column(db.String(24), index=True)
+
+    incoterm      = db.Column(db.String(8))
+    client_party  = db.Column(db.String(12))
+
     parent_quote_id = db.Column(db.Integer, db.ForeignKey('quotes.id'),
                                 nullable=True)
     revision_number = db.Column(db.Integer, default=1)
@@ -141,6 +150,35 @@ class QuoteLine(db.Model):
     line_total = db.Column(db.Numeric(15, 2))
     remarks    = db.Column(db.Text)
 
+    # FF-COMMS-01 R1.
+    #: Which bucket of a forwarding quote this is. The Incoterm on
+    #: the quote decides whether a group falls to our client — see
+    #: app/services/ff_charges.py.
+    charge_group = db.Column(db.String(24), index=True)
+    #: What the leg costs us, from the vendor rate that was chosen.
+    #: Without it there is no margin, and a forwarding quote without
+    #: a margin is a price somebody guessed.
+    cost_amount   = db.Column(db.Numeric(15, 2))
+    cost_currency = db.Column(db.String(6))
+    cost_inr      = db.Column(db.Numeric(15, 2))
+    #: The vendor reply this line was priced from, so a quote can be
+    #: traced back to the rate it rests on.
+    source_rate_request_id = db.Column(db.Integer, index=True)
+
+    @property
+    def margin_inr(self):
+        from decimal import Decimal
+        if self.line_total is None or self.cost_inr is None:
+            return None
+        return Decimal(str(self.line_total)) - Decimal(str(self.cost_inr))
+
+    @property
+    def margin_pct(self):
+        m = self.margin_inr
+        if m is None or not self.line_total:
+            return None
+        return float(m) * 100.0 / float(self.line_total)
+
     def recompute_total(self):
         from decimal import Decimal
         try:
@@ -162,6 +200,16 @@ class QuoteLine(db.Model):
             'unit_rate':   float(self.unit_rate or 0),
             'line_total':  float(self.line_total or 0),
             'remarks':     self.remarks or '',
+            'charge_group': self.charge_group or '',
+            'cost_amount': (float(self.cost_amount)
+                            if self.cost_amount is not None else None),
+            'cost_currency': self.cost_currency or '',
+            'cost_inr': (float(self.cost_inr)
+                         if self.cost_inr is not None else None),
+            'source_rate_request_id': self.source_rate_request_id,
+            'margin_inr': (float(self.margin_inr)
+                           if self.margin_inr is not None else None),
+            'margin_pct': self.margin_pct,
         }
 
 
