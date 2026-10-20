@@ -52,9 +52,17 @@ SUFFIXES = {
 #: never redacted on their own — only as part of a longer run that
 #: does identify somebody, such as "Tata Steel".
 #:
-#: This is a judgement, and it is the soft spot in the whole module:
-#: a client whose entire name is one generic word is not protected by
-#: the automatic pass and needs an alias entered by hand.
+#: This list applies to *tokens inside* a longer name, never to a
+#: whole one: an account actually called "Steel" still has that word
+#: redacted, because the full name is always a variant. The cost
+#: there is the reverse — "steel coils" in a cargo description is
+#: masked too, and the request reads badly. Leaking the client is
+#: worse than reading badly, so that is the trade taken; a one-word
+#: generic client is a case to rephrase the scope note around.
+#:
+#: The names the automatic pass genuinely cannot protect are the
+#: short ones — under MIN_TOKEN characters. Production has four:
+#: Acs, Efl, Qd and Uht. Those need an alias entered by hand.
 GENERIC = {
     'steel', 'cement', 'power', 'energy', 'motors', 'auto', 'logistics',
     'shipping', 'cargo', 'freight', 'transport', 'chemicals', 'metals',
