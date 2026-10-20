@@ -386,3 +386,94 @@ def test_the_pdf_escapes_the_terms_it_prints():
     from app.quote.routes import _esc
     assert _esc('Rates & charges < 24h') == \
         'Rates &amp; charges &lt; 24h'
+
+
+# ── reading terms off the quotes we have actually sent ───────────────
+def _terms_mod():
+    import importlib.util as u
+    spec = u.spec_from_file_location(
+        'terms_from_quotes',
+        os.path.join(_ROOT, 'scripts', 'crm2_terms_from_quotes.py'))
+    mod = u.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize('text,why', [
+    ('The LSP shall deploy vehicles with valid RC. Our offer is '
+     'attached.', 'the client binding a supplier'),
+    ('You are to quote clearly the number of trailers. Procam '
+     'Logistics Pvt Ltd.', 'the client instructing a bidder'),
+    ('Please submit your offer in a sealed envelope. Procam '
+     'Logistics Private Limited', 'a tender'),
+    ('Bidders must comply. We are pleased to quote.',
+     'a tender that also says our words'),
+])
+def test_a_clients_tender_is_not_our_quote(text, why):
+    """The first run scored on "mentions Procam" and built a
+    proposal out of TMIL's tender and L&T's LSP contract. Those
+    name Procam on every page."""
+    mod = _terms_mod()
+    score, hits, _why_not = mod._score(text)
+    assert score == 0, f'{why}: scored {score} on {hits}'
+
+
+def test_our_own_offer_is_recognised():
+    mod = _terms_mod()
+    score, hits, _ = mod._score(
+        'We are pleased to quote as below. Our offer is valid for 15 '
+        'days. Payment terms: 30 days. Procam Logistics Pvt Ltd.')
+    assert score >= 4 and hits
+
+
+def test_a_veto_outranks_any_number_of_positives():
+    """A tender can carry our letterhead on a covering page."""
+    mod = _terms_mod()
+    score, _h, why = mod._score(
+        'Procam Logistics Pvt Ltd. Our quotation. We are pleased to '
+        'quote. Our charges. The LSP shall provide tracking.')
+    assert score == 0 and 'LSP' in why
+
+
+@pytest.mark.parametrize('line,keep', [
+    ('The present offer is valid for 15 days from the date hereof',
+     True),
+    ('All risk insurance to cover the full value of the shipment',
+     True),
+    ('Axles lines (upto 10) with', False),
+    ('4921 / 4923 and equivalent 1500 3000 4500', False),
+    ('Procam Logistics Pvt. Ltd.,', False),
+    ('You should provide a proper loading plan with all packages',
+     False),
+    ('The Contractor shall not transship any goods without consent',
+     False),
+    ('Transporter shall provide a tracking report every day',
+     False),
+])
+def test_a_clause_is_a_sentence_of_terms_not_a_table_row(line, keep):
+    assert _terms_mod()._is_clause(line) is keep
+
+
+def test_the_proposal_script_publishes_nothing():
+    """It reads. `quote_terms.publish()` is a separate, deliberate
+    act, and a proposal that quietly became a publication would be
+    the worst version of this task.
+
+    Checked against the parsed code rather than the text: the module
+    docstring says the word "publish" twice, on purpose, and a
+    grep-shaped test fails on its own explanation.
+    """
+    import ast
+
+    tree = ast.parse(open(os.path.join(
+        _ROOT, 'scripts', 'crm2_terms_from_quotes.py')).read())
+    called = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            called.add(ast.unparse(node.func))
+    for banned in ('quote_terms.publish', 'db.session.commit',
+                   'db.session.add', 'db.session.delete'):
+        assert banned not in called, \
+            f'a proposal script must not call {banned}()'
+    assert 'db.session.execute' in called, \
+        'it does have to read the attachments'
