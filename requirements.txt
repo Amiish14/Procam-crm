@@ -33,3 +33,6 @@ reportlab>=4.0,<5
 # app/services/attachment_text.py degrades to spreadsheets and text if
 # this is absent, so the CRM runs without it.
 pypdf==5.1.0
+# Terms annexures arrive as .docx; attachment_text reads their
+# tables as well as their paragraphs.
+python-docx==1.1.2

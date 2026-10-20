@@ -32,13 +32,25 @@ MAX_BYTES = 15 * 1024 * 1024
 SPREADSHEET = ('.xlsx', '.xlsm', '.xltx')
 PLAIN = ('.txt', '.csv', '.tsv', '.md', '.eml')
 PDF = ('.pdf',)
+#: Only the modern zip-based format. A legacy binary .doc needs
+#: antiword or libreoffice, which are not on this server, so one is
+#: reported as unreadable rather than quietly returning nothing.
+WORD = ('.docx', '.docm')
 
-READABLE = SPREADSHEET + PLAIN + PDF
+READABLE = SPREADSHEET + PLAIN + PDF + WORD
 
 
 def pdf_supported():
     try:
         import pypdf                                          # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def word_supported():
+    try:
+        import docx                                           # noqa: F401
         return True
     except Exception:
         return False
@@ -56,6 +68,8 @@ def extract(path, *, max_chars=MAX_CHARS_PER_FILE):
             text = _from_spreadsheet(path)
         elif ext in PDF:
             text = _from_pdf(path)
+        elif ext in WORD:
+            text = _from_word(path)
         elif ext in PLAIN:
             text = _from_plain(path)
         else:
@@ -122,6 +136,33 @@ def _from_pdf(path):
         except Exception:
             continue
     return '\n'.join(text)
+
+
+def _from_word(path):
+    """Paragraphs and table cells from a .docx.
+
+    Tables matter here: a terms annexure is very often a two-column
+    table, and reading only `document.paragraphs` returns the
+    headings and none of the clauses.
+    """
+    try:
+        import docx
+    except Exception:                                     # noqa: BLE001
+        return ''
+    doc = docx.Document(path)
+    out = [p.text for p in doc.paragraphs if (p.text or '').strip()]
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [c.text.strip() for c in row.cells]
+            # A merged row repeats the same text in every cell.
+            seen, uniq = set(), []
+            for c in cells:
+                if c and c not in seen:
+                    seen.add(c)
+                    uniq.append(c)
+            if uniq:
+                out.append(' | '.join(uniq))
+    return '\n'.join(out)
 
 
 def _from_plain(path):

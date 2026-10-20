@@ -259,18 +259,22 @@ def survey():
             skipped['an invoice, PO or shipping document'] += 1
             continue
         ext = os.path.splitext(filename or '')[1].lower()
-        if ext in ('.doc', '.docx'):
-            skipped['Word file — python-docx is not installed'] += 1
+        if ext == '.doc':
+            # The legacy binary format. python-docx cannot open it
+            # and antiword is not installed, so it is named rather
+            # than counted as "no terms found".
+            skipped['legacy .doc — no reader on this server'] += 1
             unreadable.append((vertical, aid, filename,
-                               'python-docx not installed'))
+                               'legacy .doc format'))
             continue
-        if ext != '.pdf':
+        if ext not in ('.pdf',) + attachment_text.WORD:
             continue
         text = attachment_text.extract(path, max_chars=40000)
         if not text.strip():
-            skipped['PDF with no text layer (scan or image)'] += 1
-            unreadable.append((vertical, aid, filename,
-                               'no text layer'))
+            why = ('PDF with no text layer (scan or image)'
+                   if ext == '.pdf' else 'the file held no text')
+            skipped[why] += 1
+            unreadable.append((vertical, aid, filename, why))
             continue
         import hashlib
         fingerprint = hashlib.sha1(
@@ -453,6 +457,9 @@ def main():
         if not attachment_text.pdf_supported():
             raise SystemExit('pypdf is not installed; no PDF can be '
                              'read and the proposal would be empty.')
+        print('  readers: pdf yes, word '
+              + ('yes' if attachment_text.word_supported() else 'NO')
+              + '\n')
 
         found, skipped, unreadable = survey()
         grouped = group(found)

@@ -477,3 +477,48 @@ def test_the_proposal_script_publishes_nothing():
             f'a proposal script must not call {banned}()'
     assert 'db.session.execute' in called, \
         'it does have to read the attachments'
+
+
+def test_a_word_terms_annexure_is_read_tables_and_all():
+    """A terms annexure is very often a two-column table, and
+    reading only document.paragraphs returns the headings and none
+    of the clauses."""
+    import docx
+    from app.services import attachment_text
+
+    assert attachment_text.word_supported()
+    path = os.path.join(tempfile.mkdtemp(), 'terms.docx')
+    d = docx.Document()
+    d.add_paragraph('Terms and Conditions')
+    t = d.add_table(rows=2, cols=2)
+    t.cell(0, 0).text = '1'
+    t.cell(0, 1).text = 'The present offer is valid for 15 days.'
+    t.cell(1, 0).text = '2'
+    t.cell(1, 1).text = 'All risk insurance is to the client.'
+    d.save(path)
+
+    text = attachment_text.extract(path)
+    assert 'Terms and Conditions' in text
+    assert 'valid for 15 days' in text, 'the table was not read'
+    assert 'All risk insurance' in text
+
+
+def test_a_merged_row_is_not_repeated_once_per_cell():
+    import docx
+    from app.services import attachment_text
+
+    path = os.path.join(tempfile.mkdtemp(), 'merged.docx')
+    d = docx.Document()
+    t = d.add_table(rows=1, cols=3)
+    for c in t.rows[0].cells:
+        c.text = 'Payment within 30 days'
+    d.save(path)
+    assert attachment_text.extract(path).count(
+        'Payment within 30 days') == 1
+
+
+def test_docx_is_in_the_readable_list():
+    from app.services import attachment_text
+    assert '.docx' in attachment_text.READABLE
+    assert '.doc' not in attachment_text.READABLE, \
+        'the legacy binary format needs a reader this server has not'
