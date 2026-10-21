@@ -143,20 +143,48 @@ def _build_ff(example):
               origin=example['pol_name'],
               destination=example['pod_name'],
               cargo=example.get('hs_code', ''))
+    # The enquiry now has a column for each of these, which is the
+    # point of the change: the pack reads the shipment instead of
+    # leaving it blank for somebody at the far end.
+    for field in ('direction', 'shipper_name', 'consignee_name',
+                  'pol_code', 'pol_name', 'pod_code', 'pod_name',
+                  'hs_code', 'package_count', 'package_kind',
+                  'gross_weight_kg', 'volume_cbm',
+                  'container_count'):
+        if field in example:
+            setattr(rfq, field, example[field])
     db.session.add(rfq)
     db.session.flush()
     q = Quote(quote_number='Q-' + example['reference'],
               subject='TMS~' + example['reference'],
               lead_id=lead.id, account_id=acct.id, rfq_id=rfq.id,
               crn=example['reference'], incoterm=example['incoterm'],
+              incoterm_place=example.get('incoterm_place'),
               currency=example.get('currency', 'INR'),
               total_amount=example['sell_value'],
               quote_date=date.today())
     db.session.add(q)
     db.session.flush()
+    # The carrier on a pack is whoever won the freight leg, so the
+    # example's carrier has to have been chosen for it to appear.
+    from app.models.ff import RateRequest
+    from app.models.rfq import RateSourcingLine
+
+    leg = RateSourcingLine(rfq_id=rfq.id, line_no=1,
+                           service='Freight',
+                           origin=example['pol_name'],
+                           destination=example['pod_name'])
+    db.session.add(leg)
+    db.session.flush()
+    req = RateRequest(rfq_id=rfq.id, line_id=leg.id,
+                      vendor_name=example['carrier_name'],
+                      status='Chosen', requested_by='T')
+    db.session.add(req)
+    db.session.flush()
     db.session.add(QuoteLine(quote_id=q.id, line_no=1,
                              service='Freight', charge_group='freight',
-                             line_total=example['sell_value']))
+                             line_total=example['sell_value'],
+                             source_rate_request_id=req.id))
     db.session.commit()
     return q, lead, acct, rfq
 
@@ -181,6 +209,20 @@ def test_each_part_a_example_round_trips(example, ff_world):
         assert payload['pod_name'] == example['pod_name']
         assert payload['sell_value'] == float(example['sell_value'])
         assert payload['currency'] == example['currency']
+
+        # Every value in the document's example that the CRM now
+        # holds must come back out, spelled its way. This is the
+        # test the format was copied in for.
+        for field, expected in example.items():
+            if field in ('customer', 'sell_value'):
+                continue            # checked above, or renamed
+            got = payload.get(field)
+            if isinstance(expected, (int, float)) and got is not None:
+                assert float(got) == float(expected), field
+            else:
+                assert got == expected, \
+                    f'{field}: sent {got!r}, example says {expected!r}'
+
         assert not tms_intake.unknown_fields(payload)
         assert not tms_intake.missing_required(payload)
         db.session.rollback()
@@ -402,3 +444,169 @@ def test_the_customers_own_po_number_is_the_one_thing_we_send(
         ff = ff_handover.build_payload(q)
         assert ff['tally_po_number'] == 'PO-99881'
         db.session.rollback()
+
+
+# ── the shipment on the enquiry ──────────────────────────────────────
+from app.services import ff_shipment                      # noqa: E402
+
+
+def _full():
+    return {'direction': 'EXPORT', 'pol_name': 'Chennai',
+            'pod_name': 'Hamburg', 'gross_weight_kg': '18400',
+            'package_count': '12'}
+
+
+def test_the_five_required_fields_are_required():
+    assert ff_shipment.validate(_full()) == []
+    for field in ('direction', 'pol_name', 'pod_name',
+                  'gross_weight_kg', 'package_count'):
+        data = _full()
+        data[field] = ''
+        assert ff_shipment.validate(data), f'{field} was not required'
+
+
+def test_a_port_may_be_a_code_or_a_name():
+    """Requiring both would stop work on the first enquiry whose
+    agent gave a port name and no LOCODE, which is most of them."""
+    data = _full()
+    data['pol_name'] = ''
+    data['pol_code'] = 'INMAA'
+    assert ff_shipment.validate(data) == []
+
+
+def test_every_problem_is_reported_at_once():
+    """A form that reveals one problem per save is a form somebody
+    saves six times."""
+    problems = ff_shipment.validate({})
+    assert len(problems) >= 5
+
+
+def test_dangerous_goods_need_a_class_and_a_un_number():
+    data = _full()
+    data['is_dangerous'] = 'yes'
+    fields = {f for f, _m in ff_shipment.validate(data)}
+    assert fields == {'dg_class', 'un_number'}
+    data.update({'dg_class': '3', 'un_number': 'UN1263'})
+    assert ff_shipment.validate(data) == []
+
+
+def test_not_dangerous_is_not_the_same_as_not_asked():
+    """Null is "nobody has said"; False is a person saying no. Only
+    a True ever reaches the pack, where any value means dangerous."""
+    assert ff_shipment._clean('is_dangerous', None) is None
+    assert ff_shipment._clean('is_dangerous', 'no') is False
+    assert ff_shipment._clean('is_dangerous', 'yes') is True
+
+
+@pytest.mark.parametrize('field,bad', [
+    ('package_count', 'twelve'), ('gross_weight_kg', 'heavy'),
+    ('package_count', '-3'), ('gross_weight_kg', '-1'),
+])
+def test_a_number_that_is_not_one_is_refused(field, bad):
+    with pytest.raises(ff_shipment.ShipmentError):
+        ff_shipment._clean(field, bad)
+
+
+def test_the_direction_is_only_ever_a_suggestion():
+    """It pre-fills. It is never stored on the strength of the
+    guess: direction decides which customs regime a job goes
+    through."""
+    class _R:
+        origin, destination = 'Chennai', 'Hamburg'
+        pol_name = pod_name = None
+    assert ff_shipment.suggest(_R())['direction'] == 'EXPORT'
+    # And nothing is written by suggesting.
+    with pytest.raises(ff_shipment.ShipmentError):
+        ff_shipment.apply_to(_R(), {'pol_name': 'Chennai',
+                                    'pod_name': 'Hamburg',
+                                    'gross_weight_kg': 1,
+                                    'package_count': 1})
+
+
+def test_an_enquiry_is_not_ready_for_rates_until_it_is_complete(
+        ff_world):
+    from app.models.rfq import RFQ
+
+    with flask_app.app_context():
+        rfq = RFQ(rfq_number='R-ready', subject='TMS~ready',
+                  origin='Chennai', destination='Hamburg')
+        db.session.add(rfq)
+        db.session.flush()
+        assert not ff_shipment.ready_for_rates(rfq)
+        ff_shipment.apply_to(rfq, _full(), actor='T')
+        db.session.flush()
+        assert ff_shipment.ready_for_rates(rfq)
+        assert rfq.direction == 'EXPORT'
+        assert float(rfq.gross_weight_kg) == 18400
+        db.session.rollback()
+
+
+# ── GST: quote, then account, then vertical ──────────────────────────
+def test_the_account_default_beats_the_vertical():
+    class _A:
+        default_gst_treatment = 'TRANSPORT_RCM'
+    assert tms_intake.gst_treatment_for(
+        'Heavy Transport') == 'TRANSPORT_FCM'
+    assert tms_intake.gst_treatment_for(
+        'Heavy Transport', account=_A()) == 'TRANSPORT_RCM'
+
+
+def test_the_quote_beats_the_account():
+    class _A:
+        default_gst_treatment = 'TRANSPORT_RCM'
+    assert tms_intake.gst_treatment_for(
+        'Heavy Transport', override='GOODS_18',
+        account=_A()) == 'GOODS_18'
+
+
+def test_rcm_is_still_never_reached_by_a_vertical_alone():
+    """It means the client pays the tax direct — an arrangement
+    with them, not a property of the work."""
+    for vertical in tms_intake.BY_VERTICAL:
+        assert tms_intake.gst_treatment_for(vertical) != \
+            'TRANSPORT_RCM'
+
+
+def test_an_empty_account_default_falls_through():
+    class _A:
+        default_gst_treatment = None
+    assert tms_intake.gst_treatment_for(
+        'Installation', account=_A()) == 'GOODS_18'
+
+
+def test_a_rubbish_account_default_is_refused_not_sent():
+    class _A:
+        default_gst_treatment = 'MADE_UP'
+    with pytest.raises(tms_intake.IntakeError):
+        tms_intake.gst_treatment_for('Installation', account=_A())
+
+
+# ── what is left for a person ────────────────────────────────────────
+def test_cannot_supply_is_down_to_what_is_genuinely_unknown():
+    assert set(tms_intake.CANNOT_SUPPLY) == {
+        'etd', 'eta', 'notify_name', 'notify_address',
+        'overseas_agent_name', 'customer_code'}
+    for field in ('shipper_name', 'pol_code', 'hs_code',
+                  'gross_weight_kg', 'is_dangerous', 'cha_mode',
+                  'carrier_name', 'incoterm_place'):
+        assert field not in tms_intake.CANNOT_SUPPLY
+
+
+@pytest.mark.parametrize('direction,pol,pod,expected', [
+    ('EXPORT', 'Chennai', 'Hamburg', 'OWN'),
+    ('EXPORT', 'Kolkata', 'Hamburg', 'OUTSOURCED'),
+    ('IMPORT', 'Shanghai', 'Nhava Sheva', 'OUTSOURCED'),
+    ('IMPORT', 'Singapore', 'Chennai', 'OWN'),
+    ('CROSS_TRADE', 'Shanghai', 'Jebel Ali', 'OUTSOURCED'),
+    ('', 'Chennai', 'Hamburg', None),
+])
+def test_the_cha_mode_follows_the_end_that_clears_customs(
+        direction, pol, pod, expected):
+    """Getting this backwards decides whether we are selling our
+    own licence or buying somebody else's."""
+    class _R:
+        pass
+    r = _R()
+    r.direction, r.pol_name, r.pod_name = direction, pol, pod
+    r.origin = r.destination = None
+    assert ff_handover._cha_mode(r) == expected

@@ -68,6 +68,14 @@ class Quote(db.Model):
     #: once, never moved: the client has that wording in their hand.
     terms_version_id = db.Column(db.Integer, nullable=True)
     incoterm      = db.Column(db.String(8))
+    #: The named place that completes the Incoterm — "FOB" alone is
+    #: not a term, "FOB Chennai" is. Beside the Incoterm because
+    #: they are one answer, not two.
+    incoterm_place = db.Column(db.String(160))
+    #: Set only when this job is billed differently from the way
+    #: this customer usually is. Empty means "as the customer, and
+    #: failing that as the vertical" — see tms_intake.
+    gst_treatment = db.Column(db.String(24), nullable=True)
     client_party  = db.Column(db.String(12))
 
     parent_quote_id = db.Column(db.Integer, db.ForeignKey('quotes.id'),

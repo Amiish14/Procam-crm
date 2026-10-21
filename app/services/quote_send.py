@@ -143,22 +143,86 @@ def _rate_subject(req, rfq):
 
 
 def _rate_html(req, line, rfq):
+    """What a carrier needs to price the leg.
+
+    The shipment detail comes from the enquiry rather than being
+    described again in prose: the weight a carrier quotes against
+    and the weight the handover pack carries have to be the same
+    number, and they will not stay the same if they are typed
+    twice. Masked like everything else here — the client's name is
+    not among these facts, and the consignee is removed by
+    `send_rate_request` before this goes out.
+    """
     bits = ['<p>Please quote for the following:</p>', '<ul>']
     for label, value in (
             ('Service', getattr(line, 'service', '')),
             ('Scope', getattr(line, 'scope', '')),
-            ('From', getattr(line, 'origin', '')),
-            ('To', getattr(line, 'destination', '')),
+            ('Direction', getattr(rfq, 'direction', '')),
+            ('From', (getattr(rfq, 'pol_name', None)
+                      or getattr(line, 'origin', ''))),
+            ('POL code', getattr(rfq, 'pol_code', '')),
+            ('To', (getattr(rfq, 'pod_name', None)
+                    or getattr(line, 'destination', ''))),
+            ('POD code', getattr(rfq, 'pod_code', '')),
             ('Cargo', getattr(line, 'cargo', '')),
+            ('HS code', getattr(rfq, 'hs_code', '')),
+            ('Packages', _packages(rfq)),
+            ('Gross weight', _kg(rfq)),
+            ('Volume', _cbm(rfq)),
+            ('Containers', getattr(rfq, 'container_count', '')),
+            ('Incoterm', _incoterm(rfq)),
             ('Required by', getattr(line, 'required_by', ''))):
         if value:
             bits.append(f'<li><b>{label}:</b> {value}</li>')
+    if getattr(rfq, 'is_dangerous', None):
+        # Said plainly and near the top of the list, because a
+        # carrier that finds out at the terminal rolls the booking.
+        bits.append(
+            f'<li><b>DANGEROUS GOODS:</b> class '
+            f'{getattr(rfq, "dg_class", "") or "?"}, UN '
+            f'{getattr(rfq, "un_number", "") or "?"}</li>')
     bits.append('</ul>')
     if req.due_by:
         bits.append(f'<p>Please reply by {req.due_by}.</p>')
     if req.request_note:
         bits.append(f'<p>{req.request_note}</p>')
     return '\n'.join(bits)
+
+
+def _packages(rfq):
+    count = getattr(rfq, 'package_count', None)
+    if not count:
+        return ''
+    kind = (getattr(rfq, 'package_kind', None) or '').strip()
+    return f'{count} {kind}'.strip()
+
+
+def _kg(rfq):
+    value = getattr(rfq, 'gross_weight_kg', None)
+    return f'{float(value):,.3f} kg'.replace('.000', '') if value \
+        else ''
+
+
+def _cbm(rfq):
+    value = getattr(rfq, 'volume_cbm', None)
+    return f'{float(value):,.3f} CBM'.replace('.000', '') if value \
+        else ''
+
+
+def _incoterm(rfq):
+    """The Incoterm lives on the quote, and a rate request can
+    precede one. Taken from the latest quote on the enquiry when
+    there is one, and left out when there is not."""
+    from app.models.quote import Quote
+
+    if rfq is None or not getattr(rfq, 'id', None):
+        return ''
+    quote = (Quote.query.filter_by(rfq_id=rfq.id)
+             .order_by(Quote.id.desc()).first())
+    if quote is None or not quote.incoterm:
+        return ''
+    place = (quote.incoterm_place or '').strip()
+    return f'{quote.incoterm} {place}'.strip()
 
 
 def _quote_html(quote, printed, note):

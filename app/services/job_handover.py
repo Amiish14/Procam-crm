@@ -151,7 +151,10 @@ def build_payload(quote, *, pack=None, lead=None, account=None,
         'client_name': customer,
         'client_po_number': getattr(pack, 'client_po_number', None),
         'gst_treatment': tms_intake.gst_treatment_for(
-            vertical, override=gst_treatment),
+            vertical,
+            override=(gst_treatment
+                      or getattr(quote, 'gst_treatment', None)),
+            account=account),
         'po_date': str(datetime.utcnow().date()),
         'po_value': total,
         'currency': currency,

@@ -141,10 +141,9 @@ def build_payload(quote, *, pack=None, lead=None, account=None,
         'customer': (getattr(account, 'name', None)
                      or getattr(lead, 'company', None)),
         'mode': tms_intake.mode_for(getattr(lead, 'mode', None)),
-        'direction': tms_intake.direction_for(
-            getattr(rfq, 'origin', None),
-            getattr(rfq, 'destination', None)),
         'incoterm': getattr(quote, 'incoterm', None),
+        'incoterm_place': getattr(quote, 'incoterm_place', None),
+        'direction': getattr(rfq, 'direction', None),
         'quote_reference': getattr(quote, 'quote_number', None),
         # The customer's own number, kept beside Procam's and never
         # used as it. On a forwarding job the confirmation email is
@@ -161,13 +160,40 @@ def build_payload(quote, *, pack=None, lead=None, account=None,
         # the format and because a figure without its currency is
         # the thing their own gap list warns about.
         'currency': getattr(quote, 'currency', None) or 'INR',
-        # The route as two free-text boxes is all the CRM holds, so
-        # the names go and the codes cannot.
-        'pol_name': getattr(rfq, 'origin', None),
-        'pod_name': getattr(rfq, 'destination', None),
+        # The shipment, captured on the enquiry rather than left
+        # for somebody to retype at the far end.
+        'shipper_name': getattr(rfq, 'shipper_name', None),
+        'shipper_address': getattr(rfq, 'shipper_address', None),
+        'consignee_name': getattr(rfq, 'consignee_name', None),
+        'consignee_address': getattr(rfq, 'consignee_address', None),
+        'carrier_name': _chosen_carrier(quote),
+        'cha_mode': _cha_mode(rfq),
+        'pol_code': getattr(rfq, 'pol_code', None),
+        'pol_name': (getattr(rfq, 'pol_name', None)
+                     or getattr(rfq, 'origin', None)),
+        'pod_code': getattr(rfq, 'pod_code', None),
+        'pod_name': (getattr(rfq, 'pod_name', None)
+                     or getattr(rfq, 'destination', None)),
+        'hs_code': getattr(rfq, 'hs_code', None),
+        'package_count': getattr(rfq, 'package_count', None),
+        'package_kind': getattr(rfq, 'package_kind', None),
+        'gross_weight_kg': _number(
+            getattr(rfq, 'gross_weight_kg', None)),
+        'volume_cbm': _number(getattr(rfq, 'volume_cbm', None)),
+        'container_count': getattr(rfq, 'container_count', None),
+        # Written only when true; `prune` drops a False, and at the
+        # far end any value at all would mean dangerous.
+        'is_dangerous': getattr(rfq, 'is_dangerous', None) or None,
+        'dg_class': (getattr(rfq, 'dg_class', None)
+                     if getattr(rfq, 'is_dangerous', None) else None),
+        'un_number': (getattr(rfq, 'un_number', None)
+                      if getattr(rfq, 'is_dangerous', None) else None),
         # The TMS is adding this; until then it hard-codes 'FCM'.
         'gst_treatment': tms_intake.gst_treatment_for(
-            vertical, override=gst_treatment),
+            vertical,
+            override=(gst_treatment
+                      or getattr(quote, 'gst_treatment', None)),
+            account=account),
     }
     # `is_dangerous` is never written: it is truthiness at the far
     # end, so any value at all means dangerous and the only way to
@@ -205,6 +231,60 @@ def _why_missing(name, fields):
         return ('customer: must match a name on the TMS client '
                 'register exactly; a pack never creates one')
     return f'{name}: required, and the CRM has no value for it'
+
+
+def _chosen_carrier(quote):
+    """Whoever won the freight leg, if one has been chosen.
+
+    The TMS stores the carrier's *name* and leaves its vendor link
+    null for somebody to join by hand, so a name is all it wants —
+    and by handover time the choice has been made and recorded.
+    """
+    from app.models.ff import RateRequest
+    from app.models.quote import QuoteLine
+
+    line = (QuoteLine.query
+            .filter(QuoteLine.quote_id == quote.id,
+                    QuoteLine.charge_group == 'freight',
+                    QuoteLine.source_rate_request_id.isnot(None))
+            .order_by(QuoteLine.line_no.asc()).first())
+    if line is None:
+        return None
+    req = db.session.get(RateRequest, line.source_rate_request_id)
+    return req.vendor_name if req is not None else None
+
+
+def _cha_mode(rfq):
+    """OWN at Chennai and Mumbai — at whichever end clears customs.
+
+    Which end that is depends on the direction, and getting it
+    backwards is not cosmetic: it decides whether we are selling
+    our own licence or buying somebody else's. An export clears at
+    the port of loading, an import at the port of discharge, and a
+    cross trade touches no Indian customs at all, so there is no
+    own-CHA work on it whatever the ports say.
+
+    The TMS spells the second value OUTSOURCED where this CRM says
+    partner, and it does not validate the field, so a wrong word
+    here would be stored as typed.
+    """
+    from app.models.ff import CHA_OWN
+    from app.services import ff_rates
+
+    direction = (getattr(rfq, 'direction', None) or '').upper()
+    if direction == 'EXPORT':
+        port = (getattr(rfq, 'pol_name', None)
+                or getattr(rfq, 'origin', None))
+    elif direction == 'IMPORT':
+        port = (getattr(rfq, 'pod_name', None)
+                or getattr(rfq, 'destination', None))
+    elif direction == 'CROSS_TRADE':
+        return 'OUTSOURCED'
+    else:
+        return None
+    if not port:
+        return None
+    return 'OWN' if ff_rates.cha_mode_for(port) == CHA_OWN else 'OUTSOURCED'
 
 
 def _resolve(quote, lead, account, rfq):

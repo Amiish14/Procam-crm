@@ -515,3 +515,141 @@ def api_margin(quote_id):
         out['billable_lines'] = [l.to_dict() for l in billable]
         out['not_billable_lines'] = [l.to_dict() for l in not_billable]
     return jsonify(**out)
+
+
+# ── the shipment behind the enquiry (CRM 2.0 R5) ─────────────────────
+def _rfq(rfq_id):
+    from app.access import scope as sc_mod
+    from app.models.rfq import RFQ
+
+    rfq = db.session.get(RFQ, rfq_id)
+    if rfq is None:
+        return None
+    if rfq.lead_id:
+        from app import Lead
+        seen = sc_mod.leads(Lead.query.filter(Lead.id == rfq.lead_id),
+                            sc=sc_mod.current()).first()
+        if seen is None:
+            return None
+    return rfq
+
+
+@bp.route('/api/ff/rfqs/<int:rfq_id>/shipment')
+@_gated
+def api_shipment(rfq_id):
+    """What is on the enquiry, and what we would suggest for it."""
+    from app.services import ff_shipment
+
+    rfq = _rfq(rfq_id)
+    if rfq is None:
+        return jsonify(ok=False, error='Not found'), 404
+    quote = _latest_quote(rfq)
+    data = ff_shipment.as_dict(rfq, quote)
+    return jsonify(ok=True, shipment=data,
+                   suggested=ff_shipment.suggest(rfq),
+                   problems=[{'field': f, 'message': m}
+                             for f, m in ff_shipment.validate(data)],
+                   ready_for_rates=ff_shipment.ready_for_rates(
+                       rfq, quote))
+
+
+@bp.route('/api/ff/rfqs/<int:rfq_id>/shipment', methods=['POST'])
+@_gated
+def api_save_shipment(rfq_id):
+    from app.services import ff_shipment
+
+    rfq = _rfq(rfq_id)
+    if rfq is None:
+        return jsonify(ok=False, error='Not found'), 404
+    body = request.get_json(silent=True) or {}
+    quote = _latest_quote(rfq)
+    try:
+        changed = ff_shipment.apply_to(
+            rfq, body, quote=quote,
+            actor=session.get('emp_code'))
+    except ff_shipment.ShipmentError as exc:
+        data = dict(ff_shipment.as_dict(rfq, quote))
+        data.update({k: v for k, v in body.items()})
+        return jsonify(ok=False, error=str(exc),
+                       problems=[{'field': f, 'message': m}
+                                 for f, m
+                                 in ff_shipment.validate(data)]), 400
+    db.session.commit()
+    return jsonify(ok=True, changed=changed,
+                   shipment=ff_shipment.as_dict(rfq, quote))
+
+
+def _latest_quote(rfq):
+    from app.models.quote import Quote
+
+    return (Quote.query.filter_by(rfq_id=rfq.id)
+            .order_by(Quote.id.desc()).first())
+
+
+def _quote(quote_id):
+    """The quote, if this viewer may see the lead behind it.
+
+    The module's gate says records are scoped through the lead on
+    the RFQ; the older quote routes here fetch unscoped, which is a
+    gap of their own. New ones do not widen it.
+    """
+    from app.access import scope as sc_mod
+    from app.models.quote import Quote
+
+    quote = db.session.get(Quote, quote_id)
+    if quote is None:
+        return None
+    if quote.lead_id:
+        from app import Lead
+        seen = sc_mod.leads(Lead.query.filter(Lead.id == quote.lead_id),
+                            sc=sc_mod.current()).first()
+        if seen is None:
+            return None
+    return quote
+
+
+@bp.route('/api/ff/quotes/<int:quote_id>/gst-treatment',
+          methods=['POST'])
+@_gated
+def api_set_gst_treatment(quote_id):
+    """Override how this one job is billed.
+
+    Empty clears it, and the quote falls back to the customer and
+    then the vertical — which is the common case, and the reason
+    this is a separate action rather than a box that has to be
+    filled on every quote.
+    """
+    from app.services import audit, quote_terms, tms_intake
+
+    quote = _quote(quote_id)
+    if quote is None:
+        return jsonify(ok=False, error='Not found'), 404
+    body = request.get_json(silent=True) or {}
+    raw = (body.get('gst_treatment') or '').strip()
+    was = quote.gst_treatment
+    if raw:
+        try:
+            quote.gst_treatment = tms_intake.check_treatment(raw)
+        except tms_intake.IntakeError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+    else:
+        quote.gst_treatment = None
+    audit.record('quote.gst_treatment_set', 'quote', str(quote.id),
+                 old={'gst_treatment': was},
+                 new={'gst_treatment': quote.gst_treatment},
+                 actor=session.get('emp_code'),
+                 reason=('set on this job only'
+                         if quote.gst_treatment else
+                         'cleared — follows the customer, then the '
+                         'vertical'))
+    db.session.commit()
+    account = None
+    if quote.account_id:
+        from app import Company
+        account = db.session.get(Company, quote.account_id)
+    return jsonify(
+        ok=True, gst_treatment=quote.gst_treatment,
+        effective=tms_intake.gst_treatment_for(
+            quote_terms.vertical_of(quote),
+            override=quote.gst_treatment, account=account),
+        options=list(tms_intake.GST_TREATMENTS))

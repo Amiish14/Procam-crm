@@ -48,6 +48,38 @@ class RFQ(db.Model):
     origin         = db.Column(db.String(120))
     destination    = db.Column(db.String(120))
     cargo          = db.Column(db.String(240))
+
+    # ── the shipment, as the TMS intake format asks for it ───────
+    # docs/tms_import_formats.md Part A. These were the fields the
+    # handover pack had to leave blank for a person to fill in at
+    # the far end, which meant typing them twice and getting them
+    # from memory the second time. Captured once, on the enquiry,
+    # and read by the rate request, the quote and the pack.
+    direction      = db.Column(db.String(12))   # EXPORT/IMPORT/CROSS_TRADE
+    shipper_name     = db.Column(db.String(200))
+    shipper_address  = db.Column(db.Text)
+    consignee_name    = db.Column(db.String(200))
+    consignee_address = db.Column(db.Text)
+    #: UN/LOCODE for sea, IATA for air. Not validated here: the TMS
+    #: does not validate them either, and a code it would accept
+    #: that we reject is a field somebody works around.
+    pol_code       = db.Column(db.String(10))
+    pol_name       = db.Column(db.String(120))
+    pod_code       = db.Column(db.String(10))
+    pod_name       = db.Column(db.String(120))
+    hs_code        = db.Column(db.String(20))
+    package_count  = db.Column(db.Integer)
+    package_kind   = db.Column(db.String(60))
+    gross_weight_kg = db.Column(db.Numeric(14, 3))
+    volume_cbm     = db.Column(db.Numeric(12, 3))
+    container_count = db.Column(db.Integer)
+    #: Tri-state on purpose. Null is "nobody has said", False is "a
+    #: person said no". The TMS reads truthiness, so only a True
+    #: ever reaches the pack — but the difference matters here,
+    #: because an unanswered DG question is not the same as a no.
+    is_dangerous   = db.Column(db.Boolean)
+    dg_class       = db.Column(db.String(20))
+    un_number      = db.Column(db.String(12))
     scope          = db.Column(db.Text)
 
     received_date  = db.Column(db.Date, default=date.today, nullable=False)

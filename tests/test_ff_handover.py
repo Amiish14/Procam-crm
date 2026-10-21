@@ -382,8 +382,12 @@ def test_nothing_is_invented_any_more(world):
     column for, so a person fills them rather than discovering them
     at the far end."""
     assert not hasattr(ff_handover, 'INVENTED')
-    assert 'shipper_name' in ff_handover.CANNOT_SUPPLY
-    assert 'pol_code' in ff_handover.CANNOT_SUPPLY
+    # It was nineteen fields. The enquiry form captures the
+    # shipment now, so what is left is what is genuinely unknown at
+    # quotation.
+    assert set(ff_handover.CANNOT_SUPPLY) == {
+        'etd', 'eta', 'notify_name', 'notify_address',
+        'overseas_agent_name', 'customer_code'}
     # And nothing in CANNOT_SUPPLY is a name we made up.
     from app.services import tms_intake
     for field in ff_handover.CANNOT_SUPPLY:

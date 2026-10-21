@@ -79,6 +79,93 @@
         up: a carrier does not round in our favour.
       </div>
     </div>
+
+    <div class="ff-card">
+      <h3 style="margin:0 0 4px">Shipment</h3>
+      <div class="ff-note" style="margin:0 0 10px">
+        Captured once here. The rate request, the quote and the TMS
+        handover pack all read it, so a weight corrected here is
+        corrected everywhere rather than in three places a fortnight
+        apart.
+      </div>
+      <div class="ff-grid" style="max-width:320px">
+        <div><label for="shRfq">Enquiry (RFQ) id</label>
+          <input id="shRfq" type="text" inputmode="numeric"></div>
+      </div>
+      <div style="margin:10px 0"><button class="btn"
+        onclick="shLoad()">Load</button></div>
+
+      <div id="shForm" style="display:none">
+        <div class="ff-grid">
+          <div><label for="shDirection">Direction *</label>
+            <select id="shDirection">
+              <option value="">—</option>
+              <option>EXPORT</option><option>IMPORT</option>
+              <option>CROSS_TRADE</option>
+            </select>
+            <div class="ff-note" id="shDirHint"></div></div>
+          <div><label for="shIncoPlace">Incoterm place</label>
+            <input id="shIncoPlace" type="text"></div>
+          <div><label for="shPolCode">POL code</label>
+            <input id="shPolCode" type="text"></div>
+          <div><label for="shPolName">POL name *</label>
+            <input id="shPolName" type="text"></div>
+          <div><label for="shPodCode">POD code</label>
+            <input id="shPodCode" type="text"></div>
+          <div><label for="shPodName">POD name *</label>
+            <input id="shPodName" type="text"></div>
+          <div><label for="shShipper">Shipper</label>
+            <input id="shShipper" type="text"></div>
+          <div><label for="shConsignee">Consignee</label>
+            <input id="shConsignee" type="text"></div>
+          <div><label for="shHs">HS code</label>
+            <input id="shHs" type="text"></div>
+          <div><label for="shPkgs">Packages *</label>
+            <input id="shPkgs" type="text" inputmode="numeric"></div>
+          <div><label for="shPkgKind">Package kind</label>
+            <input id="shPkgKind" type="text"
+                   placeholder="crates, cartons, pallets"></div>
+          <div><label for="shGross">Gross weight (kg) *</label>
+            <input id="shGross" type="text" inputmode="decimal"></div>
+          <div><label for="shCbm">Volume (CBM)</label>
+            <input id="shCbm" type="text" inputmode="decimal"></div>
+          <div><label for="shCtr">Containers</label>
+            <input id="shCtr" type="text" inputmode="numeric"></div>
+          <div><label for="shDg">Dangerous goods</label>
+            <select id="shDg" onchange="shDgSwap()">
+              <option value="">not asked</option>
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
+            </select></div>
+          <div class="sh-dg" style="display:none">
+            <label for="shDgClass">DG class</label>
+            <input id="shDgClass" type="text"></div>
+          <div class="sh-dg" style="display:none">
+            <label for="shUn">UN number</label>
+            <input id="shUn" type="text"></div>
+        </div>
+        <div class="ff-grid" style="max-width:640px;margin-top:10px">
+          <div><label for="shShipperAddr">Shipper address</label>
+            <textarea id="shShipperAddr" rows="2"
+              style="width:100%;font:inherit;border:1px solid #e5e7eb;
+                     border-radius:8px;padding:7px 10px"></textarea></div>
+          <div><label for="shConsigneeAddr">Consignee address</label>
+            <textarea id="shConsigneeAddr" rows="2"
+              style="width:100%;font:inherit;border:1px solid #e5e7eb;
+                     border-radius:8px;padding:7px 10px"></textarea></div>
+        </div>
+        <div style="margin-top:12px">
+          <button class="btn" onclick="shSave()">Save shipment</button>
+        </div>
+        <div id="shOut"></div>
+        <div class="ff-note">
+          Direction, both ports, the gross weight and the package
+          count are required — they are what a carrier needs before
+          it will price anything, so an enquiry without them cannot
+          go out for rates either.
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ── rate grid ────────────────────────────────────────────── -->
@@ -147,6 +234,99 @@ async function post(path, body){
     headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
   return {ok: r.ok, data: await r.json().catch(()=>null)};
 }
+/* ── the shipment ─────────────────────────────────────────── */
+const SH = {
+  shDirection:'direction', shIncoPlace:'incoterm_place',
+  shPolCode:'pol_code', shPolName:'pol_name',
+  shPodCode:'pod_code', shPodName:'pod_name',
+  shShipper:'shipper_name', shShipperAddr:'shipper_address',
+  shConsignee:'consignee_name', shConsigneeAddr:'consignee_address',
+  shHs:'hs_code', shPkgs:'package_count', shPkgKind:'package_kind',
+  shGross:'gross_weight_kg', shCbm:'volume_cbm',
+  shCtr:'container_count', shDgClass:'dg_class', shUn:'un_number',
+};
+
+function shDgSwap(){
+  const yes = $('shDg').value === 'yes';
+  document.querySelectorAll('.sh-dg')
+    .forEach(e => e.style.display = yes ? '' : 'none');
+}
+
+async function shLoad(){
+  const id = ($('shRfq').value || '').trim();
+  if (!id) return;
+  const r = await fetch(PREFIX + '/api/ff/rfqs/' + encodeURIComponent(id)
+    + '/shipment', {credentials:'same-origin'});
+  const d = await r.json().catch(()=>null);
+  if (!r.ok || !d || !d.ok){
+    $('shOut').innerHTML = '<div class="ff-bad">No such enquiry, or '
+      + 'it is not yours to see.</div>';
+    $('shForm').style.display = 'none';
+    return;
+  }
+  $('shForm').style.display = '';
+  Object.entries(SH).forEach(([el, field]) => {
+    const v = d.shipment[field];
+    $(el).value = (v === null || v === undefined) ? '' : v;
+  });
+  const dg = d.shipment.is_dangerous;
+  $('shDg').value = dg === null || dg === undefined
+    ? '' : (dg ? 'yes' : 'no');
+  shDgSwap();
+
+  /* A suggestion, shown as one. It pre-fills an empty field and
+     never overwrites what somebody has already answered. */
+  const sug = d.suggested || {};
+  if (!$('shDirection').value && sug.direction){
+    $('shDirection').value = sug.direction;
+    $('shDirHint').textContent = 'Suggested ' + sug.direction
+      + ' — ' + sug.why;
+  } else if (!sug.direction && !$('shDirection').value){
+    $('shDirHint').textContent = 'The route does not say which way '
+      + 'this goes. Choose one.';
+  } else {
+    $('shDirHint').textContent = '';
+  }
+  if (!$('shPolName').value && sug.pol_name)
+    $('shPolName').value = sug.pol_name;
+  if (!$('shPodName').value && sug.pod_name)
+    $('shPodName').value = sug.pod_name;
+  shProblems(d.problems, d.ready_for_rates);
+}
+
+function shProblems(problems, ready){
+  if (!problems || !problems.length){
+    $('shOut').innerHTML = ready
+      ? '<div class="ff-note" style="color:#047857">Complete — this '
+        + 'enquiry can go out for rates.</div>' : '';
+    return;
+  }
+  $('shOut').innerHTML = '<div class="ff-warn"><b>Still needed before '
+    + 'this can go to a carrier</b><ul style="margin:6px 0 0 18px">'
+    + problems.map(p => '<li>' + esc(p.message) + '</li>').join('')
+    + '</ul></div>';
+}
+
+async function shSave(){
+  const id = ($('shRfq').value || '').trim();
+  if (!id) return;
+  const body = {};
+  Object.entries(SH).forEach(([el, field]) => {
+    body[field] = $(el).value;
+  });
+  body.is_dangerous = $('shDg').value === '' ? null
+    : ($('shDg').value === 'yes');
+  const {ok, data} = await post('/api/ff/rfqs/'
+    + encodeURIComponent(id) + '/shipment', body);
+  if (!ok || !data || !data.ok){
+    shProblems((data && data.problems) || [], false);
+    return;
+  }
+  $('shOut').innerHTML = '<div class="ff-note" style="color:#047857">'
+    + 'Saved. The rate request, the quote and the handover pack read '
+    + 'this.</div>';
+}
+
 async function cwGo(){
   const mode = $('cwMode').value;
   const {data} = await post('/api/ff/chargeable-weight', {

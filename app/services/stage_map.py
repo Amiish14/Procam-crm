@@ -104,11 +104,23 @@ def verdict(stage, days):
 
 
 def age_days(since, *, today=None):
+    """Whole days on this stage, counted in business days.
+
+    `sales_rules.business_date` rather than `.date()`: the
+    timestamps in this database are naive UTC and the business is
+    at UTC+5:30, so taking the plain date off one and comparing it
+    with a local today is the half-fix that module already
+    documents. Between 18:30 and midnight UTC a lead moved an hour
+    ago read as a day old — which on a map whose whole job is to
+    say how long something has sat is a day of invented delay.
+    """
+    from app.services import sales_rules as rules
+
     if since is None:
         return None
-    today = today or date.today()
-    when = since.date() if isinstance(since, datetime) else since
-    return max(0, (today - when).days)
+    today = today or rules.business_today()
+    return max(0, (rules.business_date(today)
+                   - rules.business_date(since)).days)
 
 
 def for_lead(lead, *, today=None):
@@ -119,7 +131,9 @@ def for_lead(lead, *, today=None):
     its whole line as done and says how it ended, because "where did
     this go" is asked about closed leads more than open ones.
     """
-    today = today or date.today()
+    from app.services import sales_rules as rules
+
+    today = today or rules.business_today()
     stage = (lead.stage or '').strip()
     closed = stage in TERMINAL and stage != 'Won'
     here = position(stage)
@@ -177,7 +191,9 @@ def pipeline(leads, *, today=None):
     stage. Terminal leads are left out: a map of where work is stuck
     has no room for the 8,340 that already stopped.
     """
-    today = today or date.today()
+    from app.services import sales_rules as rules
+
+    today = today or rules.business_today()
     rows = {name: {'stage': name, 'total': 0, GREEN: 0, ORANGE: 0,
                    RED: 0, GREY: 0, 'oldest': 0, 'value': 0}
             for name in JOURNEY}

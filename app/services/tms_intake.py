@@ -68,17 +68,25 @@ CHA_MODES = ('OWN', 'OUTSOURCED')
 READ_AND_DROPPED = ('customer_code', 'quote_reference', 'scope',
                     'currency')
 
-#: Fields the format defines that the CRM has no column for. Not
-#: "invented": the opposite. These are the gaps a person fills on
-#: the pack before importing.
+#: Fields the format defines that the CRM still has no answer for.
+#: Not "invented": the opposite. These are the gaps a person fills
+#: on the pack before importing.
+#:
+#: It was nineteen. The enquiry form now captures the shipment —
+#: parties, ports, cargo, dangerous goods — so what is left is the
+#: four things that genuinely are not known at quotation and the
+#: two the CRM has no concept of.
 CANNOT_SUPPLY = (
-    'shipper_name', 'shipper_address', 'consignee_name',
-    'consignee_address', 'notify_name', 'notify_address',
-    'carrier_name', 'overseas_agent_name',
-    'pol_code', 'pod_code', 'etd', 'eta',
-    'hs_code', 'package_count', 'package_kind', 'gross_weight_kg',
-    'volume_cbm', 'container_count', 'dg_class', 'un_number',
-    'incoterm_place', 'customer_code',
+    # Not known until a booking exists, which is after the win.
+    'etd', 'eta',
+    # A notify party is a bill-of-lading instruction, not a sales
+    # fact; nobody is asked for one while quoting.
+    'notify_name', 'notify_address',
+    # The destination agent is chosen when the job is operated.
+    'overseas_agent_name',
+    # The TMS's own code for the client. The CRM matches by name,
+    # which is what the reader does too.
+    'customer_code',
 )
 
 #: `is_dangerous` is `bool(value)` at the far end, so "No", "n/a"
@@ -139,15 +147,33 @@ class IntakeError(ValueError):
     """A value the TMS would refuse, caught before it is sent."""
 
 
-def gst_treatment_for(vertical, *, override=None):
-    """Which of the six this job is billed under."""
+def check_treatment(value):
+    text = str(value or '').strip().upper()
+    if text not in GST_TREATMENTS:
+        raise IntakeError(
+            f'{value!r} is not one of the six the TMS accepts: '
+            f'{", ".join(GST_TREATMENTS)}.')
+    return text
+
+
+def gst_treatment_for(vertical, *, override=None, account=None):
+    """Which of the six this job is billed under.
+
+    In order: what somebody set on this quote, then what is set on
+    the customer, then the vertical. The customer sits in the
+    middle because that is where RCM lives — it means they pay the
+    tax direct, which is an arrangement with them and is true of
+    every job we do for them until it is not.
+
+    TRANSPORT_RCM is still never reached by the vertical alone. A
+    vertical cannot know it, and guessing it under-bills.
+    """
     if override:
-        value = str(override).strip().upper()
-        if value not in GST_TREATMENTS:
-            raise IntakeError(
-                f'{override!r} is not one of the six the TMS accepts: '
-                f'{", ".join(GST_TREATMENTS)}.')
-        return value
+        return check_treatment(override)
+    on_account = (getattr(account, 'default_gst_treatment', None)
+                  if account is not None else None)
+    if on_account:
+        return check_treatment(on_account)
     return BY_VERTICAL.get((vertical or '').strip(), DEFAULT_GST)
 
 

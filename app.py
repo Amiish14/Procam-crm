@@ -1009,6 +1009,11 @@ class Company(db.Model):
     #: account called "Efl" cannot be redacted out of a mail (two
     #: letters of signal), but "Expo Freight Private Limited" can.
     aliases                = db.Column(db.JSON, default=list)
+    #: How this customer is billed, one of the six the TMS accepts.
+    #: Set here rather than guessed per quote: TRANSPORT_RCM means
+    #: the client pays the tax direct, which is an arrangement with
+    #: that client and cannot be read off a vertical.
+    default_gst_treatment  = db.Column(db.String(24), nullable=True)
     # §13 path 5 — the GST / customer master. Exact where a name match is
     # a guess, so it is checked before the fuzzy one.
     gstin                  = db.Column(db.String(15), nullable=True, index=True)
@@ -5160,6 +5165,27 @@ def init_db():
             ('leads',         'value_confirmed',  'BOOLEAN'),
             ('quotes',        'terms_version_id', 'INTEGER'),
             ('ff_handover_packs', 'client_po_number', 'VARCHAR(60)'),
+            ('companies',     'default_gst_treatment', 'VARCHAR(24)'),
+            ('quotes',        'incoterm_place',   'VARCHAR(160)'),
+            ('quotes',        'gst_treatment',    'VARCHAR(24)'),
+            ('rfqs',          'direction',        'VARCHAR(12)'),
+            ('rfqs',          'shipper_name',     'VARCHAR(200)'),
+            ('rfqs',          'shipper_address',  'TEXT'),
+            ('rfqs',          'consignee_name',   'VARCHAR(200)'),
+            ('rfqs',          'consignee_address', 'TEXT'),
+            ('rfqs',          'pol_code',         'VARCHAR(10)'),
+            ('rfqs',          'pol_name',         'VARCHAR(120)'),
+            ('rfqs',          'pod_code',         'VARCHAR(10)'),
+            ('rfqs',          'pod_name',         'VARCHAR(120)'),
+            ('rfqs',          'hs_code',          'VARCHAR(20)'),
+            ('rfqs',          'package_count',    'INTEGER'),
+            ('rfqs',          'package_kind',     'VARCHAR(60)'),
+            ('rfqs',          'gross_weight_kg',  'NUMERIC(14,3)'),
+            ('rfqs',          'volume_cbm',       'NUMERIC(12,3)'),
+            ('rfqs',          'container_count',  'INTEGER'),
+            ('rfqs',          'is_dangerous',     'BOOLEAN'),
+            ('rfqs',          'dg_class',         'VARCHAR(20)'),
+            ('rfqs',          'un_number',        'VARCHAR(12)'),
             ('contacts',      'state',            'VARCHAR(80)'),
             ('opportunities', 'won_project_ref',  'VARCHAR(60)'),
             ('opportunities', 'won_project_at',   'TIMESTAMP'),
