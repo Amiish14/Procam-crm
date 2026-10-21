@@ -149,17 +149,28 @@ def from_backup(path):
             for r in con.execute('SELECT * FROM leads')}
 
 
-def plan(backup_path):
-    """What would come back, and how."""
+def plan(backup_path, *, include_pre_backup=False):
+    """What would come back, and how.
+
+    The set is the 830 the 6 September backup knew and production
+    does not. `deletion_audit` holds more snapshots than that —
+    137 of them are leads deleted *before* that backup was taken,
+    so the backup never saw them and they were not in the count
+    anybody approved. They are restorable and they are a separate
+    decision, behind `--include-pre-backup`.
+    """
     cols = _columns()
     live = {r[0] for r in db.session.query(Lead.id).all()}
 
     audit = from_audit()
     backup = from_backup(backup_path)
 
-    #: Everything the backup knew that production no longer has,
-    #: plus anything deleted since whose snapshot survives.
-    wanted = sorted(set(audit) | set(backup))
+    wanted = set(audit) | set(backup)
+    pre_backup = sorted(
+        i for i in (set(audit) - set(backup)) if i not in live)
+    if not include_pre_backup:
+        wanted &= set(backup)
+    wanted = sorted(wanted)
     rows, why = [], Counter()
     for lid in wanted:
         if lid in live:
@@ -190,7 +201,7 @@ def plan(backup_path):
             'company': snap.get('company') or '',
             'stage_was': snap.get('stage') or '',
         })
-    return rows, why
+    return rows, why, pre_backup
 
 
 def apply_plan(rows, *, actor='CRM-RESTORE'):
@@ -262,6 +273,11 @@ def main():
     ap.add_argument('--yes', action='store_true')
     ap.add_argument('--backup', default=None,
                     help='a readable copy of the 6 Sep backup')
+    ap.add_argument('--include-pre-backup',
+                    dest='include_pre_backup', action='store_true',
+                    help='also restore leads deleted before the 6 '
+                         'September backup, which only a snapshot '
+                         'remembers')
     ap.add_argument('--actor', default='CRM-RESTORE')
     args = ap.parse_args()
     if len([a for a in (args.check, args.apply, args.down) if a]) != 1:
@@ -281,7 +297,9 @@ def main():
             print(f'  {n} restored lead(s) removed again.')
             return
 
-        rows, why = plan(args.backup)
+        rows, why, pre_backup = plan(
+            args.backup,
+            include_pre_backup=args.include_pre_backup)
         live = {r[0] for r in db.session.query(Lead.id).all()}
         clashes = [r for r in rows if r['id'] in live]
         dups = [r for r in rows
@@ -298,6 +316,13 @@ def main():
         print(f'  marked as a duplicate of another lead  {len(dups)}')
         print(f'  no record of why they went    {len(no_record)}')
         print(f'\n  all come back stage=Lost, no tasks created.')
+        if pre_backup and not args.include_pre_backup:
+            print(f'\n  NOT included: {len(pre_backup)} lead(s) '
+                  f'deleted before the 6 September backup.')
+            print('    Only a deletion_audit snapshot remembers '
+                  'them — the backup never saw them, so they were '
+                  'not in the 830 anybody approved.')
+            print('    --include-pre-backup adds them.')
 
         print('\n  what the reasons will say:')
         for text, n in Counter(
