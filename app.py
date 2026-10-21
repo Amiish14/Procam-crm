@@ -93,16 +93,16 @@ STATE_LIST = [
     'Daman and Diu', 'Lakshadweep',
 ]
 # Reasons captured when a Lead / Opportunity is Lost
+# The reasons offered when a lead is lost (decision 21 Oct 2026, E3):
+# five standard reasons plus Other with a written explanation. Older
+# values stay on the records that carry them and in the dashboard
+# filter (LOST_REASONS below); they are just no longer offered.
 LOSS_REASONS = [
     'Price too high',
     'Lost to competitor',
-    'Timeline mismatch',
-    'Vehicle/capacity unavailable',
-    'Customer postponed / on hold',
-    'Not commercially viable',
-    'Client selected in-house transport',
-    'Documentation / compliance issue',
-    'Payment terms mismatch',
+    'Client dropped project',
+    'No Response',
+    'Scope not in our service',
     'Other',
 ]
 
@@ -483,6 +483,13 @@ class Lead(db.Model):
     # job can also be Multimodal — something the old pair of verticals
     # could not say at all.
     mode             = db.Column(db.String(20))
+    # Decision 21 Oct 2026 (B6). Where the cargo moves from and to, and
+    # for warehousing and installation the site itself. Which of these
+    # a manual entry must give depends on the vertical — see
+    # app/services/lead_rules.py.
+    origin           = db.Column(db.String(200))
+    destination      = db.Column(db.String(200))
+    site_location    = db.Column(db.String(200))
     # FF-COMMS-01 R2. The customer-side reference, allocated once at
     # enquiry and carried to every RFQ, quote and subject line after
     # it. The vendor side gets its own number — see app/services/crn.
@@ -656,6 +663,8 @@ class Lead(db.Model):
             'linkedin': self.linkedin or '',
             'stage': self.stage or 'New', 'procam_vertical': self.procam_vertical or '',
             'mode': self.mode or '',
+            'origin': self.origin or '', 'destination': self.destination or '',
+            'site_location': self.site_location or '',
             'crn': self.crn or '',
             'business_unit': self.business_unit or '',
             'lost_to_competitor_id': self.lost_to_competitor_id,
@@ -2345,8 +2354,25 @@ def api_create_lead():
     if _refusal:
         return _refusal
     emp = Employee.query.filter_by(emp_code=session['emp_code']).first()
+    # Decisions 21 Oct 2026. A lead typed in by hand must carry what its
+    # vertical needs (B6); a tender or GeM enquiry goes to the tender
+    # desk first (B4), whoever keyed it in.
+    from app.services import lead_rules as _lead_rules
+    if _lead_rules.applies(d):
+        _gaps = _lead_rules.missing(d)
+        if _gaps:
+            return jsonify({'ok': False, 'missing': _gaps,
+                            'error': 'Please fill: ' + ', '.join(_gaps)}), 400
+    _routed = False
+    if d.get('source') == _lead_rules.TENDER_SOURCE:
+        _desk = _lead_rules.tender_owner()
+        if _desk:
+            d['assigned_to'], _routed = _desk, True
+            _desk_emp = Employee.query.filter_by(emp_code=_desk).first()
+            d['assigned_name'] = _desk_emp.name if _desk_emp else ''
     requested = d.get('assigned_to') or session['emp_code']
-    if requested != session['emp_code'] and not _matrix_can('admin.triage'):
+    if (requested != session['emp_code'] and not _routed
+            and not _matrix_can('admin.triage')):
         return jsonify({'error': 'Only admin can assign leads to another rep'}), 403
     assigned_to = requested
     lead = Lead(
@@ -2368,6 +2394,9 @@ def api_create_lead():
         linkedin        = d.get('linkedin',''),
         stage           = d.get('stage','New'),
         procam_vertical = d.get('procam_vertical',''),
+        origin          = (d.get('origin') or '').strip() or None,
+        destination     = (d.get('destination') or '').strip() or None,
+        site_location   = (d.get('site_location') or '').strip() or None,
         mode            = _lead_mode_for(d.get('procam_vertical', ''),
                                          d.get('mode')),
         assigned_to     = assigned_to,
@@ -2482,6 +2511,8 @@ def api_update_lead(lid):
         'pic':'pic','designation':'designation_pic','email':'email','phone':'phone',
         'email2':'email2','phone2':'phone2','linkedin':'linkedin',
         'stage':'stage','procam_vertical':'procam_vertical',
+        'origin':'origin','destination':'destination',
+        'site_location':'site_location',
         # 'notes' is deliberately absent. It held the original inbound
         # email *and* backed the Notes / call summary box, so every note
         # anyone saved destroyed the customer's enquiry. Notes now live in
@@ -3714,10 +3745,14 @@ def api_stats():
 #  dynamic detail table that echoes whichever filters are active.
 # ═════════════════════════════════════════════════════════════════════
 LOST_REASONS = [
-    'Price', 'Competition', 'No Response', 'Client Decision',
+    # Offered today (decision 21 Oct 2026) …
+    'Price too high', 'Lost to competitor', 'Client dropped project',
+    'No Response', 'Scope not in our service',
+    # … and the earlier values, kept so old records can still be filtered.
+    'Price', 'Competition', 'Client Decision',
     'Technical / Capability', 'Project Cancelled', 'Project Postponed',
     'Commercial Terms', 'Service Constraint', 'Geography Constraint',
-    'Duplicate / Invalid', 'Other',
+    'Duplicate / Invalid', 'Client blocked by management', 'Other',
 ]
 
 
@@ -5226,6 +5261,10 @@ def init_db():
             ('rfqs',          'shipper_address',  'TEXT'),
             ('rfqs',          'consignee_name',   'VARCHAR(200)'),
             ('rfqs',          'consignee_address', 'TEXT'),
+            ('leads',         'origin',           'VARCHAR(200)'),
+            ('leads',         'destination',      'VARCHAR(200)'),
+            ('leads',         'site_location',    'VARCHAR(200)'),
+            ('quote_lines',   'vehicle_source',   'VARCHAR(10)'),
             ('rfqs',          'pol_code',         'VARCHAR(10)'),
             ('rfqs',          'pol_name',         'VARCHAR(120)'),
             ('rfqs',          'pod_code',         'VARCHAR(10)'),

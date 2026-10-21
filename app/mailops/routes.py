@@ -609,6 +609,35 @@ def recipients_screen():
         focus=(request.args.get('event') or '').strip())
 
 
+# ── CRM rules (decisions of 21 Oct 2026) ─────────────────────────────
+@bp.route('/admin/crm-rules', methods=['GET', 'POST'])
+@access.require('admin.email')
+def crm_rules_screen():
+    """Tender desk, margin minimums, approvers, viewers, validity."""
+    from app.services import admin_settings
+
+    saved = error = ''
+    if request.method == 'POST':
+        parsed = {}
+        try:
+            for key in admin_settings.RULE_KEYS:
+                if key in request.form:
+                    parsed[key] = admin_settings.parse_rule(
+                        key, request.form.get(key))
+        except ValueError as exc:
+            error = str(exc)
+        if not error:
+            for key, value in parsed.items():
+                admin_settings.save(key, value, actor=_me())
+            saved = 'The rules are saved.'
+    rows = [(key, admin_settings.show_rule(key),
+             admin_settings.DEFAULTS[key][1],
+             isinstance(admin_settings.DEFAULTS[key][0], dict))
+            for key in admin_settings.RULE_KEYS]
+    return render_template('mailops/crm_rules.html', rows=rows,
+                           saved=saved, error=error)
+
+
 # ── the switches ─────────────────────────────────────────────────────
 @bp.route('/admin/email/switches', methods=['GET', 'POST'])
 @access.require('admin.email')

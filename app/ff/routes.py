@@ -470,13 +470,30 @@ def api_choose(rate_id):
     return jsonify(ok=True, rate=req.to_dict())
 
 
+def _quote_with_buy(quote_id):
+    """The quote, or (None, refusal). Two checks the margin endpoints
+    lacked: the quote must be inside the caller's scope (404 outside,
+    as every by-id route answers), and the caller must be one of the
+    people allowed to see buy rates and margin (decision 21 Oct 2026)."""
+    from app.access import records
+    from app.models.quote import Quote
+    from app.services import margin_policy
+    quote = db.session.get(Quote, quote_id)
+    if quote is None or not records.may_view_quote(quote):
+        return None, (jsonify(ok=False, error='Not found'), 404)
+    if not margin_policy.can_see_buy(quote):
+        return None, (jsonify(ok=False,
+                              error='Buy rates and margin on this quote are '
+                                    'visible to named people only.'), 403)
+    return quote, None
+
+
 @bp.route('/api/ff/quotes/<int:quote_id>/price-line', methods=['POST'])
 @_gated
 def api_price_line(quote_id):
-    from app.models.quote import Quote
-    quote = db.session.get(Quote, quote_id)
-    if quote is None:
-        return jsonify(ok=False, error='Not found'), 404
+    quote, refusal = _quote_with_buy(quote_id)
+    if refusal:
+        return refusal
     body = request.get_json(silent=True) or {}
     line = _line(body.get('line_id') or 0)
     if line is None:
@@ -497,10 +514,10 @@ def api_price_line(quote_id):
 @bp.route('/api/ff/quotes/<int:quote_id>/margin')
 @_gated
 def api_margin(quote_id):
-    from app.models.quote import Quote, QuoteLine
-    quote = db.session.get(Quote, quote_id)
-    if quote is None:
-        return jsonify(ok=False, error='Not found'), 404
+    from app.models.quote import QuoteLine
+    quote, refusal = _quote_with_buy(quote_id)
+    if refusal:
+        return refusal
     summary = ff_rates.margin_summary(quote)
     out = {'ok': True, 'margin': summary}
     if quote.incoterm and quote.client_party:

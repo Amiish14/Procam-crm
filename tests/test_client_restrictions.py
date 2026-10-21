@@ -252,6 +252,9 @@ def test_a_caution_asks_once_and_then_allows(world):
 
     second = _client().post('/api/leads',
                             json={'company': TAG + 'Watchlist Co',
+                                  'procam_vertical': 'Warehousing',
+                                  'site_location': 'Pune',
+                                  'project': 'Storage',
                                   'restriction_ack': row.id})
     assert second.status_code == 200
     assert Lead.query.filter_by(company=TAG + 'Watchlist Co').count() == 1

@@ -34,6 +34,7 @@ from flask import (Blueprint, jsonify, render_template, request, session,
                    redirect, url_for, current_app, make_response)
 
 from app import db
+from app.services import margin_policy as _mp
 from app.models.quote import Quote, QuoteLine, QuoteRevisionLog
 from app.models.rfq import RFQ, RateSourcingLine
 from app.services.task_engine import on_state_change
@@ -394,6 +395,7 @@ def api_create_quote():
     )
     db.session.add(quote)
     db.session.flush()
+    _apply_defaults(quote, d, rfq)
 
     # Seed lines: either explicit `lines` payload, or copy from RFQ.
     provided = d.get('lines') or []
@@ -424,7 +426,36 @@ def api_create_quote():
         db.session.commit()
     except Exception:
         db.session.rollback()
-    return jsonify(ok=True, quote=quote.to_dict(deep=True))
+    return jsonify(ok=True, quote=_mp.quote_dict(quote, deep=True))
+
+
+def _apply_defaults(quote, d, rfq):
+    """Validity and currency when the person did not give them.
+
+    Decisions 21 Oct 2026 (H7, H8): validity by vertical from the
+    `quote_validity_days` setting; an overseas client is quoted in USD.
+    Whatever the person typed wins.
+    """
+    from datetime import timedelta
+
+    from app.services import admin_settings, quote_terms
+    if not d.get('validity_until'):
+        days = (admin_settings.get('quote_validity_days') or {}).get(
+            quote_terms.vertical_of(quote))
+        if days:
+            try:
+                quote.validity_until = (quote.quote_date or date.today()) \
+                    + timedelta(days=int(days))
+            except (TypeError, ValueError):
+                pass
+    if not d.get('currency') and not (rfq and rfq.currency
+                                      and rfq.currency != 'INR'):
+        from app import Company
+        acct = db.session.get(Company, quote.account_id) \
+            if quote.account_id else None
+        country = (getattr(acct, 'country', '') or '').strip().lower()
+        if country and country not in ('india', 'in', 'ind'):
+            quote.currency = 'USD'
 
 
 def _append_quote_line(quote, d, default_line_no):
@@ -437,17 +468,31 @@ def _append_quote_line(quote, d, default_line_no):
         unit=(d.get('unit') or '')[:24] or None,
         unit_rate=Decimal(str(d.get('unit_rate', 0) or 0)),
         remarks=(d.get('remarks') or '').strip() or None,
+        vehicle_source=_vehicle_source(d.get('vehicle_source')),
     )
     ln.recompute_total()
     db.session.add(ln)
     return ln
 
 
+def _vehicle_source(value):
+    """PTM-Own / PTM-Market / Mechanical, or None. Anything else is
+    dropped rather than stored, so the margin rule never reads a value
+    it does not know."""
+    value = (value or '').strip()
+    return value if value in _mp.VEHICLE_SOURCES else None
+
+
+def _line_out(q, ln):
+    d = ln.to_dict()
+    return d if _mp.can_see_buy(q) else _mp.redact_line(d)
+
+
 @bp.route('/api/quotes/<int:qid>', methods=['GET'])
 @_require_auth
 def api_get_quote(qid):
     q = _quote_or_404(qid)
-    return jsonify(ok=True, quote=q.to_dict(deep=True))
+    return jsonify(ok=True, quote=_mp.quote_dict(q, deep=True))
 
 
 @bp.route('/api/quotes/<int:qid>', methods=['PATCH'])
@@ -493,7 +538,7 @@ def api_add_line(qid):
     except Exception:
         db.session.rollback()
         return jsonify(ok=False, error='commit failed'), 500
-    return jsonify(ok=True, line=ln.to_dict())
+    return jsonify(ok=True, line=_line_out(q, ln))
 
 
 @bp.route('/api/quotes/<int:qid>/lines/<int:line_id>', methods=['PATCH'])
@@ -509,6 +554,8 @@ def api_patch_line(qid, line_id):
     for f in ('service', 'description', 'unit', 'remarks'):
         if f in d:
             setattr(ln, f, (d.get(f) or None))
+    if 'vehicle_source' in d:
+        ln.vehicle_source = _vehicle_source(d.get('vehicle_source'))
     for numf in ('quantity', 'unit_rate'):
         if numf in d:
             try:
@@ -522,7 +569,7 @@ def api_patch_line(qid, line_id):
     except Exception:
         db.session.rollback()
         return jsonify(ok=False, error='commit failed'), 500
-    return jsonify(ok=True, line=ln.to_dict(), quote=q.to_dict())
+    return jsonify(ok=True, line=_line_out(q, ln), quote=q.to_dict())
 
 
 @bp.route('/api/quotes/<int:qid>/submit-for-approval', methods=['POST'])
@@ -549,10 +596,18 @@ def api_submit_for_approval(qid):
         db.session.commit()
     except Exception:
         db.session.rollback()
+    _rule = _mp.check(q)
+    _who = ('the director' if _rule['needs_director']
+            else 'the vertical head')
     nrules.dispatch('quote.submitted_for_approval', q,
                     actor=session.get('emp_code'),
-                    detail=f'Quote {q.quote_number} is waiting for approval.')
-    return jsonify(ok=True, quote=q.to_dict())
+                    detail=f'Quote {q.quote_number} is waiting for approval '
+                           f'by {_who}.')
+    return jsonify(ok=True, quote=q.to_dict(),
+                   approval={'needs_director': _rule['needs_director'],
+                             'below_floor': len(_rule['below_floor']),
+                             'no_cost': len(_rule['no_cost']),
+                             'over_limit': _rule['over_limit']})
 
 
 @bp.route('/api/quotes/<int:qid>/approve', methods=['POST'])
@@ -564,7 +619,16 @@ def api_approve(qid):
                        error=f'Only Awaiting-Approval quotes may be approved. Current: {q.status}'), 400
     actor = session.get('emp_code')
     emp = _current_emp()
-    if not _unrestricted() and not _has_role_key(emp, 'Vertical_Head'):
+    from app.services import flags as _flags
+    if _flags.on('FEATURE_MARGIN_GATE'):
+        # Decisions 21 Oct 2026 (H1/H3/H4): the head approves within
+        # the minimum margin and the value limit; outside it, only the
+        # director (or his stand-in).
+        allowed, why = _mp.may_approve(q, actor)
+        if not allowed:
+            return jsonify(ok=False, error=why,
+                           margin=_mp.check(q)), 403
+    elif not _unrestricted() and not _has_role_key(emp, 'Vertical_Head'):
         return jsonify(ok=False,
                        error='Only Vertical_Head (or admin) may approve'), 403
     # Maker-checker
@@ -731,7 +795,7 @@ def api_revise(qid):
         db.session.commit()
     except Exception:
         db.session.rollback()
-    return jsonify(ok=True, quote=new_q.to_dict(deep=True),
+    return jsonify(ok=True, quote=_mp.quote_dict(new_q, deep=True),
                    superseded=old_q.to_dict())
 
 

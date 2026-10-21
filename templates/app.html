@@ -3740,9 +3740,18 @@ async function newLead(){
       { name:'email',       label:'Email',        kind:'text',     placeholder:'name@company.com',                          span:'half' },
       { name:'phone',       label:'Phone',        kind:'text',                                                              span:'half' },
       { name:'industry',    label:'Industry',     kind:'text',                                                              span:'half' },
-      { name:'procam_vertical', label:'Procam vertical', kind:'select',
+      { name:'procam_vertical', label:'Procam vertical', kind:'select', required:true,
         options:['','General Transport','Heavy Cargo','Project Freight','Freight Forwarding','Warehousing','Installation'], span:'half' },
-      { name:'project',     label:'Project / requirement', kind:'textarea', rows:2,                                         span:'full' },
+      { name:'source',      label:'Source', kind:'select', value:'manual',
+        options:['manual','Tender/GeM'],
+        help:'Tender / GeM leads go to the tender desk first.',                                                              span:'half' },
+      { name:'origin',      label:'Origin',      kind:'text',
+        help:'Transport and freight: required.',                                                                             span:'half' },
+      { name:'destination', label:'Destination', kind:'text',
+        help:'Transport and freight: required.',                                                                             span:'half' },
+      { name:'site_location', label:'Site location', kind:'text',
+        help:'Warehousing and installation: required.',                                                                      span:'full' },
+      { name:'project',     label:'Project / requirement (cargo, storage or equipment)', kind:'textarea', rows:2,           span:'full' },
       { name:'estimated_value', label:'Estimated value (INR)', kind:'number',                                               span:'half' },
       { name:'quoted_amount',   label:'Quoted amount (INR, optional)', kind:'number',                                       span:'half' },
       { name:'relevance',   label:'Relevance',    kind:'select',
@@ -4448,9 +4457,9 @@ function pickDec(k, bg){
     <label class="fml">Scope / Service<input class="fmc" id="decScope" placeholder="e.g. Heavy transport, warehousing…"></label>
     <label class="fml">Remarks / Next Handover Action<textarea class="fmc" id="decNote" rows="2"></textarea></label>`;
   } else if (k === 'Lost' || k === 'Not Interested') {
-    const REASONS = ['Price','Competition','No Response','Client Decision','Technical / Capability',
-                     'Project Cancelled','Project Postponed','Commercial Terms','Service Constraint',
-                     'Geography Constraint','Duplicate / Invalid','Other'];
+    // Decision 21 Oct 2026: five standard reasons + Other (with a note).
+    const REASONS = ['Price too high','Lost to competitor','Client dropped project','No Response',
+                     'Scope not in our service','Other'];
     html = `<label class="fml">Reason * (required)
       <select class="fmc" id="decReason"><option value="">-- pick --</option>${REASONS.map(r=>`<option>${e(r)}</option>`).join('')}</select></label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;">
@@ -5409,6 +5418,8 @@ async function upTab(t){
       <div class="fmr"><div class="fmg"><label class="fml">Industry</label><input class="fmc" id="mnIn"></div><div class="fmg"><label class="fml">State</label><input class="fmc" id="mnSt"></div></div>
       <div class="fmr"><div class="fmg"><label class="fml">Opportunity value (₹)</label><input class="fmc" id="mnVl" type="text" inputmode="decimal" placeholder="e.g. 1250000"></div><div class="fmg"><label class="fml">Vertical</label><select class="fmc" id="mnVt"><option>Heavy Transport</option><option>Project Freight</option><option>Warehousing</option><option>Installation</option></select></div></div>
       <div class="fmr"><div class="fmg"><label class="fml">Contact Person</label><input class="fmc" id="mnPic"></div><div class="fmg"><label class="fml">Email</label><input class="fmc" id="mnEm" type="email"></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Origin <span style="font-weight:400">(transport &amp; freight)</span></label><input class="fmc" id="mnOr"></div><div class="fmg"><label class="fml">Destination <span style="font-weight:400">(transport &amp; freight)</span></label><input class="fmc" id="mnDe"></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Site location <span style="font-weight:400">(warehousing &amp; installation)</span></label><input class="fmc" id="mnSl"></div><div class="fmg"><label class="fml">Source</label><select class="fmc" id="mnSrc"><option value="manual">Manual</option><option value="Tender/GeM">Tender / GeM</option></select></div></div>
       <div class="fmg"><label class="fml">Notes</label><textarea class="fmc" id="mnNo" rows="3"></textarea></div>
       <button class="btn btn-red" onclick="saveMn()">+ Add Lead</button>
     </div></div>`;
@@ -5458,8 +5469,9 @@ async function procXL(file){
 async function saveMn(){
   const co=g('mnCo')?.value.trim();if(!co){toast('Company required','err');return;}
   const ind=g('mnIn')?.value.trim()||'';
-  const r=await api('/api/leads',{method:'POST',body:JSON.stringify({company:co,project:g('mnPr').value,industry:ind,opportunity_value:g('mnVl').value||'',state:g('mnSt').value,pic:g('mnPic').value,email:g('mnEm').value,procam_vertical:g('mnVt').value,notes:g('mnNo').value,source:'manual',assigned_to:ME.emp_code})});
-  if(r.ok){toast('Lead added ✓','ok');rDash();['mnCo','mnPr','mnIn','mnSt','mnVl','mnPic','mnEm','mnNo'].forEach(id=>{const el=g(id);if(el)el.value='';});}
+  const r=await api('/api/leads',{method:'POST',body:JSON.stringify({company:co,project:g('mnPr').value,industry:ind,opportunity_value:g('mnVl').value||'',state:g('mnSt').value,pic:g('mnPic').value,email:g('mnEm').value,procam_vertical:g('mnVt').value,notes:g('mnNo').value,origin:g('mnOr').value,destination:g('mnDe').value,site_location:g('mnSl').value,source:g('mnSrc').value||'manual',assigned_to:ME.emp_code})});
+  if(r.ok){toast('Lead added ✓','ok');rDash();['mnCo','mnPr','mnIn','mnSt','mnVl','mnPic','mnEm','mnNo','mnOr','mnDe','mnSl'].forEach(id=>{const el=g(id);if(el)el.value='';});}
+  else toast(r.error||'Could not add lead','err');
 }
 async function saveVC(){
   const txt=g('vcTxt')?.value.trim();if(!txt){toast('Paste data first','err');return;}
