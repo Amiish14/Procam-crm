@@ -102,15 +102,26 @@ def _coerce(column, value):
     return str(value)
 
 
-def _reason_for(original):
-    """The lost_reason this lead comes back with."""
+def _reason_for(original, *, audited=False, by=None, when=None):
+    """The lost_reason this lead comes back with.
+
+    Three cases, kept apart because they are three different
+    stories. A lead whose deletion was recorded by a named person
+    on a named day, with no reason typed, is not the same as one
+    nobody recorded at all — the first can be asked about, the
+    second cannot.
+    """
     text = (original or '').strip()
     hit = DUPLICATE.search(text)
     if hit:
         return f'Others: duplicate of #{hit.group(1)}'
-    if not text:
-        return 'Restored — originally deleted: no record'
-    return f'Restored — originally deleted: {text}'[:200]
+    if text:
+        return f'Restored — originally deleted: {text}'[:200]
+    if audited:
+        day = str(when)[:10] if when else 'an unrecorded date'
+        return (f'Restored — originally deleted: no reason given '
+                f'(deleted by {by or "unknown"} on {day})')[:200]
+    return 'Restored — originally deleted: no record' 
 
 
 def from_audit():
@@ -129,7 +140,8 @@ def from_audit():
                 continue
         if not isinstance(snap, dict) or not snap.get('id'):
             continue
-        out[int(snap['id'])] = (snap, row.reason or '')
+        out[int(snap['id'])] = (snap, row.reason or '',
+                                row.performed_by, row.performed_at)
     return out
 
 
@@ -145,7 +157,7 @@ def from_backup(path):
             f'{path}')
     con = sqlite3.connect(f'file:{path}?mode=ro', uri=True)
     con.row_factory = sqlite3.Row
-    return {r['id']: (dict(r), '')
+    return {r['id']: (dict(r), '', None, None)
             for r in con.execute('SELECT * FROM leads')}
 
 
@@ -176,11 +188,13 @@ def plan(backup_path, *, include_pre_backup=False):
         if lid in live:
             continue                      # never deleted, or already back
         if lid in audit:
-            snap, original = audit[lid]
+            snap, original, by, when = audit[lid]
             source = 'deletion_audit snapshot'
+            audited = True
         elif lid in backup:
-            snap, original = backup[lid]
+            snap, original, by, when = backup[lid]
             source = '6 Sep backup'
+            audited = False
         else:
             continue
         why[source] += 1
@@ -197,7 +211,8 @@ def plan(backup_path, *, include_pre_backup=False):
         rows.append({
             'id': lid, 'fields': fields, 'source': source,
             'original_reason': original,
-            'lost_reason': _reason_for(original),
+            'lost_reason': _reason_for(
+                original, audited=audited, by=by, when=when),
             'company': snap.get('company') or '',
             'stage_was': snap.get('stage') or '',
         })
@@ -265,6 +280,79 @@ def undo(*, actor='CRM-RESTORE'):
     return removed
 
 
+def _export_pre_backup(ids, audit, out_dir=None):
+    """The ones the backup never saw, with what is known of each.
+
+    Everything here comes from the snapshot the deletion left
+    behind. There is no second source to check it against, which
+    is the point: for these leads the audit row is the only record
+    that they existed at all.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    root = out_dir or os.path.join(os.path.dirname(_HERE),
+                                   'docs', 'exports')
+    os.makedirs(root, exist_ok=True)
+    from datetime import date as _date
+    path = os.path.join(
+        root, f'pre_backup_deleted_leads_{_date.today().isoformat()}'
+              f'.xlsx')
+
+    wb = Workbook()
+    head = Font(bold=True, color='FFFFFF')
+    fill = PatternFill('solid', fgColor='1F2937')
+    ws = wb.active
+    ws.title = 'Read me'
+    for line in (
+        'Leads deleted before the 6 September backup.',
+        '',
+        'They are not in the 830 that were restored. The backup '
+        'never held them, so no one counted them, and the only '
+        'record that they ever existed is the deletion_audit '
+        'snapshot each row below is read from.',
+        '',
+        'Nothing has been restored from this list. '
+        '--include-pre-backup on scripts/restore_deleted_leads.py '
+        'would add them to the restore, on the same terms as the '
+        '830: back as Lost, original id where free, no tasks.',
+        '',
+        'There is no second source to check any of this against.',
+    ):
+        ws.append([line])
+        ws.cell(ws.max_row, 1).alignment = Alignment(
+            wrap_text=True, vertical='top')
+    ws.column_dimensions['A'].width = 96
+    ws['A1'].font = Font(bold=True, size=13)
+
+    cols = ('id', 'company', 'stage', 'owner', 'vertical', 'source',
+            'email', 'created', 'deleted_by', 'deleted_at',
+            'reason', 'value_inr')
+    s = wb.create_sheet('Deleted before 6 Sep')
+    s.append(list(cols))
+    for c in s[1]:
+        c.font, c.fill = head, fill
+    for lid in sorted(ids):
+        snap, reason, by, when = audit[lid]
+        s.append([
+            lid, snap.get('company') or '', snap.get('stage') or '',
+            snap.get('assigned_to') or '',
+            snap.get('procam_vertical') or '',
+            snap.get('source') or '', snap.get('email') or '',
+            str(snap.get('created_at') or '')[:19],
+            by or '', str(when or '')[:19],
+            reason or '(none given)',
+            snap.get('estimated_value') or '',
+        ])
+    for col, w in (('A', 8), ('B', 34), ('C', 18), ('D', 12),
+                   ('E', 20), ('F', 12), ('G', 30), ('H', 20),
+                   ('I', 12), ('J', 20), ('K', 44), ('L', 12)):
+        s.column_dimensions[col].width = w
+    s.freeze_panes = 'A2'
+    wb.save(path)
+    return path
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--check', action='store_true')
@@ -273,6 +361,9 @@ def main():
     ap.add_argument('--yes', action='store_true')
     ap.add_argument('--backup', default=None,
                     help='a readable copy of the 6 Sep backup')
+    ap.add_argument('--export-pre-backup',
+                    dest='export_pre_backup', action='store_true',
+                    help='write the 137 to a workbook for a decision')
     ap.add_argument('--include-pre-backup',
                     dest='include_pre_backup', action='store_true',
                     help='also restore leads deleted before the 6 '
@@ -333,6 +424,10 @@ def main():
         for r in rows[:8]:
             print(f'    #{r["id"]:<7}{(r["company"] or "")[:26]:<28}'
                   f'was {r["stage_was"][:16]:<18}{r["source"]}')
+
+        if args.export_pre_backup and pre_backup:
+            path = _export_pre_backup(pre_backup, from_audit())
+            print(f'\n  {path}')
 
         if args.check:
             print('\nDRY RUN — nothing written. Re-run with --apply '
