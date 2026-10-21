@@ -183,7 +183,12 @@ def test_bulk_stage_must_be_a_real_stage(world):
         assert db.session.get(Lead, world['lead']).stage == 'New'
 
 
-def test_bulk_delete_leaves_nothing_to_reattach(world):
+def test_a_bulk_close_reattaches_nothing_because_it_removes_nothing(
+        world):
+    """This guarded against SQLite handing a deleted lead's id to the
+    next insert, so leftover notes and emails surfaced on a stranger.
+    Nothing is deleted now, so the id is never freed and the history
+    stays where it belongs — on the lead it describes."""
     from app.bulk_admin import service as bulk
     with flask_app.app_context():
         lid = world['lead']
@@ -191,12 +196,17 @@ def test_bulk_delete_leaves_nothing_to_reattach(world):
         db.session.add(LeadNote(lead_id=lid, note_text='n', author='RATWO'))
         db.session.add(LeadEmail(lead_id=lid, direction='inbound', body='b'))
         _chunk(lid, 'RATWO')
+        db.session.commit()
         bulk.delete([lid], 'test cleanup', 'RAADM')
+        assert db.session.get(Lead, lid).stage == 'Lost'
         for model in (LeadNote, LeadEmail, CopilotChunk):
-            assert model.query.filter_by(lead_id=lid).count() == 0, model
+            assert model.query.filter_by(lead_id=lid).count() == 1, model
 
 
-def test_single_delete_drops_the_chunks(world):
+def test_the_single_delete_endpoint_no_longer_exists(world):
+    """It dropped the copilot chunks along with the lead. Both stay
+    now: a closed lead is still a lead, and its history is still
+    the answer to a question somebody will ask."""
     with flask_app.app_context():
         lid = world['lead']
         Opportunity.query.filter_by(lead_id=lid).delete()
@@ -204,9 +214,10 @@ def test_single_delete_drops_the_chunks(world):
         _chunk(lid, 'RATWO')
     r = _c('RAADM', 'admin').delete(f'/api/leads/{lid}',
                                     json={'reason': 'test'})
-    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.status_code == 410, r.get_data(as_text=True)
     with flask_app.app_context():
-        assert CopilotChunk.query.filter_by(lead_id=lid).count() == 0
+        assert db.session.get(Lead, lid) is not None
+        assert CopilotChunk.query.filter_by(lead_id=lid).count() == 1
 
 
 def test_notes_are_indexed_and_deleted_notes_are_not(world):

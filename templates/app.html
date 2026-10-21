@@ -1803,9 +1803,11 @@ catch (err) { console.error('Employee list could not start loading', err); }
     <div class="mbdy" id="ldBdy"></div>
     <div class="mft">
       <button class="btn btn-ghost" onclick="orFromLd()">Draft email</button>
-      <button class="btn btn-ghost" onclick="deleteLd()"
-              style="color:var(--red);margin-left:auto;"
-              title="Permanently deletes the whole lead — not a note, not an email">🗑 Delete lead</button>
+      <button class="btn btn-ghost" onclick="closeLostLd()"
+              style="margin-left:auto;"
+              title="Closes the lead as Lost, with a reason. The record stays.">Close as Lost</button>
+      <button class="btn btn-ghost" onclick="dupLd()"
+              title="Marks this a duplicate of another lead. Both are kept.">Mark duplicate</button>
       <button class="btn btn-ghost" onclick="closeLd()">Cancel</button>
       <button class="btn btn-red" onclick="saveLd()">Save</button>
     </div>
@@ -3665,25 +3667,56 @@ async function saveLd(){
 function closeLd(ev){if(ev&&ev.target!==g('ldMob'))return;g('ldMob').style.display='none';activeId=null;
   if(window.ProcamAI&&window.ProcamAI.setContext)window.ProcamAI.setContext(null);}
 
-async function deleteLd(){
+async function closeLostLd(){
+  /* Deletion is gone. 830 leads were removed between September and
+     October; 120 of them left no record of who took them or why, and
+     the rest were only recoverable because a backup existed. A lead
+     that did not happen is closed, with a reason, and stays. */
   if (!activeId) return;
   const co = (g('ldTtl')||{}).textContent || 'this lead';
-  const reason = prompt(`Delete "${co}" and every related attachment?\n\nThis cannot be undone.\n\nType a short reason (audit trail):`, '');
-  if (reason === null) return;              // user pressed Cancel
+  const reason = prompt(
+    `Close "${co}" as Lost?\n\nIt stays on the record and can be `
+    + `reopened.\n\nWhy did it stop?`, '');
+  if (reason === null) return;
   if (!reason.trim()){
-    if (!confirm('No reason given — delete anyway?')) return;
+    toast('A reason is needed — that is the whole point', 'err');
+    return;
   }
-  const r = await api(`/api/leads/${activeId}`, {method:'DELETE', body: JSON.stringify({reason})});
+  const r = await api(`/api/leads/${activeId}/close-lost`,
+                      {method:'POST', body: JSON.stringify({reason})});
   if (r && r.ok){
-    toast(`Lead deleted ✓`, 'ok');
+    toast('Closed as Lost ✓', 'ok');
     closeLd();
-    // Refresh whichever list is visible.
     try { rLeads(); } catch(_){}
     try { rAll();   } catch(_){}
     try { rDash();  } catch(_){}
     try { rPipeline(); } catch(_){}
   } else {
-    toast((r && r.error) || 'Delete failed', 'err');
+    toast((r && r.error) || 'Could not close it', 'err');
+  }
+}
+
+async function dupLd(){
+  if (!activeId) return;
+  const kept = prompt(
+    'Which lead is the one to keep?\n\nGive its id — this one is '
+    + 'closed as a duplicate of it, and both are kept.', '');
+  if (kept === null) return;
+  if (!/^\d+$/.test((kept||'').trim())){
+    toast('Give the id of the lead to keep', 'err');
+    return;
+  }
+  const r = await api(`/api/leads/${activeId}/duplicate-of`,
+    {method:'POST',
+     body: JSON.stringify({duplicate_of: Number(kept)})});
+  if (r && r.ok){
+    toast(`Marked a duplicate of #${kept} ✓`, 'ok');
+    closeLd();
+    try { rLeads(); } catch(_){}
+    try { rAll();   } catch(_){}
+    try { rDash();  } catch(_){}
+  } else {
+    toast((r && r.error) || 'Could not mark it', 'err');
   }
 }
 async function newLead(){

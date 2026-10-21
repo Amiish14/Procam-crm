@@ -184,7 +184,7 @@ def test_sign_in_success_and_failure_are_audited(people):
         assert _events('auth.login_success', 'ATREP')
 
 
-def test_bulk_delete_leaves_a_summary_and_one_event_per_lead(people):
+def test_bulk_close_leaves_a_summary_and_one_event_per_lead(people):
     from app.bulk_admin import service as bulk
     import app.models.audit                                     # noqa: F401
     with flask_app.app_context():
@@ -194,10 +194,13 @@ def test_bulk_delete_leaves_a_summary_and_one_event_per_lead(people):
         db.session.commit()
         lid = lead.id
         bulk.delete([lid], 'duplicate import', 'ATADM')
-        per_lead = _events('lead.delete', lid)[0]
-        assert per_lead.reason == 'duplicate import'
-        summary = _events('bulk.delete')[0]
+        # Closed, not deleted — but the audit shape is the same: a
+        # summary naming the batch and a row per lead.
+        per_lead = _events('lead.closed_lost', lid)[0]
+        assert 'duplicate import' in (per_lead.reason or '')
+        summary = _events('bulk.close_lost')[0]
         assert lid in summary.new_value['lead_ids']
+        assert db.session.get(Lead, lid).stage == 'Lost'
 
 
 def test_secrets_are_redacted_whatever_the_caller_passes():

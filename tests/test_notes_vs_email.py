@@ -326,11 +326,14 @@ def test_a_manual_lead_is_not_shown_as_having_an_email():
 
 
 # ─── §5 · the buttons say what they do ───────────────────────────────────
-def test_the_lead_delete_button_says_it_deletes_the_lead():
-    """It sits beside Save in the same footer as the notes block, so
-    "Delete" alone reads as "delete this note"."""
+def test_the_footer_closes_a_lead_rather_than_deleting_it():
+    """There is no delete any more. The buttons that replaced it sit
+    in the same footer as the notes block, so they have to say what
+    they act on — "Close" alone would read as "close this note"."""
     html = open(os.path.join(_ROOT, 'templates', 'app.html')).read()
-    assert 'Delete lead</button>' in html
+    assert 'Close as Lost</button>' in html
+    assert 'Mark duplicate</button>' in html
+    assert 'Delete lead</button>' not in html
     assert '>🗑 Delete</button>' not in html, 'the bare label is ambiguous'
 
 

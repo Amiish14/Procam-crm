@@ -234,26 +234,44 @@ def purge(targets, soft):
               f'Nothing was deleted.')
         return
 
-    # Clear every table that points at leads.id before deleting the rows.
-    # Use the ORM models rather than raw SQL — a text() query with
-    # `IN :ids` needs an expanding bindparam and silently fails without one.
-    att = LeadAttachment.query.filter(
-        LeadAttachment.lead_id.in_(ids)).delete(synchronize_session=False)
+    # Closed, not deleted. This script removed leads outright until
+    # 21 October, writing no DeletionAudit row as it went — it is the
+    # only one of the three delete paths that left no record, and 120
+    # of the 830 leads it took can no longer be explained by anybody.
+    #
+    # Nothing about the selection above changes. A newsletter from a
+    # bank is still not a lead. It is now a lead that is Lost, with a
+    # reason saying so, which is searchable and reversible and does
+    # not make the next person wonder where it went.
+    from app.services import audit as audit_trail
+
     evt = EmailEvent.query.filter(EmailEvent.lead_id.in_(ids)).update(
-        {EmailEvent.lead_id: None, EmailEvent.status: 'lead_deleted'},
+        {EmailEvent.status: 'lead_closed_not_relevant'},
         synchronize_session=False)
-    child_rows = 0
-    for model in _child_models():
-        try:
-            child_rows += model.query.filter(
-                model.lead_id.in_(ids)).delete(synchronize_session=False) or 0
-        except Exception as e:                                   # noqa: BLE001
-            db.session.rollback()
-            print(f'  note: could not clean {model.__name__}: {str(e)[:90]}')
-    deleted = Lead.query.filter(Lead.id.in_(ids)).delete(synchronize_session=False)
+    reason = ('Others: not a business enquiry — closed by the junk '
+              'sweep')
+    closed = 0
+    for lead in targets:
+        was = lead.stage
+        if (was or '') == 'Lost':
+            continue
+        audit_trail.record(
+            'lead.stage_change', 'lead', lead.id, actor='PURGE-SWEEP',
+            old={'stage': was, 'relevance': lead.relevance},
+            new={'stage': 'Lost', 'lost_reason': reason},
+            reason='junk sweep: ' + (lead.email or 'no sender'),
+            strict=False)
+        lead.stage = 'Lost'
+        lead.lost_reason = reason
+        lead.relevance = 'Not Relevant'
+        closed += 1
     db.session.commit()
-    print(f'\nDeleted {deleted} leads, {att} attachment rows, {child_rows} '
-          f'child rows; {evt} email events marked lead_deleted.')
+    print(f'\nClosed {closed} leads as Lost (relevance Not Relevant), '
+          f'each with an audit row; {evt} email events marked. '
+          f'Nothing was deleted.')
+    print('Their attachments and history are untouched: the leads are '
+          'closed, not gone, and --soft is now only the difference '
+          'between marking them and closing them.')
     print('Attachment FILES on disk were left in place — remove them '
           'manually from EMAIL_INGEST_STORAGE_ROOT if you want the space.')
 
@@ -263,10 +281,12 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--preview', action='store_true',
-                    help='list the leads --apply would remove')
-    ap.add_argument('--apply', action='store_true', help='actually purge')
+                    help='list the leads --apply would close')
+    ap.add_argument('--apply', action='store_true',
+                    help='close the selected leads as Lost')
     ap.add_argument('--soft', action='store_true',
-                    help="with --apply: mark 'Not Relevant' instead of deleting")
+                    help="with --apply: mark 'Not Relevant' only, "
+                         "without closing them")
     ap.add_argument('--domains', help='comma-separated sender domains to purge')
     ap.add_argument('--ids', help='comma-separated lead ids to purge')
     ap.add_argument('--since', metavar='YYYY-MM-DD')

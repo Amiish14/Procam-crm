@@ -87,6 +87,27 @@ def deletion_blocked(counts):
     return reasons
 
 
+def close_blocked(counts):
+    """Why a bulk close as Lost is refused.
+
+    Narrower than `deletion_blocked`, and deliberately so. That one
+    refused where a quote, an RFQ or an opportunity was attached,
+    because destroying the lead would have orphaned them. Closing
+    destroys nothing, and a lead going Lost after it was quoted is
+    the commonest outcome in the book — refusing it would make the
+    bulk tool useless for the one thing it is now for.
+
+    A Won deal is different. Marking a lead Lost when Procam did
+    the work says something false about business that happened, and
+    no amount of bulk convenience justifies it.
+    """
+    if counts.get('won_deals'):
+        return [f'{counts["won_deals"]} Won deal(s) are linked — '
+                f'closing these as Lost would say Procam did not '
+                f'win work it did']
+    return []
+
+
 def _snapshot(lead):
     return {
         'id': lead.id, 'company': lead.company, 'project': lead.project,
@@ -232,68 +253,60 @@ def set_field(lead_ids, field, value, actor):
 
 
 def delete(lead_ids, reason, actor):
-    """§55-57 — permanent, restricted, audited, and refused where history
-    would be destroyed.
+    """There is no longer a bulk delete. Closes them as Lost.
 
-    The audit rows are written and committed BEFORE the deletion, so the
-    record of what was removed survives even if the delete itself fails
-    part-way.
+    §55-57 built this carefully — a reason required, a refusal
+    where history would be destroyed, the audit committed before
+    the deletion. None of that was the problem. The problem is that
+    a lead which did not happen is a lead which did not happen, and
+    an absence cannot be reported on, searched, or explained to
+    whoever asks next year why the pipeline shrank.
+
+    So the same set is closed instead. The signature and the
+    refusal rules are unchanged, because every caller and every
+    test depends on them, and `deleted` still counts what the
+    action affected.
     """
     from app import Lead
     if not (reason or '').strip():
-        raise ValueError('A reason is required for permanent deletion')
+        raise ValueError('A reason is required')
 
     rows = Lead.query.filter(Lead.id.in_(lead_ids)).all()
     if not rows:
-        return {'deleted': 0}
+        return {'deleted': 0, 'closed': 0}
 
     counts = linked_counts([l.id for l in rows])
-    blocked = deletion_blocked(counts)
+    blocked = close_blocked(counts)
     if blocked:
         raise PermissionError(
-            'Permanent deletion refused — ' + '; '.join(blocked)
-            + '. Archive these instead: the records leave the active '
-              'pipeline but the history stays.')
+            'Bulk close refused — ' + '; '.join(blocked)
+            + '. Close those individually if that is really what '
+              'happened.')
 
     batch_ref = uuid.uuid4().hex[:12]
-    for lead in rows:
-        _audit(lead, 'delete', reason, actor, counts, batch_ref)
-    # Query.delete below bypasses the ORM, so the per-lead events the
-    # session listener would write are written here.
     from app.services import audit as audit_trail
-    _bulk_event('bulk.delete', rows, actor, reason, batch_ref)
-    for lead in rows:
-        audit_trail.record('lead.delete', 'lead', lead.id, actor=actor,
-                           old={'company': lead.company,
-                                'stage': lead.stage,
-                                'assigned_to': lead.assigned_to},
-                           reason=reason, strict=True)
-    db.session.commit()          # the audit survives whatever follows
+    from app.services import task_autoclose
 
-    from app import (LeadActivity, LeadAttachment, LeadNote, LeadEmail,
-                     LeadAssignmentHistory)
-    ids = [l.id for l in rows]
-    # The same set the single-lead delete removes. SQLite hands a deleted
-    # id to the next insert, so a note, email or assignment left here
-    # attaches itself to an unrelated new lead. The audit rows written
-    # above hold the snapshot.
-    for model in (LeadNote, LeadEmail, LeadAssignmentHistory):
-        model.query.filter(model.lead_id.in_(ids)).delete(
-            synchronize_session=False)
-    try:
-        from app.models.copilot import CopilotChunk
-        CopilotChunk.query.filter(CopilotChunk.lead_id.in_(ids)).delete(
-            synchronize_session=False)
-    except ImportError:
-        pass
-    LeadActivity.query.filter(LeadActivity.lead_id.in_(ids)).delete(
-        synchronize_session=False)
-    LeadAttachment.query.filter(LeadAttachment.lead_id.in_(ids)).delete(
-        synchronize_session=False)
-    history = _model('app:LeadStageHistory')
-    if history is not None:
-        history.query.filter(history.lead_id.in_(ids)).delete(
-            synchronize_session=False)
-    Lead.query.filter(Lead.id.in_(ids)).delete(synchronize_session=False)
+    for lead in rows:
+        _audit(lead, 'close_lost', reason, actor, counts, batch_ref)
+    _bulk_event('bulk.close_lost', rows, actor, reason, batch_ref)
+    for lead in rows:
+        was = lead.stage
+        # Its own action, not another `lead.stage_change`: the
+        # session listener already writes one of those for the
+        # stage itself, and two rows with one name means whichever
+        # is read first wins.
+        audit_trail.record('lead.closed_lost', 'lead', lead.id,
+                           actor=actor,
+                           old={'stage': was},
+                           new={'stage': 'Lost',
+                                'lost_reason': reason[:200]},
+                           reason=f'bulk close as Lost: {reason}',
+                           strict=True)
+        lead.stage = 'Lost'
+        lead.lost_reason = reason[:200]
+        lead.updated_at = datetime.utcnow()
+        # Their open tasks go with them, as on any other close.
+        task_autoclose.close_for_lead(lead, actor)
     db.session.commit()
-    return {'deleted': len(rows), 'batch_ref': batch_ref}
+    return {'deleted': 0, 'closed': len(rows), 'batch_ref': batch_ref}

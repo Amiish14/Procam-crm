@@ -140,11 +140,18 @@ def test_impact_is_reported_before_anything_happens(leads):
     assert body['reasons']
 
 
-def test_a_lead_with_no_history_can_be_deleted(leads):
+def test_a_lead_is_closed_as_lost_rather_than_deleted(leads):
+    """There is no bulk delete any more. 830 leads went that way
+    between September and October and 120 of them left no record at
+    all; the same set is closed instead, and stays."""
     with flask_app.app_context():
         out = bulk.delete([leads['plain']], 'duplicate entry', 'BADMIN')
-        assert out['deleted'] == 1
-        assert Lead.query.get(leads['plain']) is None
+        assert out['closed'] == 1
+        assert out['deleted'] == 0
+        lead = db.session.get(Lead, leads['plain'])
+        assert lead is not None, 'the lead was destroyed'
+        assert lead.stage == 'Lost'
+        assert lead.lost_reason == 'duplicate entry'
 
 
 def test_deletion_requires_a_reason(leads):
@@ -155,16 +162,21 @@ def test_deletion_requires_a_reason(leads):
 
 
 # ── §57: the audit survives the record ───────────────────────────────
-def test_deletion_is_audited_with_a_snapshot(leads):
+def test_closing_is_audited_with_a_snapshot(leads):
+    """The snapshot stays even though nothing is destroyed: it is
+    what the lead looked like before somebody closed it in bulk,
+    which is the question asked afterwards."""
     with flask_app.app_context():
-        bulk.delete([leads['plain']], 'test deletion', 'BADMIN')
-        row = DeletionAudit.query.filter_by(action='delete').first()
+        bulk.delete([leads['plain']], 'test closing', 'BADMIN')
+        row = DeletionAudit.query.filter_by(
+            action='close_lost').first()
         assert row is not None
-        assert row.reason == 'test deletion'
+        assert row.reason == 'test closing'
         assert row.performed_by == 'BADMIN'
         assert row.performed_at is not None
-        # after a permanent delete the snapshot is all that remains
         assert row.snapshot.get('company') == 'Plain Co'
+        assert DeletionAudit.query.filter_by(
+            action='delete').count() == 0
 
 
 def test_archiving_is_audited_too(leads):

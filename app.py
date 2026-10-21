@@ -2688,72 +2688,125 @@ def api_lead_relevance(lid):
 @app.route('/api/leads/<int:lid>', methods=['DELETE'])
 @require_auth
 def api_delete_lead(lid):
-    """Delete a lead + all its dependent records (attachments, activities,
-    outreach drafts) so nothing is orphaned.
-    Admins can delete any lead; regular users can delete only their own.
+    """Gone. A lead is closed, never destroyed.
+
+    830 leads were removed through this endpoint and the purge
+    script between September and October. 710 left a snapshot and
+    120 left nothing at all — no record of who took them or why.
+    All 830 came back as Lost, because a lead that did not happen
+    is a lead that did not happen, not an absence.
+
+    The route stays and answers 410 rather than vanishing, so an
+    old client gets told what to call instead of a 404 it will
+    read as "wrong id".
     """
+    return jsonify({
+        'ok': False,
+        'error': 'Leads are no longer deleted. Close it as Lost, or '
+                 'mark it a duplicate — both keep the record and '
+                 'both ask for a reason.',
+        'use': {
+            'close_as_lost': f'POST /api/leads/{lid}/close-lost',
+            'mark_duplicate': f'POST /api/leads/{lid}/duplicate-of',
+        },
+    }), 410
+
+
+#: Why a lead stopped, where a person has to say. Free text, because
+#: a dropdown of reasons is a dropdown somebody picks the first item
+#: from; the point is that somebody writes a sentence.
+def _closing_reason(payload, *, what):
+    reason = ((payload or {}).get('reason') or '').strip()
+    if len(reason) < 3:
+        raise ValueError(
+            f'Say why — "{what}" without a reason is the thing that '
+            f'left 120 leads with no record of where they went.')
+    return reason[:200]
+
+
+@app.route('/api/leads/<int:lid>/close-lost', methods=['POST'])
+@require_auth
+def api_close_lost(lid):
+    """Close a lead as Lost, with a reason. Replaces deletion."""
+    from app.services import task_autoclose
+
     lead = _require_lead_access(lid)
-    role   = session.get('role')
-    caller = session.get('emp_code')
-
-    reason = ((request.get_json(silent=True) or {}).get('reason') or '').strip()
-
-    # ── Audit, BEFORE anything is destroyed ──────────────────────────
-    # The dialog asks the user for a reason "for the audit trail", and
-    # for a long time that reason went only to app.logger — at INFO,
-    # which the logger's level was discarding. So 571 leads were deleted
-    # with no record anywhere of who did it or why, and no way to tell an
-    # accident from housekeeping. deletion_audit already exists for this
-    # and keeps a snapshot, which after a permanent delete is the only
-    # thing that can answer what was there.
     try:
-        from app.models.audit import DeletionAudit
-        snapshot = lead.to_dict()
-        linked = {}
-        for label, model, col in (
-                ('attachments', LeadAttachment, 'lead_id'),
-                ('activities', LeadActivity, 'lead_id'),
-                ('stage_history', LeadStageHistory, 'lead_id'),
-                ('notes', LeadNote, 'lead_id'),
-                ('emails', LeadEmail, 'lead_id')):
-            try:
-                linked[label] = model.query.filter_by(**{col: lid}).count()
-            except Exception:
-                linked[label] = None
-        db.session.add(DeletionAudit(
-            entity_type='Lead', entity_id=lid, action='delete',
-            reason=reason or None, snapshot=snapshot, linked=linked,
-            performed_by=caller or 'unknown'))
-        db.session.flush()
-    except Exception:
-        # An audit failure must not silently allow an unrecorded delete.
-        db.session.rollback()
-        app.logger.exception('lead_delete audit failed for lid=%s', lid)
-        return jsonify({'error': 'Could not record the deletion for audit — '
-                                 'the lead was not deleted.'}), 500
+        reason = _closing_reason(request.get_json(silent=True),
+                                 what='close as Lost')
+    except ValueError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
 
-    app.logger.info('lead_delete lid=%s company=%r by=%s role=%s reason=%r',
-                    lid, lead.company, caller, role, reason)
-
-    # Cascade: remove dependent rows to avoid orphans (LeadAttachment stores
-    # a lead_id foreign key; other tables reference the lead loosely).
-    # SQLite hands a deleted row's id to the next insert, so anything
-    # left behind here does not just linger — it attaches itself to
-    # whichever lead takes the id next. The audit snapshot above is what
-    # preserves the history; these rows must go.
-    from app.models.copilot import CopilotChunk
-    for model in (LeadAttachment, LeadNote, LeadEmail,
-                  LeadAssignmentHistory, LeadActivity, LeadStageHistory,
-                  CopilotChunk):
-        try:
-            model.query.filter_by(lead_id=lid).delete(
-                synchronize_session=False)
-        except Exception:
-            pass   # table may not exist in every deployment
-
-    db.session.delete(lead)
+    was = lead.stage
+    lead.stage = 'Lost'
+    lead.lost_reason = reason
+    lead.updated_at = datetime.utcnow()
+    _audit_lead_close(lead, was, reason, 'closed as Lost',
+                      'lead.closed_lost')
+    # The tasks go with it, as they do on any other close.
+    task_autoclose.close_for_lead(lead, session.get('emp_code'))
     db.session.commit()
-    return jsonify({'ok': True, 'deleted_id': lid})
+    return jsonify({'ok': True, 'id': lead.id, 'stage': lead.stage,
+                    'lost_reason': lead.lost_reason})
+
+
+@app.route('/api/leads/<int:lid>/duplicate-of', methods=['POST'])
+@require_auth
+def api_mark_duplicate(lid):
+    """Mark a lead a duplicate of another, keeping both."""
+    from app.services import task_autoclose
+
+    lead = _require_lead_access(lid)
+    payload = request.get_json(silent=True) or {}
+    try:
+        kept = int(payload.get('duplicate_of') or 0)
+    except (TypeError, ValueError):
+        kept = 0
+    if not kept:
+        return jsonify({'ok': False,
+                        'error': 'Which lead is the one to keep? '
+                                 'Give its id as duplicate_of.'}), 400
+    if kept == lid:
+        return jsonify({'ok': False,
+                        'error': 'A lead cannot be a duplicate of '
+                                 'itself.'}), 400
+    other = db.session.get(Lead, kept)
+    if other is None:
+        return jsonify({'ok': False,
+                        'error': f'There is no lead #{kept}.'}), 404
+
+    note = ((payload.get('reason') or '').strip()
+            or f'duplicate of #{kept}')
+    was = lead.stage
+    lead.stage = 'Lost'
+    lead.lost_reason = f'Others: duplicate of #{kept}'[:200]
+    lead.updated_at = datetime.utcnow()
+    _audit_lead_close(lead, was, note,
+                      f'marked a duplicate of #{kept}',
+                      'lead.marked_duplicate')
+    task_autoclose.close_for_lead(lead, session.get('emp_code'))
+    db.session.commit()
+    return jsonify({'ok': True, 'id': lead.id, 'stage': lead.stage,
+                    'lost_reason': lead.lost_reason,
+                    'duplicate_of': kept})
+
+
+def _audit_lead_close(lead, was, reason, what, action):
+    """A row of its own, not another `lead.stage_change`.
+
+    The session listener already writes one of those for the stage
+    itself. A second with the same action and a different reason is
+    two rows saying the same thing, and whichever is read first
+    wins — so the deliberate act gets its own name.
+    """
+    from app.services import audit as audit_trail
+
+    audit_trail.record(
+        action, 'lead', str(lead.id),
+        old={'stage': was}, new={'stage': lead.stage,
+                                 'lost_reason': lead.lost_reason},
+        actor=session.get('emp_code'),
+        reason=f'{what}: {reason}')
 
 
 # ─── Lead attachments (email ingest + manual upload later) ───────────
