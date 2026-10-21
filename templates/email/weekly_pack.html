@@ -44,6 +44,30 @@
   {% endif %}
 {% endif %}
 
+{% if r.new_accounts is not none %}
+  {{ bits.heading('New accounts this week (' ~ (r.new_accounts|length) ~ ')') }}
+  {% if r.new_accounts %}
+  <table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">
+    {% for a in r.new_accounts %}
+    <tr>
+      <td style="padding:6px 10px 6px 0;border-top:1px solid #EFEDEB;">
+        <a href="{{ base_url }}{{ a.link }}" style="color:#1F2937;"><strong>{{ a.name }}</strong></a>
+        <div style="font-size:11.5px;color:#8A857F;">PIC {{ a.pic }} · created by {{ a.created_by }}</div>
+      </td>
+      <td style="padding:6px 0;border-top:1px solid #EFEDEB;white-space:nowrap;
+                 font-size:11.5px;color:#8A857F;">{{ a.created }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div style="font-size:11.5px;color:#8A857F;margin-top:6px;">
+    Check for duplicates and junk before Friday's review. Open an account to
+    merge it or set it dormant.
+  </div>
+  {% else %}
+    {{ bits.nothing('No accounts were created this week.') }}
+  {% endif %}
+{% endif %}
+
 {% if r.restrictions and r.restrictions.total %}
   {{ bits.heading('Clients the company will not deal with') }}
   <table role="presentation" style="border-collapse:collapse;width:100%;font-size:13px;">

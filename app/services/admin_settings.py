@@ -57,6 +57,43 @@ DEFAULTS = {
     'weekly_pack_recipients': (
         [], 'Extra people on the Thursday review pack, beyond the '
             'vertical heads.'),
+    # ── decisions of 21 Oct 2026 (CRM questionnaire) ─────────────────
+    'tender_owner_email': (
+        '', 'Email address of the tender desk: every Tender / GeM lead '
+            'goes to this person first, who passes it to the vertical. '
+            'Empty means the person who keys the lead in keeps it.'),
+    'new_accounts_reviewer': (
+        ['DIR12010'],
+        'Who reviews the accounts created during the week, in the '
+        'Thursday report before the Friday sales review.'),
+    'mail_subject_prefix': (
+        '[CRM]', 'Put at the start of every CRM email subject, so CRM '
+                 'mail can be told apart from TMS mail sent from the same '
+                 'mailbox. Empty turns it off.'),
+    'margin_floors': (
+        {'PTM_OWN': 38, 'PTM_MARKET': 14, 'MECHANICAL': 12,
+         'FREIGHT_FORWARDING': 10, 'WAREHOUSING': 18, 'INSTALLATION': 25},
+        'Minimum margin %, on sell, per service line. A quote below it '
+        'needs the director\'s approval. PTM lines need Own or Market '
+        'on the line.'),
+    'head_approval_limit_inr': (
+        2500000, 'The largest quote (INR, before GST) a vertical head may '
+                 'approve. Larger quotes need the director.'),
+    'director_approvers': (
+        ['DIR12010'],
+        'Who may approve a quote below its minimum margin or above the '
+        'head\'s limit — the director, and whoever stands in for him '
+        '(add their employee code).'),
+    'margin_viewers_ff': (
+        ['DIR12010'],
+        'The only people who see buy rates and margin on Freight '
+        'Forwarding / Project Freight quotes. Add employee codes on this '
+        'screen.'),
+    'quote_validity_days': (
+        {'Heavy Transport': 15, 'Project Freight': 7,
+         'Freight Forwarding': 7, 'Installation': 30, 'Warehousing': 30},
+        'Default quote validity in days, by vertical. Forwarding quotes '
+        'also never outlive the carrier\'s own validity.'),
 }
 
 
@@ -95,6 +132,55 @@ def save(key, value, *, actor=None, commit=True):
     except Exception:
         pass
     return value
+
+
+#: The settings on the "CRM rules" screen (decisions of 21 Oct 2026).
+RULE_KEYS = ('tender_owner_email', 'new_accounts_reviewer',
+             'director_approvers', 'margin_viewers_ff', 'margin_floors',
+             'head_approval_limit_inr', 'quote_validity_days',
+             'mail_subject_prefix')
+
+
+def parse_rule(key, raw):
+    """A value typed on the rules screen, checked against the default's
+    shape. Raises ValueError with a sentence a person can act on."""
+    default = DEFAULTS[key][0]
+    raw = (raw or '').strip()
+    if isinstance(default, str):
+        return raw
+    if isinstance(default, list):
+        return [p.strip().upper() for p in raw.replace('\n', ',').split(',')
+                if p.strip()]
+    if isinstance(default, (int, float)) and not isinstance(default, bool):
+        try:
+            return int(raw.replace(',', ''))
+        except ValueError:
+            raise ValueError(f'{key}: enter a whole number')
+    if isinstance(default, dict):
+        out = {}
+        for line in raw.splitlines():
+            if not line.strip():
+                continue
+            if '=' not in line:
+                raise ValueError(f'{key}: write one "name = number" per line')
+            name, value = line.split('=', 1)
+            try:
+                out[name.strip()] = float(value.strip())
+            except ValueError:
+                raise ValueError(f'{key}: "{value.strip()}" is not a number')
+            if out[name.strip()].is_integer():
+                out[name.strip()] = int(out[name.strip()])
+        return out
+    raise ValueError(f'{key}: cannot be edited here')
+
+
+def show_rule(key):
+    value = get(key)
+    if isinstance(value, list):
+        return ', '.join(value)
+    if isinstance(value, dict):
+        return '\n'.join(f'{k} = {v}' for k, v in value.items())
+    return '' if value is None else str(value)
 
 
 def all_settings():

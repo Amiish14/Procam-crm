@@ -123,3 +123,38 @@ def test_the_freeze_report_renders_and_names_the_week(world):
     assert report['week'] == out['week']
     html = digests.render(report)
     assert out['week'] in html
+
+
+# ── decision 21 Oct 2026 (C7): the director reviews new accounts ─────
+def _render(report):
+    from app.services import digests
+    return digests.render(report)
+
+
+def test_reviewer_sees_new_accounts_and_others_do_not(world):
+    from datetime import datetime, timedelta
+    from app.services import admin_settings
+    with flask_app.app_context():
+        admin_settings.save('new_accounts_reviewer', [OWNER], actor='test')
+        fresh = Company(name=TAG + 'Fresh Account', created_by=OWNER,
+                        pic_emp_code=OWNER)
+        old = Company(name=TAG + 'Old Account',
+                      created_at=datetime.utcnow() - timedelta(days=20))
+        db.session.add_all([fresh, old])
+        db.session.commit()
+        try:
+            report = pack.review_pack(OWNER)
+            names = [a['name'] for a in report['new_accounts']]
+            assert TAG + 'Fresh Account' in names
+            assert TAG + 'Old Account' not in names
+            html = _render(report)
+            assert 'New accounts this week' in html
+            assert TAG + 'Fresh Account' in html
+
+            admin_settings.save('new_accounts_reviewer', [], actor='test')
+            assert pack.review_pack(OWNER)['new_accounts'] is None
+            assert 'New accounts this week' not in _render(
+                pack.review_pack(OWNER))
+        finally:
+            admin_settings.save('new_accounts_reviewer', ['DIR12010'],
+                                actor='test')

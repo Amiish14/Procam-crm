@@ -4,7 +4,7 @@ The Thursday review pack and the Friday freeze.
 Two reports with one purpose: make the Monday sales review about
 decisions rather than about whose number is right.
 
-**Thursday, 14:00 IST — the review pack.** Sent before the meeting, to
+**Thursday, 15:00 IST — the review pack.** Sent before the meeting, to
 the people who will be in it, so nobody spends the first twenty minutes
 reading. It is the week's movement: what came in, what moved stage,
 what was won and lost, what is sitting past its quote deadline, and the
@@ -175,6 +175,35 @@ def register_summary():
 
 
 # ── the Thursday pack ────────────────────────────────────────────────
+def is_account_reviewer(emp_code):
+    from app.services import admin_settings
+    codes = admin_settings.get('new_accounts_reviewer') or []
+    return bool(emp_code) and emp_code in codes
+
+
+def new_accounts(*, today=None, days=7):
+    """Accounts created in the last `days` days (decision 21 Oct 2026, C7).
+
+    Sales users create accounts without an approval step; the director
+    reviews them each Thursday instead. Every row is a link, so a
+    duplicate can be merged or a junk account set dormant from here.
+    """
+    from app import Company, Employee
+    since = datetime.utcnow() - timedelta(days=days)
+    rows = (Company.query.filter(Company.created_at >= since)
+            .order_by(Company.created_at.desc()).all())
+    names = {e.emp_code: e.name for e in Employee.query.filter(
+        Employee.emp_code.in_({c for r in rows
+                               for c in (r.created_by, r.pic_emp_code)
+                               if c})).all()} if rows else {}
+    return [{'id': r.id, 'name': r.name,
+             'created': r.created_at.strftime('%d %b') if r.created_at else '',
+             'created_by': names.get(r.created_by, r.created_by or 'System'),
+             'pic': names.get(r.pic_emp_code, r.pic_emp_code or '—'),
+             'link': f'/companies/{r.id}'}
+            for r in rows]
+
+
 def review_pack(emp_code, *, today=None):
     """What one person needs in front of them before the review."""
     today = today or rules.business_today()
@@ -204,6 +233,8 @@ def review_pack(emp_code, *, today=None):
         'report': 'weekly_pack',
         'template': 'email/weekly_pack.html',
         'restrictions': register_summary(),
+        'new_accounts': (new_accounts(today=today)
+                         if is_account_reviewer(emp_code) else None),
         'date': str(today),
         'week': week_label(today),
         'person': person,

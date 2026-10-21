@@ -106,6 +106,14 @@
       <div class="field"><label>Unit</label><input name="unit" value="lot"></div>
       <div class="field"><label>Unit rate</label><input type="number" step="0.01" name="unit_rate" value="0"></div>
     </div>
+    <div class="field"><label>Vehicle (Heavy Transport only)</label>
+      <select name="vehicle_source">
+        <option value="">Not transport / not applicable</option>
+        <option value="PTM-Own">PTM hydraulic – own vehicle</option>
+        <option value="PTM-Market">PTM hydraulic – market vehicle</option>
+        <option value="Mechanical">Mechanical trailer</option>
+      </select>
+    </div>
     <div class="actions">
       <button type="button" class="btn" onclick="document.getElementById('lineModal').close()">Cancel</button>
       <button type="button" class="btn primary" onclick="addLine()">Add</button>
@@ -133,7 +141,7 @@ async function reload() {
   document.getElementById('linesBody').innerHTML = lines.map((ln, i) => `
     <tr>
       <td>${ln.line_no || (i+1)}</td>
-      <td>${esc(ln.service)}</td>
+      <td>${esc(ln.service)}${ln.vehicle_source ? ' <span style="color:var(--text-2);font-size:11.5px">· ' + esc(ln.vehicle_source) + '</span>' : ''}</td>
       <td>${esc(ln.description)}</td>
       <td class="num">${Number(ln.quantity||0)}</td>
       <td>${esc(ln.unit)}</td>
@@ -163,7 +171,13 @@ async function addLine() {
 }
 async function submitForApproval() {
   const j = await jf('/api/quotes/' + QID + '/submit-for-approval', {method:'POST', body:'{}'});
-  if (j && j.ok) reload(); else alert((j && j.error) || 'Failed');
+  if (j && j.ok) {
+    const a = j.approval || {};
+    if (a.needs_director) alert('Sent for approval. This quote needs the director: '
+      + (a.below_floor ? a.below_floor + ' line(s) below the minimum margin. ' : '')
+      + (a.over_limit ? 'Value above the head\'s limit.' : ''));
+    reload();
+  } else alert((j && j.error) || 'Failed');
 }
 async function approve() {
   const j = await jf('/api/quotes/' + QID + '/approve', {method:'POST', body:'{}'});

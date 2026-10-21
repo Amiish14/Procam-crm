@@ -64,7 +64,9 @@ REASON = 'Specialist required'
 
 
 def _lead(client, **kw):
-    body = {'company': 'Test Co', 'source': 'manual'}
+    body = {'company': 'Test Co', 'source': 'manual',
+            'procam_vertical': 'Warehousing', 'site_location': 'Pune',
+            'project': 'Storage'}
     body.update(kw)
     r = client.post('/api/leads', json=body)
     assert r.status_code in (200, 201), r.get_data(as_text=True)
