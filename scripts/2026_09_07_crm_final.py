@@ -75,7 +75,7 @@ SEED_HELP_ARTICLES = [
      'When an Opportunity is Won, a structured payload is handed to the '
      'Transport Management System (TMS) for execution.'),
     ('business-cards', 'accounts', 'Business Card Scan',
-     'Snap a business card and let Claude Vision extract Name, '
+     'Snap a business card and let Procam AI extract Name, '
      'Designation, Company, Email, Phone and address into a review form.'),
 ]
 
