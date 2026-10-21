@@ -224,29 +224,75 @@ def plan(backup_path, *, include_pre_backup=False):
     return rows, why, pre_backup, unusable
 
 
+#: Unique on `leads`, so a restored row carrying the same value as
+#: a live one is refused by the database — the whole insert, and
+#: with it the other 136. Found the hard way on the first apply of
+#: the pre-backup set.
+UNIQUE_COLUMNS = ('email_message_id', 'crn')
+
+
+def _taken():
+    """{column: {value: live lead id}} for the unique columns."""
+    out = {}
+    for name in UNIQUE_COLUMNS:
+        column = getattr(Lead, name, None)
+        if column is None:
+            continue
+        out[name] = {v: i for i, v in
+                     db.session.query(Lead.id, column)
+                     .filter(column.isnot(None)).all() if v}
+    return out
+
+
 def apply_plan(rows, *, actor='CRM-RESTORE'):
     from app.services import audit as audit_trail
 
     live = {r[0] for r in db.session.query(Lead.id).all()}
-    made, renumbered = [], []
+    taken = _taken()
+    made, renumbered, duplicates = [], [], []
     for row in rows:
         keep_id = row['id'] not in live
-        lead = Lead(**row['fields'])
+        fields = dict(row['fields'])
+
+        # A live lead already holding this message id is not a
+        # coincidence: the enquiry was deleted and the same email
+        # was ingested again. So the one coming back is a
+        # duplicate of the one that is live, which is exactly the
+        # case the reason rule was written for. The id is cleared
+        # because the column is unique, and kept in the audit row
+        # so nothing is lost.
+        clash_with, cleared = None, {}
+        for name, index in taken.items():
+            value = fields.get(name)
+            if value and value in index:
+                clash_with = clash_with or index[value]
+                cleared[name] = value
+                fields[name] = None
+
+        lead = Lead(**fields)
         if keep_id:
             lead.id = row['id']
         lead.stage = 'Lost'
-        lead.lost_reason = row['lost_reason']
+        lead.lost_reason = (f'Others: duplicate of #{clash_with}'
+                            if clash_with else row['lost_reason'])
         lead.updated_at = datetime.utcnow()
         db.session.add(lead)
         db.session.flush()
         live.add(lead.id)
+        for name, value in cleared.items():
+            taken.setdefault(name, {})
         if not keep_id:
             renumbered.append((row['id'], lead.id))
+        if clash_with:
+            duplicates.append((row['id'], clash_with, cleared))
         audit_trail.record(
             ACTION, 'lead', str(lead.id),
             old={'deleted': True, 'original_id': row['id']},
             new={'stage': 'Lost', 'lost_reason': lead.lost_reason,
-                 'id': lead.id, 'from': row['source']},
+                 'id': lead.id, 'from': row['source'],
+                 **({'cleared_unique': cleared,
+                     'duplicate_of': clash_with} if clash_with
+                    else {})},
             actor=actor,
             reason=('restored after deletion'
                     + ('' if keep_id else
@@ -254,7 +300,7 @@ def apply_plan(rows, *, actor='CRM-RESTORE'):
                        f'another lead, so this came back as '
                        f'#{lead.id}')))
         made.append(lead)
-    return made, renumbered
+    return made, renumbered, duplicates
 
 
 def undo(*, actor='CRM-RESTORE'):
@@ -454,7 +500,8 @@ def main():
                   'apply put back.')
             return
 
-        made, renumbered = apply_plan(rows, actor=args.actor)
+        made, renumbered, duplicates = apply_plan(
+            rows, actor=args.actor)
         try:
             db.session.commit()
         except Exception as exc:                          # noqa: BLE001
@@ -464,6 +511,16 @@ def main():
             raise SystemExit(1)
         print(f'\n  {len(made)} lead(s) restored as Lost, each with '
               f'an audit row.')
+        if duplicates:
+            print(f'  {len(duplicates)} were the same enquiry as a '
+                  f'lead that is already live — the email was '
+                  f'ingested again after the delete. They came back '
+                  f'as duplicates of it:')
+            for was, of, cleared in duplicates[:20]:
+                print(f'    #{was} -> duplicate of #{of} '
+                      f'({", ".join(cleared)} cleared)')
+            if len(duplicates) > 20:
+                print(f'    … and {len(duplicates) - 20} more')
         if renumbered:
             print(f'  {len(renumbered)} came back under a new id '
                   f'because the original was taken:')
