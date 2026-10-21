@@ -128,7 +128,7 @@ def from_audit():
     """{id: (fields, original_reason)} from the snapshots."""
     from app.models.audit import DeletionAudit
 
-    out = {}
+    out, unusable = {}, []
     for row in (DeletionAudit.query
                 .filter_by(entity_type='Lead')
                 .order_by(DeletionAudit.id.asc()).all()):
@@ -137,12 +137,17 @@ def from_audit():
             try:
                 snap = json.loads(snap)
             except Exception:                             # noqa: BLE001
+                unusable.append((row, 'the snapshot is not readable'))
                 continue
-        if not isinstance(snap, dict) or not snap.get('id'):
+        if not isinstance(snap, dict):
+            unusable.append((row, 'no snapshot was kept'))
+            continue
+        if not snap.get('id'):
+            unusable.append((row, 'the snapshot has no lead id'))
             continue
         out[int(snap['id'])] = (snap, row.reason or '',
                                 row.performed_by, row.performed_at)
-    return out
+    return out, unusable
 
 
 def from_backup(path):
@@ -174,7 +179,7 @@ def plan(backup_path, *, include_pre_backup=False):
     cols = _columns()
     live = {r[0] for r in db.session.query(Lead.id).all()}
 
-    audit = from_audit()
+    audit, unusable = from_audit()
     backup = from_backup(backup_path)
 
     wanted = set(audit) | set(backup)
@@ -216,7 +221,7 @@ def plan(backup_path, *, include_pre_backup=False):
             'company': snap.get('company') or '',
             'stage_was': snap.get('stage') or '',
         })
-    return rows, why, pre_backup
+    return rows, why, pre_backup, unusable
 
 
 def apply_plan(rows, *, actor='CRM-RESTORE'):
@@ -388,7 +393,7 @@ def main():
             print(f'  {n} restored lead(s) removed again.')
             return
 
-        rows, why, pre_backup = plan(
+        rows, why, pre_backup, unusable = plan(
             args.backup,
             include_pre_backup=args.include_pre_backup)
         live = {r[0] for r in db.session.query(Lead.id).all()}
@@ -407,6 +412,19 @@ def main():
         print(f'  marked as a duplicate of another lead  {len(dups)}')
         print(f'  no record of why they went    {len(no_record)}')
         print(f'\n  all come back stage=Lost, no tasks created.')
+
+        if unusable:
+            # Named rather than counted: a deletion recorded with no
+            # usable snapshot is a lead nothing can bring back, and
+            # the row is the only sign it existed.
+            print(f'\n  {len(unusable)} deletion(s) cannot be '
+                  f'restored — no usable snapshot:')
+            for row, told in unusable[:20]:
+                print(f'    audit #{row.id} lead #{row.entity_id} '
+                      f'deleted by {row.performed_by} on '
+                      f'{str(row.performed_at)[:10]} — {told}')
+            if len(unusable) > 20:
+                print(f'    … and {len(unusable) - 20} more')
         if pre_backup and not args.include_pre_backup:
             print(f'\n  NOT included: {len(pre_backup)} lead(s) '
                   f'deleted before the 6 September backup.')
@@ -426,7 +444,8 @@ def main():
                   f'was {r["stage_was"][:16]:<18}{r["source"]}')
 
         if args.export_pre_backup and pre_backup:
-            path = _export_pre_backup(pre_backup, from_audit())
+            path = _export_pre_backup(pre_backup,
+                                      from_audit()[0])
             print(f'\n  {path}')
 
         if args.check:
