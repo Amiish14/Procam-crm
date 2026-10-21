@@ -279,12 +279,22 @@ def apply_plan(rows, *, actor='CRM-RESTORE'):
         db.session.add(lead)
         db.session.flush()
         live.add(lead.id)
-        for name, value in cleared.items():
-            taken.setdefault(name, {})
+        # Register what this row now occupies, so the next row in
+        # the same batch sees it. Two deleted leads can share a
+        # message id — the enquiry was ingested twice and both
+        # copies were removed — and an index built once from the
+        # live table cannot know that. The first apply of the 137
+        # failed here, on row 2 of a pair.
+        for name in UNIQUE_COLUMNS:
+            value = getattr(lead, name, None)
+            if value:
+                taken.setdefault(name, {})[value] = lead.id
         if not keep_id:
             renumbered.append((row['id'], lead.id))
         if clash_with:
             duplicates.append((row['id'], clash_with, cleared))
+        # A row whose unique values were cleared registers nothing,
+        # which is right: null is not taken.
         audit_trail.record(
             ACTION, 'lead', str(lead.id),
             old={'deleted': True, 'original_id': row['id']},

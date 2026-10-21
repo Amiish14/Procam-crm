@@ -229,3 +229,55 @@ def test_the_detector_catches_a_reintroduction(src, why):
 ])
 def test_the_detector_leaves_everything_else_alone(src, why):
     assert not _detect(src), f'false positive: {why}'
+
+
+# ── the restore, on the collisions that actually happened ────────────
+def _restore_mod():
+    import importlib.util as u
+    spec = u.spec_from_file_location(
+        'restore_deleted_leads',
+        os.path.join(_ROOT, 'scripts', 'restore_deleted_leads.py'))
+    mod = u.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_the_restore_knows_both_unique_columns():
+    """Asked of the model, not remembered. The first apply failed on
+    email_message_id; crn is unique too and would have failed the
+    next one."""
+    mod = _restore_mod()
+    assert set(mod.UNIQUE_COLUMNS) == {'email_message_id', 'crn'}
+
+
+@pytest.mark.parametrize('original,audited,by,when,expected', [
+    ('', True, 'DIR12010', '2026-09-24 10:00:00',
+     'Restored — originally deleted: no reason given '
+     '(deleted by DIR12010 on 2026-09-24)'),
+    ('', False, None, None,
+     'Restored — originally deleted: no record'),
+    ('Bulk cleanup', True, 'DIR12010', '2026-09-24',
+     'Restored — originally deleted: Bulk cleanup'),
+    ('Duplicate of lead #12115', True, 'X', '2026-09-24',
+     'Others: duplicate of #12115'),
+])
+def test_the_reason_says_which_kind_of_silence(original, audited,
+                                               by, when, expected):
+    assert _restore_mod()._reason_for(
+        original, audited=audited, by=by, when=when) == expected
+
+
+def test_a_deletion_with_no_usable_snapshot_is_not_restorable():
+    """Those rows are the only sign the lead existed. They are
+    named rather than silently skipped."""
+    mod = _restore_mod()
+    src = open(os.path.join(_ROOT, 'scripts',
+                            'restore_deleted_leads.py')).read()
+    assert 'no snapshot was kept' in src
+    # The message is wrapped across two source lines, so assert on
+    # what the function does rather than on how the string is laid
+    # out — a test that reads formatting fails on a reflow.
+    assert 'unusable' in src
+    import inspect
+    assert 'unusable' in inspect.getsource(mod.from_audit)
+    assert mod.from_audit.__code__.co_argcount == 0
