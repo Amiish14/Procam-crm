@@ -536,3 +536,59 @@ def test_editing_a_note_never_touches_the_email(client):
     client.put(f'/api/leads/{lid}/notes/{n["id"]}', json={'note_text': 'second'})
     with flask_app.app_context():
         assert db.session.get(Lead, lid).original_email_body == ENQUIRY
+
+
+# ── the assistant is called Procam AI ────────────────────────────────
+def test_nothing_served_to_a_browser_names_the_vendor():
+    """No trace on the portal, comments included.
+
+    A template comment is delivered to the browser with the page,
+    so view-source is part of the portal. Server-side Python is
+    not, and keeps naming the vendor whose API it calls — see
+    scripts/rebrand_procam_ai.py for where that line is drawn and
+    why.
+    """
+    import glob
+
+    offenders = []
+    for root in (os.path.join(_ROOT, 'templates'),
+                 os.path.join(_ROOT, 'static')):
+        for path in glob.glob(os.path.join(root, '**', '*'),
+                              recursive=True):
+            if not os.path.isfile(path):
+                continue
+            if os.path.splitext(path)[1].lower() not in (
+                    '.html', '.js', '.css', '.svg', '.txt'):
+                continue
+            try:
+                text = open(path, encoding='utf-8').read()
+            except (UnicodeDecodeError, OSError):
+                continue
+            for n, line in enumerate(text.splitlines(), 1):
+                for word in ('laude', 'nthropic', 'ANTHROPIC'):
+                    if word in line:
+                        offenders.append(
+                            os.path.relpath(path, _ROOT) + ':'
+                            + str(n) + ': ' + line.strip()[:80])
+    assert not offenders, (
+        'the vendor is named in something the browser receives:\n  '
+        + '\n  '.join(offenders))
+
+
+def test_the_model_chip_shows_the_product_not_the_model():
+    """The stored value is the model id, a fact about how the
+    record was made. What a user reads is Procam AI."""
+    html = open(os.path.join(_ROOT, 'templates', 'app.html')).read()
+    assert 'const modelChip' in html
+    body = html.split('const modelChip')[1][:500]
+    assert 'Procam AI</span>' in body
+    assert 'e(x._ai_model)' not in body
+
+
+def test_model_ids_are_left_alone_server_side():
+    """Renaming one stops the API call working."""
+    src = open(os.path.join(_ROOT, 'app.py')).read()
+    assert 'claude-sonnet-4-5-20250929' in src
+    router = open(os.path.join(_ROOT, 'email_ingest',
+                               'ai_router.py')).read()
+    assert "'anthropic/claude'" in router

@@ -2772,7 +2772,7 @@ function clrF(t){
 
 // ── LEAD MODAL ──
 // Renders the AI-extracted "Lead Summary" card at the top of the lead detail
-// modal, but only for source=email leads that were enriched by Claude Haiku.
+// modal, but only for source=email leads Procam AI enriched.
 function renderEmailSummaryCard(l){
   const x = l.email_extracted;
   const atts = Array.isArray(l && l.attachments) ? l.attachments : [];
@@ -2803,7 +2803,10 @@ function renderEmailSummaryCard(l){
       ${x.extraction_notes ? e(x.extraction_notes) : 'Some customer details could not be confidently extracted from the forwarded email. Please verify the highlighted fields before contacting.'}
     </div>` : '';
     const employeeNote = x.employee_note ? `<div style="font-size:12px;color:var(--p-text-2);margin-bottom:10px;padding:8px 12px;background:var(--p-surface-3);border-radius:var(--rd);">Employee note · <span style="color:var(--p-ink-2);">${e(x.employee_note)}</span></div>` : '';
-    const modelChip = x._ai_model ? `<span title="Model used to extract this record" style="display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;background:var(--p-surface-3);color:var(--p-text-2);font-weight:500;letter-spacing:.02em;">${e(x._ai_model)}</span>` : '';
+    /* The stored value is the model id, which is a fact about how
+       the record was made and stays in the database. What a user
+       reads is the product: Procam AI. */
+    const modelChip = x._ai_model ? `<span title="Extracted automatically by Procam AI" style="display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;background:var(--p-surface-3);color:var(--p-text-2);font-weight:500;letter-spacing:.02em;">Procam AI</span>` : '';
 
     body = `
       ${reviewBanner}
@@ -3916,8 +3919,8 @@ Format:
 - CTA: 20-min call this week with two time slots
 3. Sign: BD Team | Procam Logistics Pvt. Ltd. | +91-124-4873305 | www.procamlogistics.com`;
   try{
-    // Route through our backend so the Anthropic API key stays server-side.
-    // Backend endpoint /api/outreach/generate uses ANTHROPIC_API_KEY from .env.
+    // Route through our backend so the model credential stays
+    // server-side. Endpoint: /api/outreach/generate.
     const r=await api('/api/outreach/generate',{method:'POST',body:JSON.stringify({
       lead_id: parseInt(id, 10),
       channel: 'email',
