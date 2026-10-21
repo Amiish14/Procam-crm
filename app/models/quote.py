@@ -205,6 +205,10 @@ class QuoteLine(db.Model):
     #: The vendor reply this line was priced from, so a quote can be
     #: traced back to the rate it rests on.
     source_rate_request_id = db.Column(db.Integer, index=True)
+    #: Decision 21 Oct 2026 (H1). Own or Market, for hydraulic (PTM)
+    #: lines: the minimum margin differs (38% own, 14% market). Blank on
+    #: every other line. See app/services/margin_policy.py.
+    vehicle_source = db.Column(db.String(10))
 
     @property
     def margin_inr(self):
@@ -248,6 +252,7 @@ class QuoteLine(db.Model):
             'cost_inr': (float(self.cost_inr)
                          if self.cost_inr is not None else None),
             'source_rate_request_id': self.source_rate_request_id,
+            'vehicle_source': self.vehicle_source or '',
             'margin_inr': (float(self.margin_inr)
                            if self.margin_inr is not None else None),
             'margin_pct': self.margin_pct,

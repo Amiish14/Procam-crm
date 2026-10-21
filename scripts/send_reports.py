@@ -140,7 +140,12 @@ def recipients(key, only=None):
         # vertical heads, plus whoever the matrix calls management.
         people = vertical_heads()
         if key == 'weekly_pack':
-            people = list(dict.fromkeys(people + list(nrules.management())))
+            # The new-accounts reviewer (decision 21 Oct 2026) gets the
+            # pack even if not a head, since that is where the list is.
+            from app.services import admin_settings
+            reviewers = list(admin_settings.get('new_accounts_reviewer') or [])
+            people = list(dict.fromkeys(people + list(nrules.management())
+                                        + reviewers))
     elif key == 'freeze':
         people = list(nrules.management()) + vertical_heads()
         people = list(dict.fromkeys(people))

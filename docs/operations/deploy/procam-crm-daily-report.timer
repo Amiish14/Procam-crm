@@ -2,11 +2,11 @@
 Description=Procam CRM morning action report
 
 [Timer]
-# 08:30 IST. The server runs UTC, so every time in these units is IST
-# minus 5h30. Before the working day starts, and after the nightly
+# 09:00 IST (decision 21 Oct 2026; was 08:30). The server runs UTC, so
+# every time in these units is IST minus 5h30. Before the working day starts, and after the nightly
 # backup (01:30), Copilot index (02:15) and DQ snapshot (02:30) have
 # finished with the database.
-OnCalendar=Mon..Sat *-*-* 03:00:00
+OnCalendar=Mon..Sat *-*-* 03:30:00
 Persistent=true
 RandomizedDelaySec=300
 

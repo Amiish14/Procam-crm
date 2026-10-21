@@ -43,9 +43,11 @@ class Scope:
     """A resolved data boundary. Immutable by intent — build a new one
     rather than editing this, so nothing downstream can widen it."""
 
-    __slots__ = ('emp_code', 'vertical', 'codes', 'perms', 'data_scope')
+    __slots__ = ('emp_code', 'vertical', 'codes', 'perms', 'data_scope',
+                 'lead_allowances')
 
-    def __init__(self, emp_code, vertical, codes, perms, data_scope):
+    def __init__(self, emp_code, vertical, codes, perms, data_scope,
+                 lead_allowances=False):
         self.emp_code = emp_code or ''
         self.vertical = (vertical or '').strip()
         #: None means "no restriction". A set — even an empty one — is a
@@ -53,6 +55,12 @@ class Scope:
         self.codes = codes
         self.perms = set(perms or ())
         self.data_scope = data_scope or DataScope.OWN
+        #: The two lead allowances of 21 Oct 2026 (own vertical's leads,
+        #: leads with a task) belong to a person's own boundary. A scope
+        #: narrowed to show *someone's* records — a review, a workbench
+        #: "for=" view — is built without them, so it stays exactly that
+        #: person's records.
+        self.lead_allowances = bool(lead_allowances)
 
     # ── questions ────────────────────────────────────────────────────
     @property
@@ -102,9 +110,11 @@ def for_employee(emp_code):
         return Scope(emp_code, vertical, None, perms, data_scope)
 
     if data_scope == DataScope.OWN:
-        return Scope(emp_code, vertical, {emp_code}, perms, data_scope)
+        return Scope(emp_code, vertical, {emp_code}, perms, data_scope,
+                     lead_allowances=True)
 
-    return Scope(emp_code, vertical, _vertical_codes(emp), perms, data_scope)
+    return Scope(emp_code, vertical, _vertical_codes(emp), perms, data_scope,
+                 lead_allowances=True)
 
 
 def _vertical_codes(emp):
@@ -161,6 +171,58 @@ def _narrow(q, column, sc, *, extra_columns=()):
     return q.filter(or_(*[c.in_(sc.codes) for c in cols]))
 
 
+#: Decision A2 of 21 October 2026 widens who may open a lead. It
+#: is a visibility change over the whole book, so it ships like
+#: every other new behaviour here: behind a flag, off, until a
+#: pilot has looked at what it reveals.
+ALLOWANCE_FLAG = 'FEATURE_LEAD_ALLOWANCES'
+
+
+def allowances_on():
+    try:
+        from app.services import flags
+        return bool(flags.on(ALLOWANCE_FLAG))
+    except Exception:                                     # noqa: BLE001
+        return False
+
+
+def _lead_vertical_names(sc):
+    """The lead vertical values (normalised) that belong to a
+    vertical-scoped viewer's own vertical.
+
+    `Employee.vertical` holds the four managed names; leads carry more
+    (Freight Forwarding, General Transport…). The alias table maps one
+    to the other. Only a VERTICAL scope gets this: an own-scope user
+    must not see a lead just because it is in their vertical.
+    """
+    if sc.data_scope != DataScope.VERTICAL or not sc.vertical:
+        return set()
+    from app.services import vertical_heads
+    heads, aliases = vertical_heads._load()
+    master = vertical_heads.master_vertical(sc.vertical)
+    if master == vertical_heads.FALLBACK_VERTICAL and sc.vertical not in heads:
+        master = sc.vertical
+    names = {vertical_heads.normalise(master),
+             vertical_heads.normalise(sc.vertical)}
+    names |= {alias for alias, target in aliases.items() if target == master}
+    names.discard('')
+    return names
+
+
+def _lead_task_ids(sc):
+    """Ids of leads on which someone in scope holds a task.
+
+    Decision 21 Oct 2026: a head (or user) asked by another vertical to
+    act on a lead must be able to open it. Any task, open or closed —
+    the history of what they were asked to do stays readable.
+    """
+    from app.models.task_engine import TaskInstance
+    return (TaskInstance.query
+            .filter(TaskInstance.entity_type == 'Lead',
+                    TaskInstance.owner_user_id.in_(sc.codes))
+            .with_entities(TaskInstance.entity_id))
+
+
 def leads(q=None, sc=None, *, include_deleted=False):
     """Leads the viewer may see — primary or secondary PIC counts.
 
@@ -174,14 +236,36 @@ def leads(q=None, sc=None, *, include_deleted=False):
     here is what makes "it disappears from everywhere" true instead
     of true in the places somebody remembered. The Admin bin passes
     `include_deleted=True`; it is the only caller that does.
+
+    Two allowances on top of ownership (decision 21 Oct 2026,
+    behind FEATURE_LEAD_ALLOWANCES): a vertical-scoped viewer sees
+    every lead whose own vertical is theirs, whoever owns it; and
+    anyone sees a lead on which they, or someone in their scope,
+    were given a task. With the flag off this is exactly the
+    ownership test it was.
     """
+    from sqlalchemy import func, or_
+
     from app import Lead
     sc = sc or current()
     q = q if q is not None else Lead.query
     if not include_deleted:
         q = q.filter(Lead.junk_deleted.isnot(True))
-    return _narrow(q, Lead.assigned_to, sc,
-                   extra_columns=(Lead.secondary_owner,))
+    if not (sc.lead_allowances and allowances_on()):
+        return _narrow(q, Lead.assigned_to, sc,
+                       extra_columns=(Lead.secondary_owner,))
+    if sc.codes is None:
+        return q
+    if not sc.codes:
+        return q.filter(False)
+    clauses = [Lead.assigned_to.in_(sc.codes),
+               Lead.secondary_owner.in_(sc.codes),
+               Lead.id.in_(_lead_task_ids(sc))]
+    names = _lead_vertical_names(sc)
+    if names:
+        clauses.append(func.lower(func.trim(Lead.procam_vertical))
+                       .in_(sorted(names)))
+    return q.filter(or_(*clauses))
 
 
 def opportunities(q=None, sc=None):
@@ -319,7 +403,30 @@ def may_view(record, sc=None):
     for attr in ('secondary_owner', 'secondary_pic_emp_code'):
         if hasattr(record, attr) and sc.reaches(getattr(record, attr) or ''):
             return True
+    if (sc.lead_allowances and allowances_on()
+            and sc.codes and _is_lead(record)):
+        return _lead_allowance(record, sc)
     return False
+
+
+def _is_lead(record):
+    from app import Lead
+    return isinstance(record, Lead)
+
+
+def _lead_allowance(lead, sc):
+    """The two lead allowances in `leads()`, for one loaded lead."""
+    from app.services import vertical_heads
+    names = _lead_vertical_names(sc)
+    if names and vertical_heads.normalise(lead.procam_vertical) in names:
+        return True
+    if lead.id is None:
+        return False
+    from app.models.task_engine import TaskInstance
+    return TaskInstance.query.filter(
+        TaskInstance.entity_type == 'Lead',
+        TaskInstance.entity_id == lead.id,
+        TaskInstance.owner_user_id.in_(sc.codes)).first() is not None
 
 
 def require_view(record, sc=None):

@@ -138,6 +138,24 @@ def _result(ok, *, code=None, error='', retry=None, held=False):
             'retry': retry, 'held': bool(held)}
 
 
+def with_prefix(subject):
+    """The subject with the CRM tag in front (decision 21 Oct 2026, F1).
+
+    The CRM and the TMS send from the same mailbox, so a reader needs
+    the subject to say which system wrote. Applied once, here, so every
+    sender gets it, and never twice — a reply or a retry keeps one tag.
+    """
+    subject = subject or ''
+    try:
+        from app.services import admin_settings
+        tag = (admin_settings.get('mail_subject_prefix') or '').strip()
+    except Exception:
+        tag = ''
+    if not tag or tag.lower() in subject.lower():
+        return subject
+    return f'{tag} {subject}'
+
+
 def send_detail(to, subject, html, *, cc=None, text=None, attachments=None,
                 reply_to=None, headers=None):
     """`send`, but returning the SMTP code and the server's own words.
@@ -183,6 +201,7 @@ def send_detail(to, subject, html, *, cc=None, text=None, attachments=None,
                                     + ', '.join(refused + cc_refused
                                                 or ['(none given)']))
 
+    subject = with_prefix(subject)
     which = transport()
     try:
         if which == SMTP:

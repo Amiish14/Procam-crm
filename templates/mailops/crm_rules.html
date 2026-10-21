@@ -1,0 +1,33 @@
+{% extends "mailops/_shell.html" %}
+{% block title %}CRM rules — Procam CRM{% endblock %}
+{% block heading %}CRM rules{% endblock %}
+{% block strap %}Tender desk, margin minimums, approvers and quote defaults{% endblock %}
+
+{% block body %}
+{% if saved %}<div class="mo-card" style="border-color:#86EFAC;background:#F0FDF4">
+  <p class="mo-note" style="margin:0">{{ saved }}</p></div>{% endif %}
+{% if error %}<div class="mo-card" style="border-color:#FCA5A5;background:#FEF2F2">
+  <p class="mo-note" style="margin:0">{{ error }} — nothing was saved.</p></div>{% endif %}
+
+<div class="mo-card">
+  <p class="mo-note">Lists take employee codes separated by commas. Tables
+    take one <code>name = number</code> per line. A change applies at once.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <table class="mo">
+      {% for key, value, note, multi in rows %}
+      <tr>
+        <td style="width:30%"><label for="r_{{ key }}"><code>{{ key }}</code></label>
+          <div class="mo-note">{{ note }}</div></td>
+        <td>{% if multi %}
+          <textarea id="r_{{ key }}" name="{{ key }}" rows="6" style="width:100%">{{ value }}</textarea>
+          {% else %}
+          <input id="r_{{ key }}" name="{{ key }}" value="{{ value }}" style="width:100%">
+          {% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <button type="submit">Save rules</button>
+  </form>
+</div>
+{% endblock %}

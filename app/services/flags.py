@@ -10,7 +10,7 @@ rollback a line in the admin screen rather than a revert.
                             instead of straight at the transport
     FEATURE_RFQ_CAPTURE     keep the client's original message as a .eml
                             and record its attachments
-    FEATURE_DAILY_BRIEF     the 08:30 action brief
+    FEATURE_DAILY_BRIEF     the 09:00 action brief
     FEATURE_WEEKLY_PACK     the Thursday review pack and the Friday
                             freeze
     FEATURE_REPLY_CAPTURE   file replies on the thread against the lead
@@ -63,7 +63,7 @@ KILL_SWITCH = 'EMAIL_KILL_SWITCH'
 FLAGS = (
     ('FEATURE_EMAIL_NOTIFY', 'Queue outbound email through the outbox', False),
     ('FEATURE_RFQ_CAPTURE', 'Keep the original RFQ email and its files', False),
-    ('FEATURE_DAILY_BRIEF', 'Daily action brief, 08:30 IST', True),
+    ('FEATURE_DAILY_BRIEF', 'Daily action brief, 09:00 IST', True),
     ('FEATURE_WEEKLY_PACK', 'Thursday review pack and Friday freeze', False),
     ('FEATURE_REPLY_CAPTURE', 'File replies against the lead', False),
     ('FEATURE_MY_MAIL', 'The My Mail page: what happened to what you '
@@ -124,6 +124,13 @@ FLAGS = (
     ('FEATURE_ACCOUNT_MERGE',
      'Merge duplicate accounts: one customer, one row, the old '
      'spelling kept as an alias (FINISH-TRACKER-CRM)', False),
+    ('FEATURE_LEAD_ALLOWANCES',
+     'A vertical head sees every lead of their vertical, and anyone '
+     'sees a lead they hold a task on (decision A2, 21 Oct 2026)',
+     False),
+    ('FEATURE_MARGIN_GATE', 'Quote approval by margin minimum and value '
+                            'limit: below the minimum or above the head\'s '
+                            'limit goes to the director (21 Oct 2026)', False),
     (KILL_SWITCH, 'Stop all outbound CRM email immediately', False),
 )
 
