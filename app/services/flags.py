@@ -85,6 +85,9 @@ FLAGS = (
                        'communication hub (FF-COMMS-01)', False),
     ('FEATURE_CRM2', 'CRM 2.0: the cockpit, global search and the '
                      'stage map', False),
+    ('FEATURE_SENDER_BLOCK',
+     'Hold mail from system senders — quarantine digests, bounces, '
+     'postmaster notices — instead of making a lead of it', False),
     (KILL_SWITCH, 'Stop all outbound CRM email immediately', False),
 )
 

@@ -360,6 +360,33 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                         'reason': 'previously purged as irrelevant',
                         'lead_id': None, 'internet_message_id': imid}
 
+        # ── Mail from a machine ───────────────────────────────────
+        # Before the parse and before the AI call: a quarantine
+        # digest costs a model call and becomes a lead called
+        # "Microsoft" that somebody has to close. Held, logged and
+        # visible on the Mail ingest screen under `blocked`, never
+        # deleted — and `force` overrides it, because a person
+        # replaying a message by hand has already decided.
+        if not force:
+            try:
+                from app.services import system_senders
+                if system_senders.enabled():
+                    sender = (((msg.get('from') or {})
+                               .get('emailAddress') or {})
+                              .get('address') or '')
+                    hit, pattern, why = system_senders.blocks(sender)
+                    if hit:
+                        told = (f'{system_senders.REASON}: {sender} '
+                                f'matches {pattern} — {why}')
+                        _record_ingest('blocked', msg, reason=told)
+                        return {'status': 'skipped', 'reason': told,
+                                'lead_id': None,
+                                'internet_message_id': imid}
+            except Exception:
+                # A failure here must not lose an email: fall
+                # through and treat it as ordinary mail.
+                log.exception('sender block check failed')
+
         rfc_id = (msg.get('internetMessageId') or '')[:400]
         if rfc_id and not force:
             decided = (db.session.query(EmailClassification.classification,

@@ -187,12 +187,23 @@ def _parse_json(raw):
 
 
 def health():
-    """What the admin screen shows about the model."""
+    """What the admin screen shows about the model.
+
+    `model` is the product name a person reads; `model_id` is what
+    is actually answering. Both, because this page exists to tell
+    an administrator which model is running — hiding that would
+    make the screen useless for the one job it has — and because
+    the product name is what the CRM calls itself everywhere else.
+    """
     why = refusal()
+    from app.services.ai_branding import display
+
+    name = model_name() if why is None else None
     return {
         'available': why is None,
         'reason': why,
         'base_url': base_url() or None,
-        'model': model_name() if why is None else None,
+        'model': display(name) if why is None else None,
+        'model_id': name,
         'classifier': classifier_model() if why is None else None,
     }

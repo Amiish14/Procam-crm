@@ -626,3 +626,16 @@ def test_the_draft_api_never_returns_a_model_id():
     assert 'claude' not in str(out).lower()
     # and the column itself is untouched
     assert draft.model == 'claude-sonnet-4-5-20250929'
+
+
+def test_the_copilot_screen_names_the_product_and_keeps_the_id():
+    """That page exists to tell an administrator which model is
+    answering, so hiding the id would make it useless for its one
+    job. The product name leads; the id follows in small grey."""
+    src = open(os.path.join(_ROOT, 'app', 'copilot', 'model.py')).read()
+    assert "'model': display(name)" in src
+    assert "'model_id': name" in src
+    html = open(os.path.join(_ROOT, 'templates', 'copilot',
+                             'analytics.html')).read()
+    assert 'm.model_id' in html
+    assert '#9ca3af' in html

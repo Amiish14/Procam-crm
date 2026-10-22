@@ -25,7 +25,13 @@ ATTACHED = 'attached'
 REOPENED = 'reopened'
 SKIPPED = 'skipped'
 ERROR = 'error'
-OUTCOMES = (CREATED, ATTACHED, REOPENED, SKIPPED, ERROR)
+#: Mail from a machine — a quarantine digest, a bounce, a
+#: postmaster notice. Its own outcome rather than `skipped`,
+#: because skipped is where "already ingested" and "already
+#: classified" live and an administrator looking for what the
+#: sender rules held should not have to read past 488 of those.
+BLOCKED = 'blocked'
+OUTCOMES = (CREATED, ATTACHED, REOPENED, SKIPPED, BLOCKED, ERROR)
 
 
 class MailIngestLog(db.Model):

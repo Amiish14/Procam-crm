@@ -76,6 +76,14 @@ fetch('{{ url_prefix }}/api/copilot/analytics?days=30')
     '<div class="mdl '+(m.available?'on':'off')+'">'
     + (m.available
         ? 'Model host: <b>'+esc(m.base_url)+'</b> · '+esc(m.model)
+          /* The id, small and grey, for the administrator this
+             page is for. The name above is what the CRM calls
+             itself; this is what is actually answering, and a
+             screen that hides it cannot do its job. */
+          + (m.model_id
+              ? ' <span style="color:#9ca3af;font-size:11px">'
+                + esc(m.model_id) + '</span>'
+              : '')
         : 'No model — answering from rules alone. '+esc(m.reason||''))
     + '</div>'
     + '<div class="mdl '+(ix.chunks?'on':'off')+'">'
