@@ -592,3 +592,37 @@ def test_model_ids_are_left_alone_server_side():
     router = open(os.path.join(_ROOT, 'email_ingest',
                                'ai_router.py')).read()
     assert "'anthropic/claude'" in router
+
+
+def test_a_draft_reports_the_product_not_the_model():
+    """The id stays in the column — it says how the draft was
+    actually made — and the JSON a browser receives says Procam
+    AI."""
+    from app.services.ai_branding import PRODUCT, display
+
+    for stored in ('claude-sonnet-4-5-20250929',
+                   'claude-haiku-4-5-20251001',
+                   'anthropic/claude', 'groq/llama-3.3-70b',
+                   'qwen2.5:14b-instruct', 'gpt-6-astra', '', None):
+        assert display(stored) == PRODUCT, stored
+
+
+def test_something_that_is_not_a_model_id_is_left_alone():
+    """An old record carrying a person's name is not rebranded."""
+    from app.services.ai_branding import display
+    assert display('Drafted by R. Mehta') == 'Drafted by R. Mehta'
+
+
+def test_the_draft_api_never_returns_a_model_id():
+    """to_dict feeds /api/outreach/generate, whose response goes
+    straight to the browser."""
+    import app as _a
+
+    draft = _a.OutreachDraft(
+        lead_id=1, channel='email', subject='s', body='b',
+        model='claude-sonnet-4-5-20250929', status='draft')
+    out = draft.to_dict()
+    assert out['model'] == 'Procam AI'
+    assert 'claude' not in str(out).lower()
+    # and the column itself is untouched
+    assert draft.model == 'claude-sonnet-4-5-20250929'

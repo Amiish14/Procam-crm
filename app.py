@@ -1418,6 +1418,11 @@ class LeadNote(db.Model):
         }
 
 
+def _ai_display(value):
+    from app.services.ai_branding import display
+    return display(value)
+
+
 class OutreachDraft(db.Model):
     """AI-generated outreach draft saved for audit + human editing."""
     __tablename__ = 'outreach_drafts'
@@ -1438,7 +1443,12 @@ class OutreachDraft(db.Model):
         return {
             'id': self.id, 'lead_id': self.lead_id, 'company_id': self.company_id,
             'channel': self.channel, 'subject': self.subject or '',
-            'body': self.body or '', 'model': self.model or '',
+            'body': self.body or '',
+            # The product, not the model id. The column keeps
+            # the id: it says how this draft was actually
+            # made, which is the question asked when one
+            # reads oddly. See app/services/ai_branding.py.
+            'model': _ai_display(self.model),
             'status': self.status,
             'generated_at': str(self.generated_at)[:16],
             'generated_by': self.generated_by or '',
