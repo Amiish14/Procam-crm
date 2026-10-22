@@ -17,6 +17,7 @@ built to avoid.
 import argparse
 import os
 import sys
+import re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
@@ -120,8 +121,7 @@ def main():
                            or (lead.estimated_value_inr or 0))
                 if not touched:
                     continue
-                reason = (lead.lost_reason or '').lower()
-                if any(k in reason for k in AGREES):
+                if _agrees(lead, AGREES):
                     agreed.append(lead)
                 else:
                     worked.append(lead)
@@ -167,6 +167,36 @@ def main():
               f'list "{system_senders.LIST_KEY}".')
         print('  Edit them in Admin → Master Data. Nothing is held '
               'until FEATURE_SENDER_BLOCK is turned on.')
+
+
+def _agrees(lead, keywords, _depth=0):
+    """Did the person who closed this reach the rule's conclusion?
+
+    Directly, or through the lead they called it a duplicate of.
+    Four Google Alerts leads read "Duplicate of lead #10781", and
+    #10781 reads "system / no-reply email, not a customer" — the
+    same judgement, recorded one hop away. Reading those four as
+    "somebody was working this" would be wrong in the direction
+    that matters: it argues against a rule the evidence supports.
+
+    Following the pointer rather than adding "duplicate" to the
+    keywords, because a duplicate closure says nothing on its own
+    — a real enquiry can be a duplicate of another real enquiry.
+    """
+    from app import Lead
+
+    reason = (getattr(lead, 'lost_reason', None) or '').lower()
+    if any(k in reason for k in keywords):
+        return True
+    if _depth >= 2:
+        return False                      # and no cycles
+    hit = re.search(r'#\s*(\d+)', reason)
+    if not hit:
+        return False
+    parent = db.session.get(Lead, int(hit.group(1)))
+    if parent is None or parent.id == lead.id:
+        return False
+    return _agrees(parent, keywords, _depth + 1)
 
 
 def _list_exists():
