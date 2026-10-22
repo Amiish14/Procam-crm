@@ -2806,6 +2806,13 @@ function renderEmailSummaryCard(l){
     /* The stored value is the model id, which is a fact about how
        the record was made and stays in the database. What a user
        reads is the product: Procam AI. */
+    /* Who passed it on. A forwarded enquiry belongs to the
+       customer, which is why the sender shown is theirs — but the
+       colleague who sent it in is the person to ask when the
+       thread goes quiet, and the CRM could not name them. */
+    const fwdChip = (l && l.forwarded_by_email)
+      ? `<span title="${e(l.forwarded_by_email)}" style="display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;background:var(--p-surface-3);color:var(--p-text-2);font-weight:500;letter-spacing:.02em;">Forwarded by ${e(l.forwarded_by_name || l.forwarded_by_email)}</span>`
+      : '';
     const modelChip = x._ai_model ? `<span title="Extracted automatically by Procam AI" style="display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;background:var(--p-surface-3);color:var(--p-text-2);font-weight:500;letter-spacing:.02em;">Procam AI</span>` : '';
 
     body = `
@@ -2815,7 +2822,7 @@ function renderEmailSummaryCard(l){
           <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:var(--red)">Lead Summary · from inbound email</div>
           ${classPill}
         </div>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${urgencyPill}${reqPill}${vertPill}${modelChip}</div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${urgencyPill}${reqPill}${vertPill}${fwdChip}${modelChip}</div>
       </div>
       ${employeeNote}
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px 24px">

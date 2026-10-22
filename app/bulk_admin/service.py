@@ -275,6 +275,15 @@ def delete(lead_ids, reason, actor):
     if not rows:
         return {'deleted': 0, 'closed': 0}
 
+    from app.services import lead_kinds
+    auctions = [l for l in rows if lead_kinds.is_auction(l)]
+    if auctions:
+        raise PermissionError(
+            f'{len(auctions)} of these are auction or spot-load '
+            f'enquiries, which close in hours — '
+            + ', '.join(f'#{l.id}' for l in auctions[:6])
+            + '. Close those individually, with a bid outcome.')
+
     counts = linked_counts([l.id for l in rows])
     blocked = close_blocked(counts)
     if blocked:

@@ -636,6 +636,33 @@ class Lead(db.Model):
 
     # ── Why this email became a lead ────────────────────────────────
     classification   = db.Column(db.String(32), index=True)
+
+    # ── who passed it on ─────────────────────────────────────────
+    # The parser unwraps a forward and records the ORIGINAL sender,
+    # which is right — the enquiry is the customer's, not the
+    # colleague's. What was lost with it is the colleague. 226
+    # SuperProcure load postings were forwarded in by somebody who
+    # stopped on 11 September, and nothing in the CRM could say who
+    # to ask.
+    forwarded_by_email = db.Column(db.String(320), index=True)
+    forwarded_by_name  = db.Column(db.String(160))
+    #: The subject as it arrived — "FW: Isgec … Load Post
+    #: Notification". `original_email_subject` keeps the stripped
+    #: original, which is what a person searches for.
+    forwarded_subject  = db.Column(db.String(500))
+
+    #: What kind of enquiry this is, where that changes how it is
+    #: handled. 'auction' is the first: a spot load or a reverse
+    #: auction is time-critical and must never be swept as junk.
+    lead_type        = db.Column(db.String(32), index=True)
+    #: Which platform it came through — superprocure, ariba. From
+    #: the Master Data patterns, not a list in code.
+    lead_platform    = db.Column(db.String(40), index=True)
+    #: Did we bid, and why not. Asked when an auction lead closes,
+    #: because "which lanes do we win" cannot be answered from a
+    #: lost_reason free-text box.
+    bid_outcome      = db.Column(db.String(16))
+    bid_reason       = db.Column(db.String(300))
     lead_confidence  = db.Column(db.Integer)      # 0-100
     duplicate_score  = db.Column(db.Integer)      # 0-100
     rejection_reason = db.Column(db.String(80))   # from master_items
@@ -664,6 +691,14 @@ class Lead(db.Model):
             'assigned_to': self.assigned_to or '', 'assigned_name': self.assigned_name or '',
             'followup': sd(self.followup_date), 'notes': self.notes or '',
             'history': self.history or '',
+            # Who passed it on, for the chip on the summary card.
+            'forwarded_by_email': self.forwarded_by_email or '',
+            'forwarded_by_name': self.forwarded_by_name or '',
+            'forwarded_subject': self.forwarded_subject or '',
+            'lead_type': self.lead_type or '',
+            'lead_platform': self.lead_platform or '',
+            'bid_outcome': self.bid_outcome or '',
+            'bid_reason': self.bid_reason or '',
             'secondary_owner': self.secondary_owner or '',
             'secondary_owner_name': self.secondary_owner_name or '',
             'phone_call_date': sd(self.phone_call_date),
@@ -2746,6 +2781,24 @@ def api_close_lost(lid):
                                  what='close as Lost')
     except ValueError as exc:
         return jsonify({'ok': False, 'error': str(exc)}), 400
+
+    from app.services import lead_kinds
+
+    payload = request.get_json(silent=True) or {}
+    if lead_kinds.is_auction(lead):
+        # "Which lanes do we win" cannot be answered from a
+        # free-text reason, so an auction says whether we bid.
+        outcome = (payload.get('bid_outcome') or '').strip()
+        if outcome not in lead_kinds.OUTCOMES:
+            return jsonify({
+                'ok': False,
+                'error': 'This is an auction or spot load. Say '
+                         'whether we bid: bid_outcome must be '
+                         f'{" or ".join(lead_kinds.OUTCOMES)}.',
+                'bid_outcome_options': list(lead_kinds.OUTCOMES),
+            }), 400
+        lead.bid_outcome = outcome
+        lead.bid_reason = reason[:300]
 
     was = lead.stage
     lead.stage = 'Lost'
@@ -5249,6 +5302,13 @@ def init_db():
             ('rfqs',          'is_dangerous',     'BOOLEAN'),
             ('rfqs',          'dg_class',         'VARCHAR(20)'),
             ('rfqs',          'un_number',        'VARCHAR(12)'),
+            ('leads',         'forwarded_by_email', 'VARCHAR(320)'),
+            ('leads',         'forwarded_by_name', 'VARCHAR(160)'),
+            ('leads',         'forwarded_subject', 'VARCHAR(500)'),
+            ('leads',         'lead_type',        'VARCHAR(32)'),
+            ('leads',         'lead_platform',    'VARCHAR(40)'),
+            ('leads',         'bid_outcome',      'VARCHAR(16)'),
+            ('leads',         'bid_reason',       'VARCHAR(300)'),
             ('contacts',      'state',            'VARCHAR(80)'),
             ('opportunities', 'won_project_ref',  'VARCHAR(60)'),
             ('opportunities', 'won_project_at',   'TIMESTAMP'),

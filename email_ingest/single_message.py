@@ -748,6 +748,37 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                 duplicate_score   = (decision.duplicate_score if decision else None),
                 **lead_kwargs,
             )
+            # Who passed it on, and what kind of enquiry it is.
+            # Both read off the same message at the same moment,
+            # and both are facts the CRM could not answer before:
+            # 226 forwarded load postings, no record of the
+            # forwarder, and nothing marking them as time-critical
+            # when a bulk review deleted them.
+            try:
+                from app.services import lead_intake as _lik
+                from app.services import lead_kinds
+
+                fwd_email, fwd_name, fwd_subject = \
+                    lead_kinds.forwarder(msg, _lik.body_text(msg))
+                if fwd_email:
+                    lead.forwarded_by_email = fwd_email
+                    lead.forwarded_by_name = fwd_name
+                    lead.forwarded_subject = fwd_subject
+
+                kind, platform, _why = lead_kinds.classify(
+                    subject=(msg.get('subject') or ''),
+                    sender=(lead.original_email_from or lead.email
+                            or ''))
+                if kind:
+                    lead.lead_type = kind
+                    lead.lead_platform = platform or None
+                    owner = lead_kinds.owner()
+                    if owner and not (lead.assigned_to or '').strip():
+                        lead.assigned_to = owner
+            except Exception:
+                # Never the reason an email is lost.
+                log.exception('could not record forwarder or kind')
+
             db.session.add(lead)
             db.session.flush()
 

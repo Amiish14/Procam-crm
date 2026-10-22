@@ -159,9 +159,18 @@ def select_targets(args, denylist):
     if args.ids:
         want = {int(x) for x in args.ids.replace(' ', '').split(',') if x}
         return [l for l in leads if l.id in want], leads
+    from app.services import lead_kinds
+
     targets = [l for l in leads
-               if is_junk_domain(domain_of(l), denylist) or is_bulk_sender(l)
-               or (args.include_internal and is_internal_thread(l))]
+               if (is_junk_domain(domain_of(l), denylist)
+                   or is_bulk_sender(l)
+                   or (args.include_internal and is_internal_thread(l)))
+               # An auction or spot load is never junk. 226 of them
+               # went in a bulk review of unassigned leads because
+               # nothing on the record said they were time-critical,
+               # and a load posting looks exactly like a newsletter
+               # to somebody scanning a spreadsheet.
+               and not lead_kinds.is_auction(l)]
     return targets, leads
 
 
