@@ -163,8 +163,15 @@ def main():
 
         made = system_senders.seed(actor=args.actor)
         db.session.commit()
-        print(f'\n  {len(made)} pattern(s) written to Master Data '
-              f'list "{system_senders.LIST_KEY}".')
+        total = len(system_senders.patterns())
+        if made:
+            print(f'\n  {len(made)} pattern(s) written to Master '
+                  f'Data list "{system_senders.LIST_KEY}".')
+        else:
+            print(f'\n  Nothing to write — all of them were '
+                  f'already in Master Data list '
+                  f'"{system_senders.LIST_KEY}".')
+        print(f'  {total} pattern(s) now active.')
         print('  Edit them in Admin → Master Data. Nothing is held '
               'until FEATURE_SENDER_BLOCK is turned on.')
 

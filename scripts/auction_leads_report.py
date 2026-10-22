@@ -108,8 +108,18 @@ def main():
 
         made = lead_kinds.seed(actor=args.actor)
         db.session.commit()
-        print(f'\n  {len(made)} pattern(s) written to Master Data '
-              f'list "{lead_kinds.LIST_KEY}".')
+        total = len(lead_kinds.patterns())
+        # "0 written" on its own reads as "nothing happened" when
+        # it means "they were already there" — and the difference
+        # matters when somebody is checking whether a deploy took.
+        if made:
+            print(f'\n  {len(made)} pattern(s) written to Master '
+                  f'Data list "{lead_kinds.LIST_KEY}".')
+        else:
+            print(f'\n  Nothing to write — all of them were '
+                  f'already in Master Data list '
+                  f'"{lead_kinds.LIST_KEY}".')
+        print(f'  {total} pattern(s) now active.')
         print(f'  Set the owner in admin_settings under '
               f'"{lead_kinds.OWNER_SETTING}" — no name is in code.')
 
