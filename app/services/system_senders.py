@@ -47,13 +47,38 @@ SEEDS = (
      'Exchange Online Protection notices'),
     ('postmaster@*', 'delivery reports and non-delivery notices'),
     ('mailer-daemon@*', 'the mail system reporting a failure'),
-    ('no-reply@*', 'a sender that cannot be replied to'),
-    ('noreply@*', 'a sender that cannot be replied to'),
-    ('donotreply@*', 'a sender that cannot be replied to'),
-    ('do-not-reply@*', 'a sender that cannot be replied to'),
     ('bounce@*', 'bounce handling'),
     ('bounces@*', 'bounce handling'),
+    # Named senders, not patterns. Each one was read before it was
+    # added; see the note below on why the general form is absent.
+    ('googlealerts-noreply@google.com',
+     'Google Alerts digests — 32 in 90 days, none an enquiry'),
+    ('noreply@justdial.com', 'directory listing marketing'),
+    ('no-reply@peoplemattersonline.com',
+     'HR conference marketing'),
 )
+
+#: `noreply@*` is NOT here, and neither are `no-reply@*`,
+#: `donotreply@*` or `do-not-reply@*`. They were, until the 90-day
+#: report was read.
+#:
+#: Those four would have held 247 leads, and 226 of them were
+#: freight load postings from SuperProcure — "Load posted by Isgec
+#: Heavy Engineering Ltd", route, vehicle type, tonnage, loading
+#: date — plus RFQ invitations from SAP Ariba: "Jindal Stainless
+#: has invited you to participate in an event: RFQ_Transporter
+#: Required". Two of the Ariba ones are open opportunities with
+#: owners right now.
+#:
+#: A procurement portal sends from noreply@ precisely because the
+#: reply goes into the portal, not the mailbox. The address says
+#: nothing about whether the message is business. Blocking that
+#: shape would have silently dropped the enquiries this company
+#: exists to win, which is the one failure the capture-everything
+#: inbox was designed to prevent.
+#:
+#: A robot gets named, individually, after somebody has read what
+#: it sends.
 
 REASON = 'System mail – not a lead'
 

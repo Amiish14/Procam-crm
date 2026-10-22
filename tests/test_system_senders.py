@@ -62,18 +62,53 @@ def empty_list():
 @pytest.mark.parametrize('sender', [
     'quarantine@messaging.microsoft.com',
     'QUARANTINE@Messaging.Microsoft.Com',
-    'noreply@anything.com',
-    'no-reply@vendor.co.in',
-    'donotreply@bank.example',
     'postmaster@someone.com',
     'mailer-daemon@mail.example.net',
     'bounces@campaign.example',
     'alerts@protection.outlook.com',
+    'googlealerts-noreply@google.com',
 ])
 def test_a_machine_is_recognised(sender):
     blocked, pattern, why = ss.blocks(sender, rules=ss.SEEDS)
     assert blocked, sender
     assert pattern and why
+
+
+@pytest.mark.parametrize('sender,what', [
+    ('noreply@alerts.superprocure.com',
+     'freight load postings — "Load posted by Isgec Heavy '
+     'Engineering Ltd", route, vehicle type, tonnage'),
+    ('noreply@alerts2.superprocure.com', 'the same portal'),
+    ('noreply@us.bn.cloud.ariba.com',
+     'RFQ invitations — "Jindal Stainless has invited you to '
+     'participate in an event: RFQ_Transporter Required"'),
+    ('do-not-reply@hlag.com', 'a carrier\'s own notices'),
+    ('noreply@drewry.co.uk', 'shipping research somebody reads'),
+    ('noreply@fffai.org',
+     'the freight forwarders\' federation — an industry body'),
+])
+def test_a_reply_less_address_is_not_a_robot(sender, what):
+    """The seeds had noreply@*, no-reply@*, donotreply@* and
+    do-not-reply@* until the 90-day report was read. They would
+    have held 247 leads, 226 of them live freight enquiries.
+
+    A procurement portal sends from noreply@ precisely because the
+    reply belongs in the portal. The address says nothing about
+    whether the message is business, and blocking that shape drops
+    the enquiries this company exists to win.
+    """
+    blocked, pattern, _why = ss.blocks(sender, rules=ss.SEEDS)
+    assert not blocked, f'{sender} ({what}) held by {pattern}'
+
+
+def test_the_wide_reply_less_patterns_are_gone_from_the_seeds():
+    patterns = [p for p, _w in ss.SEEDS]
+    for wide in ('noreply@*', 'no-reply@*', 'donotreply@*',
+                 'do-not-reply@*'):
+        assert wide not in patterns, (
+            f'{wide} is back. It held 226 SuperProcure load '
+            f'postings and the Ariba RFQ invitations in the '
+            f'90-day report.')
 
 
 # ── what it must never catch ─────────────────────────────────────────

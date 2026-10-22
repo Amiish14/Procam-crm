@@ -47,8 +47,35 @@ into, and the first mistake silently holds a customer.
 | `*@protection.outlook.com` | Exchange Online Protection notices |
 | `postmaster@*` | delivery reports, non-delivery notices |
 | `mailer-daemon@*` | the mail system reporting a failure |
-| `no-reply@*`, `noreply@*`, `donotreply@*`, `do-not-reply@*` | senders that cannot be replied to |
 | `bounce@*`, `bounces@*` | bounce handling |
+| `googlealerts-noreply@google.com` | Google Alerts digests, 32 in 90 days |
+| `noreply@justdial.com` | directory listing marketing |
+| `no-reply@peoplemattersonline.com` | HR conference marketing |
+
+### What the report changed, before anything ran
+
+The first draft of this list had `noreply@*`, `no-reply@*`,
+`donotreply@*` and `do-not-reply@*`. The 90-day report said they
+would hold **247 leads** — and **226 of them were live freight
+enquiries**:
+
+- `noreply@alerts.superprocure.com` and `alerts2`, 226 between
+  them: *"Load posted by Isgec Heavy Engineering Ltd"*, with the
+  route (BHEL Trichy → ISGEC Rattangarh), vehicle type, tonnage
+  and loading date.
+- `noreply@us.bn.cloud.ariba.com`: *"Jindal Stainless has invited
+  you to participate in an event: RFQ_Transporter Required"*. Two
+  are open opportunities with owners right now.
+
+A procurement portal sends from `noreply@` **precisely because**
+the reply belongs in the portal rather than the mailbox. The shape
+of the address says nothing about whether the message is business.
+
+All four patterns were removed. A robot is named individually,
+after somebody has read what it sends. `do-not-reply@hlag.com`,
+`noreply@drewry.co.uk` and `noreply@fffai.org` are deliberately
+**not** on the list — a carrier's own notices, shipping research
+somebody reads, and the freight forwarders' federation.
 
 ### Off until the report is read
 
