@@ -101,23 +101,53 @@ def main():
 
             # The number that decides it: anything held that a
             # person had worked is a rule that is too wide.
-            worked = [l for l, _s, _p, _w in hit
-                      if (l.stage or '') not in
-                      ('New', 'Lost', 'Not Interested', '')
-                      or (l.assigned_to or '').strip()
-                      or (l.estimated_value_inr or 0)]
-            print(f'\n  of those, ones somebody had worked: '
+            #
+            # Except when the work was agreeing with the rule. The
+            # first run of this flagged five Google Alerts leads
+            # as worked; a person had been assigned each one and
+            # closed it "system / no-reply email, not a customer".
+            # That is the rule being corroborated by hand, five
+            # times, and reading it as a warning would have been
+            # exactly backwards.
+            AGREES = ('not a customer', 'no-reply', 'noreply',
+                      'system', 'not a lead', 'newsletter',
+                      'spam', 'junk')
+            worked, agreed = [], []
+            for lead, _s, _p, _w in hit:
+                touched = ((lead.stage or '') not in
+                           ('New', 'Lost', 'Not Interested', '')
+                           or (lead.assigned_to or '').strip()
+                           or (lead.estimated_value_inr or 0))
+                if not touched:
+                    continue
+                reason = (lead.lost_reason or '').lower()
+                if any(k in reason for k in AGREES):
+                    agreed.append(lead)
+                else:
+                    worked.append(lead)
+
+            if agreed:
+                print(f'\n  {len(agreed)} were closed by a person as '
+                      f'system mail — the rule agreeing with a '
+                      f'judgement somebody already made by hand:')
+                for l in agreed[:10]:
+                    print(f'      #{l.id} {(l.company or "")[:24]:<26}'
+                          f'{(l.lost_reason or "")[:52]}')
+
+            print(f'\n  of those, ones somebody actually worked: '
                   f'{len(worked)}')
             if worked:
                 print('    !! read these before switching it on — a '
                       'pattern that catches a worked lead is too '
                       'wide:')
                 for l in worked[:15]:
-                    print(f'      #{l.id} {(l.company or "")[:30]:<32}'
-                          f'{l.stage:<18}{_sender(l)}')
+                    print(f'      #{l.id} {(l.company or "")[:28]:<30}'
+                          f'{str(l.stage):<16}{_sender(l)}')
+                    print(f'            closed: '
+                          f'{(l.lost_reason or "(no reason)")[:70]}')
             else:
-                print('    none — every one was New, Lost or Not '
-                      'Interested, unowned and unvalued.')
+                print('    none — every one was either untouched or '
+                      'closed by a person as system mail.')
 
         print('\n  senders that came through, most frequent first '
               '(to spot a robot the list misses):')
