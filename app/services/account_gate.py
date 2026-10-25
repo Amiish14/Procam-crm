@@ -116,6 +116,15 @@ def why_pending(lead):
     account = account_of(lead)
     if account is None:
         return 'no account'
+    # An account named "Unknown", or one holding our own domain, is
+    # not a customer. A lead filed under one *looks* placed, which
+    # is worse than being unplaced: it never reaches this queue, and
+    # the histories of several real customers pool under one
+    # meaningless row. #983 "Unknown" held 4,435 leads.
+    from app.services import account_match
+    placeholder = account_match.not_a_customer(account)
+    if placeholder:
+        return f'no account — {placeholder}'
     vertical = vertical_of(lead)
     if not vertical:
         # No vertical means no owner question can even be asked. The

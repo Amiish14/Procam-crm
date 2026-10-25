@@ -813,3 +813,77 @@ def test_bulk_confirm_refuses_a_placeholder_too():
     body = _bulk(client, [lead_id]).get_json()
     assert body['confirmed'] == 0
     assert 'placeholder' in body['skipped'][0]['why']
+
+
+# ── a placeholder account is no account ──────────────────────────────
+@pytest.mark.parametrize('name', ['Unknown', 'New Lead', 'Info',
+                                  'Email'])
+def test_a_lead_under_a_placeholder_is_held(name):
+    """It *looks* placed, which is worse than being unplaced: it
+    never reaches the queue, and several customers' histories pool
+    under one meaningless row."""
+    with flask_app.app_context():
+        _on()
+        lead = _lead(account=_account(name=name, owner=REP))
+        assert account_gate.check(lead, 'Quoted') is not None
+        assert 'placeholder' in account_gate.why_pending(lead)
+
+
+def test_a_lead_under_an_own_domain_account_is_held():
+    from app.services.mail_signals import OUR_DOMAINS
+
+    with flask_app.app_context():
+        _on()
+        ours = sorted(OUR_DOMAINS)[0]
+        account = _account(name='ZZ Looks Fine', owner=REP,
+                           domain=ours)
+        lead = _lead(account=account)
+        assert account_gate.check(lead, 'Quoted') is not None
+        assert 'our own domain' in account_gate.why_pending(lead)
+
+
+def test_a_real_account_with_an_owner_still_passes():
+    with flask_app.app_context():
+        _on()
+        lead = _lead(account=_account(name='ZZ Real Steel',
+                                      owner=REP))
+        assert account_gate.check(lead, 'Quoted') is None
+
+
+def test_such_a_lead_appears_in_the_queue():
+    with flask_app.app_context():
+        _on()
+        lead = _lead(account=_account(name='Unknown', owner=REP))
+        held = [l.id for l in account_gate.pending_leads(
+            sc=__import__('app.access.scope', fromlist=['x'])
+            .Scope(emp_code=HEAD, vertical='', codes=None, perms=(),
+                   data_scope='all'))]
+        assert lead.id in held
+
+
+# ── confirm_one is the one implementation ────────────────────────────
+def test_confirm_one_refuses_to_replace_a_real_account():
+    from app.services import account_suggest as sug
+
+    with flask_app.app_context():
+        _on()
+        real = _account(name='ZZ Already Here', owner=REP)
+        _account(name='ZZ Domain Co', domain='zzsteel.com', owner=REP)
+        lead = _lead(account=real)
+        ok, why = sug.confirm_one(lead, actor=HEAD)
+        assert ok is False
+        assert why == 'already has an account'
+        assert lead.company_id == real.id
+
+
+def test_confirm_one_will_replace_a_placeholder():
+    """That is the whole point of counting one as no account."""
+    from app.services import account_suggest as sug
+
+    with flask_app.app_context():
+        _on()
+        _account(name='ZZ Domain Co', domain='zzsteel.com', owner=REP)
+        lead = _lead(account=_account(name='Unknown', owner=REP))
+        ok, detail = sug.confirm_one(lead, actor=HEAD)
+        assert ok is True, detail
+        assert detail['account'] == 'ZZ Domain Co'

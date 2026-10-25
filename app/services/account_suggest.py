@@ -202,3 +202,108 @@ def bucket(found):
     if found.get('rival_count', found['candidate_count']) > 1:
         return 'several'
     return 'weak'
+
+
+def confirm_one(lead, *, actor, account_id=None,
+                via='Account check'):
+    """Link one lead to its suggested account. (ok, detail).
+
+    The single implementation behind both the Account check button
+    and the offline bulk pass. Everything is recomputed here — the
+    caller's view of the suggestion is at best seconds old, and at
+    worst a stored row from a pass that ran yesterday.
+
+    Returns (False, why) rather than raising: a batch of 129 must
+    report what it skipped and carry on, because a batch that stops
+    at the first oddity gets re-run with the guard removed.
+    """
+    from app import Company, db
+    from app.models.assignment import LeadAccountSuggestion
+    from app.services import account_gate, account_match, audit
+
+    if lead is None:
+        return False, 'no such lead'
+    if lead.company_id:
+        existing = db.session.get(Company, lead.company_id)
+        if not account_match.not_a_customer(existing):
+            return False, 'already has an account'
+
+    found = suggest_for(lead)
+    chosen = account_id or found['account_id']
+    account = db.session.get(Company, chosen or 0)
+    if account is None:
+        return False, 'nothing matched'
+
+    why = account_match.not_a_customer(account)
+    if why:
+        return False, why
+    if account_id is None:
+        if not found['exact_single']:
+            return False, 'no longer a single exact match'
+        if found['confidence'] < TRUSTED:
+            return False, (f'confidence {found["confidence"]} is '
+                           f'below the floor')
+
+    vertical = account_gate.vertical_of(lead)
+    owner = account_gate.owner_for(account, vertical)
+    if not owner:
+        try:
+            from app.services import vertical_heads
+            heads = vertical_heads.heads_for_vertical(vertical) or []
+            owner = heads[0] if heads else ''
+        except Exception:                                 # noqa: BLE001
+            owner = ''
+    if not owner:
+        return False, (f'nobody owns {account.name} for '
+                       f'{vertical or "this vertical"}')
+
+    was = lead.company_id
+    lead.company_id = account.id
+    _ensure_owner(account, vertical, owner, actor=actor)
+    _assign(lead, owner)
+
+    row = LeadAccountSuggestion.query.filter_by(lead_id=lead.id).first()
+    if row is not None:
+        row.acted_at = datetime.utcnow()
+        row.acted_by = actor
+        row.outcome = 'accepted'
+
+    audit.record('lead.account_confirmed', 'lead', lead.id,
+                 old={'company_id': was},
+                 new={'company_id': account.id, 'account': account.name,
+                      'assigned_to': owner, 'rule': found['rule'],
+                      'confidence': found['confidence']},
+                 actor=actor,
+                 reason=f'{via}: confirmed from a single exact '
+                        f'match ({found["rule"]})')
+    return True, {'account': account.name, 'owner': owner,
+                  'rule': found['rule']}
+
+
+def _ensure_owner(account, vertical, owner, *, actor):
+    from app import db
+    from app.models.assignment import AccountVerticalOwner
+    from app.services import audit
+
+    if not vertical:
+        return
+    row = AccountVerticalOwner.query.filter_by(
+        account_id=account.id, vertical=vertical).first()
+    if row is not None:
+        return
+    db.session.add(AccountVerticalOwner(
+        account_id=account.id, vertical=vertical, emp_code=owner,
+        source='manual', note='set when the account was confirmed'))
+    audit.record('account.vertical_owner_set', 'company', account.id,
+                 new={'vertical': vertical, 'emp_code': owner},
+                 actor=actor, reason='named when a lead was confirmed')
+
+
+def _assign(lead, owner):
+    from app.services import lead_assignment
+    try:
+        lead_assignment.assign(lead, primary_code=owner, actor=None,
+                               note='account confirmed',
+                               _defer_commit=True)
+    except Exception:                                     # noqa: BLE001
+        lead.assigned_to = owner

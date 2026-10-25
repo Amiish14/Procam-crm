@@ -489,8 +489,7 @@ def api_bulk_confirm():
     from datetime import datetime
 
     from app import Company, Lead, db
-    from app.models.assignment import LeadAccountSuggestion
-    from app.services import account_suggest, audit
+    from app.services import account_suggest
 
     d = request.get_json(silent=True) or {}
     ids = [int(i) for i in (d.get('lead_ids') or [])
@@ -505,78 +504,26 @@ def api_bulk_confirm():
     for lead_id in ids:
         lead = db.session.get(Lead, lead_id)
         if lead is None:
-            skipped.append({'lead_id': lead_id,
-                            'why': 'no such lead'})
+            skipped.append({'lead_id': lead_id, 'why': 'no such lead'})
             continue
         if not may_clear(lead):
             skipped.append({'lead_id': lead_id,
                             'why': 'not yours to confirm'})
             continue
-        if lead.company_id:
+        if _blocked(db.session.get(Company, lead.company_id or 0)
+                    if lead.company_id else None):
             skipped.append({'lead_id': lead_id,
-                            'why': 'already has an account'})
+                            'why': 'account is blocked'})
             continue
-
-        # Recomputed, not read. This is the guard that makes a bulk
-        # action safe to offer at all.
-        found = account_suggest.suggest_for(lead)
-
-        # Asked before the match quality, because "Email is a
-        # placeholder, not a company" tells a head what to do and
-        # "no longer a single exact match" does not.
-        from app.services import account_match as _am
-        _suggested = db.session.get(Company, found['account_id'] or 0)
-        _why = _am.not_a_customer(_suggested) if _suggested else ''
-        if _why:
-            skipped.append({'lead_id': lead_id, 'why': _why})
+        # One implementation, shared with the offline pass. It
+        # recomputes everything itself.
+        ok, detail = account_suggest.confirm_one(
+            lead, actor=session['emp_code'], via='bulk-confirmed')
+        if not ok:
+            skipped.append({'lead_id': lead_id, 'why': detail})
             continue
-
-        if not found['exact_single'] or not found['account_id']:
-            skipped.append({'lead_id': lead_id,
-                            'why': 'no longer a single exact match'})
-            continue
-        if found['confidence'] < account_suggest.TRUSTED:
-            skipped.append({'lead_id': lead_id,
-                            'why': f'confidence {found["confidence"]} '
-                                   f'is below the floor'})
-            continue
-        account = db.session.get(Company, found['account_id'])
-        if account is None or _blocked(account):
-            skipped.append({'lead_id': lead_id,
-                            'why': 'account is blocked or gone'})
-            continue
-
-        vertical = account_gate.vertical_of(lead)
-        owner = account_gate.owner_for(account, vertical) \
-            or _head_of(vertical)
-        if not owner:
-            skipped.append({
-                'lead_id': lead_id,
-                'why': f'nobody owns {account.name} for '
-                       f'{vertical or "this vertical"}'})
-            continue
-
-        lead.company_id = account.id
-        _ensure_vertical_owner(account, vertical, owner,
-                               actor=session['emp_code'])
-        _assign(lead, owner)
-        row = LeadAccountSuggestion.query.filter_by(
-            lead_id=lead.id).first()
-        if row is not None:
-            row.acted_at = datetime.utcnow()
-            row.acted_by = session['emp_code']
-            row.outcome = 'accepted'
-        audit.record('lead.account_confirmed', 'lead', lead.id,
-                     old={'company_id': None},
-                     new={'company_id': account.id,
-                          'account': account.name,
-                          'assigned_to': owner, 'rule': found['rule'],
-                          'confidence': found['confidence']},
-                     actor=session['emp_code'],
-                     reason='bulk-confirmed on Account check from a '
-                            f'single exact match ({found["rule"]})')
-        done.append({'lead_id': lead.id, 'account': account.name,
-                     'owner': owner})
+        done.append({'lead_id': lead.id, 'account': detail['account'],
+                     'owner': detail['owner']})
 
     db.session.commit()
     return jsonify(ok=True, confirmed=len(done), done=done,
