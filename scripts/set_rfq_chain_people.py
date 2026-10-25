@@ -146,16 +146,41 @@ def main():
         if args.check:
             print('\nCHECK ONLY — nothing written.')
             return
-        if problems:
-            raise SystemExit(
-                '\n  REFUSED: resolve the names above first. A '
-                'half-filled table silently drops the verticals it '
-                'could not place.')
 
+        # A setting is written only when it is complete. A
+        # half-filled vertical table silently drops the verticals
+        # it could not place, and those steps then open owned by
+        # nobody with nothing to say why.
+        wanted = {'rfq_scm_by_vertical': SCM,
+                  'rfq_ops_by_vertical': OPS}
+        written, held = [], []
         for key, value in settings.items():
+            table = wanted.get(key)
+            if table is not None and len(value) != len(table):
+                held.append(f'{key} — only {len(value)} of '
+                            f'{len(table)} verticals resolved')
+                continue
+            if not value:
+                held.append(f'{key} — nothing resolved')
+                continue
             admin_settings.save(key, value, actor=args.actor)
+            written.append(key)
+        for line in problems:
+            key = line.split(' —')[0].split('[')[0]
+            if key not in written and key not in \
+                    [h.split(' —')[0] for h in held]:
+                held.append(line)
         db.session.commit()
-        print(f'\n  {len(settings)} setting(s) written.')
+
+        print(f'\n  {len(written)} setting(s) written: '
+              f'{", ".join(written) or "none"}')
+        if held:
+            print('  not written, and why:')
+            for line in held:
+                print(f'    {line}')
+            print('  Those steps will open owned by nobody until '
+                  'the name is settled — visible, which is the '
+                  'point.')
 
 
 if __name__ == '__main__':
