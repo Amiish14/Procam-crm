@@ -61,9 +61,20 @@ def migration_date():
     """
     from app.models.audit import AuditEvent
     row = (AuditEvent.query
-           .filter(AuditEvent.action.like('%not_interested%'))
+           .filter(AuditEvent.action == 'crm2.not_interested_merged')
            .order_by(AuditEvent.id.desc()).first())
-    return getattr(row, 'created_at', None)
+    return getattr(row, 'occurred_at', None)
+
+
+def _who_set_it(lead):
+    """(actor, when) for the stage change that put it here."""
+    from app.models.audit import AuditEvent
+    row = (AuditEvent.query
+           .filter(AuditEvent.entity_type == 'lead',
+                   AuditEvent.entity_id == str(lead.id),
+                   AuditEvent.action == 'lead.stage_change')
+           .order_by(AuditEvent.id.desc()).first())
+    return (getattr(row, 'actor', ''), getattr(row, 'occurred_at', None))
 
 
 def apply_plan(rows, *, actor='CRM-ACCOUNT-FIRST-01'):
@@ -143,18 +154,24 @@ def main():
                       'whether these pre-date it cannot be read off '
                       'the record. Not guessed at.')
             else:
+                print(f'    the R2 conversion ran {str(when)[:16]}')
+                late = 0
                 for lead, _s, _w in retired:
+                    who, at = _who_set_it(lead)
                     made = lead.created_at
-                    after = made is not None and made > when
-                    print(f'    #{lead.id} created {str(made)[:16]} — '
-                          f'{"AFTER" if after else "before"} the '
-                          f'conversion on {str(when)[:16]}')
-                if any(l.created_at and l.created_at > when
-                       for l, _s, _w in retired):
-                    print('    At least one was created after the '
-                          'conversion, so something still writes '
-                          'this stage — worth finding before it '
-                          'writes more.')
+                    print(f'    #{lead.id} created {str(made)[:16]}'
+                          f'{" (after the conversion)" if made and made > when else ""}'
+                          f' — set to {RETIRED_STAGE} '
+                          f'{str(at)[:16] or "?"} by {who or "?"}')
+                    if at is not None and at > when:
+                        late += 1
+                if late:
+                    print(f'\n    {late} of these were set AFTER the '
+                          f'conversion, by people. The stage is still '
+                          f'offered in the UI, so converting them '
+                          f'again fixes today and the queue refills. '
+                          f'Removing the option is a separate '
+                          f'decision, not taken here.')
 
         if args.check:
             print('\nDRY RUN — nothing written.')
