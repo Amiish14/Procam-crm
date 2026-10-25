@@ -378,3 +378,109 @@ def _notify(rfq, priority, *, actor):
                 commit=False)
         except Exception:                                 # noqa: BLE001
             pass
+
+
+# ── §5.4: the unmatched quote mail queue ─────────────────────────────
+def _may_clear_mail(emp_code=None):
+    """The RFQ Coordinator, a vertical head, or an admin."""
+    from app import Employee
+    from app.services import admin_settings
+
+    code = emp_code or session.get('emp_code')
+    emp = Employee.query.filter_by(emp_code=code).first()
+    if emp is None:
+        return False
+    if (getattr(emp, 'role', '') or '').lower() in (
+            'admin', 'super admin', 'superadmin', 'director'):
+        return True
+    if code == (admin_settings.get('rfq_coordinator') or ''):
+        return True
+    try:
+        from app.models.email_admin import VerticalHead
+        return VerticalHead.query.filter_by(
+            head_emp_code=code, active=True).first() is not None
+    except Exception:                                     # noqa: BLE001
+        return False
+
+
+@bp.route('/api/chain/unmatched')
+@_gate
+def api_unmatched():
+    from app.models.quote import UnmatchedQuoteMail
+
+    rows = (UnmatchedQuoteMail.query
+            .filter(UnmatchedQuoteMail.status ==
+                    UnmatchedQuoteMail.OPEN)
+            .order_by(UnmatchedQuoteMail.created_at.desc())
+            .limit(200).all())
+    out = []
+    for row in rows:
+        item = row.to_dict()
+        if row.suggested_lead_id:
+            from app import Lead, db
+            lead = db.session.get(Lead, row.suggested_lead_id)
+            item['suggested'] = ({'id': lead.id,
+                                  'company': lead.company or '',
+                                  'stage': lead.stage or ''}
+                                 if lead is not None else None)
+        out.append(item)
+    return jsonify(ok=True, rows=out, total=len(out),
+                   may_clear=_may_clear_mail())
+
+
+@bp.route('/api/chain/unmatched/<int:row_id>', methods=['POST'])
+@_gate
+def api_resolve_unmatched(row_id):
+    """"Link to lead…" or "Not a quotation"."""
+    from datetime import datetime
+
+    from app import Lead, db
+    from app.models.quote import UnmatchedQuoteMail
+    from app.services import audit
+
+    if not _may_clear_mail():
+        return jsonify(ok=False,
+                       error='Only the RFQ coordinator, a vertical '
+                             'head or an admin can clear this '
+                             'queue.'), 403
+
+    row = db.session.get(UnmatchedQuoteMail, row_id)
+    if row is None:
+        return jsonify(ok=False, error='Not found'), 404
+    if row.status != UnmatchedQuoteMail.OPEN:
+        return jsonify(ok=False,
+                       error=f'already {row.status}'), 400
+
+    d = request.get_json(silent=True) or {}
+    action = (d.get('action') or '').strip()
+
+    if action == 'not_a_quote':
+        row.status = UnmatchedQuoteMail.NOT_A_QUOTE
+        row.resolved_by = session['emp_code']
+        row.resolved_at = datetime.utcnow()
+        audit.record('quote_mail.not_a_quotation', 'quote_mail',
+                     row.id, new={'subject': row.subject},
+                     actor=session['emp_code'],
+                     reason='a person said this is not a quotation')
+        db.session.commit()
+        return jsonify(ok=True, status=row.status)
+
+    if action != 'link':
+        return jsonify(ok=False,
+                       error='action must be link or '
+                             'not_a_quote'), 400
+
+    lead = db.session.get(Lead, d.get('lead_id') or 0)
+    if lead is None:
+        return jsonify(ok=False, error='Choose a lead'), 400
+
+    row.status = UnmatchedQuoteMail.LINKED
+    row.linked_lead_id = lead.id
+    row.resolved_by = session['emp_code']
+    row.resolved_at = datetime.utcnow()
+    audit.record('quote_mail.linked', 'quote_mail', row.id,
+                 new={'lead_id': lead.id, 'subject': row.subject},
+                 actor=session['emp_code'],
+                 reason=f'filed on lead {lead.id} by hand')
+    db.session.commit()
+    return jsonify(ok=True, status=row.status, lead_id=lead.id)

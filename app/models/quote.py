@@ -262,3 +262,65 @@ class QuoteRevisionLog(db.Model):
             'diff_summary':  self.diff_summary or {},
             'reason':        self.reason or '',
         }
+
+
+class UnmatchedQuoteMail(db.Model):
+    """A quotation mail the CRM could not place, kept for a person.
+
+    CRM-QUOTE-REV-02 §5.4.
+
+    The spec says to reuse the FF-COMMS-01 unmatched queue. There
+    is no queue to reuse: `ff_inbound.link` returns a reason to
+    its caller and nothing persists it, so every unplaceable
+    vendor reply since that release has been a log line. This is
+    the queue, written once and used by both.
+
+    The alternative — attaching on a best guess — is worse than a
+    row here. A quotation filed on the wrong lead changes that
+    lead's stage, its amount and its reported pipeline, and
+    nobody looks at it again until the figures are wrong.
+    """
+    __tablename__ = 'unmatched_quote_mail'
+
+    OPEN = 'open'
+    LINKED = 'linked'
+    NOT_A_QUOTE = 'not_a_quote'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    #: RFC-5322 Message-Id. Unique, so the same mail seen twice by
+    #: the webhook and the poll is one row.
+    message_id = db.Column(db.String(400), unique=True, index=True)
+    conversation_id = db.Column(db.String(400), index=True)
+    subject = db.Column(db.String(500))
+    from_addr = db.Column(db.String(320), index=True)
+    to_addr = db.Column(db.String(600))
+    sent_at = db.Column(db.DateTime)
+    body_excerpt = db.Column(db.Text)
+
+    #: What the matcher did find, so a person starts from what we
+    #: know rather than from nothing: a suggested lead from the
+    #: same customer domain, and why it was not enough.
+    suggested_lead_id = db.Column(db.Integer, index=True)
+    suggested_account_id = db.Column(db.Integer, index=True)
+    why = db.Column(db.String(300))
+
+    status = db.Column(db.String(16), default=OPEN, index=True)
+    resolved_by = db.Column(db.String(20))
+    resolved_at = db.Column(db.DateTime)
+    linked_lead_id = db.Column(db.Integer, index=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow,
+                           index=True)
+
+    def to_dict(self):
+        return {'id': self.id, 'subject': self.subject or '',
+                'from_addr': self.from_addr or '',
+                'to_addr': self.to_addr or '',
+                'sent_at': str(self.sent_at or '')[:16],
+                'excerpt': (self.body_excerpt or '')[:300],
+                'suggested_lead_id': self.suggested_lead_id,
+                'why': self.why or '',
+                'status': self.status,
+                'linked_lead_id': self.linked_lead_id,
+                'created_at': str(self.created_at or '')[:16]}
