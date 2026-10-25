@@ -1,0 +1,697 @@
+"""
+The twelve steps from RFQ received to handover.
+
+CRM-RFQ-CHAIN-01 (R2), behind `FEATURE_RFQ_CHAIN`.
+
+The SCM team tracks this chain on a spreadsheet today: twelve
+steps, a standard time per step derived from the RFQ's priority,
+and a workload table per person. Nobody can see where an RFQ is
+stuck, who is holding it, or how long each person took, because
+the timestamps that would answer that are in nobody's hands.
+
+This is not a second engine. The steps are `TaskDefinition` rows
+and the live ones are `TaskInstance` rows, the same engine that
+already runs twenty definitions and 3,693 instances. What R2 adds
+is the four things that engine has no word for: which step of a
+chain a task is, how long it was held, whether it finished early
+or late, and why.
+
+Two rules worth stating because they are easy to lose:
+
+    Steps close on events, not on somebody remembering. The cost
+    sheet saving closes step 6; approval closes step 7; the quote
+    going out closes step 8. Only Screening, Technical Evaluation
+    and Survey take a Confirm click, because only those three
+    have no event of their own.
+
+    A reason is asked only on an exception. Every step asking
+    "why" trains people to pick the first option; asking only
+    when a step ran late or unusually early keeps the answer
+    worth reading.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+
+FLAG = 'FEATURE_RFQ_CHAIN'
+
+#: The twelve, in order. `share` is the fraction of the priority
+#: window this step is expected to take; `event` names what closes
+#: it, and 'confirm' means a person clicks.
+#:
+#: Steps 9-11 carry no share: 9 and 10 run on a response clock per
+#: revision, and 11 waits on the customer's own decision, which is
+#: not a Procam delay and must never be coloured as one.
+STEPS = (
+    {'no': 1,  'key': 'rfq.received',     'title': 'RFQ Received',
+     'who': 'sales',       'share': 0.00, 'event': 'rfq_mail_linked'},
+    {'no': 2,  'key': 'rfq.registration', 'title': 'RFQ Registration',
+     'who': 'coordinator', 'share': 0.05, 'event': 'registered'},
+    {'no': 3,  'key': 'rfq.screening',    'title': 'Initial Screening',
+     'who': 'scm',         'share': 0.05, 'event': 'confirm'},
+    {'no': 4,  'key': 'rfq.technical',    'title': 'Technical Evaluation',
+     'who': 'ops',         'share': 0.15, 'event': 'confirm',
+     'optional': 'needs_technical'},
+    {'no': 5,  'key': 'rfq.survey',       'title': 'Site / Route Survey',
+     'who': 'ops',         'share': 0.15, 'event': 'confirm',
+     'optional': 'needs_survey'},
+    {'no': 6,  'key': 'rfq.costing',      'title': 'Cost Estimation',
+     'who': 'scm',         'share': 0.30, 'event': 'cost_sheet_saved'},
+    {'no': 7,  'key': 'rfq.approval',     'title': 'Commercial Approval',
+     'who': 'head',        'share': 0.10, 'event': 'quote_approved'},
+    {'no': 8,  'key': 'rfq.submission',   'title': 'Quotation Submission',
+     'who': 'sales',       'share': 0.20, 'event': 'quote_sent'},
+    {'no': 9,  'key': 'rfq.negotiation',  'title': 'Negotiation',
+     'who': 'sales',       'share': None, 'event': 'customer_replied',
+     'response_clock': True},
+    {'no': 10, 'key': 'rfq.final_bid',    'title': 'Final Bid / Closure',
+     'who': 'sales',       'share': None, 'event': 'award_date_recorded',
+     'response_clock': True},
+    {'no': 11, 'key': 'rfq.award',        'title': 'Award / PO',
+     'who': 'sales',       'share': None, 'event': 'po_recorded',
+     'customer_clock': True},
+    {'no': 12, 'key': 'rfq.handover',     'title': 'Handover',
+     'who': 'sales',       'share': None, 'event': 'handover_sent',
+     'fixed_hours': 24},
+)
+BY_NO = {s['no']: s for s in STEPS}
+BY_KEY = {s['key']: s for s in STEPS}
+
+#: Steps a person may close by hand. Everything else waits for its
+#: event: a chain whose steps can all be ticked is a spreadsheet
+#: with extra clicks.
+CONFIRMABLE = tuple(s['no'] for s in STEPS if s['event'] == 'confirm')
+
+#: D3. Days from RFQ received to quote sent, per priority.
+PRIORITY_DAYS = {
+    'Critical': 2,
+    'High': 4,
+    'Medium': 7,
+    'Low': 10,
+}
+DEFAULT_PRIORITY = 'Medium'
+
+#: §4.1, step 9-10: Procam's own response time per revision.
+RESPONSE_HOURS = {'Critical': 4, 'High': 8, 'Medium': 24, 'Low': 24}
+
+#: D11. Inside this fraction of the standard time is "Early".
+EARLY_FRACTION = 0.5
+ON_TIME_TARGET = 0.98
+
+EARLY, ON_TIME, DELAYED = 'Early', 'On time', 'Delayed'
+
+RED, ORANGE, GREEN, PURPLE, BLUE, GREY = (
+    'red', 'orange', 'green', 'purple', 'blue', 'grey')
+
+
+# ── settings, with the spec's numbers as the fallback ───────────────
+def _setting(key, default):
+    try:
+        from app.services import admin_settings
+        got = admin_settings.get(key)
+        return default if got in (None, '') else got
+    except Exception:                                     # noqa: BLE001
+        return default
+
+
+def priority_days(priority):
+    days = _setting('rfq_priority_days', None) or {}
+    try:
+        return float(days.get(priority))
+    except (AttributeError, TypeError, ValueError):
+        return float(PRIORITY_DAYS.get(priority,
+                                       PRIORITY_DAYS[DEFAULT_PRIORITY]))
+
+
+def share_of(step_no):
+    shares = _setting('rfq_step_shares', None) or {}
+    try:
+        return float(shares[str(step_no)])
+    except (KeyError, TypeError, ValueError):
+        return BY_NO[step_no].get('share')
+
+
+def standard_hours(step_no, priority):
+    """How long this step is expected to take, in hours, or None.
+
+    None is a real answer for steps 9-11: a response clock and the
+    customer's own clock are not a share of our window, and
+    pretending otherwise would colour a customer's silence as a
+    Procam delay.
+    """
+    step = BY_NO.get(step_no)
+    if step is None:
+        return None
+    if step.get('fixed_hours'):
+        return float(step['fixed_hours'])
+    if step.get('customer_clock'):
+        return None
+    if step.get('response_clock'):
+        hours = _setting('rfq_response_hours', None) or {}
+        try:
+            return float(hours[priority])
+        except (KeyError, TypeError, ValueError):
+            return float(RESPONSE_HOURS.get(
+                priority, RESPONSE_HOURS[DEFAULT_PRIORITY]))
+    share = share_of(step_no)
+    if not share:
+        return None
+    return priority_days(priority) * 24.0 * float(share)
+
+
+def early_fraction():
+    try:
+        return float(_setting('rfq_early_fraction', EARLY_FRACTION))
+    except (TypeError, ValueError):
+        return EARLY_FRACTION
+
+
+# ── the clock ────────────────────────────────────────────────────────
+def elapsed_hours(task, *, now=None):
+    """Hours this step has been live, with held time removed."""
+    now = now or datetime.utcnow()
+    started = getattr(task, 'started_at', None) \
+        or getattr(task, 'created_at', None)
+    if started is None:
+        return 0.0
+    end = getattr(task, 'completed_at', None) or now
+    seconds = max(0.0, (end - started).total_seconds())
+    seconds -= float(getattr(task, 'paused_seconds', 0) or 0)
+    return max(0.0, seconds) / 3600.0
+
+
+def verdict(task, *, priority=None, now=None):
+    """(colour, words) for one live or finished step."""
+    step_no = getattr(task, 'step_no', None)
+    if step_no is None:
+        return GREY, 'not part of the chain'
+    if getattr(task, 'held_at', None):
+        return PURPLE, 'on hold'
+
+    step = BY_NO.get(step_no, {})
+    standard = standard_hours(step_no, priority or DEFAULT_PRIORITY)
+    if standard is None:
+        return BLUE, ('waiting on the customer'
+                      if step.get('customer_clock')
+                      else 'no standard time')
+
+    spent = elapsed_hours(task, now=now)
+    left = standard - spent
+    if left < 0:
+        return RED, f'overdue {_hours(-left)}'
+    # Orange inside the last 24 hours, or the last half of a short
+    # step — a Critical step of three hours must warn before it is
+    # two hours from due, which a flat 24h rule never would.
+    soon = min(24.0, standard * 0.5)
+    if left <= soon:
+        return ORANGE, f'due in {_hours(left)}'
+    return GREEN, f'due in {_hours(left)}'
+
+
+def _hours(value):
+    if value >= 48:
+        return f'{value / 24:.0f}d'
+    if value >= 1:
+        return f'{value:.0f}h'
+    return f'{max(1, int(value * 60))}m'
+
+
+def result_for(task, *, priority=None):
+    """Early / On time / Delayed, measured not typed."""
+    standard = standard_hours(getattr(task, 'step_no', None) or 0,
+                              priority or DEFAULT_PRIORITY)
+    if standard is None:
+        return None
+    spent = elapsed_hours(task)
+    if spent > standard:
+        return DELAYED
+    if spent <= standard * early_fraction():
+        return EARLY
+    return ON_TIME
+
+
+def needs_reason(result):
+    """Which reason a close must carry, or None.
+
+    Only the exceptions. A reason on every step is a reason nobody
+    reads, and the pre-selected first option becomes the answer.
+    """
+    if result == DELAYED:
+        return 'delay'
+    if result == EARLY:
+        return 'good_practice'
+    return None
+
+
+def suggest_priority(deadline, *, today=None):
+    """§4.4 — suggested from how long the customer has given us."""
+    if deadline is None:
+        return DEFAULT_PRIORITY
+    today = today or datetime.utcnow().date()
+    days = (deadline - today).days
+    if days < 2:
+        return 'Critical'
+    if days < 4:
+        return 'High'
+    if days < 7:
+        return 'Medium'
+    return 'Low'
+
+
+def applicable(rfq):
+    """The steps this RFQ actually runs, in order.
+
+    Technical evaluation and the survey are ticked at registration
+    and are N/A for air and sea freight. A chain that always shows
+    twelve boxes when two never happen reports a false bottleneck
+    at the two that stay grey forever.
+    """
+    out = []
+    for step in STEPS:
+        flag = step.get('optional')
+        if flag and not bool(getattr(rfq, flag, False)):
+            continue
+        out.append(step)
+    return out
+
+
+# ── the chain, as task instances ─────────────────────────────────────
+def enabled(emp_code=None):
+    from flask import has_request_context, session
+
+    from app.services import flags
+
+    if emp_code is None and has_request_context():
+        emp_code = session.get('emp_code')
+    if emp_code is None:
+        return flags.on(FLAG)
+    return flags.on_for(FLAG, emp_code)
+
+
+def steps_for(rfq):
+    """Every chain task on this RFQ, by step number."""
+    from app.models.task_engine import TaskInstance
+
+    rows = (TaskInstance.query
+            .filter(TaskInstance.entity_type == 'RFQ',
+                    TaskInstance.entity_id == rfq.id,
+                    TaskInstance.step_no.isnot(None))
+            .order_by(TaskInstance.step_no).all())
+    return {row.step_no: row for row in rows}
+
+
+def open_step(rfq, step_no, *, owner=None, actor='system'):
+    """Open one step. Idempotent — a step already open stays as is."""
+    from app import db
+    from app.models.task_engine import TaskInstance, TaskInstanceStatus
+
+    step = BY_NO.get(step_no)
+    if step is None:
+        return None
+    existing = steps_for(rfq).get(step_no)
+    if existing is not None and existing.status in \
+            TaskInstanceStatus.OPEN:
+        return existing
+    if existing is not None:
+        return None                    # already closed; never reopen
+
+    hours = standard_hours(step_no, rfq.priority or DEFAULT_PRIORITY)
+    now = datetime.utcnow()
+    row = TaskInstance(
+        task_key=step['key'], entity_type='RFQ', entity_id=rfq.id,
+        entity_display=(rfq.rfq_number or f'RFQ #{rfq.id}')[:120],
+        owner_user_id=owner or _owner_for(rfq, step),
+        status=TaskInstanceStatus.PENDING, priority=3,
+        step_no=step_no, paused_seconds=0,
+        action_route=f'/rfqs/{rfq.id}',
+        started_at=now, created_at=now,
+        due_at=(now + timedelta(hours=hours)) if hours else None)
+    db.session.add(row)
+    db.session.flush()
+    return row
+
+
+def _owner_for(rfq, step):
+    """Who holds this step. Never a name in code (§4.1)."""
+    from app.services import admin_settings
+
+    who = step.get('who')
+    if who == 'sales':
+        return _account_owner(rfq) or rfq.lead_driver
+    if who == 'coordinator':
+        return (admin_settings.get('rfq_coordinator') or '') or None
+    if who in ('scm', 'ops'):
+        table = admin_settings.get(f'rfq_{who}_by_vertical') or {}
+        vertical = _vertical_of(rfq)
+        if isinstance(table, dict) and vertical:
+            found = table.get(vertical)
+            if found:
+                return found
+        return None
+    if who == 'head':
+        return _head_of(_vertical_of(rfq))
+    return None
+
+
+def _vertical_of(rfq):
+    try:
+        from app.services import vertical_heads as vh
+        return vh.master_vertical(vh.vertical_of(rfq)) or ''
+    except Exception:                                     # noqa: BLE001
+        return ''
+
+
+def _head_of(vertical):
+    try:
+        from app.services import vertical_heads as vh
+        found = vh.heads_for_vertical(vertical) or []
+        return found[0] if found else None
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def _account_owner(rfq):
+    try:
+        from app import Company, db
+        from app.services import auto_assign
+        if not rfq.account_id:
+            return None
+        account = db.session.get(Company, rfq.account_id)
+        return auto_assign.owner_for_vertical(
+            rfq.account_id, _vertical_of(rfq)) \
+            or (getattr(account, 'pic_emp_code', None) or None)
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def close_step(rfq, step_no, *, actor, reason=None, remarks='',
+               event='', owner_next=None):
+    """Close a step and open the next. (ok, detail-or-why).
+
+    The reason rules live here rather than in each caller, because
+    there are six callers and the one that forgets is the one that
+    makes the whole report meaningless.
+    """
+    from app import db
+    from app.models.task_engine import TaskInstanceStatus
+    from app.services import audit
+
+    task = steps_for(rfq).get(step_no)
+    if task is None:
+        return False, f'step {step_no} is not open on this RFQ'
+    if task.status not in TaskInstanceStatus.OPEN:
+        return False, f'step {step_no} is already closed'
+    if task.held_at:
+        return False, 'the step is on hold — reactivate it first'
+
+    step = BY_NO[step_no]
+    if step['event'] == 'confirm':
+        if event and event != 'confirm':
+            return False, (f'{step["title"]} closes on a person '
+                           f'confirming it, not on {event}')
+    elif event and event != step['event']:
+        return False, (f'{step["title"]} closes on {step["event"]}, '
+                       f'not on {event}')
+
+    result = result_for(task, priority=rfq.priority)
+    wanted = needs_reason(result)
+    if wanted and not (reason or '').strip():
+        return False, (f'this step finished '
+                       f'{"late" if result == DELAYED else "early"} — '
+                       f'choose a {wanted.replace("_", " ")} reason')
+    if (reason or '').strip().lower().startswith('other') \
+            and not (remarks or '').strip():
+        return False, '"Others" needs a remark saying what happened'
+
+    task.status = TaskInstanceStatus.COMPLETED
+    task.completed_at = datetime.utcnow()
+    task.completed_by_id = actor
+    task.result = result
+    if wanted == 'delay':
+        task.delay_reason = reason
+    elif wanted == 'good_practice':
+        task.good_practice_reason = reason
+    task.reason_remarks = (remarks or '') or None
+
+    audit.record('rfq.step_closed', 'rfq', rfq.id,
+                 new={'step_no': step_no, 'step': step['title'],
+                      'result': result, 'reason': reason or '',
+                      'by': actor},
+                 actor=actor,
+                 reason=f'{step["title"]} closed '
+                        f'({result or "no standard time"})')
+
+    nxt = next_step(rfq, step_no)
+    opened = open_step(rfq, nxt, owner=owner_next,
+                       actor=actor) if nxt else None
+    db.session.flush()
+    return True, {'result': result, 'next': nxt,
+                  'next_owner': getattr(opened, 'owner_user_id', None)}
+
+
+def next_step(rfq, step_no):
+    """The next step this RFQ actually runs, skipping the N/A ones."""
+    for step in applicable(rfq):
+        if step['no'] > step_no:
+            return step['no']
+    return None
+
+
+def suggest_reason(rfq, step_no):
+    """Pre-select a delay reason from evidence (§4.3).
+
+    Evidence, not a guess: an open vendor rate request is why
+    costing is late, and the CRM already knows it is open.
+    """
+    try:
+        from app.models.ff import RateRequest
+        waiting = RateRequest.query.filter(
+            RateRequest.rfq_id == rfq.id,
+            RateRequest.status.in_(('Sent', 'Awaiting'))).count()
+        if waiting and step_no in (5, 6):
+            return 'Awaiting vendor rate'
+    except Exception:                                     # noqa: BLE001
+        pass
+    task = steps_for(rfq).get(step_no)
+    if task is not None and getattr(task, 'waiting_for_customer',
+                                    False):
+        return 'Customer clarification pending'
+    return ''
+
+
+# ── hold (D5) ────────────────────────────────────────────────────────
+def may_hold(emp_code, rfq):
+    """Only the vertical head for this RFQ, or a director."""
+    from app import Employee
+
+    emp = Employee.query.filter_by(emp_code=emp_code).first()
+    if emp is None:
+        return False
+    if (getattr(emp, 'role', '') or '').lower() in (
+            'admin', 'super admin', 'superadmin', 'director'):
+        return True
+    return emp_code == _head_of(_vertical_of(rfq))
+
+
+def hold(rfq, *, actor, reason, remarks=''):
+    from app import db
+    from app.models.task_engine import TaskInstanceStatus
+    from app.services import audit
+
+    if not may_hold(actor, rfq):
+        return False, ('only the vertical head or a director can '
+                       'hold an RFQ')
+    if not (reason or '').strip():
+        return False, 'a hold always needs a reason'
+    if rfq.held_at:
+        return False, 'already on hold'
+
+    now = datetime.utcnow()
+    rfq.held_at, rfq.held_by = now, actor
+    rfq.hold_reason, rfq.hold_remarks = reason, (remarks or None)
+    for task in steps_for(rfq).values():
+        if task.status in TaskInstanceStatus.OPEN:
+            task.held_at = now
+    audit.record('rfq.held', 'rfq', rfq.id,
+                 new={'reason': reason, 'remarks': remarks},
+                 actor=actor, reason=f'on hold: {reason}')
+    db.session.flush()
+    return True, 'held'
+
+
+def reactivate(rfq, *, actor, remarks=''):
+    """Add the held time to each step, and start the clock again."""
+    from app import db
+    from app.models.task_engine import TaskInstanceStatus
+    from app.services import audit
+
+    if not may_hold(actor, rfq):
+        return False, ('only the vertical head or a director can '
+                       'reactivate an RFQ')
+    if not rfq.held_at:
+        return False, 'not on hold'
+
+    now = datetime.utcnow()
+    held_for = max(0.0, (now - rfq.held_at).total_seconds())
+    for task in steps_for(rfq).values():
+        if task.status in TaskInstanceStatus.OPEN and task.held_at:
+            task.paused_seconds = int(
+                (task.paused_seconds or 0)
+                + max(0.0, (now - task.held_at).total_seconds()))
+            task.held_at = None
+            # The due date moves by the held time, or every step
+            # comes back already overdue for a pause nobody caused.
+            if task.due_at:
+                task.due_at = task.due_at + timedelta(seconds=held_for)
+    was = rfq.hold_reason
+    rfq.held_at = rfq.held_by = rfq.hold_reason = None
+    rfq.hold_remarks = None
+    audit.record('rfq.reactivated', 'rfq', rfq.id,
+                 old={'hold_reason': was},
+                 new={'held_seconds': int(held_for),
+                      'remarks': remarks},
+                 actor=actor,
+                 reason=f'reactivated after {held_for / 3600:.1f}h '
+                        f'on hold; that time is not counted against '
+                        f'anybody')
+    db.session.flush()
+    return True, {'held_seconds': int(held_for)}
+
+
+def set_priority(rfq, priority, *, actor, remarks=''):
+    """Change the priority, which moves every open step's due date."""
+    from app import db
+    from app.models.task_engine import TaskInstanceStatus
+    from app.services import audit
+
+    if not may_hold(actor, rfq):
+        return False, ('only the vertical head or a director can '
+                       'change the priority')
+    if priority not in PRIORITY_DAYS:
+        return False, f'priority must be one of {list(PRIORITY_DAYS)}'
+    was = rfq.priority
+    if was == priority:
+        return False, f'already {priority}'
+
+    rfq.priority = priority
+    for task in steps_for(rfq).values():
+        if task.status not in TaskInstanceStatus.OPEN:
+            continue
+        hours = standard_hours(task.step_no, priority)
+        if hours and task.started_at:
+            task.due_at = task.started_at + timedelta(
+                hours=hours,
+                seconds=int(task.paused_seconds or 0))
+    audit.record('rfq.priority_changed', 'rfq', rfq.id,
+                 old={'priority': was}, new={'priority': priority,
+                                             'remarks': remarks},
+                 actor=actor,
+                 reason=f'priority {was or "unset"} -> {priority}')
+    db.session.flush()
+    return True, {'priority': priority}
+
+
+def board(rfq):
+    """The twelve boxes, for the journey strip and the board."""
+    from app.models.task_engine import TaskInstanceStatus
+
+    live = steps_for(rfq)
+    out = []
+    for step in applicable(rfq):
+        task = live.get(step['no'])
+        if task is None:
+            state, colour, words = 'future', GREY, ''
+        elif task.status in TaskInstanceStatus.OPEN:
+            state = 'current'
+            colour, words = verdict(task, priority=rfq.priority)
+        else:
+            state, colour = 'done', GREEN
+            words = task.result or 'done'
+        out.append({
+            'step_no': step['no'], 'title': step['title'],
+            'state': state, 'colour': colour, 'words': words,
+            'owner': getattr(task, 'owner_user_id', '') or '',
+            'result': getattr(task, 'result', '') or '',
+            'closed_at': str(getattr(task, 'completed_at', '') or '')[:16],
+            'confirmable': step['no'] in CONFIRMABLE,
+        })
+    return out
+
+
+# ── Master Data (§8) ─────────────────────────────────────────────────
+DELAY_REASONS = (
+    'Awaiting vendor rate', 'Shipping line response pending',
+    'Insufficient RFQ information', 'Technical clarification pending',
+    'Route survey required', 'Customer clarification pending',
+    'Internal approval pending', 'Workload / resource constraint',
+    'System issue', 'Others',
+)
+GOOD_PRACTICE_REASONS = (
+    'Existing vendor relationship', 'Historical rate / database used',
+    'Complete customer information', 'Early vendor engagement',
+    'Standard solution available',
+    'Quick interdepartmental coordination', 'Others',
+)
+HOLD_REASONS = (
+    'Requirement closed by customer', 'Cancelled by customer',
+    'Postponed by customer', 'No longer commercially relevant',
+    'Others',
+)
+CONDITION_TYPES = (
+    'Condition', 'Assumption', 'Limitation', 'Exclusion',
+    'Special requirement', 'Customer-facing term',
+)
+SCREENING_OUTCOMES = (
+    'Complete — nothing missing',
+    'Missing: drawings / dimensions',
+    'Missing: site address / route',
+    'Missing: scope of work',
+    'Missing: required date',
+)
+COMPLETE_OUTCOME = SCREENING_OUTCOMES[0]
+
+LISTS = {
+    'rfq_delay_reason': DELAY_REASONS,
+    'rfq_good_practice_reason': GOOD_PRACTICE_REASONS,
+    'rfq_hold_reason': HOLD_REASONS,
+    'rfq_condition_type': CONDITION_TYPES,
+    'rfq_screening_outcome': SCREENING_OUTCOMES,
+}
+
+
+def seed_lists(*, actor='system'):
+    """Put the §8 vocabularies in Master Data. Caller commits."""
+    from app import db
+    from app.models.master_data import MasterItem
+
+    added, present = [], 0
+    for list_key, values in LISTS.items():
+        for order, code in enumerate(values):
+            if MasterItem.query.filter_by(list_key=list_key,
+                                          code=code).first():
+                present += 1
+                continue
+            db.session.add(MasterItem(list_key=list_key, code=code,
+                                      label=code, sort_order=order,
+                                      is_active=True))
+            added.append(f'{list_key}:{code}')
+    return added, present
+
+
+def reasons(kind):
+    """The live list for a dropdown, falling back to the seed."""
+    key = {'delay': 'rfq_delay_reason',
+           'good_practice': 'rfq_good_practice_reason',
+           'hold': 'rfq_hold_reason',
+           'condition_type': 'rfq_condition_type',
+           'screening': 'rfq_screening_outcome'}.get(kind)
+    if key is None:
+        return []
+    try:
+        from app.intel import master_codes
+        found = [c for c in master_codes(key) if c]
+        if found:
+            return found
+    except Exception:                                     # noqa: BLE001
+        pass
+    return list(LISTS.get(key, ()))

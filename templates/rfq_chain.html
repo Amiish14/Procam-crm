@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{% include "_csrf_fetch.html" %}
+<title>RFQ Chain — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .ch-wrap { max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
+  .ch-head { display:flex; align-items:baseline; gap:12px;
+      flex-wrap:wrap; margin-bottom:4px; }
+  .ch-head h1 { font-family:Barlow,sans-serif; font-size:23px;
+      font-weight:800; margin:0; }
+  .ch-lede { color:#6b7280; font-size:13.5px; margin:0 0 18px;
+      max-width:66ch; line-height:1.5; }
+  .ch-bars { display:grid; gap:4px; margin:0 0 20px;
+      grid-template-columns:repeat(12,1fr); align-items:end; }
+  .ch-bar { text-align:center; cursor:pointer; }
+  .ch-bar .fill { background:#e5e7eb; border-radius:4px 4px 0 0;
+      min-height:4px; transition:background .12s; }
+  .ch-bar.on .fill, .ch-bar:hover .fill { background:#111827; }
+  .ch-bar b { display:block; font-size:16px; font-weight:800;
+      line-height:1.3; }
+  .ch-bar span { display:block; font-size:9.5px; color:#6b7280;
+      line-height:1.25; margin-top:3px; min-height:24px; }
+  .ch-row { background:#fff; border:1px solid #e5e7eb;
+      border-radius:11px; padding:13px 15px; margin-bottom:10px; }
+  .ch-top { display:flex; gap:11px; align-items:baseline;
+      flex-wrap:wrap; }
+  .ch-no { font-weight:700; font-size:14.5px; }
+  .ch-sub { color:#6b7280; font-size:13px; flex:1;
+      min-width:200px; }
+  .ch-pri { font-size:11px; font-weight:700; border-radius:5px;
+      padding:2px 8px; background:#f3f4f6; color:#374151; }
+  .ch-pri.Critical { background:#fee2e2; color:#991b1b; }
+  .ch-pri.High { background:#ffedd5; color:#9a3412; }
+  .ch-when { font-size:12.5px; font-weight:600; }
+  .ch-strip { display:flex; gap:3px; margin-top:10px;
+      flex-wrap:wrap; }
+  .ch-box { width:26px; height:26px; border-radius:5px;
+      font-size:10.5px; font-weight:700; display:flex;
+      align-items:center; justify-content:center; color:#fff;
+      cursor:default; }
+  .ch-box.grey { background:#e5e7eb; color:#9ca3af; }
+  .ch-box.green { background:#16a34a; }
+  .ch-box.orange { background:#f59e0b; }
+  .ch-box.red { background:#dc2626; }
+  .ch-box.purple { background:#7c3aed; }
+  .ch-box.blue { background:#2563eb; }
+  .ch-holder { color:#6b7280; font-size:12px; margin-top:7px; }
+  .ch-empty { color:#6b7280; padding:34px 0; text-align:center; }
+  .ch-key { color:#9ca3af; font-size:11.5px; margin:16px 0 0; }
+</style>
+</head>
+<body>
+<div class="ch-wrap">
+  <div class="ch-head"><h1>RFQ chain</h1>
+    <span id="count" class="ch-pri">—</span></div>
+  <p class="ch-lede">
+    Where every RFQ is sitting now, and who is holding it. Each
+    box is one of the twelve steps, coloured by its own timer —
+    the time a step was on hold is never counted against anybody.
+  </p>
+  <div class="ch-bars" id="bars"></div>
+  <div id="list"><p class="ch-empty">Loading…</p></div>
+  <p class="ch-key">
+    green on time · orange due soon · red overdue ·
+    purple on hold · blue waiting on the customer · grey not reached
+  </p>
+</div>
+
+<script>
+const P = "{{ url_prefix }}";
+let FILTER = null, ROWS = [];
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+async function load() {
+  const r = await fetch(P + '/api/chain/board');
+  if (!r.ok) {
+    document.getElementById('list').innerHTML =
+      '<p class="ch-empty">This page is not switched on.</p>';
+    return;
+  }
+  const j = await r.json();
+  ROWS = j.rows;
+  const most = Math.max(1, ...j.bars.map(b => b.count));
+  document.getElementById('bars').innerHTML = j.bars.map(b => `
+    <div class="ch-bar ${FILTER === b.step_no ? 'on' : ''}"
+         onclick="pick(${b.step_no})" title="${esc(b.title)}">
+      <b>${b.count}</b>
+      <div class="fill" style="height:${6 + (b.count / most) * 46}px"></div>
+      <span>${esc(b.title)}</span>
+    </div>`).join('');
+  draw();
+}
+
+function pick(step) { FILTER = (FILTER === step) ? null : step; load(); }
+
+function draw() {
+  const rows = FILTER ? ROWS.filter(r => r.step_no === FILTER) : ROWS;
+  document.getElementById('count').textContent =
+    rows.length + (FILTER ? ' at this step' : ' RFQs');
+  const box = document.getElementById('list');
+  if (!rows.length) {
+    box.innerHTML = '<p class="ch-empty">No RFQs yet. The chain '
+      + 'fills as RFQs are registered.</p>';
+    return;
+  }
+  box.innerHTML = rows.map(row).join('');
+}
+
+function row(r) {
+  return `<div class="ch-row">
+    <div class="ch-top">
+      <span class="ch-no">${esc(r.rfq_number) || 'RFQ #' + r.rfq_id}</span>
+      <span class="ch-sub">${esc(r.subject)}</span>
+      ${r.priority ? `<span class="ch-pri ${esc(r.priority)}">${esc(r.priority)}</span>` : ''}
+      <span class="ch-when" style="color:${colour(r.colour)}">${esc(r.words)}</span>
+    </div>
+    <div class="ch-strip">${r.strip.map(boxFor).join('')}</div>
+    <div class="ch-holder">${r.holder
+      ? 'with ' + esc(r.holder) : 'nobody is holding it'}${
+      r.held ? ' · on hold' : ''}</div>
+  </div>`;
+}
+
+function boxFor(s) {
+  const cls = s.state === 'done' ? 'green' : s.colour;
+  const tip = `${s.step_no}. ${s.title}`
+    + (s.words ? ' — ' + s.words : '')
+    + (s.owner ? ' (' + s.owner + ')' : '');
+  return `<div class="ch-box ${cls}" title="${esc(tip)}">${s.step_no}</div>`;
+}
+
+function colour(c) {
+  return {red:'#dc2626', orange:'#b45309', green:'#15803d',
+          purple:'#6d28d9', blue:'#1d4ed8'}[c] || '#6b7280';
+}
+
+load();
+</script>
+</body>
+</html>

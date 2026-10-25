@@ -132,6 +132,34 @@ class TaskInstance(db.Model):
     # '<key>.escalated' matches no TaskDefinition, and tasks only close
     # by matching one. An escalation is a thing that happened to a
     # task, not a second task, so it is three columns on the original.
+    # ── CRM-RFQ-CHAIN-01: what a chain needs and the engine lacks ──
+    #: Which of the twelve steps this is. Null for every task that
+    #: is not part of an RFQ chain, which is all 3,693 existing
+    #: ones — the chain is an addition, not a reinterpretation.
+    step_no = db.Column(db.SmallInteger, index=True)
+
+    #: Seconds this step spent on hold. Never counted as work: an
+    #: RFQ held for a week by a director is not a week of somebody
+    #: being slow, and reporting it as one would make the hold
+    #: button the thing people avoid.
+    paused_seconds = db.Column(db.Integer, nullable=False, default=0)
+    held_at = db.Column(db.DateTime)
+    held_by = db.Column(db.String(20))
+    hold_reason = db.Column(db.String(120))
+    hold_remarks = db.Column(db.String(400))
+
+    #: Early / On time / Delayed, computed from the timestamps at
+    #: the moment of closing and then frozen. Recomputing it later
+    #: would quietly rewrite history every time a setting changed.
+    result = db.Column(db.String(12), index=True)
+    delay_reason = db.Column(db.String(120))
+    good_practice_reason = db.Column(db.String(120))
+    reason_remarks = db.Column(db.String(400))
+
+    #: Step 3 stays open while the customer is chased, rather than
+    #: closing on a question nobody has answered.
+    waiting_for_customer = db.Column(db.Boolean, default=False)
+
     escalated = db.Column(db.Boolean, nullable=False, default=False,
                           index=True)
     #: The role it was escalated to, from TaskDefinition.escalation_role.

@@ -6223,6 +6223,9 @@ for _mod_path, _bp_name in [
     # Account check: the queue of leads with no confirmed customer.
     # Every route answers 404 while FEATURE_ACCOUNT_FIRST is off.
     ('app.account_check.routes', 'account_check_bp'),
+    # The 12-step RFQ chain. Every route answers 404 while
+    # FEATURE_RFQ_CHAIN is off.
+    ('app.rfq_chain.routes',     'rfq_chain_bp'),
     # The TMS integration API. Exempted from CSRF below, because it is
     # authenticated by a bearer token rather than by a session cookie —
     # a CSRF token is a defence against a browser being used as a

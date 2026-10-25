@@ -91,6 +91,9 @@ FLAGS = (
     ('FEATURE_ACCOUNT_FIRST',
      'Every lead belongs to an account with an owner before anyone '
      'works it (CRM-ACCOUNT-FIRST-01)', False),
+    ('FEATURE_RFQ_CHAIN',
+     'The 12-step RFQ chain: timers from the priority, holds, and '
+     'the chain board (CRM-RFQ-CHAIN-01)', False),
     (KILL_SWITCH, 'Stop all outbound CRM email immediately', False),
 )
 

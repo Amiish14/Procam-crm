@@ -93,6 +93,28 @@ class RFQ(db.Model):
     status         = db.Column(db.String(24), default='Received',
                                index=True, nullable=False)
 
+    # ── CRM-RFQ-CHAIN-01 (R2) ──
+    #: D3. Drives every step's standard time, so it is the one
+    #: field the whole chain's timing hangs off.
+    priority       = db.Column(db.String(16), index=True)
+    #: What the customer asked for, read from their mail where it
+    #: says so. Separate from `quote_by_date`, which is our own
+    #: internal target: a deadline we set and one we were given are
+    #: different facts, and conflating them hides the ones we are
+    #: about to miss.
+    customer_deadline = db.Column(db.Date)
+    #: Ticked at registration (§4.4). N/A for air and sea freight.
+    needs_technical = db.Column(db.Boolean, default=False)
+    needs_survey    = db.Column(db.Boolean, default=False)
+    registered_at   = db.Column(db.DateTime)
+    registered_by   = db.Column(db.String(20))
+    #: Whole-RFQ hold, distinct from a single step's. Only a head
+    #: or a director (D5), always with a reason.
+    held_at         = db.Column(db.DateTime)
+    held_by         = db.Column(db.String(20))
+    hold_reason     = db.Column(db.String(120))
+    hold_remarks    = db.Column(db.String(400))
+
     created_by_id  = db.Column(db.String(20))
     created_at     = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at     = db.Column(db.DateTime, default=datetime.utcnow,
@@ -234,3 +256,55 @@ class RateSourcingLine(db.Model):
             'created_at':          str(self.created_at)[:19] if self.created_at else '',
             'updated_at':          str(self.updated_at)[:19] if self.updated_at else '',
         }
+
+
+class RfqCondition(db.Model):
+    """What a department says must be true for its part of the job.
+
+    CRM-RFQ-CHAIN-01 §4.6. Each of steps 4-7 ticks its conditions
+    while closing, from the vertical's terms library, plus one free
+    line if the list does not cover it.
+
+    `visibility` is the field that matters. An internal note and a
+    customer-facing term look identical when they are typed and are
+    very different when a quotation goes out, and the only reliable
+    way to keep an internal remark off a customer's PDF is to have
+    recorded which it was at the moment somebody wrote it.
+    """
+    __tablename__ = 'rfq_conditions'
+
+    CUSTOMER = 'customer'
+    INTERNAL = 'internal'
+
+    id = db.Column(db.Integer, primary_key=True)
+    rfq_id = db.Column(db.Integer, db.ForeignKey('rfqs.id'),
+                       nullable=False, index=True)
+    step_no = db.Column(db.SmallInteger, index=True)
+
+    #: Condition / Assumption / Limitation / Exclusion / Special
+    #: requirement / Customer-facing term — a Master Data list.
+    type = db.Column(db.String(40))
+    text = db.Column(db.Text, nullable=False)
+    visibility = db.Column(db.String(12), nullable=False,
+                           default=INTERNAL)
+
+    created_by = db.Column(db.String(20))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow,
+                           index=True)
+    #: Set when the condition has passed commercial approval and may
+    #: flow into a quote.
+    approved = db.Column(db.Boolean, default=False, index=True)
+
+    def customer_facing(self):
+        return self.visibility == self.CUSTOMER
+
+    def to_dict(self):
+        return {'id': self.id, 'rfq_id': self.rfq_id,
+                'step_no': self.step_no, 'type': self.type or '',
+                'text': self.text or '',
+                'visibility': self.visibility,
+                'customer_facing': self.customer_facing(),
+                'created_by': self.created_by or '',
+                'created_at': str(self.created_at)[:16]
+                if self.created_at else '',
+                'approved': bool(self.approved)}
