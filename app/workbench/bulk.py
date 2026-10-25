@@ -161,6 +161,12 @@ def plan(ids, action, value, sc):
         # than moved without it. Skipping is the right shape here:
         # the other forty in the selection should still go through.
         if action == 'set_stage':
+            from app.services import stage_map as _sm
+            if _sm.retired(stored) is not None:
+                skipped.append({
+                    'id': lid, 'name': lead.company,
+                    'reason': _sm.retired(stored)})
+                continue
             from app.services import value_gate
             if value_gate.check(lead, stored) is not None:
                 skipped.append({

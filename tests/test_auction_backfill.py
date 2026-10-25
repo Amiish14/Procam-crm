@@ -55,7 +55,8 @@ OWNER = 'EMP_AUCT'
 
 
 def _purge():
-    for model in (Lead, AuditEvent):
+    from app.models.task_engine import TaskInstance
+    for model in (Lead, AuditEvent, TaskInstance):
         model.query.delete()
     Employee.query.filter(Employee.emp_code.in_(
         (OWNER, 'EMP_OTHER'))).delete(synchronize_session=False)
@@ -273,3 +274,82 @@ def test_an_ordinary_enquiry_is_not_swept_up():
         db.session.add(lead)
         db.session.commit()
         assert ab.survey() == []
+
+
+# ── the ones that closed before anybody looked ───────────────────────
+def test_an_overdue_auction_gets_a_task_to_record_the_outcome():
+    from app.models.task_engine import TaskInstance
+
+    with flask_app.app_context():
+        lead = _lead('Reverse Auction | 03/09/2026 @ 3:00 PM')
+        rows = ab.survey()
+        ab.apply_rows(rows)
+        ab.mark_overdue(rows, OWNER)
+        db.session.commit()
+
+        task = TaskInstance.query.filter_by(
+            task_key=ab.OVERDUE_TASK, entity_id=lead.id).first()
+        assert task is not None
+        assert task.owner_user_id == OWNER
+        # The question, not a nudge to go and bid on a closed auction.
+        assert 'bid' in (task.notes or '')
+        assert '03 Sep 2026' in (task.notes or '')
+
+
+def test_an_auction_still_open_gets_no_such_task():
+    from app.models.task_engine import TaskInstance
+
+    with flask_app.app_context():
+        later = date.today() + timedelta(days=14)
+        _lead(f'Reverse Auction | {later:%d/%m/%Y} @ 3:00 PM')
+        rows = ab.survey()
+        ab.mark_overdue(rows, OWNER)
+        db.session.commit()
+        assert TaskInstance.query.filter_by(
+            task_key=ab.OVERDUE_TASK).count() == 0
+
+
+def test_an_auction_with_no_stated_deadline_gets_no_task():
+    """Not stated is not overdue. Guessing would raise a task on
+    every Ariba enquiry in the system."""
+    from app.models.task_engine import TaskInstance
+
+    with flask_app.app_context():
+        _lead('FW: 2 x 40 HC Kolkata : Eta at Haldia 20.10.26')
+        ab.mark_overdue(ab.survey(), OWNER)
+        db.session.commit()
+        assert TaskInstance.query.filter_by(
+            task_key=ab.OVERDUE_TASK).count() == 0
+
+
+def test_running_it_twice_raises_one_task():
+    from app.models.task_engine import TaskInstance
+
+    with flask_app.app_context():
+        _lead('Reverse Auction | 03/09/2026 @ 3:00 PM')
+        for _ in range(2):
+            ab.mark_overdue(ab.survey(), OWNER)
+            db.session.commit()
+        assert TaskInstance.query.filter_by(
+            task_key=ab.OVERDUE_TASK).count() == 1
+
+
+def test_down_closes_the_tasks_rather_than_destroying_them():
+    """A revert that leaves them open asks somebody to act on a
+    decision that no longer exists — but the record of having
+    raised one stays, because nothing here is hard-deleted."""
+    from app.models.task_engine import TaskInstance, TaskInstanceStatus
+
+    with flask_app.app_context():
+        _lead('Reverse Auction | 03/09/2026 @ 3:00 PM')
+        rows = ab.survey()
+        ab.apply_rows(rows)
+        ab.mark_overdue(rows, OWNER)
+        db.session.commit()
+        ab.undo()
+        db.session.commit()
+        tasks = TaskInstance.query.filter_by(
+            task_key=ab.OVERDUE_TASK).all()
+        assert len(tasks) == 1
+        assert tasks[0].status == TaskInstanceStatus.CANCELLED
+        assert 'withdrawn' in tasks[0].notes

@@ -182,7 +182,12 @@ LEGACY_STAGE_MAP = {
     'Decision Taken':   'RFQ Generated',
     **_stage_map.ALIASES,
 }
-DECISION_OUTCOMES = ['Won', 'Lost', 'On Hold', 'Not Interested']
+# What a person may choose when closing a lead. "Not Interested"
+# was removed on 25 October: it is Lost with a reason, and leaving
+# it on the screen is why three more leads were filed under it in
+# the three days after R2 converted the previous 1,212.
+DECISION_OUTCOMES = [s for s in ('Won', 'Lost', 'On Hold')
+                     if not _stage_map.retired(s)]
 
 db = SQLAlchemy(app)
 
@@ -2591,6 +2596,11 @@ def api_update_lead(lid):
     # CRM-VALUE-01, before any field is written. The form may be
     # submitting the value in the same save, which satisfies the gate.
     if 'stage' in d and (d.get('stage') or '') != (lead.stage or ''):
+        _retired = _stage_map.retired(d.get('stage'))
+        if _retired:
+            db.session.rollback()
+            return jsonify({'error': _retired,
+                            'needs': 'lost_reason'}), 400
         from app.services import value_gate
         _refused = value_gate.check(lead, d.get('stage'), d)
         if _refused:
@@ -3217,6 +3227,10 @@ def api_lead_decision(lid):
     _old_stage_decision = lead.stage
     data = request.get_json() or {}
     outcome = (data.get('outcome') or '').strip()
+    _retired = _stage_map.retired(outcome)
+    if _retired:
+        return jsonify({'ok': False, 'error': _retired,
+                        'needs': 'lost_reason'}), 400
     if outcome not in DECISION_OUTCOMES:
         return jsonify({'ok': False,
                         'error': f'Outcome must be one of {DECISION_OUTCOMES}'}), 400

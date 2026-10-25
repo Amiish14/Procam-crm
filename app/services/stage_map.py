@@ -59,6 +59,26 @@ ALIASES = {
 
 TERMINAL = ('Won', 'Lost', 'On Hold', 'Not Interested')
 
+#: Stages that still exist in history but may no longer be chosen.
+#:
+#: R2 converted 1,212 "Not Interested" leads to Lost and left the
+#: option on the screen, so three more were filed under it within
+#: three days — the conversion fixed the data and not the cause.
+#: It stays in TERMINAL, because the leads that carried it are
+#: genuinely closed and every report that counts closed work must
+#: keep counting them; it just cannot be picked again.
+RETIRED = {
+    'Not Interested': ('"Not Interested" is no longer a stage. Close '
+                       'the lead as Lost and choose "Not interested" '
+                       'as the reason — same outcome, and it stays '
+                       'visible to the lost-reason reports.'),
+}
+
+
+def retired(stage):
+    """The sentence to show, or None if this stage may still be set."""
+    return RETIRED.get((stage or '').strip())
+
 #: Working days a stage is expected to take. Orange past it, red past
 #: twice it. Deliberately not in Master Data yet: a number an
 #: administrator can change is a number somebody will change before

@@ -41,6 +41,13 @@ ACTION = 'lead.type_backfilled'
 DIGEST_EVENT = 'auction.backfill_digest'
 DAYS = 90
 
+#: An auction whose closing date has passed needs an outcome, not a
+#: reminder to bid. A task, because the digest is one mail that gets
+#: archived and the question — did we bid, and why not — is the only
+#: thing that tells us which lanes are worth bidding next time.
+OVERDUE_TASK = 'auction.close_outcome'
+OVERDUE_TITLE = 'Auction closed — record bid / not bid'
+
 #: A date that is an auction deadline, not a cargo ETA. The
 #: context word has to be there: "reverse auction | 05/10/2026",
 #: "best rate up to 14.09.2026", "auction start date-time".
@@ -163,6 +170,55 @@ def apply_rows(rows, *, actor='CRM-FORWARD-01b'):
     return typed, assigned, watched
 
 
+def mark_overdue(rows, owner, *, actor='CRM-FORWARD-01b'):
+    """One task per auction whose closing date has already passed."""
+    from datetime import timedelta
+
+    from app.models.task_engine import TaskInstance, TaskInstanceStatus
+    from app.services import audit
+
+    made = []
+    for row in rows:
+        if not (row['open'] and row['overdue']):
+            continue
+        lead = row['lead']
+        already = (TaskInstance.query
+                   .filter(TaskInstance.task_key == OVERDUE_TASK,
+                           TaskInstance.entity_type == 'Lead',
+                           TaskInstance.entity_id == lead.id,
+                           TaskInstance.status.in_(
+                               TaskInstanceStatus.OPEN))
+                   .first())
+        if already is not None:
+            continue
+        when = f"{row['closing']:%d %b %Y}" + (f" {row['clock']}"
+                                               if row['clock'] else '')
+        task = TaskInstance(
+            task_key=OVERDUE_TASK, entity_type='Lead',
+            entity_id=lead.id,
+            entity_display=(lead.company or f'Lead #{lead.id}')[:120],
+            owner_user_id=owner or lead.assigned_to,
+            status=TaskInstanceStatus.PENDING, priority=2,
+            action_route=f'/?lead={lead.id}',
+            due_at=datetime.utcnow() + timedelta(days=2),
+            notes=(f'{OVERDUE_TITLE}. This auction closed {when} and '
+                   f'the lead is still open. Record whether we bid '
+                   f'and, if not, why — that is what tells us which '
+                   f'lanes are worth bidding next time. Then close '
+                   f'the lead.'))
+        db.session.add(task)
+        db.session.flush()
+        audit.record('task.created', 'task', str(task.id),
+                     new={'task_key': OVERDUE_TASK, 'lead_id': lead.id,
+                          'owner': task.owner_user_id,
+                          'closed_on': str(row['closing'])},
+                     actor=actor,
+                     reason='an open auction whose closing date has '
+                            'passed')
+        made.append((lead, when))
+    return made
+
+
 def _name_of(emp_code):
     from app import Employee
     row = Employee.query.filter_by(emp_code=emp_code).first()
@@ -235,7 +291,26 @@ def _esc(text):
 
 def undo(*, actor='CRM-FORWARD-01b'):
     from app.models.audit import AuditEvent
+    from app.models.task_engine import TaskInstance, TaskInstanceStatus
     from app.services import audit
+
+    # The tasks first: a revert that leaves them open asks somebody
+    # to act on a decision that no longer exists. Cancelled rather
+    # than deleted — this CRM does not destroy records, and a task
+    # that was raised and withdrawn is itself worth being able to
+    # see.
+    dropped = 0
+    for task in (TaskInstance.query
+                 .filter(TaskInstance.task_key == OVERDUE_TASK,
+                         TaskInstance.status.in_(
+                             TaskInstanceStatus.OPEN)).all()):
+        task.status = TaskInstanceStatus.CANCELLED
+        task.notes = ((task.notes or '') +
+                      ' | withdrawn: the auction backfill was '
+                      'reverted')[:2000]
+        dropped += 1
+    if dropped:
+        print(f'  {dropped} overdue-auction task(s) cancelled')
 
     cleared = 0
     for ev in (AuditEvent.query
@@ -354,6 +429,7 @@ def main():
                 'swept.')
 
         typed, assigned, watched = apply_rows(rows, actor=args.actor)
+        marked = mark_overdue(rows, owner, actor=args.actor)
         queued = send_digest(rows, actor=args.actor)
         try:
             db.session.commit()
@@ -368,6 +444,11 @@ def main():
         print(f'  {len(assigned)} open one(s) assigned to {owner}.')
         for lead, was in watched:
             print(f'    #{lead.id}: {was} kept as watcher')
+        for lead, when in marked:
+            print(f'  #{lead.id}: task raised — closed {when}, '
+                  f'needs bid / not bid')
+        if not marked:
+            print('  no overdue auctions needed a task')
         print(f'  digest: '
               + ('queued to the owner' if queued
                  else 'not queued — no live ones, or no address on '

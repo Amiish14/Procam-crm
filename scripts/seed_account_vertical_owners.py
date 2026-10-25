@@ -36,7 +36,11 @@ GOOD_STAGES_EXTRA = ('Won',)
 #: Organisational groupings, and the fallback a lead should never be
 #: seeded against. Management owns unmapped notifications; it does
 #: not serve customers.
-NOT_A_SERVICE = ('Management', 'All')
+# "Other" joins them on 25 October: it is a vertical in the head
+# table so that unplaceable mail has somewhere to go, not a service
+# anybody sells. Seeding an owner "for Other" names a person as
+# responsible for work that has no description.
+NOT_A_SERVICE = ('Management', 'All', 'Other')
 
 
 def main():
