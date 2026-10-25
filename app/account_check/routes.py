@@ -520,6 +520,17 @@ def api_bulk_confirm():
         # Recomputed, not read. This is the guard that makes a bulk
         # action safe to offer at all.
         found = account_suggest.suggest_for(lead)
+
+        # Asked before the match quality, because "Email is a
+        # placeholder, not a company" tells a head what to do and
+        # "no longer a single exact match" does not.
+        from app.services import account_match as _am
+        _suggested = db.session.get(Company, found['account_id'] or 0)
+        _why = _am.not_a_customer(_suggested) if _suggested else ''
+        if _why:
+            skipped.append({'lead_id': lead_id, 'why': _why})
+            continue
+
         if not found['exact_single'] or not found['account_id']:
             skipped.append({'lead_id': lead_id,
                             'why': 'no longer a single exact match'})

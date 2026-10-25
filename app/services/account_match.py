@@ -380,6 +380,49 @@ def _by_name(company_name):
     return None
 
 
+# ── accounts that are not customers ─────────────────────────────────
+#: Names that describe the row's emptiness rather than a company.
+#: Real rows carry these today: #983 "Unknown", #847 "New Lead",
+#: #709 "Email", #762 "Info".
+PLACEHOLDER_NAMES = frozenset((
+    'unknown', 'new lead', 'email', 'info', 'n/a', 'na', 'test',
+    'customer', 'client', 'none', '-', '--', '.',
+))
+
+
+def not_a_customer(account):
+    """Why this account must never be linked to automatically, or ''.
+
+    Two kinds, both found in live data:
+
+    A placeholder name. Every lead filed under "Unknown" looks
+    placed, so it never reaches Account check, and the histories of
+    several real customers pool under one meaningless row — #847
+    "New Lead" holds both fried-sped.de and jindalstainless.com.
+
+    Our own domain. #983 "Unknown" lists `procamgroup.in`, so every
+    internal forward matched it on an exact rule. Nothing had
+    linked to it yet only because the flag was still off.
+    """
+    if account is None:
+        return 'no account'
+    name = (getattr(account, 'name', '') or '').strip().lower()
+    if name in PLACEHOLDER_NAMES:
+        return f'"{account.name}" is a placeholder, not a company'
+    try:
+        from app.services.mail_signals import OUR_DOMAINS
+        for raw in (getattr(account, 'email_domains', None) or []):
+            domain = str(raw).strip().lower()
+            if any(domain == d or domain.endswith('.' + d)
+                   for d in OUR_DOMAINS):
+                return (f'"{account.name}" claims our own domain '
+                        f'({domain}) — it would swallow every '
+                        f'internal forward')
+    except Exception:                                     # noqa: BLE001
+        pass
+    return ''
+
+
 # ── CRM-ACCOUNT-FIRST-01: every hit, not just the first ──────────────
 #: Rules that identify a customer exactly. A hit on one of these is a
 #: fact about the sender; the rest are inferences from a name.
@@ -534,11 +577,15 @@ def auto_link(from_addr, *, company_name=None, text=None):
         return None, UNMAPPED
 
     learned = [r for r in rows if r['rule'] == 'learned email']
-    if learned:
+    if learned and not not_a_customer(learned[0]['account']):
         return learned[0]['account'], learned[0]['rule']
 
     exact = [r for r in rows if r['exact']]
     if len(exact) != 1:
+        return None, UNMAPPED
+    # Never unasked into a placeholder or an account holding our
+    # own domain, however exact the rule that found it.
+    if not_a_customer(exact[0]['account']):
         return None, UNMAPPED
     # "No name-only alternative" means another account the name
     # genuinely resolves to — not every string within 60% of it.

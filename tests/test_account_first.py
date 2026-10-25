@@ -54,6 +54,12 @@ from app.services import account_gate, account_match, flags   # noqa: E402
 VERTICAL = 'Heavy Transport'
 HEAD, REP, OTHER = 'EMP_HEAD', 'EMP_REP', 'EMP_OTH'
 
+#: Accounts this module made, by id. Purging on `name LIKE 'ZZ%'`
+#: alone leaked: one test renames its account to "Email" to check
+#: the placeholder guard, the name stops matching, the row survives
+#: and competes for the same domain in the next test.
+_MADE = set()
+
 
 def _purge():
     # SenderAccountLink too: confirming an account teaches the
@@ -62,8 +68,10 @@ def _purge():
     for model in (Lead, AccountVerticalOwner, AccountOwnerConfirmation,
                   SenderAccountLink, LeadAccountSuggestion):
         model.query.delete()
-    Company.query.filter(Company.name.like('ZZ%')).delete(
+    Company.query.filter(db.or_(Company.name.like('ZZ%'),
+                                Company.id.in_(_MADE or {-1}))).delete(
         synchronize_session=False)
+    _MADE.clear()
     Employee.query.filter(Employee.emp_code.in_(
         (HEAD, REP, OTHER))).delete(synchronize_session=False)
     VerticalHead.query.filter_by(vertical=VERTICAL).delete(
@@ -126,6 +134,7 @@ def _account(name='ZZ Steel', *, owner=None, domain=None):
                       email_domains=[domain] if domain else [])
     db.session.add(account)
     db.session.flush()
+    _MADE.add(account.id)
     if owner:
         db.session.add(AccountVerticalOwner(
             account_id=account.id, vertical=VERTICAL, emp_code=owner,
@@ -744,3 +753,63 @@ def test_resemblances_are_tagged_so_a_person_still_sees_them():
         kinds = {r['name']: r['kind'] for r in rows}
         assert kinds['ZZ Domain Co'] in ('exact', 'name')
         assert kinds.get('ZZ Domain Cx') == 'resemblance'
+
+
+# ── accounts that are not customers ──────────────────────────────────
+@pytest.mark.parametrize('name', ['Unknown', 'New Lead', 'Email',
+                                  'Info', 'N/A', '-'])
+def test_a_placeholder_account_is_never_linked_unasked(name):
+    with flask_app.app_context():
+        _on()
+        _account(name=name, domain='zzsteel.com')
+        linked, _how = account_match.auto_link('buyer@zzsteel.com')
+        assert linked is None
+
+
+def test_an_account_holding_our_own_domain_is_refused():
+    """#983 'Unknown' lists procamgroup.in. With the flag on it
+    would have swallowed every internal forward."""
+    from app.services.mail_signals import OUR_DOMAINS
+
+    with flask_app.app_context():
+        _on()
+        ours = sorted(OUR_DOMAINS)[0]
+        account = _account(name='ZZ Looks Real', domain=ours)
+        assert account_match.not_a_customer(account)
+        linked, _how = account_match.auto_link(f'colleague@{ours}')
+        assert linked is None
+
+
+def test_a_real_account_is_not_caught_by_the_guard():
+    with flask_app.app_context():
+        _on()
+        account = _account(name='ZZ Steel Industries',
+                           domain='zzsteel.com')
+        assert account_match.not_a_customer(account) == ''
+
+
+def test_bulk_confirm_refuses_a_placeholder_too():
+    """auto_link is one caller, not the gate."""
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(_ROOT, 'scripts'))
+    import account_suggestions as pass_
+    from app.models.assignment import LeadAccountSuggestion
+
+    with flask_app.app_context():
+        _on()
+        account = _account(name='ZZ Real Co', domain='zzsteel.com',
+                           owner=REP)
+        lead_id = _lead().id
+        pass_.run(write=True)
+        # It qualified; now the account turns out to be a
+        # placeholder, as #709 "Email" did.
+        account.name = 'Email'
+        db.session.commit()
+        assert LeadAccountSuggestion.query.filter_by(
+            lead_id=lead_id).first().exact_single is True
+    client = flask_app.test_client()
+    with client.session_transaction() as s:
+        s['emp_code'] = HEAD
+    body = _bulk(client, [lead_id]).get_json()
+    assert body['confirmed'] == 0
+    assert 'placeholder' in body['skipped'][0]['why']
