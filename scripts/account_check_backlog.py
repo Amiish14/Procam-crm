@@ -50,7 +50,13 @@ def survey():
         if not why:
             continue
         vertical = account_gate.vertical_of(lead) or UNSET
-        bucket = 'no account' if why == 'no account' else 'no owner'
+        # startswith, not equality: the placeholder reason reads
+        # 'no account — "Unknown" is a placeholder…', and matching
+        # exactly filed 159 of them under "no owner", which sent
+        # a staffing question to a head who actually has a
+        # matching problem.
+        bucket = ('no account' if why.startswith('no account')
+                  else 'no owner')
         out[vertical][bucket] += 1
         out[vertical]['leads'].append(lead)
     return out, len(rows)
