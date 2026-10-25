@@ -82,6 +82,13 @@ _GATES = (
     # (D6) — because it depends on the record, not on the route.
     (re.compile(r"@_gate\b"), 'FEATURE_ACCOUNT_FIRST, then signed in; '
                               'clearing is head-of-vertical or admin'),
+    # R4's two decorators are built by a factory, so the name above
+    # the def is what there is to match on. Same shape as the rest:
+    # the flag first, then the session, then records by scope.
+    (re.compile(r"@_journey\b"), 'FEATURE_LEAD_JOURNEY, then signed '
+                                 'in; records by scope'),
+    (re.compile(r"@_funnel\b"), 'FEATURE_PRE_RFQ_FUNNEL, then signed '
+                                'in; records by scope'),
     (re.compile(r"session\.get\('emp_code'\)|_current_emp_code\(\)|"
                 r"'emp_code' not in session"), 'signed in (checked inline)'),
     (re.compile(r"require_auth|_login_required|_require_login|_authed\(\)"),

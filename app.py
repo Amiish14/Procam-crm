@@ -676,6 +676,21 @@ class Lead(db.Model):
     #: Which platform it came through — superprocure, ariba. From
     #: the Master Data patterns, not a list in code.
     lead_platform    = db.Column(db.String(40), index=True)
+
+    # ── CRM-LEAD-JOURNEY-01 (R4) ──
+    #: How the lead reached us (§6.1). Four channels the CRM works
+    #: out for itself; the rest a person picks. `_auto` records
+    #: which, because "Inbound" chosen by a person and "Inbound"
+    #: deduced by a rule are different kinds of fact and the
+    #: funnel's conversion maths leans on the second.
+    lead_channel      = db.Column(db.String(40), index=True)
+    lead_channel_auto = db.Column(db.Boolean, default=False)
+    #: Asked once, when "Meeting held" is logged.
+    expected_rfq_timing = db.Column(db.String(32), index=True)
+    #: Asked once. "No" closes the lead.
+    capability_fit    = db.Column(db.String(32))
+    #: Asked once, when "RFQ expected" is logged.
+    rfq_expected_date = db.Column(db.Date, index=True)
     #: Did we bid, and why not. Asked when an auction lead closes,
     #: because "which lanes do we win" cannot be answered from a
     #: lost_reason free-text box.
@@ -6226,6 +6241,9 @@ for _mod_path, _bp_name in [
     # The 12-step RFQ chain. Every route answers 404 while
     # FEATURE_RFQ_CHAIN is off.
     ('app.rfq_chain.routes',     'rfq_chain_bp'),
+    # One lead record and the pre-RFQ funnel. 404 while
+    # FEATURE_LEAD_JOURNEY / FEATURE_PRE_RFQ_FUNNEL are off.
+    ('app.journey.routes',       'journey_bp'),
     # The TMS integration API. Exempted from CSRF below, because it is
     # authenticated by a bearer token rather than by a session cookie —
     # a CSRF token is a defence against a browser being used as a

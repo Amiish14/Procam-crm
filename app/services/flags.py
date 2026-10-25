@@ -98,6 +98,12 @@ FLAGS = (
      'A revision keeps the first quote number (Rev-00, Rev-01), '
      'conditions flow in from the RFQ steps, and the PDF carries '
      'the letterhead (CRM-QUOTE-REV-02)', False),
+    ('FEATURE_PRE_RFQ_FUNNEL',
+     'Log activity moves the account stage, automatic lead '
+     'channels, and RFQ targets (CRM-LEAD-JOURNEY-01)', False),
+    ('FEATURE_LEAD_JOURNEY',
+     'One lead record: the 8 + 12 journey flowchart and the '
+     'time-per-step chart', False),
     (KILL_SWITCH, 'Stop all outbound CRM email immediately', False),
 )
 

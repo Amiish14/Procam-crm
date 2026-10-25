@@ -759,3 +759,94 @@ def _display(quote):
         return quote_rev.display_number(quote)
     except Exception:                                     # noqa: BLE001
         return quote.quote_number or ''
+
+
+def on_po_recorded(rfq, *, actor, po_number, amount=None,
+                   awarded_on=None):
+    """Step 11 closes when a PO or LOI is actually recorded.
+
+    The customer's own clock runs on step 11, so it is never
+    late — but it does close, and the PO number is the evidence
+    that it did. Recording the number is the whole point: "Won"
+    without a reference is a claim nobody can check against the
+    customer's system later.
+    """
+    from app import db
+
+    if not enabled():
+        return False, 'the chain is off'
+    if not (po_number or '').strip():
+        return False, ('a PO or LOI reference is required — "Won" '
+                       'with no reference cannot be checked against '
+                       'the customer later')
+    ok, detail = close_step(
+        rfq, 11, actor=actor, event='po_recorded',
+        evidence={'po_number': po_number.strip()[:60],
+                  'amount': float(amount) if amount else None,
+                  'awarded_on': str(awarded_on or '')[:10],
+                  'recorded_by': actor})
+    if ok:
+        db.session.flush()
+    return ok, detail
+
+
+def on_handover_sent(rfq, *, actor, pack_ref=''):
+    """Step 12 closes when the existing Won handover pack goes.
+
+    Not a new handover. The pack that `ff_handover` / `job_handover`
+    already builds is the event; this only records that the chain
+    has ended, so the twelve boxes finish where the work does.
+    """
+    from app import db
+
+    if not enabled():
+        return False, 'the chain is off'
+    ok, detail = close_step(
+        rfq, 12, actor=actor, event='handover_sent',
+        evidence={'pack_ref': (pack_ref or '')[:120],
+                  'sent_by': actor})
+    if ok:
+        db.session.flush()
+    return ok, detail
+
+
+def journey(lead):
+    """The 8 pre-RFQ boxes and the 12 chain boxes, for one lead.
+
+    §6.4. One flowchart, so a person sees where the work is
+    without reading two screens and joining them in their head.
+    """
+    from app import Company, db
+    from app.services import lead_journey as lj
+
+    account = (db.session.get(Company, lead.company_id)
+               if lead.company_id else None)
+    stage = getattr(account, 'dev_stage', None) or ''
+    here = lj.stage_rank(stage)
+
+    before = []
+    from presales.models import ACCOUNT_DEV_STAGES
+    for name in ACCOUNT_DEV_STAGES[:8]:
+        rank = lj.stage_rank(name)
+        before.append({
+            'title': name,
+            'state': ('done' if here > rank else
+                      'current' if here == rank else 'future'),
+        })
+
+    rfq = _rfq_of_lead(lead)
+    after = board(rfq) if rfq is not None else [
+        {'step_no': s['no'], 'title': s['title'], 'state': 'future',
+         'colour': GREY, 'words': '', 'owner': '', 'result': '',
+         'closed_at': '', 'confirmable': s['no'] in CONFIRMABLE}
+        for s in STEPS]
+    return {'before': before, 'after': after,
+            'dev_stage': stage,
+            'rfq_number': getattr(rfq, 'rfq_number', '') or '',
+            'closed': (lead.stage or '') in ('Won', 'Lost')}
+
+
+def _rfq_of_lead(lead):
+    from app.models.rfq import RFQ
+    return (RFQ.query.filter_by(lead_id=lead.id)
+            .order_by(RFQ.id.desc()).first())
