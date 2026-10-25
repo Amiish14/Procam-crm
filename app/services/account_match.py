@@ -408,9 +408,19 @@ def candidates(from_addr, *, company_name=None, text=None):
     free = is_free_mail(domain)
     seen, out = {}, []
 
-    def offer(account, rule, note=''):
+    def offer(account, rule, note='', kind=''):
+        """`kind`: 'exact', 'name', or 'resemblance'.
+
+        The distinction matters more than it looks. A resemblance
+        is "these two strings are 60% alike" — useful to show a
+        person, and no evidence at all. Before it was tagged, every
+        resemblance counted as a rival claim and disqualified the
+        domain match beside it: of 352 leads with a clear domain
+        hit, exactly one survived as unambiguous.
+        """
         if account is None:
             return
+        kind = kind or ('exact' if rule in EXACT_RULES else 'name')
         prior = seen.get(account.id)
         if prior is not None:
             # Keep the surest rule, but record that another agreed:
@@ -418,10 +428,14 @@ def candidates(from_addr, *, company_name=None, text=None):
             # the screen can show.
             if rule not in prior['also']:
                 prior['also'].append(rule)
+            if kind != 'resemblance' and prior['kind'] == 'resemblance':
+                prior.update(rule=rule, note=note, kind=kind,
+                             exact=rule in EXACT_RULES)
             return
         row = {'account': account, 'account_id': account.id,
                'name': account.name, 'rule': rule, 'note': note,
-               'also': [], 'exact': rule in EXACT_RULES}
+               'also': [], 'exact': rule in EXACT_RULES,
+               'kind': kind}
         seen[account.id] = row
         out.append(row)
 
@@ -463,17 +477,18 @@ def candidates(from_addr, *, company_name=None, text=None):
 
         if company_name:
             offer(_by_name(company_name), 'company name',
-                  f'the sender typed "{company_name}"')
+                  f'the sender typed "{company_name}"', kind='name')
             for row in _similar_names(company_name):
                 offer(row[0], 'company name',
-                      f'{int(row[1] * 100)}% like "{company_name}"')
+                      f'{int(row[1] * 100)}% like "{company_name}"',
+                      kind='resemblance')
     except Exception:                                     # noqa: BLE001
         db.session.rollback()
 
     return out
 
 
-def _similar_names(company_name, *, floor=0.5, limit=5):
+def _similar_names(company_name, *, floor=0.62, limit=5):
     """[(account, ratio)] for names close to this one.
 
     Only for a person to look at. Nothing auto-links on a ratio.
@@ -525,7 +540,13 @@ def auto_link(from_addr, *, company_name=None, text=None):
     exact = [r for r in rows if r['exact']]
     if len(exact) != 1:
         return None, UNMAPPED
-    others = [r for r in rows if r['account_id'] != exact[0]['account_id']]
-    if others:
+    # "No name-only alternative" means another account the name
+    # genuinely resolves to — not every string within 60% of it.
+    # Counting resemblances here disqualified 351 of 352 leads that
+    # had an unambiguous domain match.
+    rivals = [r for r in rows
+              if r['account_id'] != exact[0]['account_id']
+              and r['kind'] != 'resemblance']
+    if rivals:
         return None, UNMAPPED
     return exact[0]['account'], exact[0]['rule']

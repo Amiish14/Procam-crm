@@ -706,3 +706,41 @@ def test_bulk_confirm_has_a_ceiling():
     r = _bulk(client, list(range(1, 600)))
     assert r.status_code == 400
     assert '500' in r.get_json()['error']
+
+
+# ── a resemblance is not a rival claim ───────────────────────────────
+def test_a_mere_resemblance_does_not_block_a_domain_match():
+    """The bug this caught: of 352 leads with a clear domain hit,
+    exactly one survived as unambiguous, because any string 50%
+    alike counted as a competing account."""
+    with flask_app.app_context():
+        _on()
+        account = _account(name='ZZ Domain Co', domain='zzsteel.com')
+        _account(name='ZZ Domain Cx')         # looks alike, means nothing
+        linked, how = account_match.auto_link(
+            'buyer@zzsteel.com', company_name='ZZ Domain Co')
+        assert linked is not None and linked.id == account.id
+        assert how == 'account email domain'
+
+
+def test_a_real_name_match_still_blocks_it():
+    """A second account the name genuinely resolves to is a rival."""
+    with flask_app.app_context():
+        _on()
+        _account(name='ZZ Domain Co', domain='zzsteel.com')
+        _account(name='ZZ Other Name')
+        linked, _how = account_match.auto_link(
+            'buyer@zzsteel.com', company_name='ZZ Other Name')
+        assert linked is None
+
+
+def test_resemblances_are_tagged_so_a_person_still_sees_them():
+    with flask_app.app_context():
+        _on()
+        _account(name='ZZ Domain Co', domain='zzsteel.com')
+        _account(name='ZZ Domain Cx')
+        rows = account_match.candidates('buyer@zzsteel.com',
+                                        company_name='ZZ Domain Co')
+        kinds = {r['name']: r['kind'] for r in rows}
+        assert kinds['ZZ Domain Co'] in ('exact', 'name')
+        assert kinds.get('ZZ Domain Cx') == 'resemblance'

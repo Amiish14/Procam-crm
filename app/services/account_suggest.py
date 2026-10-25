@@ -90,8 +90,13 @@ def suggest_for(lead):
         'alternatives': [
             {'account_id': r['account_id'], 'name': r['name'],
              'rule': r['rule'], 'note': r['note'],
+             'kind': r.get('kind', ''),
              'confidence': confidence_of(r['rule'], note=r['note'])}
             for r in rows[1:6]],
+        #: Rival claims, not resemblances. This is what "several
+        #: matched" should mean on the report.
+        'rival_count': sum(1 for r in rows
+                           if r.get('kind') != 'resemblance'),
     }
 
 
@@ -184,11 +189,16 @@ def pending(sc=None):
 
 
 def bucket(found):
-    """'one exact' | 'several' | 'weak' | 'none' — for the report."""
+    """'one exact' | 'several' | 'weak' | 'none' — for the report.
+
+    'several' counts rival claims, not resemblances: two accounts
+    the evidence actually points at, which is the case a person
+    has to settle.
+    """
     if not found['candidate_count']:
         return 'none'
     if found['exact_single']:
         return 'one exact'
-    if found['candidate_count'] > 1:
+    if found.get('rival_count', found['candidate_count']) > 1:
         return 'several'
     return 'weak'
