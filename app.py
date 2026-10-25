@@ -3860,12 +3860,34 @@ def api_stats():
 #  a fully-reconciled snapshot. /api/dashboard/records powers the
 #  dynamic detail table that echoes whichever filters are active.
 # ═════════════════════════════════════════════════════════════════════
-LOST_REASONS = [
+#: The starting vocabulary, used only to seed Master Data and as
+#: the answer when Master Data cannot be read. It is not the list:
+#: until 25 October it was a *second* list, holding twelve values
+#: while the `lost_reason` Master Data list held ten different
+#: ones. So "No Response" could be reported on and never chosen,
+#: "Price too high" chosen and never reported on, and the 1,213
+#: leads carrying "Not interested" sat under a reason in neither.
+LOST_REASONS_SEED = [
     'Price', 'Competition', 'No Response', 'Client Decision',
     'Technical / Capability', 'Project Cancelled', 'Project Postponed',
     'Commercial Terms', 'Service Constraint', 'Geography Constraint',
     'Duplicate / Invalid', 'Other',
 ]
+
+
+def lost_reasons():
+    """The one list, from Master Data, where an admin maintains it.
+
+    Falls back to the seed rather than to nothing: a dropdown with
+    no options stops people closing leads, and an unreadable list
+    is a reason to degrade, not to block.
+    """
+    try:
+        from app.intel import master_codes
+        found = [c for c in master_codes('lost_reason') if c]
+        return found or list(LOST_REASONS_SEED)
+    except Exception:
+        return list(LOST_REASONS_SEED)
 
 
 #: The Lead columns the dashboard summary reads — and only these. Loading
@@ -4038,7 +4060,7 @@ def _dashboard_summary_payload(leads, allowed_codes, today):
         'industries': sorted({l.industry for l in leads if l.industry}),
         'states':     sorted({l.state for l in leads if l.state}),
         'stages':     STAGES_ALL,
-        'lost_reasons': LOST_REASONS,
+        'lost_reasons': lost_reasons(),
         'pic':        [{'emp_code': e.emp_code, 'name': e.name}
                         for e in Employee.query
                                  .filter(Employee.emp_code.in_(allowed_codes))
@@ -4256,7 +4278,7 @@ def api_dashboard_options():
         'states':     sorted({v[0] for v in db.session.query(Lead.state)
                               .filter(Lead.state.isnot(None)).distinct()}),
         'stages':     STAGES_ALL,
-        'lost_reasons': LOST_REASONS,
+        'lost_reasons': lost_reasons(),
         'pic':        pic_list,
         # Served rather than written into the page, for the same
         # reason the vertical list is: a second copy of a vocabulary

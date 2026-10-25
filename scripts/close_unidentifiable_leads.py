@@ -28,11 +28,10 @@ What it will not do
     every stage and reason from the audit trail.
 
 A note on the reason
-    "No Response" is in app.LOST_REASONS but not in the
-    `lost_reason` Master Data list that fills the dropdown — two
-    lists that disagree, like the stage lists did. The value is
-    legal and is what the rule asks for; reconciling the two lists
-    is a separate decision.
+    "No Response" was in app.LOST_REASONS and not in the
+    `lost_reason` Master Data list, so it could be reported on and
+    never chosen. The two lists were reconciled on 25 October and
+    Master Data is now the source.
 """
 import argparse
 import os
