@@ -87,6 +87,8 @@ _GATES = (
     # the flag first, then the session, then records by scope.
     (re.compile(r"@_journey\b"), 'FEATURE_LEAD_JOURNEY, then signed '
                                  'in; records by scope'),
+    (re.compile(r"@_gate\b"), 'FEATURE_RFQ_REPORTS, then signed in; '
+                              'records by scope'),
     (re.compile(r"@_funnel\b"), 'FEATURE_PRE_RFQ_FUNNEL, then signed '
                                 'in; records by scope'),
     (re.compile(r"session\.get\('emp_code'\)|_current_emp_code\(\)|"

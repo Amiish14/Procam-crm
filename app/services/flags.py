@@ -104,6 +104,10 @@ FLAGS = (
     ('FEATURE_LEAD_JOURNEY',
      'One lead record: the 8 + 12 journey flowchart and the '
      'time-per-step chart', False),
+    ('FEATURE_RFQ_REPORTS',
+     'RFQ dashboard, the slowest step, the workload table and the '
+     'delay reasons — all from timestamps (CRM-RFQ-REPORTS-01)',
+     False),
     (KILL_SWITCH, 'Stop all outbound CRM email immediately', False),
 )
 

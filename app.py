@@ -6244,6 +6244,8 @@ for _mod_path, _bp_name in [
     # One lead record and the pre-RFQ funnel. 404 while
     # FEATURE_LEAD_JOURNEY / FEATURE_PRE_RFQ_FUNNEL are off.
     ('app.journey.routes',       'journey_bp'),
+    # The RFQ reports. 404 while FEATURE_RFQ_REPORTS is off.
+    ('app.rfq_reports.routes',   'rfq_reports_bp'),
     # The TMS integration API. Exempted from CSRF below, because it is
     # authenticated by a bearer token rather than by a session cookie —
     # a CSRF token is a defence against a browser being used as a
