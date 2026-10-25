@@ -83,6 +83,20 @@ def identifiers(lead):
             break
     except Exception:                                     # noqa: BLE001
         pass
+
+    # A link back to the ERP opportunity, or a named contact carried
+    # in from one. Lead #9246 had both and was still counted as
+    # unidentifiable, which would have closed an active negotiation
+    # as "No Response" — it has a customer, we just have not written
+    # it into company_id yet.
+    notes = (lead.notes or '')
+    if 'myprocam.in' in notes.lower():
+        found.append('an ERP opportunity link')
+    import re as _re
+    named = _re.search(r'Owner \(unmatched\):\s*([^|\n]{3,60})',
+                       notes)
+    if named:
+        found.append(f'a named contact ({named.group(1).strip()})')
     return found
 
 

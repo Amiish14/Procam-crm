@@ -899,7 +899,8 @@ def _sweep():
 
 def _old_lead(account, **kw):
     from datetime import timedelta
-    lead = Lead(company=kw.pop('company', ''), stage='New',
+    lead = Lead(company=kw.pop('company', ''),
+                stage=kw.pop('stage', 'New'),
                 procam_vertical=VERTICAL, source='email',
                 company_id=account.id,
                 created_at=datetime.utcnow() - timedelta(days=200),
@@ -993,3 +994,21 @@ def test_down_puts_them_back():
         fresh = db.session.get(Lead, lead.id)
         assert fresh.stage == 'New'
         assert not fresh.lost_reason
+
+
+def test_an_erp_link_counts_as_an_identifier():
+    """Lead #9246 was at Under Negotiation, had an ERP opportunity
+    link and a named contact, and the first version of this sweep
+    would have closed it as "No Response"."""
+    mod = _sweep()
+    with flask_app.app_context():
+        lead = _old_lead(
+            _account(name='Unknown'), stage='Under Negotiation',
+            notes='Owner (unmatched): VENKATESH ALTHADA | ERP: '
+                  'http://pws.myprocam.in/OpportunityERPOpportunity/'
+                  'Detail/6a2b7c5b')
+        close, keep = mod.plan()
+        assert close == []
+        assert keep[0]['lead'].id == lead.id
+        assert any('ERP' in i for i in keep[0]['identifiers'])
+        assert any('VENKATESH' in i for i in keep[0]['identifiers'])
