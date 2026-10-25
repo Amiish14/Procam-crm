@@ -123,11 +123,13 @@ def test_the_api_serves_the_master_data_list():
 
 # ── the reconciliation ───────────────────────────────────────────────
 def test_it_adds_the_seed_values_that_were_missing():
+    """The seed is now the final seven, so that is what the
+    reconciliation tops the list up with."""
     with flask_app.app_context():
         _seed_some('Price too high')
         _have, wanted, _used = _recon.plan()
         codes = [c for c, _n in wanted]
-        assert 'No Response' in codes
+        assert 'No response' in codes
         assert 'Price too high' not in codes       # already there
 
 
@@ -188,3 +190,113 @@ def test_every_reason_in_use_can_be_picked_by_hand():
             and not any(m in r for m in marks)}
         missing = in_use - choosable
         assert not missing, f'cannot be picked by hand: {missing}'
+
+
+# ── the final seven ──────────────────────────────────────────────────
+_map = _il.import_module('2026_10_25_lost_reason_mapping')
+
+
+def test_the_seed_matches_the_final_seven():
+    """The fallback must not reintroduce the list we removed."""
+    assert _main.LOST_REASONS_SEED == _map.FINAL
+    assert len(_map.FINAL) == 7
+
+
+def test_not_interested_stays_its_own_reason():
+    """A customer who says it has answered. Folding 1,213 of those
+    into silence loses the one distinction a head acts on."""
+    assert 'Not interested' in _map.FINAL
+    assert _map.MAPPING.get('Not interested') is None or \
+        _map.MAPPING['Not interested'] == 'Not interested'
+    assert _map.MAPPING['Client Decision'] == 'Not interested'
+
+
+def test_timeline_mismatch_is_a_postponement():
+    assert _map.MAPPING['Timeline mismatch'] == \
+        'Customer cancelled or postponed'
+
+
+def test_duplicate_is_not_a_lost_reason():
+    assert 'Duplicate / Invalid' not in _map.MAPPING
+    assert 'Duplicate / Invalid' not in _map.FINAL
+
+
+def test_every_mapping_target_is_one_of_the_seven():
+    for was, target in _map.MAPPING.items():
+        assert target in _map.FINAL, f'{was} -> {target}'
+
+
+@pytest.mark.parametrize('reason', [
+    'Restored — originally deleted: no reason given',
+    'Others: newsletter, not a client',
+    'Others – Duplicate of lead #12115',
+])
+def test_free_text_is_left_exactly_as_written(reason):
+    """Those sentences are the only record of why the lead closed."""
+    with flask_app.app_context():
+        lead = _lead(reason)
+        assert _map.is_free_text(reason)
+        _map.apply_plan(actor='test')
+        db.session.commit()
+        assert db.session.get(Lead, lead.id).lost_reason == reason
+
+
+def test_a_mapped_reason_moves_and_is_reversible():
+    with flask_app.app_context():
+        lead = _lead('No Response from Client')
+        _map.apply_plan(actor='test')
+        db.session.commit()
+        assert db.session.get(Lead, lead.id).lost_reason == 'No response'
+        _map.undo(actor='test')
+        db.session.commit()
+        assert db.session.get(Lead, lead.id).lost_reason == \
+            'No Response from Client'
+
+
+def test_a_duplicate_with_a_named_lead_points_at_it():
+    with flask_app.app_context():
+        lead = _lead('Duplicate / Invalid')
+        lead.notes = 'Closed: duplicate of #10781'
+        db.session.commit()
+        _map.apply_plan(actor='test')
+        db.session.commit()
+        assert db.session.get(Lead, lead.id).lost_reason == \
+            'Others: duplicate of #10781'
+
+
+def test_a_duplicate_naming_nothing_falls_to_others():
+    with flask_app.app_context():
+        lead = _lead('Duplicate / Invalid')
+        _map.apply_plan(actor='test')
+        db.session.commit()
+        assert db.session.get(Lead, lead.id).lost_reason == 'Others'
+
+
+def test_the_list_is_reduced_to_seven_and_restored():
+    with flask_app.app_context():
+        _seed_some('Price too high', 'No Response', 'Other')
+        before, now = _map.reduce_list(actor='test')
+        db.session.commit()
+        assert now == 7
+        assert set(_main.lost_reasons()) == set(_map.FINAL)
+        _map.undo(actor='test')
+        db.session.commit()
+        assert set(_main.lost_reasons()) == {'Price too high',
+                                             'No Response', 'Other'}
+
+
+def test_every_reason_in_use_is_still_choosable_after_the_reduction():
+    """The rule that mattered before still has to hold after."""
+    with flask_app.app_context():
+        for reason in ('No Response', 'Not interested', 'Price too high',
+                       'Competition', 'Timeline mismatch'):
+            _lead(reason)
+        _map.apply_plan(actor='test')
+        _map.reduce_list(actor='test')
+        db.session.commit()
+
+        choosable = set(_main.lost_reasons())
+        in_use = {r for (r,) in db.session.query(
+            Lead.lost_reason).filter(Lead.lost_reason.isnot(None))
+            .distinct() if r and not _map.is_free_text(r)}
+        assert not (in_use - choosable), in_use - choosable

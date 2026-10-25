@@ -3868,10 +3868,9 @@ def api_stats():
 #: "Price too high" chosen and never reported on, and the 1,213
 #: leads carrying "Not interested" sat under a reason in neither.
 LOST_REASONS_SEED = [
-    'Price', 'Competition', 'No Response', 'Client Decision',
-    'Technical / Capability', 'Project Cancelled', 'Project Postponed',
-    'Commercial Terms', 'Service Constraint', 'Geography Constraint',
-    'Duplicate / Invalid', 'Other',
+    'No response', 'Not interested', 'Price', 'Lost to competitor',
+    'Customer cancelled or postponed', 'We could not serve it',
+    'Others',
 ]
 
 
