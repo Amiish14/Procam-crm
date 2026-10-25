@@ -1,0 +1,811 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>RFQ Chain Tracker</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: Procam CRM shell (white top bar, page nav pills), page body, one record panel on the right that every row opens */
+:root{
+  --bg:#F6F7F9; --surface:#FFFFFF; --surface-2:#FAFBFC; --surface-3:#F1F3F6; --border:#E7E9EE; --border-2:#D6D9E0;
+  --ink:#0A0B0F; --text:#2E323C; --text-2:#5C616D; --text-3:#8A8F9C;
+  --red:#CC1E2E; --red-soft:#FFF1F2;
+  --ok:#059669; --ok-soft:#ECFDF5; --warn:#C4770A; --warn-soft:#FFFBEB; --bad:#DC2626; --bad-soft:#FEF2F2;
+  --info:#2563EB; --info-soft:#EFF6FF; --hold:#7C3AED; --hold-soft:#F5F3FF; --grey:#9CA3AF;
+  --font:'Inter',-apple-system,system-ui,'Segoe UI',sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#111318; --surface:#1A1D24; --surface-2:#1E222A; --surface-3:#252A33; --border:#2E333D; --border-2:#3A404C;
+  --ink:#F3F4F6; --text:#D9DCE2; --text-2:#A3A9B6; --text-3:#7D8494;
+  --red:#F2545F; --red-soft:#3A1C21; --ok:#34D399; --ok-soft:#14302A; --warn:#F5B44A; --warn-soft:#3A2E16; --bad:#F87171; --bad-soft:#3A1E1E;
+  --info:#60A5FA; --info-soft:#1A2A44; --hold:#A78BFA; --hold-soft:#2A2344; --grey:#6B7280; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#111318; --surface:#1A1D24; --surface-2:#1E222A; --surface-3:#252A33; --border:#2E333D; --border-2:#3A404C;
+  --ink:#F3F4F6; --text:#D9DCE2; --text-2:#A3A9B6; --text-3:#7D8494;
+  --red:#F2545F; --red-soft:#3A1C21; --ok:#34D399; --ok-soft:#14302A; --warn:#F5B44A; --warn-soft:#3A2E16; --bad:#F87171; --bad-soft:#3A1E1E;
+  --info:#60A5FA; --info-soft:#1A2A44; --hold:#A78BFA; --hold-soft:#2A2344; --grey:#6B7280; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13.5px;line-height:1.45}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--surface)}
+h1,h2,h3{margin:0;color:var(--ink);text-wrap:balance}
+h1{font-size:20px;font-weight:700}
+h2{font-size:14.5px;font-weight:600}
+h3{font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)}
+button,select,input,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--info);outline-offset:2px}
+.num,td.n{font-variant-numeric:tabular-nums}
+.wrap{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));max-width:1360px;margin:0 auto}
+
+/* top bar, like _crm_topbar.html */
+.top{background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:env(safe-area-inset-top,0px);z-index:6}
+.top .wrap{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;padding-block:8px}
+.brand{font-weight:800;letter-spacing:.12em;color:var(--ink);font-size:15px;white-space:nowrap}
+.brand i{font-style:normal;color:var(--red)}
+.brand small{font-weight:600;letter-spacing:0;color:var(--text-2);margin-left:4px}
+.nav{display:flex;gap:2px;overflow-x:auto;flex:1;min-width:0}
+.nav button{border:0;background:none;padding:6px 10px;border-radius:6px;color:var(--text-2);font-weight:500;white-space:nowrap;cursor:pointer}
+.nav button:hover{background:var(--surface-3);color:var(--ink)}
+.nav button.on{background:var(--red-soft);color:var(--red)}
+.nav .badge{display:inline-block;background:var(--red);color:#fff;border-radius:999px;font-size:10.5px;font-weight:700;padding:0 6px;margin-left:5px}
+.who{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2)}
+.who select{border:1px solid var(--border-2);background:var(--surface);border-radius:6px;padding:4px 6px;max-width:260px}
+.clock{font-size:12px;color:var(--text-2);white-space:nowrap}
+.mini{border:1px solid var(--border-2);background:var(--surface);border-radius:6px;padding:3px 8px;font-size:12px;cursor:pointer}
+.note{background:var(--warn-soft);border-bottom:1px solid var(--border);font-size:12.5px;color:var(--text)}
+.note .wrap{padding-block:6px}
+
+main .wrap{padding-block:18px 60px;display:grid;gap:16px}
+.hero{display:flex;flex-wrap:wrap;align-items:end;gap:8px 16px}
+.hero p{margin:2px 0 0;color:var(--text-2)}
+.hero .acts{margin-left:auto}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;min-width:0}
+.card-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin-bottom:12px}
+.card-h p{margin:0;color:var(--text-2);font-size:12.5px}
+.card-h .r{margin-left:auto}
+.g2{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,500px),1fr));gap:16px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;text-align:left;cursor:pointer;display:grid;gap:2px}
+.tile:hover{border-color:var(--border-2);box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.tile .l{font-size:11.5px;color:var(--text-2);font-weight:500}
+.tile .v{font-size:24px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+.tile .s{font-size:11.5px;color:var(--text-3)}
+.tile.bad .v{color:var(--bad)} .tile.warn .v{color:var(--warn)} .tile.ok .v{color:var(--ok)} .tile.hold .v{color:var(--hold)}
+.search{position:relative}
+.search input{width:100%;border:1px solid var(--border-2);background:var(--surface);border-radius:10px;padding:10px 14px;font-size:14px}
+.hits{position:absolute;left:0;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.12);z-index:5;max-height:320px;overflow:auto}
+.hit{display:flex;gap:10px;align-items:baseline;padding:8px 12px;border:0;background:none;width:100%;text-align:left;cursor:pointer;border-bottom:1px solid var(--border)}
+.hit:hover{background:var(--surface-3)}
+.hit .k{font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;min-width:56px}
+
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);font-weight:600;text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+td.n,th.n{text-align:right}
+tr.row{cursor:pointer} tr.row:hover td{background:var(--surface-2)}
+.sub{font-size:12px;color:var(--text-2)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+.lnk{background:none;border:0;padding:0;color:var(--info);cursor:pointer;font-weight:600;text-align:left}
+.chip{display:inline-block;font-size:11px;font-weight:600;padding:1px 8px;border-radius:999px;white-space:nowrap;background:var(--surface-3);color:var(--text-2)}
+.c-red{background:var(--bad-soft);color:var(--bad)} .c-amb{background:var(--warn-soft);color:var(--warn)} .c-ok{background:var(--ok-soft);color:var(--ok)} .c-info{background:var(--info-soft);color:var(--info)} .c-hold{background:var(--hold-soft);color:var(--hold)} .c-brand{background:var(--red-soft);color:var(--red)}
+.rag{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;white-space:nowrap}
+.rag::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor;flex:none}
+.t-red{color:var(--bad)} .t-amb{color:var(--warn)} .t-ok{color:var(--ok)} .t-info{color:var(--info)} .t-hold{color:var(--hold)} .t-grey{color:var(--grey)}
+.fit{font-size:11px;font-weight:600;padding:1px 7px;border-radius:4px;white-space:nowrap}
+.fit-Built{background:var(--ok-soft);color:var(--ok)} .fit-Extend{background:var(--warn-soft);color:var(--warn)} .fit-New{background:var(--red-soft);color:var(--red)}
+
+/* journey strip (compact) */
+.js{display:flex;align-items:center;gap:2px;flex-wrap:nowrap}
+.js i{width:11px;height:11px;border-radius:3px;background:var(--surface-3);border:1px solid var(--border-2);flex:none}
+.js i.d{background:var(--grey);border-color:var(--grey)}
+.js i.s{background:transparent;border-style:dashed;opacity:.6}
+.js i.a.g{background:var(--ok);border-color:var(--ok)} .js i.a.o{background:var(--warn);border-color:var(--warn)} .js i.a.r{background:var(--bad);border-color:var(--bad)} .js i.a.h{background:var(--hold);border-color:var(--hold)} .js i.a.w{background:var(--info);border-color:var(--info)}
+.js b{width:6px;flex:none}
+.now{font-size:12.5px} .now b{font-weight:600;color:var(--ink)}
+
+/* bars */
+.bars{display:grid;gap:6px}
+.bar{display:grid;grid-template-columns:minmax(110px,210px) 1fr 70px;gap:10px;align-items:center;font-size:12.5px;border:0;background:none;padding:2px 0;text-align:left;cursor:pointer;width:100%}
+.bar:hover .lbl{color:var(--info)}
+.bar.hot .lbl{color:var(--bad);font-weight:600}
+.track{height:14px;background:var(--surface-3);border-radius:4px;display:flex;overflow:hidden;position:relative}
+.track i{display:block;height:100%}
+.track .sla{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--text-2);margin-top:10px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.heat td.h{text-align:center;font-size:12px;min-width:46px;cursor:pointer}
+.h1{background:var(--ok-soft)} .h2{background:var(--warn-soft)} .h3{background:var(--bad-soft)}
+
+.btn{border:1px solid var(--border-2);background:var(--surface);border-radius:6px;padding:5px 11px;cursor:pointer;font-size:12.5px;font-weight:500;white-space:nowrap}
+.btn:hover{border-color:var(--text-3)}
+.btn.p{background:var(--red);border-color:var(--red);color:#fff}
+.btn.s{padding:3px 8px;font-size:12px}
+.acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.call{border-left:3px solid var(--bad);padding:8px 12px;background:var(--bad-soft);border-radius:0 6px 6px 0;font-size:13px;margin:0}
+.call.ok{border-left-color:var(--ok);background:var(--ok-soft)} .call.info{border-left-color:var(--info);background:var(--info-soft)} .call.hold{border-left-color:var(--hold);background:var(--hold-soft)} .call.warn{border-left-color:var(--warn);background:var(--warn-soft)}
+.empty{color:var(--text-3);padding:10px 0;margin:0}
+
+/* record panel */
+.scrim{position:fixed;inset:0;background:rgba(10,11,15,.35);z-index:20}
+.panel{position:fixed;top:0;right:0;bottom:0;width:min(1000px,100%);background:var(--bg);z-index:21;overflow-y:auto;box-shadow:-10px 0 30px rgba(0,0,0,.18);padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);padding-right:env(safe-area-inset-right,0px)}
+.panel .in{padding:16px 18px 50px;display:grid;gap:14px}
+.ph{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+.ph h2{font-size:18px}
+.ph .x{margin-left:auto}
+.meta{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:12.5px;color:var(--text-2)}
+.meta b{color:var(--ink);font-weight:600}
+.ptabs{display:flex;gap:2px;border-bottom:1px solid var(--border);overflow-x:auto}
+.ptabs button{border:0;background:none;padding:8px 12px;border-bottom:2px solid transparent;color:var(--text-2);font-weight:500;cursor:pointer;white-space:nowrap}
+.ptabs button.on{color:var(--ink);border-bottom-color:var(--red)}
+/* flowchart */
+.flow{display:grid;gap:10px}
+.lane{display:grid;gap:6px}
+.lane h3{display:flex;gap:8px;align-items:center}
+.nodes{display:flex;flex-wrap:wrap;gap:6px 0;align-items:stretch}
+.nd{display:flex;align-items:center}
+.nd .box{border:1px solid var(--border-2);background:var(--surface);border-radius:8px;padding:6px 8px;min-width:96px;max-width:132px;text-align:left;cursor:pointer;display:grid;gap:1px}
+.nd .box b{font-size:11.5px;font-weight:600;color:var(--ink);line-height:1.25}
+.nd .box span{font-size:10.5px;color:var(--text-2);line-height:1.25}
+.nd .arr{width:14px;height:2px;background:var(--border-2);margin:0 1px;position:relative}
+.nd .arr::after{content:"";position:absolute;right:-1px;top:-3px;border-left:5px solid var(--border-2);border-top:4px solid transparent;border-bottom:4px solid transparent}
+.box.done{background:var(--surface-3);border-color:var(--border)}
+.box.done b::before{content:"✓ ";color:var(--ok)}
+.box.skip{border-style:dashed;opacity:.55}
+.box.cur{border-width:2px}
+.box.cur.g{border-color:var(--ok);background:var(--ok-soft)} .box.cur.o{border-color:var(--warn);background:var(--warn-soft)} .box.cur.r{border-color:var(--bad);background:var(--bad-soft)} .box.cur.h{border-color:var(--hold);background:var(--hold-soft)} .box.cur.w{border-color:var(--info);background:var(--info-soft)}
+.box.sel{box-shadow:0 0 0 3px var(--info-soft),0 0 0 4px var(--info)}
+.box.end{background:var(--ok-soft);border-color:var(--ok)} .box.lost{background:var(--surface-3);border-color:var(--grey)}
+/* gantt */
+.gantt{display:grid;gap:4px}
+.gr{display:grid;grid-template-columns:minmax(110px,170px) 1fr 80px;gap:8px;align-items:center;font-size:12px;border:0;background:none;padding:0;text-align:left;cursor:pointer;width:100%}
+.gt{position:relative;height:14px;background:var(--surface-3);border-radius:3px}
+.gt i{position:absolute;top:0;bottom:0;border-radius:3px}
+/* forms */
+.form{display:grid;gap:10px}
+.frow{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));gap:10px}
+.fld{display:grid;gap:3px;min-width:0}
+.fld label,.fld .lab{font-size:11.5px;font-weight:600;color:var(--text-2)}
+.fld input,.fld select,.fld textarea{border:1px solid var(--border-2);background:var(--surface);border-radius:6px;padding:6px 8px;width:100%}
+.fld .hint{font-size:11.5px;color:var(--text-3)}
+.chk{display:flex;gap:8px;align-items:flex-start;font-size:13px;padding:4px 0}
+.chk input{margin-top:3px;width:auto;flex:none}
+.opt{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer}
+.opt input{margin-top:3px;flex:none;width:auto}
+.opt.new{border-style:dashed}
+.err{color:var(--bad);font-size:12.5px;font-weight:600;margin:0}
+.action{border:1px solid var(--border-2);border-radius:10px;background:var(--surface);padding:14px;display:grid;gap:10px}
+.action .ah{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}
+.action .ah h2{font-size:14px}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:#1A1D24;color:#fff;padding:10px 16px;border-radius:8px;z-index:40;font-size:13px;max-width:calc(100% - 32px);box-shadow:0 8px 24px rgba(0,0,0,.25)}
+.list{margin:0;padding-left:18px;display:grid;gap:6px;max-width:90ch}
+/* quotation preview */
+.qdoc{background:#fff;color:#222;border:1px solid #ccc;padding:24px;font-size:12px;display:grid;gap:10px;color-scheme:light;border-radius:6px}
+.qdoc .qh{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;border-bottom:3px solid #C62132;padding-bottom:8px}
+.qdoc .ql{font-weight:800;letter-spacing:.14em;font-size:19px;color:#404042}
+.qdoc .ql i{font-style:normal;color:#C62132}
+.qdoc h4{margin:2px 0 0;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:#404042}
+.qdoc ul{margin:0;padding-left:18px}
+.qdoc table{font-size:12px} .qdoc th{color:#555;border-bottom:1px solid #bbb} .qdoc td{border-bottom:1px solid #e3e3e3}
+@media (max-width:620px){.bar{grid-template-columns:96px 1fr 56px}.gr{grid-template-columns:90px 1fr 60px}.tile .v{font-size:20px}.nd .box{min-width:84px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<header class="top"><div class="wrap">
+  <div class="brand">PRO<i>C</i>AM<small>CRM</small></div>
+  <nav class="nav" id="nav" aria-label="Sections"></nav>
+  <div class="who"><label for="viewer">Signed in as</label><select id="viewer"></select></div>
+  <div class="clock"><span id="clock"></span> <button class="mini" id="ff" type="button" title="Move the demo clock forward 4 hours">+4 h</button> <button class="mini" id="rs" type="button">Reset</button></div>
+</div></header>
+<div class="note"><div class="wrap">Demo for review — names from the Procam employee list; customers, numbers and amounts are samples. Switch <b>Signed in as</b> to see each person's view. Click any row, bar or circle to open the record and act on it there.</div></div>
+<main><div class="wrap" id="view"></div></main>
+<div class="scrim" id="scrim" hidden></div>
+<aside class="panel" id="panel" hidden aria-label="Record"></aside>
+<div class="toast" id="toast" hidden role="status"></div>
+
+<script>
+(function(){
+const H=3600e3,D=24*H,BASE=new Date('2026-10-23T18:00:00+05:30').getTime();
+let NOW=BASE;
+const TARGET=.98,EARLY=.5,FX={INR:1,USD:84,EUR:91};
+
+/* ---------- people (Procam employee list) ---------- */
+const PEOPLE={
+ nilesh:{n:'Nilesh Kumar Sinha',c:'DIR12010',role:'admin',t:'Director'},
+ james:{n:'James Francis Xavier',c:'DIR22010',role:'head',t:'Vertical Head — Heavy Transport',v:'HT'},
+ sanjna:{n:'Sanjna Vardhan',c:'EMP372011',role:'head',t:'Vertical Head — Project Freight & FF',v:'PF'},
+ gowdhaman:{n:'Gowdhaman Rajakrishnan',c:'',role:'head',t:'Vertical Head — Installation',v:'INS'},
+ srinivas:{n:'Srinivas Marella',c:'DIR72012',role:'head',t:'Vertical Head — Warehousing',v:'WH'},
+ seema:{n:'Seema Chattopadhyay',c:'EMP1552018',role:'coord',t:'RFQ Coordinator'},
+ vijay:{n:'Vijay T V',c:'EMP572012',role:'sales',t:'Sales / BD'},
+ sharayu:{n:'Sharayu Uday Bhosale',c:'',role:'sales',t:'Sales / BD'},
+ sayan:{n:'Sayan Das',c:'',role:'sales',t:'Tender desk'},
+ suranjan:{n:'Suranjan Aon',c:'',role:'scm',t:'SCM — transport costing'},
+ sanjeev:{n:'Sanjeev Paliwal',c:'',role:'scm',t:'SCM — freight costing'},
+ pravin:{n:'Pravin Choudhary',c:'EMP4092026',role:'scm',t:'SCM — warehousing'},
+ dipanka:{n:'Dipanka Talukder',c:'',role:'ops',t:'Operations / ODC'},
+ vipul:{n:'Vipulsinh Zala',c:'',role:'ops',t:'Operations — warehousing'},
+ bhavin:{n:'Bhavin Jilka',c:'',role:'acct',t:'Accounts'}
+};
+const nm=k=>PEOPLE[k]?PEOPLE[k].n:k;
+const VERT={
+ HT:{n:'Heavy Transport',head:'james',scm:'suranjan',ops:'dipanka',floor:14,floorTxt:'14% (market vehicle) / 38% (own hydraulic)'},
+ PF:{n:'Project Freight',head:'sanjna',scm:'sanjeev',ops:'sanjeev',floor:10,floorTxt:'10% (freight forwarding)'},
+ INS:{n:'Installation',head:'gowdhaman',scm:'suranjan',ops:'dipanka',floor:25,floorTxt:'25%'},
+ WH:{n:'Warehousing',head:'srinivas',scm:'pravin',ops:'vipul',floor:18,floorTxt:'18%'}
+};
+/* ---------- masters (dropdowns) ---------- */
+const PRI={Critical:{d:2,txt:'1–2 days',resp:4},High:{d:4,txt:'3–4 days',resp:8},Medium:{d:7,txt:'5–7 days',resp:24},Low:{d:10,txt:'8–10 days',resp:24}};
+const PRIS=['Critical','High','Medium','Low'];
+const CH=[['a','Management Leads',.5,5],['b','Existing Customer / Repeat',.6,20],['c','Customer Referrals',.3,12],['d','Customer Visits',.35,15],['e','Networking',.1,4],['f','LinkedIn',.1,5],['g','Email Outreach',.05,20],['h','Cold Calling',.05,12],['i','Inbound Enquiries',.5,5],['j','Industry Events & Exhibitions',.15,2],['k','Channel Partners',.2,3],['l','Tender / E-Procurement Portals',.1,10]];
+const chName=c=>(CH.find(x=>x[0]===c)||['','—'])[1];
+const AUTO_CH={a:'Forwarded by a director',b:'Account has earlier wins',i:'Customer mail to leads@',l:'Tender / auction mail pattern'};
+const TIMING=['Immediate (≤ 1 month)','Short-term (1–3 months)','Medium-term (3–6 months)','Long-term (> 6 months)','Nurturing (not confirmed)','Dormant (no requirement)'];
+const DELAY=['Awaiting vendor rate','Shipping line response pending','Insufficient RFQ information','Technical clarification pending','Route survey required','Customer clarification pending','Internal approval pending','Workload / resource constraint','System issue','Others'];
+const GOOD=['Existing vendor relationship','Historical rate / database used','Complete customer information','Early vendor engagement','Standard solution available','Quick interdepartmental coordination','Others'];
+const HOLDR=['Requirement closed by customer','Cancelled by customer','Postponed by customer','No longer commercially relevant','Others'];
+const LOSTR=['Price — competitor lower','Project dropped / postponed','Technical / capability not matched','Delivery timeline not acceptable','No response from customer','Others'];
+const MISSING=['Complete — nothing missing','Missing: drawings / dimensions','Missing: site address / route','Missing: scope of work','Missing: required date'];
+const IOUP=['Client visit — travel','Site / route survey — travel','Client meeting — hospitality','Tender document fee','EMD / bid security (refundable)','Courier & documentation','Exhibition / event','Other'];
+const ACT=['Phone call','Email','LinkedIn message','Meeting planned','Meeting held','Requirement received','Capability check','RFQ expected'];
+const CTYPES=['Condition','Assumption','Limitation','Exclusion','Special requirement','Customer-facing term'];
+const CLIB={
+ HT:[['Assumption','Route clear of overhead obstructions above 5.5 m; line lifting by customer or utility at actuals'],['Limitation','Movement in daylight hours only, as per police permission'],['Exclusion','Port charges, customs duty and stamp duty are excluded'],['Condition','Detention beyond 2 free days charged per vehicle per day']],
+ PF:[['Exclusion','Destination duties, taxes and local charges are excluded'],['Condition','Rates subject to space and equipment availability at booking'],['Condition','Free time at port as per carrier tariff']],
+ INS:[['Assumption','Foundation and anchor bolts ready and certified by customer'],['Special requirement','Customer to provide work permit and power at site'],['Exclusion','Civil work and grouting excluded']],
+ WH:[['Condition','Minimum billing of 3 months'],['Exclusion','Insurance of stored goods by customer'],['Assumption','Inbound in palletised condition']]};
+
+/* RFQ steps — SCM sheet, Received is closed by the mail itself */
+const STEPS=[
+ {n:'RFQ Received',s:'Received',role:'sales',w:0,ev:'Closes when the RFQ mail arrives'},
+ {n:'RFQ Registration',s:'Register',role:'coord',w:.05,ev:'Closes when the coordinator confirms priority'},
+ {n:'Initial Screening',s:'Screen',role:'scm',w:.05,ev:'Closes when information is confirmed complete'},
+ {n:'Technical Evaluation',s:'Tech eval',role:'ops',w:.15,ev:'Closes when conditions are confirmed'},
+ {n:'Site / Route Survey',s:'Survey',role:'ops',w:.15,ev:'Closes when survey conditions are confirmed'},
+ {n:'Cost Estimation',s:'Costing',role:'scm',w:.30,ev:'Closes when the cost sheet is saved'},
+ {n:'Commercial Approval',s:'Approval',role:'head',w:.10,ev:'Closes when the quote is approved'},
+ {n:'Quotation Submission',s:'Submit',role:'sales',w:.20,ev:'Closes when the quote is sent'},
+ {n:'Negotiation',s:'Negotiate',role:'sales',ev:'Closes on customer acceptance'},
+ {n:'Final Bid / Closure',s:'Final bid',role:'sales',ev:'Closes when the award date is recorded'},
+ {n:'Award / PO',s:'PO',role:'sales',cust:true,ev:'Closes when the PO is recorded'},
+ {n:'Handover',s:'Handover',role:'sales',ev:'Closes when the handover pack is sent'}];
+const PRE=[
+ {n:'Target account',t:0},{n:'Lead generated',t:2},{n:'Decision-maker engaged',t:5},{n:'Meeting scheduled',t:7},
+ {n:'Meeting completed',t:3},{n:'Requirement identified',t:10},{n:'Capability matched',t:5},{n:'RFQ expected',t:30}];
+function slaOf(i,pri){const s=STEPS[i];if(i===0)return null;if(i<8)return PRI[pri].d*D*s.w;if(s.cust)return null;if(i===11)return D;return PRI[pri].resp*H}
+
+/* ---------- sample data ---------- */
+function rng(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const CL=[
+ ['Arka Steel Ltd','HT','140 T reformer, Paradip → Angul'],['Velor Wind Pvt Ltd','HT','78 m blades × 9, Tuticorin → Kayathar'],
+ ['Kaveri Power Ltd','INS','Turbine module erection, 3 × 60 T'],['Sagar Ports Pvt Ltd','PF','Breakbulk 2,400 FRT, Hamburg → Chennai'],
+ ['Delta Pharma Ltd','PF','Air export 4 PMC, BOM → FRA'],['Zenith Cement Pvt Ltd','INS','Kiln shell rigging, 220 T'],
+ ['Orion Chemicals Ltd','WH','6,000 sq ft bonded storage, Chakan'],['Meridian Rail Pvt Ltd','HT','Bogie frames FTL × 12, Kolkata → Pune'],
+ ['Tarang Solar Ltd','WH','Module storage 40,000 pcs, Savli'],['Indus Refinery Pvt Ltd','PF','Sea import FCL × 18, Jebel Ali → Mundra'],
+ ['Shakti Forgings Ltd','INS','3000 T press shifting & erection'],['Nirmaan Infra Pvt Ltd','HT','PSC girders ODC, Hazira → Dahej'],
+ ['Vayu Turbines Ltd','HT','Nacelle 92 T, Mundra → Jaisalmer']];
+let ACC=[],LEADS=[],INBOX=[],MAIL=[],SER={lead:12100,rfq:100,quo:40,iou:310};
+const FREE=['gmail.com','yahoo.com','yahoo.co.in','outlook.com','hotmail.com','rediffmail.com'];
+const dom=n=>n.toLowerCase().replace(/ (pvt )?ltd$/,'').replace(/[^a-z]/g,'')+'.example';
+const BIAS={dipanka:{4:1.8,3:1.2},james:{6:1.4},suranjan:{5:1.3},seema:{1:.5},sanjeev:{5:1.1}};
+const bias=(p,i)=>(BIAS[p]&&BIAS[p][i])||.85;
+
+function build(){
+  const r=rng(31);SER={lead:12100,rfq:100,quo:40,iou:310};
+  ACC=CL.map((c,k)=>({id:k+1,name:c[0],v:c[1],domains:[dom(c[0])],gstin:'',contacts:[{n:'Procurement Manager',e:'procurement@'+dom(c[0])}],learned:[],owners:{[c[1]]:salesFor(c[1],k)},owner:salesFor(c[1],k),blocked:null,created:BASE-200*D,by:'Import',wins:k%3===0?2:0}));
+  ACC.push({id:14,name:'ARKA STEELS PVT LTD',v:'HT',domains:[],gstin:'',contacts:[],learned:[],owners:{},owner:null,blocked:null,created:BASE-40*D,by:'Excel import',wins:0});
+  ACC.push({id:15,name:'Kesari Engineering Works',v:'HT',domains:['kesarieng.example'],gstin:'',contacts:[],learned:[],owners:{HT:'vijay'},owner:'vijay',blocked:{reason:'Bad paymaster',by:'Nilesh Kumar Sinha'},created:BASE-300*D,by:'Import',wins:0});
+  LEADS=[];
+  const preNodes=[0,1,2,2,3,3,4,4,5,6,7,7],preCh=['f','g','h','d','e','c','j','k','a','d','f','g'];
+  const rfqCur=[1,1,2,2,3,3,4,4,4,5,5,5,6,6,7,8,8,9,12,12,8,9],rfqCh=['i','b','i','b','a','c','i','l','d','b','i','c','b','a','i','d','b','l','b','d','i','c'];
+  preNodes.forEach((pn,k)=>{const a=ACC[k%13];const L=mkLead(a,preCh[k],a.owners[a.v]);L.pre=pn;
+    let t=NOW-(pn*4+2+r()*3)*D;L.created=t;for(let s=0;s<=pn;s++){L.preAt[s]=t;t+=(PRE[s].t||1)*D*(.4+r()*.9);if(t>NOW-3*H)t=NOW-3*H}
+    if(pn>=4)L.timing=TIMING[Math.floor(r()*5)];if(pn>=7)L.rfqDate=NOW+(8+Math.floor(r()*60))*D;
+    addPreActs(L,pn);LEADS.push(L)});
+  rfqCur.forEach((cur,k)=>{const a=ACC[(k+5)%13],ch=rfqCh[k],owner=ch==='l'?'sayan':a.owners[a.v];const L=mkLead(a,ch,owner);if(owner==='sayan')L.ownerRule='tender desk — all tender / GeM leads';
+    const lostAt=(k===20||k===21)?cur:null;
+    const skip=['i','b','l'].includes(ch);
+    const u=r(),pri=u<.18?'Critical':u<.46?'High':u<.8?'Medium':'Low';
+    const team=teamFor(L);
+    const steps=STEPS.map((s,i)=>({i,who:team[s.role],status:(i===4&&L.v==='PF')?'na':'todo',start:null,end:null,paused:0,result:null,reason:null}));
+    const durs=[];for(let i=0;i<12;i++){if(steps[i].status==='na'||i===0){durs.push(0);continue}const sla=slaOf(i,pri);
+      if(i<cur||(lostAt!=null&&i===cur))durs.push(sla?sla*bias(steps[i].who,i)*(.35+r()):D*(1+r()*6));else if(i===cur)durs.push(sla?sla*bias(steps[i].who,i)*(.15+r()*1.25):D*(.5+r()*5))}
+    const total=durs.reduce((x,y)=>x+y,0),created=NOW-total-r()*2*H;
+    L.created=created-(skip?0:(20+r()*20)*D);L.pre=7;
+    if(skip){for(let s=1;s<8;s++)L.preSkip[s]=true;L.preAt[0]=L.created}else{let t=L.created;for(let s=0;s<8;s++){L.preAt[s]=t;t+=PRE[s].t*D*.6}L.timing=TIMING[0];addPreActs(L,7)}
+    const R={num:null,pri,deadline:created+PRI[pri].d*D+(r()<.3?-8*H:16*H),received:created,steps,conds:[],quotes:[],hold:null,holds:[],outcome:null,lostReason:null,contact:a.contacts[0]};
+    L.rfq=R;log(L,created,'leads@ mailbox','RFQ mail received','','',a.contacts[0].e);
+    let t=created;const money=amountFor(L.v,r);
+    for(let i=0;i<12;i++){const s=steps[i];if(s.status==='na')continue;s.start=t;
+      if(i<cur||(lostAt!=null&&i===cur)){t+=durs[i];
+        if(lostAt!=null&&i===cur){s.status='closed';s.end=t;R.outcome='Lost';R.lostReason=LOSTR[k===20?0:1];log(L,t,nm(s.who),'Lead closed as Lost','Open','Lost',R.lostReason);break}
+        s.end=t;s.status='done';finishSample(L,s,r,money)}
+      else if(i===cur){s.status='active';break}}
+    if(cur>=12&&!R.outcome){R.outcome='Won';R.po={no:'4500'+Math.floor(r()*900000+100000),date:t};log(L,t,nm(L.owner),'Won — PO recorded','','PO '+R.po.no,'')}
+    if(k===9||k===12){const s=steps.find(x=>x.status==='active');R.hold={since:Math.max(s.start+H,NOW-30*H),by:'james',reason:'Postponed by customer',remarks:'Customer moved project start to Q1; keep the file ready',step:s.i};log(L,R.hold.since,nm('james'),'RFQ put on hold','Active','On hold','Postponed by customer')}
+    if(k===0||k===4){log(L,created+2*H,nm('nilesh'),'Priority changed (management)','High',pri,'Customer bid closing advanced')}
+    LEADS.push(L)});
+  LEADS.sort((x,y)=>x.created-y.created);
+  LEADS.forEach(L=>{L.no=++SER.lead;if(L.rfq&&L.rfq.steps[1].status==='done')L.rfq.num='RFQ-2026-'+String(++SER.rfq).padStart(4,'0')});
+  LEADS.filter(L=>L.rfq&&L.rfq.quotes.length).sort((x,y)=>x.rfq.quotes[0].at-y.rfq.quotes[0].at).forEach(L=>L.rfq.qno='QUO-2026-'+String(++SER.quo).padStart(4,'0'));
+  LEADS.forEach(L=>L.audit.sort((a,b)=>a.at-b.at));
+  sampleIOUs(r);buildInbox();buildMail();
+}
+function salesFor(v,k){return v==='HT'?(k%2?'sharayu':'vijay'):v==='PF'?'sharayu':v==='INS'?'vijay':'sharayu'}
+function mkLead(a,ch,owner){return {no:null,acc:a.id,v:a.v,scope:CL.find(c=>c[0]===a.name)?CL.find(c=>c[0]===a.name)[2]:'Requirement to be confirmed',ch,chAuto:!!AUTO_CH[ch],owner,ownerRule:'account owner for this vertical',pre:0,preAt:{},preSkip:{},timing:null,rfqDate:null,fit:null,rfq:null,acts:[],audit:[],ious:[],created:NOW}}
+function teamFor(L){const V=VERT[L.v];return {sales:L.owner,coord:'seema',scm:V.scm,ops:V.ops,head:V.head}}
+function amountFor(v,r){if(v==='PF')return {cur:r()<.5?'USD':'EUR',amt:Math.round((20000+r()*160000)/100)*100};if(v==='WH')return {cur:'INR',amt:Math.round((300000+r()*900000)/1000)*1000};if(v==='INS')return {cur:'INR',amt:Math.round((1500000+r()*7500000)/10000)*10000};return {cur:'INR',amt:Math.round((800000+r()*5200000)/10000)*10000}}
+function addPreActs(L,pn){const k=[null,null,'Phone call','Meeting planned','Meeting held','Requirement received','Capability check','RFQ expected'];for(let s=1;s<=pn;s++){if(s===1){L.acts.push({at:L.preAt[1]||L.created,by:L.owner,kind:'Lead created',note:'Channel: '+chName(L.ch)});continue}L.acts.push({at:L.preAt[s],by:L.owner,kind:k[s],note:s===4?'Expected RFQ: '+(L.timing||TIMING[1]):s===6?'Capability: Yes — standard solution':''})}}
+function finishSample(L,s,r,money){const R=L.rfq,sla=slaOf(s.i,R.pri);
+  s.result=resOf(sla,s.end-s.start-s.paused);
+  if(s.result==='Delayed')s.reason={1:'Insufficient RFQ information',2:'Insufficient RFQ information',3:'Technical clarification pending',4:'Route survey required',5:L.v==='PF'?'Shipping line response pending':'Awaiting vendor rate',6:'Internal approval pending',7:'Workload / resource constraint',8:'Customer clarification pending',9:'Customer clarification pending'}[s.i]||'Workload / resource constraint';
+  if(s.result==='Early')s.reason={2:'Complete customer information',3:'Standard solution available',4:'Standard solution available',5:'Historical rate / database used'}[s.i]||'Quick interdepartmental coordination';
+  if(s.i>0)log(L,s.end,nm(s.who),'Step closed: '+STEPS[s.i].n,'',s.result||'Done',s.reason||'');
+  if(s.i===1)log(L,s.end,nm(s.who),'RFQ registered','','Priority '+R.pri,'');
+  if(s.i===3||s.i===4||s.i===5){(CLIB[L.v]||[]).slice(s.i===3?0:s.i===4?1:2,s.i===3?1:s.i===4?2:4).forEach(([type,text])=>R.conds.push({step:s.i,by:s.who,type,text,vis:'cust'}));if(s.i===4)R.conds.push({step:4,by:s.who,type:'Condition',text:'Bridge at km 42 needs a structural check — cost not yet included',vis:'int'})}
+  if(s.i===5){const buy=Math.round(money.amt*(1-VERT[L.v].floor/100-.06));R.quotes.push({rev:0,amount:money.amt,buy,cur:money.cur,at:s.end,reason:'Initial offer',status:'Draft',by:s.who});log(L,s.end,nm(s.who),'Cost sheet saved (Rev-00)','',fmtM(money.amt,money.cur),'')}
+  if(s.i===6){const q=last(R);q.status='Approved';q.appBy=s.who;q.appAt=s.end;log(L,s.end,nm(s.who),'Quotation approved (Rev-00)','Draft','Approved','')}
+  if(s.i===7){const q=last(R);Object.assign(q,{status:'Submitted',sentAt:s.end,sentBy:s.who,sentTo:R.contact.e,via:'Sent from CRM',ref:'MSG-'+Math.floor(r()*900000+100000)});log(L,s.end,nm(s.who),'Quotation sent (Rev-00)','Approved','Submitted','leads@ copied')}
+  if(s.i===8){const o=last(R);o.status='Superseded';const n={rev:o.rev+1,amount:Math.round(o.amount*.96/100)*100,buy:o.buy,cur:o.cur,at:s.end-6*H,reason:'Customer asked for a revised price',status:'Submitted',by:s.who,appBy:VERT[L.v].head,appAt:s.end-4*H,sentAt:s.end-3*H,sentBy:s.who,sentTo:o.sentTo,via:'Sent from Outlook — matched via leads@',ref:'MSG-'+Math.floor(r()*900000+100000)};R.quotes.push(n);log(L,n.sentAt,nm(s.who),'Quotation revised (Rev-01)',fmtM(o.amount,o.cur),fmtM(n.amount,n.cur),n.reason)}
+}
+function sampleIOUs(r){
+  const find=f=>LEADS.find(f);
+  const add=(L,by,p,amt,st,ago,settleIn)=>{if(!L)return;const o={no:'IOU-2026-'+String(++SER.iou).padStart(4,'0'),by,p,amt,at:NOW-ago*D,mode:'Bank transfer',settleBy:NOW-ago*D+settleIn*D,status:st,app:VERT[L.v].head};if(['Approved','Paid','Settled'].includes(st)){o.appAt=o.at+.3*D}if(['Paid','Settled'].includes(st))o.paidAt=o.at+.6*D;if(st==='Settled'){o.spent=Math.round(amt*.92);o.setAt=o.at+5*D}L.ious.push(o);log(L,o.at,nm(by),'IOU raised '+o.no,'',fmtM(amt,'INR'),p)};
+  add(find(L=>!L.rfq&&L.pre===3),'vijay','Client visit — travel',8500,'Requested',.2,15);
+  add(find(L=>!L.rfq&&L.pre===4),'sharayu','Client meeting — hospitality',4200,'Settled',9,15);
+  add(find(L=>L.rfq&&L.rfq.steps[4].status==='active'),'dipanka','Site / route survey — travel',18000,'Paid',2,15);
+  add(find(L=>L.rfq&&L.rfq.steps[5].status==='done'&&L.v==='HT'),'dipanka','Site / route survey — travel',22000,'Paid',21,15);
+  add(find(L=>L.owner==='sayan'),'sayan','Tender document fee',5900,'Settled',12,15);
+  add(find(L=>L.owner==='sayan'),'sayan','EMD / bid security (refundable)',250000,'Approved',1,15);
+  add(find(L=>L.rfq&&L.rfq.outcome==='Won'),'vijay','Client visit — travel',14500,'Settled',30,15);
+  add(find(L=>L.rfq&&L.rfq.steps[8].status==='active'),'sharayu','Client meeting — hospitality',6800,'Requested',.1,10);
+}
+function buildInbox(){
+  INBOX=[
+   {id:'i1',from:'logistics@meridianrail.example',sig:'Meridian Rail',subject:'Enquiry: bogie frames Kolkata → Chennai, 8 loads',v:'HT',at:NOW-5*H},
+   {id:'i2',from:'rajesh.n@arkasteel.example',sig:'Arka Steels Pvt Ltd, Angul',subject:'RFQ: shifting of 2 × 90 T reactors within plant',v:'HT',at:NOW-3*H},
+   {id:'i3',from:'velor.procurement@gmail.com',sig:'Velor Wind Pvt Ltd',subject:'Blade transport, 12 sets — budgetary quote',v:'HT',at:NOW-2*H},
+   {id:'i4',from:'amit@prakashhydro.example',sig:'Prakash Hydro Projects Ltd · GSTIN 24AAACP1234F1Z5',subject:'Turbine runner lifting & erection at site',v:'INS',at:NOW-90*60e3},
+   {id:'i5',from:'stores@kesarieng.example',sig:'Kesari Engineering Works',subject:'Transport of press frame 60 T',v:'HT',at:NOW-60*60e3}];
+  INBOX.forEach(autoMatch);
+}
+function buildMail(){
+  MAIL=[];const s7=LEADS.find(L=>L.rfq&&!L.rfq.hold&&!L.rfq.outcome&&L.rfq.steps[7].status==='active');
+  if(s7)MAIL.push({id:'m1',at:NOW-2*H,from:nm(s7.owner),to:s7.rfq.contact.e,subject:'Our offer for '+s7.scope.split(',')[0],att:'Procam_Offer.pdf',status:'unmatched',why:'No RFQ or quote number in the subject',suggest:s7.no});
+  const rv=LEADS.find(L=>L.rfq&&L.rfq.quotes.some(q=>q.via&&q.via.includes('leads@')));
+  if(rv){const q=last(rv.rfq);MAIL.push({id:'m2',at:q.sentAt,from:nm(q.sentBy),to:q.sentTo,subject:`Revised offer ${rv.rfq.qno} / ${rvs(q)}`,att:`${rv.rfq.qno}_${rvs(q)}.pdf`,status:'matched',why:'Quote number and revision found in subject',lead:rv.no})}
+  MAIL.push({id:'m3',at:NOW-5*H,from:nm('suranjan'),to:'leads@procamgroup.in',subject:'Fwd: trailer availability Hazira',att:'',status:'unmatched',why:'No number; does not look like a quotation'});
+}
+
+/* ---------- helpers ---------- */
+function fmt(ms){ms=Math.max(0,ms);const m=Math.round(ms/60000);if(m<60)return m+'m';const h=Math.floor(m/60),mm=m%60;if(h<24)return h+'h'+(mm?' '+mm+'m':'');const d=Math.floor(h/24),hh=h%24;return d+'d'+(hh?' '+hh+'h':'')}
+function fmtM(a,c){if(c==='INR'){if(a>=1e7)return '₹'+(a/1e7).toFixed(2)+' Cr';if(a>=1e5)return '₹'+(a/1e5).toFixed(2)+' L';return '₹'+a.toLocaleString('en-IN')}return c+' '+a.toLocaleString('en-IN')}
+const inr=q=>q.amount*FX[q.cur];
+const fmtI=a=>a>=1e7?'₹'+(a/1e7).toFixed(2)+' Cr':a>=1e5?'₹'+(a/1e5).toFixed(1)+' L':'₹'+Math.round(a).toLocaleString('en-IN');
+const dt=t=>new Date(t).toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'});
+const dd=t=>new Date(t).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric',timeZone:'Asia/Kolkata'});
+const isoD=t=>new Date(t+5.5*H).toISOString().slice(0,10);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const last=R=>R.quotes[R.quotes.length-1];
+const rvs=q=>'Rev-'+String(q.rev).padStart(2,'0');
+const qno=(R,q)=>`${R.qno||'QUO-2026-(on save)'} / ${rvs(q)}`;
+const opts=(l,sel)=>l.map(x=>`<option${x===sel?' selected':''}>${esc(x)}</option>`).join('');
+const pOpts=(keys,sel)=>keys.map(k=>`<option value="${k}"${k===sel?' selected':''}>${esc(nm(k))}</option>`).join('');
+function log(L,at,user,action,prev,next,remarks){L.audit.push({at,user,action,prev:prev||'',next:next||'',remarks:remarks||''})}
+function resOf(sla,d){if(sla==null)return null;return d<=EARLY*sla?'Early':d<=sla?'On time':'Delayed'}
+const acc=L=>ACC.find(a=>a.id===L.acc);
+const active=R=>R?R.steps.find(s=>s.status==='active'):null;
+function elapsed(R,s){const end=s.end!=null?s.end:(R.hold?R.hold.since:NOW);return end-s.start-(s.paused||0)}
+function rag(R,s){if(R.hold)return {c:'h',t:'t-hold',l:'On hold '+fmt(NOW-R.hold.since),rem:1e15};const sla=slaOf(s.i,R.pri);if(sla==null)return {c:'w',t:'t-info',l:'Customer clock '+fmt(elapsed(R,s)),rem:1e15};const rem=sla-elapsed(R,s);if(rem<0)return {c:'r',t:'t-red',l:'Overdue '+fmt(-rem),rem};if(rem<Math.min(D,sla*.5))return {c:'o',t:'t-amb',l:'Due in '+fmt(rem),rem};return {c:'g',t:'t-ok',l:'Due in '+fmt(rem),rem}}
+function preRag(L){const days=(NOW-(L.preAt[L.pre]||L.created))/D,t=PRE[L.pre].t||14;if(days>t*2)return {c:'r',t:'t-red',l:`${Math.floor(days)}d at stage (target ${t}d)`};if(days>t)return {c:'o',t:'t-amb',l:`${Math.floor(days)}d at stage (target ${t}d)`};return {c:'g',t:'t-ok',l:`${Math.floor(days)}d at stage (target ${t}d)`}}
+const stepDur=s=>s.end-s.start-(s.paused||0);
+function status(L){if(L.closed)return L.closed;if(!L.rfq)return 'pre';if(L.rfq.outcome)return L.rfq.outcome==='Won'?'won':'lost';if(L.rfq.hold)return 'hold';return 'rfq'}
+/* who is holding this lead now */
+function holder(L){if(L.closed)return null;if(!L.rfq)return L.owner;if(L.rfq.outcome)return null;const s=active(L.rfq);return s?s.who:null}
+function curNode(L){if(!L.rfq)return L.pre;const s=active(L.rfq);if(L.rfq.outcome)return 20;return 8+(s?s.i:0)}
+const nodeName=i=>i<8?PRE[i].n:i<20?STEPS[i-8].n:'Closed';
+function progress(L){if(!L.rfq)return L.pre/20;const ap=L.rfq.steps.filter(s=>s.status!=='na');return (8+ap.filter(s=>s.status==='done').length)/(8+ap.length)}
+function cycle(L){const s=L.rfq&&L.rfq.steps[7];return s&&s.status==='done'?s.end-L.rfq.received-L.rfq.steps.reduce((a,x)=>a+(x.paused||0),0):null}
+function spent(L){return L.ious.reduce((a,o)=>a+(o.status==='Settled'?o.spent:['Paid'].includes(o.status)?o.amt:0),0)}
+
+/* ---------- visibility ---------- */
+const S={viewer:'vijay',page:'cockpit',open:null,ptab:'journey',sel:null,f:{v:'',owner:'',node:'',st:'open',person:''},msg:null,q:'',period:'all'};
+const me=()=>({k:S.viewer,...PEOPLE[S.viewer]});
+function canSee(L){const m=me();if(m.role==='admin'||m.role==='coord'||m.role==='acct')return true;if(m.role==='head')return L.v===m.v||inTeam(L,m.k);return inTeam(L,m.k)}
+function inTeam(L,k){if(L.owner===k)return true;if(L.ious.some(o=>o.by===k))return true;return L.rfq?L.rfq.steps.some(s=>s.who===k):false}
+const allMine=()=>LEADS.filter(canSee);
+function canAct(L,stepWho){const m=me();return m.k===stepWho||m.role==='admin'||(m.role==='head'&&L.v===m.v)}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,3600)}
+
+/* ---------- account check ---------- */
+const normN=n=>n.toLowerCase().replace(/\b(pvt|private|ltd|limited|llp|inc|co|company|the|india)\b/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/s\b/g,'').replace(/\s+/g,' ').trim();
+function sim(a,b){const A=new Set(normN(a).split(' ').filter(Boolean)),B=new Set(normN(b).split(' ').filter(Boolean));if(!A.size||!B.size)return 0;let i=0;A.forEach(x=>{if(B.has(x))i++});return i/Math.max(A.size,B.size)}
+const domOf=e=>(e.split('@')[1]||'').toLowerCase();
+function cands(it){const out=[],d=domOf(it.from),free=FREE.includes(d),g=(it.sig.match(/GSTIN\s*([0-9A-Z]{15})/)||[])[1];
+  ACC.forEach(a=>{let rule=null,ex=false;if(a.learned.includes(it.from.toLowerCase())){rule='learned contact';ex=true}else if(!free&&a.domains.includes(d)){rule='account email domain';ex=true}else if(g&&a.gstin===g){rule='GSTIN';ex=true}else{const s=sim(it.sig.split(/[,·]/)[0],a.name);if(s>=.5)rule=`company name ${Math.round(s*100)}% similar`}if(rule)out.push({a,rule,ex})});
+  return out.sort((x,y)=>y.ex-x.ex)}
+function ownerFor(a,v){if(a.owners[v])return [a.owners[v],'account owner for this vertical'];if(a.owner)return [a.owner,'account owner'];return [VERT[v].head,'vertical head — owner to confirm']}
+function autoMatch(it){const c=cands(it);it.c=c;const bl=c.find(x=>x.ex&&x.a.blocked);if(bl){it.st='blocked';it.res=`Blocked client ${bl.a.name} (${bl.a.blocked.reason}). No lead created.`;return}
+  const ln=c.find(x=>x.rule==='learned contact');if(ln){linkIt(it,ln.a,'system',ln.rule);return}
+  const ex=c.filter(x=>x.ex);if(ex.length===1&&c.length===1&&(ex[0].a.owners[it.v]||ex[0].a.owner)){linkIt(it,ex[0].a,'system',ex[0].rule);return}
+  it.st='pending';it.why=!c.length?'No account found — create one':FREE.includes(domOf(it.from))?'Free-mail sender — domain cannot identify the company':c.length>1?`${c.length} possible accounts (likely duplicate)`:'Name match only'}
+function newRfqLead(a,v,scope,at,by,rule){const [o,or]=ownerFor(a,v);const L=mkLead(a,'i',o);L.v=v;L.scope=scope;L.ownerRule=or;L.created=at;L.pre=7;for(let s=1;s<8;s++)L.preSkip[s]=true;L.preAt[0]=at;
+  const team=teamFor(L),pri='Medium';const steps=STEPS.map((s,i)=>({i,who:team[s.role],status:(i===4&&v==='PF')?'na':'todo',start:null,end:null,paused:0,result:null,reason:null}));
+  steps[0].start=at;steps[0].end=at;steps[0].status='done';steps[1].start=at;steps[1].status='active';
+  L.rfq={num:null,pri,deadline:at+5*D,received:at,steps,conds:[],quotes:[],hold:null,holds:[],outcome:null,contact:{n:'Sender',e:scope.mail||a.contacts[0]&&a.contacts[0].e||''}};L.no=++SER.lead;
+  log(L,at,'leads@ mailbox','RFQ mail received','','','');log(L,NOW,by==='system'?'System':nm(by),'Account linked','',a.name,'Rule: '+rule);log(L,NOW,'System','Owner assigned','',nm(o),or);LEADS.push(L);return L}
+function linkIt(it,a,by,rule,newOwner){if(newOwner){a.owners[it.v]=newOwner;if(!a.owner)a.owner=newOwner}if(by!=='system'&&!a.learned.includes(it.from.toLowerCase()))a.learned.push(it.from.toLowerCase());
+  const L=newRfqLead(a,it.v,it.subject,it.at,by,rule);L.rfq.contact={n:it.sig,e:it.from};it.st=by==='system'?'auto':'linked';it.lead=L.no;it.res=`${a.name} · owner ${nm(L.owner)} (${L.ownerRule})`}
+
+/* ---------- small UI pieces ---------- */
+const chip=(t,c)=>`<span class="chip ${c||''}">${esc(t)}</span>`;
+const priChip=p=>chip(p==='Low'?'Low / Auction':p,{Critical:'c-red',High:'c-amb',Medium:'c-info',Low:''}[p]);
+function stChip(L){const s=status(L);return s==='hold'?chip('On hold','c-hold'):s==='won'?chip('Won','c-ok'):s==='lost'?chip('Lost'):s==='pre'?chip('Before RFQ','c-brand'):''}
+function jstrip(L){let h='<span class="js" aria-hidden="true">';for(let i=0;i<20;i++){if(i===8)h+='<b></b>';let c='';const cur=curNode(L);
+  if(i<8){if(L.preSkip[i])c='s';else if(L.rfq||i<L.pre)c='d';else if(i===L.pre)c='a '+preRag(L).c}
+  else{const s=L.rfq&&L.rfq.steps[i-8];if(s){if(s.status==='done')c='d';else if(s.status==='na'||s.status==='closed')c='s';else if(s.status==='active')c='a '+rag(L.rfq,s).c}}
+  h+=`<i class="${c}"></i>`}return h+'</span>'}
+function nowTxt(L){const s=status(L);if(s==='won')return '<span class="rag t-ok">Won · handed over</span>';if(s==='lost')return `<span class="rag t-grey">${L.rfq?'Lost · '+esc(L.rfq.lostReason):'Closed · not a fit'}</span>`;
+  if(s==='pre'){const r=preRag(L);return `<div class="now">With <b>${esc(nm(L.owner))}</b> · ${PRE[L.pre].n}</div><span class="rag ${r.t}">${r.l}</span>`}
+  const a=active(L.rfq),r=rag(L.rfq,a);if(s==='hold')return `<div class="now">On hold at <b>${a.i+1}. ${STEPS[a.i].s}</b></div><span class="rag t-hold">${esc(L.rfq.hold.reason)}</span>`;
+  return `<div class="now">With <b>${esc(nm(a.who))}</b> · ${STEPS[a.i].n}</div><span class="rag ${r.t}">${r.l}</span>`}
+const leadRef=L=>`#${L.no}${L.rfq&&L.rfq.num?' · '+L.rfq.num:''}`;
+function leadCell(L){return `<button class="lnk" type="button" data-open="${L.no}">${esc(leadRef(L))}</button><div class="sub">${esc(acc(L).name)} · ${VERT[L.v].n}</div>`}
+function leadsTable(list,opt){opt=opt||{};if(!list.length)return '<p class="empty">Nothing here for these filters.</p>';
+  return `<div class="tw"><table><thead><tr><th>Lead</th><th>Owner</th><th>Journey (before RFQ | RFQ to order)</th><th>Now</th><th class="n">Quoted</th>${opt.spend?'<th class="n">Spend</th>':''}</tr></thead><tbody>${list.map(L=>{const q=L.rfq&&L.rfq.quotes.filter(z=>z.status!=='Draft').pop();return `<tr class="row" data-open="${L.no}"><td>${leadCell(L)}</td><td>${esc(nm(L.owner))}<div class="sub">${esc(chName(L.ch))}</div></td><td>${jstrip(L)} ${L.rfq?priChip(L.rfq.pri):''} ${stChip(L)}</td><td>${nowTxt(L)}</td><td class="n">${q?fmtM(q.amount,q.cur)+`<div class="sub">${rvs(q)}</div>`:'–'}</td>${opt.spend?`<td class="n">${spent(L)?fmtI(spent(L)):'–'}</td>`:''}</tr>`}).join('')}</tbody></table></div>`}
+function tile(l,v,s,cls,go){return `<button type="button" class="tile ${cls||''}" ${go}><span class="l">${l}</span><span class="v">${v}</span><span class="s">${s||''}</span></button>`}
+
+/* ---------- pages ---------- */
+function waitingOnMe(){const k=me().k;return LEADS.filter(L=>holder(L)===k&&!(L.rfq&&L.rfq.hold)).sort((a,b)=>sortKey(a)-sortKey(b))}
+function sortKey(L){if(!L.rfq)return 1e14;const a=active(L.rfq);return a?rag(L.rfq,a).rem:1e15}
+function iouQueues(){const k=me().k,m=me();const all=LEADS.flatMap(L=>L.ious.map(o=>({o,L})));
+  return {approve:all.filter(x=>x.o.status==='Requested'&&(x.o.app===k||m.role==='admin')),pay:all.filter(x=>x.o.status==='Approved'&&(m.role==='acct'||m.role==='admin')),settle:all.filter(x=>x.o.status==='Paid'&&x.o.by===k),mine:all.filter(x=>x.o.by===k)}}
+function pageCockpit(){
+  const m=me(),mine=waitingOnMe(),late=mine.filter(L=>L.rfq&&rag(L.rfq,active(L.rfq)).c==='r').length;
+  const ac=accQueue().length,um=MAIL.filter(x=>x.status==='unmatched').length,iq=iouQueues();
+  const vis=allMine().filter(L=>!['won','lost'].includes(status(L)));
+  const exp=allMine().filter(L=>!L.rfq&&L.pre===7&&L.rfqDate&&L.rfqDate<NOW+31*D).length;
+  let h=`<div class="hero"><div><h1>Cockpit</h1><p>${esc(m.n)}${m.c?' · '+m.c:''} · ${esc(m.t)}</p></div><div class="acts"><button class="btn p" type="button" data-act="newlead">New lead</button></div></div>
+  <div class="search"><input id="q" placeholder="Search lead no., RFQ, quote, account or IOU…" autocomplete="off" value="${esc(S.q)}" aria-label="Search everything"><div class="hits" id="hits" hidden></div></div>
+  <div class="tiles">${tile('Waiting on me',mine.length,'leads and steps in my name','',`data-go="mywork"`)}${tile('Overdue',late,'reason asked when closing',late?'bad':'',`data-go="mywork"`)}${['admin','head'].includes(m.role)?tile('Accounts to confirm',ac,'new leads without an account',ac?'warn':'',`data-go="accounts"`):''}${['coord','admin','head'].includes(m.role)?tile('Unmatched quote mail',um,'copied to leads@',um?'warn':'',`data-go="rfqs"`):''}${tile('My IOUs open in TMS',iq.mine.filter(x=>x.o.status!=='Settled'&&x.o.status!=='Rejected').length,'tagged to my leads','',`data-go="mywork"`)}${tile('RFQs expected ≤ 30 days',exp,'from the pre-RFQ funnel','',`data-go="funnels"`)}</div>`;
+  h+=`<section class="card"><div class="card-h"><h2>Where my work is</h2><p>Every lead I can see, on one line from target account to handover. Click a lead to act on it.</p><span class="r legend" style="margin:0"><span><i style="background:var(--ok)"></i>within target</span><span><i style="background:var(--warn)"></i>due soon / past target</span><span><i style="background:var(--bad)"></i>overdue</span><span><i style="background:var(--hold)"></i>on hold</span></span></div>${leadsTable(vis.sort((a,b)=>sortKey(a)-sortKey(b)).slice(0,14))}${vis.length>14?`<p class="sub" style="margin:8px 0 0">${vis.length-14} more on <button class="lnk" type="button" data-go="leads">Leads</button>.</p>`:''}</section>`;
+  return h;
+}
+function pageMyWork(){
+  const mine=waitingOnMe(),iq=iouQueues(),m=me();
+  let h=`<div class="hero"><div><h1>My Work</h1><p>Everything waiting on ${esc(m.n)}, soonest first. Each row opens the record with the next action ready.</p></div></div>`;
+  h+=`<section class="card"><div class="card-h"><h2>Waiting on me</h2><p>${mine.length} item${mine.length===1?'':'s'}</p></div>${mine.length?`<div class="tw"><table><thead><tr><th>Lead</th><th>Next action</th><th>Since</th><th>Timer</th><th></th></tr></thead><tbody>${mine.map(L=>{const pre=!L.rfq,a=active(L.rfq),r=pre?preRag(L):rag(L.rfq,a);return `<tr class="row" data-open="${L.no}"><td>${leadCell(L)}</td><td>${pre?esc(nextPreAction(L)):esc(STEPS[a.i].n)+`<div class="sub">${esc(STEPS[a.i].ev)}</div>`}</td><td class="sub">${dt(pre?(L.preAt[L.pre]||L.created):a.start)}</td><td><span class="rag ${r.t}">${r.l}</span></td><td><button class="btn p s" type="button" data-open="${L.no}">Act</button></td></tr>`}).join('')}</tbody></table></div>`:'<p class="empty">Nothing is waiting on you.</p>'}</section>`;
+  const _ioRows=(arr,act,label)=>arr.length?`<div class="tw"><table><thead><tr><th>IOU</th><th>Lead</th><th>Raised by</th><th>Purpose</th><th class="n">Amount</th><th>Settle by</th><th></th></tr></thead><tbody>${arr.map(({o,L})=>`<tr><td class="mono">${o.no}</td><td>${leadCell(L)}</td><td>${esc(nm(o.by))}</td><td class="sub">${esc(o.p)}</td><td class="n">${fmtI(o.amt)}</td><td class="sub ${o.settleBy<NOW&&o.status!=='Settled'?'t-red':''}">${dd(o.settleBy)}</td><td><button class="btn p s" type="button" data-iou="${act}" data-lead="${L.no}" data-no="${o.no}">${label}</button></td></tr>`).join('')}</tbody></table></div>`:'';
+  const myOpen=iq.mine.filter(x=>x.o.status!=='Settled'&&x.o.status!=='Rejected');
+  if(myOpen.length)h+=`<section class="card"><div class="card-h"><h2>My IOUs in the TMS</h2><p>Approval, payment and settlement stay in the TMS IOU module. Shown here by lead no.</p></div><div class="tw"><table><thead><tr><th>IOU</th><th>Lead no.</th><th>Purpose</th><th class="n">Amount</th><th>Status</th><th>Settle by</th></tr></thead><tbody>${myOpen.map(({o,L})=>`<tr class="row" data-open="${L.no}" data-tab="spend"><td class="mono">${o.no}</td><td>${leadCell(L)}</td><td class="sub">${esc(o.p)}</td><td class="n">${fmtI(o.amt)}</td><td>${chip(o.status,o.status==='Requested'?'c-amb':'c-info')}</td><td class="sub ${o.settleBy<NOW?'t-red':''}">${dd(o.settleBy)}</td></tr>`).join('')}</tbody></table></div></section>`;
+  return h;
+}
+function nextPreAction(L){return ['Reach the decision-maker','Log first contact','Plan a meeting','Hold the meeting','Note the requirement','Check capability fit','Confirm RFQ date','Wait for RFQ mail'][L.pre]}
+function pageLeads(){
+  const f=S.f;let list=allMine().filter(L=>(!f.v||L.v===f.v)&&(!f.owner||L.owner===f.owner)&&(f.node===''||String(curNode(L))===f.node)&&(f.st==='all'||(f.st==='open'?!['won','lost'].includes(status(L)):status(L)===f.st)));
+  const owners=[...new Set(allMine().map(L=>L.owner))];
+  let h=`<div class="hero"><div><h1>Leads</h1><p>All leads you can see, with their journey. Filters carry over from charts on other pages.</p></div><div class="acts"><button class="btn p" type="button" data-act="newlead">New lead</button></div></div>
+  <div class="acts sub"><label>Vertical <select class="btn" data-f="v"><option value="">All</option>${Object.entries(VERT).map(([k,v])=>`<option value="${k}"${f.v===k?' selected':''}>${v.n}</option>`).join('')}</select></label>
+  <label>Owner <select class="btn" data-f="owner"><option value="">All</option>${pOpts(owners,f.owner)}</select></label>
+  <label>At stage <select class="btn" data-f="node"><option value="">Any</option>${Array.from({length:20},(_,i)=>`<option value="${i}"${f.node===String(i)?' selected':''}>${i<8?'Before RFQ · ':'RFQ · '}${nodeName(i)}</option>`).join('')}</select></label>
+  <label>Status <select class="btn" data-f="st">${[['open','Open'],['pre','Before RFQ'],['rfq','RFQ in progress'],['hold','On hold'],['won','Won'],['lost','Lost'],['all','All']].map(([v,l])=>`<option value="${v}"${f.st===v?' selected':''}>${l}</option>`).join('')}</select></label>
+  ${(f.v||f.owner||f.node!==''||f.st!=='open')?'<button class="btn s" type="button" data-act="clearf">Clear filters</button>':''}</div>
+  <section class="card">${leadsTable(list,{spend:true})}</section>`;
+  return h;
+}
+const canAcc=it=>{const m=me();return m.role==='admin'||(m.role==='head'&&m.v===it.v)};
+const accQueue=()=>{const m=me();return INBOX.filter(i=>i.st==='pending'&&(m.role==='admin'||m.role==='coord'||(m.role==='head'&&m.v===i.v)))};
+function pageAccounts(){
+  const pend=accQueue(),done=INBOX.filter(i=>i.st!=='pending');
+  let h=`<div class="hero"><div><h1>Accounts</h1><p>Every new lead belongs to an account with an owner before anyone works on it.</p></div></div>
+  <section class="card"><div class="card-h"><h2>Account check</h2><p>Leads the CRM could not settle by itself. The vertical head (own vertical) or an admin confirms the account or creates it from the mail.</p></div>${pend.length?pend.map(it=>acctForm(it)).join(''):'<p class="call ok">Every new lead has an account and an owner.</p>'}</section>
+  <section class="card"><div class="card-h"><h2>Settled today</h2></div><div class="tw"><table><thead><tr><th>From</th><th>Subject</th><th>Result</th><th></th></tr></thead><tbody>${done.map(i=>`<tr><td>${esc(i.from)}</td><td>${esc(i.subject)}</td><td><span class="rag ${i.st==='blocked'?'t-red':'t-ok'}">${i.st==='auto'?'Linked automatically':i.st==='linked'?'Confirmed':'Refused'}</span><div class="sub">${esc(i.res)}</div></td><td>${i.lead?`<div class="acts"><button class="lnk" type="button" data-open="${i.lead}">#${i.lead}</button>${i.st==='linked'?`<button class="btn s" type="button" data-act="nextmail" data-id="${i.id}">Test: next mail from this sender</button>`:''}</div>`:''}</td></tr>`).join('')}</tbody></table></div></section>
+  <section class="card"><div class="card-h"><h2>Account owners</h2><p>Owner per vertical. New accounts are listed for the Thursday review; no approval step.</p></div><div class="tw"><table><thead><tr><th>Account</th><th>Owner by vertical</th><th class="n">Open leads</th><th class="n">Won before</th><th>Created</th></tr></thead><tbody>${ACC.map(a=>`<tr><td>${esc(a.name)} ${a.blocked?chip('Blocked: '+a.blocked.reason,'c-red'):''}${a.created>BASE-7*D?' '+chip('New this week','c-amb'):''}</td><td class="sub">${Object.entries(a.owners).map(([v,o])=>VERT[v].n+': '+esc(nm(o))).join('<br>')||'<span class="t-amb">no owner</span>'}</td><td class="n">${LEADS.filter(L=>L.acc===a.id&&!['won','lost'].includes(status(L))).length}</td><td class="n">${a.wins}</td><td class="sub">${esc(a.by)}, ${dd(a.created)}</td></tr>`).join('')}</tbody></table></div></section>`;
+  return h;
+}
+function acctForm(it){const c=it.c||[],free=FREE.includes(domOf(it.from)),g=(it.sig.match(/GSTIN\s*([0-9A-Z]{15})/)||[])[1]||'';
+  return `<div class="action" style="margin-bottom:10px" data-acform="${it.id}"><div class="ah"><h2>${esc(it.subject)}</h2><span class="sub">${esc(it.from)} · ${esc(it.sig)} · ${VERT[it.v].n} · ${dt(it.at)}</span><span class="rag t-amb">${esc(it.why)}</span></div>
+  ${c.map((x,k)=>{const [o,r]=ownerFor(x.a,it.v);return `<label class="opt"><input type="radio" name="acc-${it.id}" value="${x.a.id}"${k===0&&!x.a.blocked?' checked':''}${x.a.blocked?' disabled':''}><span><b>${esc(x.a.name)}</b> <span class="sub">— matched by ${esc(x.rule)} · owner for ${VERT[it.v].n}: ${esc(nm(o))} (${esc(r)})${x.a.blocked?' · BLOCKED':''}${!x.a.owner?' · no owner yet ('+esc(x.a.by)+')':''}</span></span></label>`}).join('')}
+  <label class="opt new"><input type="radio" name="acc-${it.id}" value="new"${c.length?'':' checked'}><span><b>Create a new account</b></span></label>
+  <div class="frow" data-newacc="${it.id}"><div class="fld"><label>New account name</label><input data-n="name" value="${esc(it.sig.split(/[,·]/)[0].trim())}"></div><div class="fld"><label>Email domain</label><input data-n="dom" value="${free?'':esc(domOf(it.from))}"></div><div class="fld"><label>GSTIN</label><input data-n="gst" value="${esc(g)}"></div></div>
+  <div class="frow"><div class="fld"><label>Owner for ${VERT[it.v].n} (if the account has none)</label><select data-n="own">${pOpts([VERT[it.v].head,'vijay','sharayu'],VERT[it.v].head)}</select><span class="hint">Default is the vertical head, as today.</span></div><div class="fld"><span class="lab">&nbsp;</span>${canAcc(it)?`<button class="btn p" type="button" data-act="acconfirm" data-id="${it.id}">Confirm account & assign</button>`:`<span class="call info">Waiting for ${esc(nm(VERT[it.v].head))} (vertical head) or an admin.</span>`}</div></div></div>`}
+function pageRfqs(){
+  const f=S.f,base=allMine().filter(L=>L.rfq&&!L.rfq.outcome);
+  const list=base.filter(L=>(f.node===''||String(curNode(L))===f.node)&&(!f.person||holder(L)===f.person));
+  let h=`<div class="hero"><div><h1>RFQs</h1><p>Chain board: who holds each RFQ now. Click a bar to filter, a row to act.</p></div></div>`;
+  h+=`<section class="card"><div class="card-h"><h2>Where RFQs are sitting now</h2><p>Visible to everyone in the chain.</p></div>${sitting(base)}</section>`;
+  h+=`<section class="card"><div class="card-h"><h2>RFQ chain</h2><p>${list.length} open${f.node!==''?' · at '+nodeName(+f.node):''}${f.person?' · with '+esc(nm(f.person)):''}</p>${(f.node!==''||f.person)?'<button class="btn s r" type="button" data-act="clearf">Show all</button>':''}</div>${leadsTable(list.sort((a,b)=>sortKey(a)-sortKey(b)))}</section>`;
+  if(['coord','admin','head'].includes(me().role))h+=pageMailQ();
+  return h;
+}
+function sitting(base){const rows=STEPS.map((s,i)=>{const c={r:0,o:0,g:0,w:0,h:0};base.forEach(L=>{const a=active(L.rfq);if(a&&a.i===i)c[rag(L.rfq,a).c]++});return {i,c,t:c.r+c.o+c.g+c.w+c.h}}).filter(r=>r.i>0);
+  const mx=Math.max(1,...rows.map(r=>r.t)),hot=rows.reduce((a,b)=>b.c.r>a.c.r?b:a,rows[0]);
+  const seg=(n,col)=>n?`<i style="width:${n/mx*100}%;background:var(${col})"></i>`:'';
+  return `<div class="bars">${rows.map(r=>`<button type="button" class="bar${hot.c.r&&r.i===hot.i?' hot':''}" data-gonode="${8+r.i}"><span class="lbl">${r.i+1}. ${STEPS[r.i].n}</span><span class="track">${seg(r.c.r,'--bad')}${seg(r.c.o,'--warn')}${seg(r.c.g,'--ok')}${seg(r.c.w,'--info')}${seg(r.c.h,'--hold')}</span><span class="sub">${r.t?r.t+(r.c.r?' · '+r.c.r+' late':''):'–'}</span></button>`).join('')}</div><div class="legend"><span><i style="background:var(--bad)"></i>Overdue</span><span><i style="background:var(--warn)"></i>Due soon</span><span><i style="background:var(--ok)"></i>On track</span><span><i style="background:var(--info)"></i>Customer clock</span><span><i style="background:var(--hold)"></i>On hold</span></div>${hot.c.r?`<p class="call" style="margin-top:10px">Bottleneck now: <b>${STEPS[hot.i].n}</b> — ${hot.c.r} of ${hot.t} past the timer.</p>`:''}`}
+function pageMailQ(){return `<section class="card"><div class="card-h"><h2>Quote mail copied to leads@</h2><p>Linked by itself only when the quote or RFQ number is found; the rest waits here.</p></div><div class="tw"><table><thead><tr><th>Received</th><th>From → to</th><th>Subject</th><th>Match</th><th></th></tr></thead><tbody>${MAIL.slice().sort((a,b)=>b.at-a.at).map(x=>{let act='';
+  if(x.status==='unmatched'){act=`<div class="acts"><select class="btn" id="lk-${x.id}"><option value="">Link to lead…</option>${LEADS.filter(L=>L.rfq&&!L.rfq.outcome&&L.rfq.num).map(L=>`<option value="${L.no}"${L.no===x.suggest?' selected':''}>${esc(leadRef(L))}${L.no===x.suggest?' (same customer)':''}</option>`).join('')}</select><button class="btn p s" type="button" data-act="linkmail" data-id="${x.id}">Link</button><button class="btn s" type="button" data-act="dismiss" data-id="${x.id}">Not a quotation</button></div>`}
+  else if(x.lead)act=`<button class="lnk" type="button" data-open="${x.lead}">#${x.lead}</button>`;else act='<span class="sub">Dismissed</span>';
+  return `<tr><td class="sub">${dt(x.at)}</td><td>${esc(x.from)}<div class="sub">${esc(x.to)}</div></td><td>${esc(x.subject)}<div class="sub">${esc(x.att||'no attachment')}</div></td><td><span class="rag ${x.status==='unmatched'?'t-amb':x.status==='dismissed'?'t-grey':'t-ok'}">${x.status==='unmatched'?'Unmatched':x.status==='dismissed'?'Dismissed':'Matched'}</span><div class="sub">${esc(x.why)}</div></td><td>${act}</td></tr>`}).join('')}</tbody></table></div></section>`}
+function pageQuotes(){const rows=allMine().filter(L=>L.rfq&&L.rfq.quotes.length).flatMap(L=>L.rfq.quotes.map(q=>({L,q})));
+  return `<div class="hero"><div><h1>Quotes</h1><p>Every revision keeps the first quote's number. Click to open the record and the PDF.</p></div></div><section class="card"><div class="tw"><table><thead><tr><th>Quotation</th><th>Lead</th><th class="n">Value</th><th>Status</th><th>Reason</th><th>Sent</th></tr></thead><tbody>${rows.sort((a,b)=>b.q.at-a.q.at).map(({L,q})=>`<tr class="row" data-open="${L.no}" data-tab="quotes"><td class="mono">${esc(qno(L.rfq,q))}${q.rev?`<div class="sub">revision ${q.rev} of ${esc(L.rfq.qno)} / Rev-00</div>`:''}</td><td>${leadCell(L)}</td><td class="n">${fmtM(q.amount,q.cur)}</td><td>${chip(q.status,q.status==='Submitted'?'c-ok':q.status==='Draft'?'c-amb':q.status==='Approved'?'c-info':'')}</td><td class="sub">${esc(q.reason)}</td><td class="sub">${q.sentAt?dt(q.sentAt)+' · '+esc(q.via):'–'}</td></tr>`).join('')}</tbody></table></div></section>`}
+function pageFunnels(){
+  const list=allMine(),f=list.filter(L=>!S.f.v||L.v===S.f.v);
+  const reach=i=>f.filter(L=>!L.preSkip[i]&&(L.rfq||L.pre>=i)).length;
+  const rfqRec=f.filter(L=>L.rfq).length;
+  let h=`<div class="hero"><div><h1>Funnels</h1><p>Pre-RFQ funnel from the sales funnel sheet, built on the CRM's account-development stages. Click a bar to see those leads.</p></div><div class="acts sub"><label>Vertical <select class="btn" data-f="v"><option value="">All</option>${Object.entries(VERT).map(([k,v])=>`<option value="${k}"${S.f.v===k?' selected':''}>${v.n}</option>`).join('')}</select></label></div></div>`;
+  const stages=PRE.map((p,i)=>({i,n:p.n,c:reach(i)})).concat([{i:8,n:'RFQ received',c:rfqRec}]);const mx=Math.max(1,...stages.map(s=>s.c));
+  h+=`<div class="g2"><section class="card"><div class="card-h"><h2>Leads reaching each stage</h2><p>Inbound, repeat and tender RFQs skip the early stages.</p></div><div class="bars">${stages.map((s,k)=>`<button type="button" class="bar" ${s.i===8?'data-gost="rfq"':`data-gonode="${s.i}" data-golist="1"`}><span class="lbl">${s.n}</span><span class="track"><i style="width:${s.c/mx*100}%;background:var(--info)"></i></span><span class="sub">${s.c}${k&&stages[k-1].c?' · '+Math.round(s.c/stages[k-1].c*100)+'%':''}</span></button>`).join('')}</div></section>`;
+  h+=`<section class="card"><div class="card-h"><h2>After the meeting: when is the RFQ expected?</h2><p>One dropdown at "Meeting held". Shown as labels, never as timer colours.</p></div><div class="bars">${TIMING.map(t=>{const n=f.filter(L=>!L.rfq&&L.pre>=4&&L.timing===t).length;return `<div class="bar" style="cursor:default"><span class="lbl">${t}</span><span class="track"><i style="width:${n*12}%;background:var(--info)"></i></span><span class="sub">${n}</span></div>`}).join('')}</div>
+  <h3 style="margin:14px 0 8px">RFQ expected — forecast</h3>${(()=>{const e=f.filter(L=>!L.rfq&&L.pre===7).sort((a,b)=>a.rfqDate-b.rfqDate);return e.length?`<div class="tw"><table><tbody>${e.map(L=>`<tr class="row" data-open="${L.no}"><td>${leadCell(L)}</td><td>${esc(nm(L.owner))}</td><td class="n">${dd(L.rfqDate)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="empty">None.</p>'})()}</section></div>`;
+  const TG=[['vijay','HT',6],['vijay','INS',5],['sharayu','HT',5],['sharayu','PF',6],['sharayu','WH',4],['sayan','HT',4]];
+  const mStart=new Date('2026-10-01T00:00:00+05:30').getTime();
+  h+=`<section class="card"><div class="card-h"><h2>RFQ targets — October 2026</h2><p>Set per month, per vertical, per salesperson. Leads needed = target ÷ the salesperson's channel mix conversion (sample 27%). Sheet lines "Project Cargo Management" and "3PL" count under Warehousing.</p></div><div class="tw"><table><thead><tr><th>Salesperson</th><th>Vertical</th><th class="n">RFQ target</th><th class="n">Leads needed</th><th class="n">RFQs received</th><th class="n">Achieved</th><th class="n">RFQ expected (forecast)</th></tr></thead><tbody>${TG.filter(t=>!S.f.v||t[1]===S.f.v).map(([p,v,t])=>{const got=LEADS.filter(L=>L.owner===p&&L.v===v&&L.rfq&&L.rfq.received>=mStart).length,fc=LEADS.filter(L=>L.owner===p&&L.v===v&&!L.rfq&&L.pre===7).length,pc=Math.round(got/t*100);return `<tr class="row" data-goowner="${p}" data-gov2="${v}"><td>${esc(nm(p))}</td><td>${VERT[v].n}</td><td class="n">${t}</td><td class="n">${Math.ceil(t/.27)}</td><td class="n">${got}</td><td class="n"><span class="${pc>=100?'t-ok':pc>=50?'t-amb':'t-red'}">${pc}%</span></td><td class="n">${fc}</td></tr>`}).join('')}<tr><td><b>Total</b></td><td></td><td class="n"><b>${TG.reduce((a,t)=>a+t[2],0)}</b></td><td></td><td class="n"><b>${TG.reduce((a,[p,v])=>a+LEADS.filter(L=>L.owner===p&&L.v===v&&L.rfq&&L.rfq.received>=mStart).length,0)}</b></td><td></td><td></td></tr></tbody></table></div></section>`;
+  const exact=CH.reduce((a,c)=>a+c[2]*c[3],0);
+  h+=`<section class="card"><div class="card-h"><h2>Lead channels: plan against actual</h2><p>Channel plan from the sales funnel sheet (30 RFQs a month). Expected RFQs are not rounded row by row: ${exact.toFixed(2)} in total.</p></div><div class="tw"><table><thead><tr><th>Channel</th><th>How it is set</th><th class="n">Std conv.</th><th class="n">Leads planned</th><th class="n">Expected RFQs</th><th class="n">Leads so far</th><th class="n">RFQs so far</th><th class="n">Sales spend</th><th class="n">Spend per RFQ</th></tr></thead><tbody>${CH.map(c=>{const L=f.filter(x=>x.ch===c[0]),rq=L.filter(x=>x.rfq).length,sp=L.reduce((a,x)=>a+spent(x),0);return `<tr class="row" data-goch="${c[0]}"><td>${c[0]}. ${c[1]}</td><td class="sub">${AUTO_CH[c[0]]?'Automatic — '+AUTO_CH[c[0]].toLowerCase():'Dropdown on New lead'}</td><td class="n">${Math.round(c[2]*100)}%</td><td class="n">${c[3]}</td><td class="n">${(c[2]*c[3]).toFixed(2)}</td><td class="n">${L.length}</td><td class="n">${rq}</td><td class="n">${sp?fmtI(sp):'–'}</td><td class="n">${rq&&sp?fmtI(sp/rq):'–'}</td></tr>`}).join('')}</tbody></table></div></section>`;
+  return h;
+}
+function pageReports(){
+  const L0=LEADS.filter(L=>!S.f.v||L.v===S.f.v),R=L0.filter(L=>L.rfq);
+  const act=R.filter(L=>status(L)==='rfq'),hold=R.filter(L=>status(L)==='hold'),won=R.filter(L=>status(L)==='won'),lost=R.filter(L=>status(L)==='lost'),quoted=R.filter(L=>L.rfq.steps[7].status==='done');
+  const over=act.filter(L=>rag(L.rfq,active(L.rfq)).c==='r').length;const eod=new Date(NOW);eod.setHours(23,59,59,999);
+  const today=act.filter(L=>{const s=active(L.rfq),sla=slaOf(s.i,L.rfq.pri);if(!sla)return false;const due=NOW+(sla-elapsed(L.rfq,s));return due<=eod.getTime()&&due>=NOW}).length;
+  const cy=quoted.map(cycle).filter(x=>x!=null),avg=cy.length?cy.reduce((a,b)=>a+b,0)/cy.length:null;
+  const lq=L=>L.rfq.quotes.filter(q=>q.status==='Submitted').pop();
+  const pros=R.filter(L=>!L.rfq.outcome&&lq(L)).reduce((a,L)=>a+inr(lq(L)),0),wonR=won.reduce((a,L)=>a+(lq(L)?inr(lq(L)):0),0);
+  const sp=L0.reduce((a,L)=>a+spent(L),0);
+  let h=`<div class="hero"><div><h1>Reports</h1><p>Management view. Every tile, bar and cell opens the list behind it.</p></div><div class="acts sub"><label>Vertical <select class="btn" data-f="v"><option value="">All</option>${Object.entries(VERT).map(([k,v])=>`<option value="${k}"${S.f.v===k?' selected':''}>${v.n}</option>`).join('')}</select></label></div></div>
+  <div class="tiles">${tile('RFQs received',R.length,'','',`data-gost="all"`)}${tile('Active',act.length,'timer running','',`data-gost="rfq"`)}${tile('On hold',hold.length,'timer paused','hold',`data-gost="hold"`)}${tile('Quoted',quoted.length,'sent at least once','',`data-gost="open"`)}${tile('Won',won.length,'','ok',`data-gost="won"`)}${tile('Lost',lost.length,'','',`data-gost="lost"`)}${tile('Overdue',over,'current step late',over?'bad':'',`data-go="rfqs"`)}${tile('Due today',today,'',today?'warn':'',`data-go="rfqs"`)}${tile('Avg response',avg?fmt(avg):'–','RFQ → quote sent','',`data-go="rfqs"`)}${tile('Prospective revenue',fmtI(pros),'open quotes, latest revision','',`data-go="quotes"`)}${tile('Won revenue',fmtI(wonR),'','ok',`data-gost="won"`)}${tile('Conversion',won.length+lost.length?Math.round(won.length/(won.length+lost.length)*100)+'%':'–','won ÷ closed','',`data-gost="won"`)}${tile('Sales spend (IOU)',fmtI(sp),'paid + settled, tagged to leads','',`data-go="leads"`)}</div>`;
+  const ss=STEPS.map((x,i)=>{let n=0,r=0,ok=0,q=0;L0.forEach(L=>{if(!L.rfq)return;const s=L.rfq.steps[i],sla=slaOf(i,L.rfq.pri);if(s.status==='done'&&sla){n++;r+=stepDur(s)/sla;if(stepDur(s)<=sla)ok++}if(s.status==='active'&&!L.rfq.outcome)q++});return {i,ratio:n?r/n:null,on:n?ok/n:null,q}}).filter(s=>s.i>0);
+  const worst=ss.filter(s=>s.ratio!=null).reduce((a,b)=>(!a||b.ratio>a.ratio)?b:a,null)||{i:1,ratio:0,on:0,q:0},mx=Math.max(2,...ss.map(s=>s.ratio||0));
+  h+=`<div class="g2"><section class="card"><div class="card-h"><h2>Time per step against standard</h2><p>Black mark = standard time.</p></div><p class="call" style="margin-bottom:10px">Slowest: <b>${STEPS[worst.i].n}</b> at ${worst.ratio.toFixed(2)}× standard, ${Math.round(worst.on*100)}% on time, ${worst.q} waiting now.</p><div class="bars">${ss.map(s=>{const col=s.ratio==null?'--info':s.ratio>1.5?'--bad':s.ratio>1?'--warn':'--ok';return `<button type="button" class="bar${s.i===worst.i?' hot':''}" data-gonode="${8+s.i}"><span class="lbl">${s.i+1}. ${STEPS[s.i].n}</span><span class="track"><i style="width:${(s.ratio||0)/mx*100}%;background:var(${col})"></i>${s.ratio==null?'':`<span class="sla" style="left:${100/mx}%"></span>`}</span><span class="sub">${s.ratio==null?(STEPS[s.i].cust?'customer':'–'):s.ratio.toFixed(2)+'×'}</span></button>`}).join('')}</div></section>${reasonsCard(L0)}</div>`;
+  const ppl=Object.keys(PEOPLE).filter(k=>!['admin','acct'].includes(PEOPLE[k].role));
+  h+=`<section class="card"><div class="card-h"><h2>Workload & completion</h2><p>Same layout as the "200+ RFQs Analysis" sheet, worked out from step timestamps.</p></div><div class="tw"><table><thead><tr><th>Person</th><th class="n">RFQs</th>${PRIS.map(p=>`<th class="n">${p}</th>`).join('')}<th class="n">On-time</th><th class="n">Early</th><th>Std. 98%</th><th class="n">Gap</th><th class="n">Open / late</th></tr></thead><tbody>${ppl.map(k=>{const st=pStats(k,L0);if(!st.rfqs)return '';const ach=st.on!=null&&st.on>=TARGET;return `<tr class="row" data-goperson="${k}"><td>${esc(nm(k))}<div class="sub">${esc(PEOPLE[k].t)}</div></td><td class="n">${st.rfqs}</td>${PRIS.map(p=>`<td class="n">${st.by[p]}</td>`).join('')}<td class="n">${st.on==null?'–':Math.round(st.on*100)+'%'}</td><td class="n">${st.early}</td><td><span class="rag ${ach?'t-ok':'t-red'}">${ach?'Achieved':'Below target'}</span></td><td class="n">${st.on==null?'–':Math.max(0,Math.round((TARGET-st.on)*100))+'%'}</td><td class="n">${st.open} / ${st.late}</td></tr>`}).join('')}</tbody></table></div></section>`;
+  h+=`<section class="card"><div class="card-h"><h2>Person × step: average time against standard</h2><p>Click a cell to see that person's RFQs.</p></div><div class="tw"><table class="heat"><thead><tr><th>Person</th>${STEPS.slice(1,12).map((x,i)=>`<th class="n">${i+2}. ${x.s}</th>`).join('')}</tr></thead><tbody>${ppl.map(k=>{let any=false;const cells=STEPS.slice(1,12).map((x,j)=>{const i=j+1;let n=0,r=0;L0.forEach(L=>{if(!L.rfq)return;const s=L.rfq.steps[i],sla=slaOf(i,L.rfq.pri);if(s.who===k&&s.status==='done'&&sla){n++;r+=stepDur(s)/sla}});if(!n)return '<td class="h"></td>';any=true;const v=r/n;return `<td class="h ${v>1.5?'h3':v>1?'h2':'h1'}" data-goperson="${k}">${v.toFixed(1)}</td>`}).join('');return any?`<tr><td>${esc(nm(k))}</td>${cells}</tr>`:''}).join('')}</tbody></table></div><div class="legend"><span><i class="h1"></i>Within</span><span><i class="h2"></i>Up to 1.5×</span><span><i class="h3"></i>Over 1.5×</span></div></section>`;
+  h+=spendCard(L0);
+  return h;
+}
+function pStats(k,L0){const rq=L0.filter(L=>L.rfq&&L.rfq.steps.some(s=>s.who===k&&s.status!=='na'));let done=0,ok=0,early=0,open=0,late=0;rq.forEach(L=>L.rfq.steps.forEach(s=>{if(s.who!==k)return;if(s.status==='done'&&s.result){done++;if(s.result!=='Delayed')ok++;if(s.result==='Early')early++}if(s.status==='active'&&!L.rfq.outcome){open++;if(rag(L.rfq,s).c==='r')late++}}));const by={};PRIS.forEach(p=>by[p]=rq.filter(L=>L.rfq.pri===p).length);return {rfqs:rq.length,by,on:done?ok/done:null,early,open,late}}
+function reasonsCard(L0){const dl={},gd={},dep={};L0.forEach(L=>{if(!L.rfq)return;L.rfq.steps.forEach(s=>{if(s.status!=='done'||!s.reason)return;const t=s.result==='Delayed'?dl:gd;t[s.reason]=(t[s.reason]||0)+1;if(s.result==='Delayed'){const d=PEOPLE[s.who]?PEOPLE[s.who].t.split(' — ')[0]:'';dep[d]=(dep[d]||0)+1}})});
+  const bars=(o,col)=>{const e=Object.entries(o).sort((a,b)=>b[1]-a[1]),m=Math.max(1,...e.map(x=>x[1]));return e.length?'<div class="bars">'+e.map(([k,v])=>`<div class="bar" style="cursor:default"><span class="lbl">${esc(k)}</span><span class="track"><i style="width:${v/m*100}%;background:var(${col})"></i></span><span class="sub">${v}</span></div>`).join('')+'</div>':'<p class="empty">None.</p>'};
+  return `<section class="card"><div class="card-h"><h2>Delay & good-practice reasons</h2><p>From the one dropdown asked only on late or early steps.</p></div><h3 style="margin-bottom:8px">Why steps ran late</h3>${bars(dl,'--bad')}<p class="sub" style="margin:8px 0 0">By function: ${Object.entries(dep).map(([k,v])=>esc(k)+' '+v).join(' · ')||'–'}</p><h3 style="margin:14px 0 8px">What made steps early</h3>${bars(gd,'--info')}</section>`}
+function spendCard(L0){const all=L0.flatMap(L=>L.ious.map(o=>({o,L})));const byV={},byP={};all.forEach(({o,L})=>{if(o.status==='Requested'||o.status==='Rejected')return;const a=o.status==='Settled'?o.spent:o.amt;byV[L.v]=(byV[L.v]||0)+a;byP[o.p]=(byP[o.p]||0)+a});
+  const ovd=all.filter(({o})=>o.status==='Paid'&&o.settleBy<NOW);const m=Math.max(1,...Object.values(byP));
+  return `<section class="card"><div class="card-h"><h2>Sales spend tagged to leads (IOU)</h2><p>From the TMS IOU module, grouped by the Lead no. on each IOU.</p></div><div class="g2"><div><h3 style="margin-bottom:8px">By purpose</h3><div class="bars">${Object.entries(byP).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="bar" style="cursor:default"><span class="lbl">${esc(k)}</span><span class="track"><i style="width:${v/m*100}%;background:var(--red)"></i></span><span class="sub">${fmtI(v)}</span></div>`).join('')}</div></div><div><h3 style="margin-bottom:8px">By vertical</h3><div class="tw"><table><tbody>${Object.entries(byV).map(([k,v])=>`<tr class="row" data-gov="${k}"><td>${VERT[k].n}</td><td class="n">${fmtI(v)}</td><td class="n sub">${L0.filter(L=>L.v===k&&L.rfq&&L.rfq.outcome==='Won').length} won</td></tr>`).join('')}</tbody></table></div>${ovd.length?`<p class="call" style="margin-top:10px"><b>${ovd.length}</b> IOU${ovd.length>1?'s':''} past the 15-day settlement date: ${ovd.map(({o,L})=>`<button class="lnk" type="button" data-open="${L.no}" data-tab="spend">${o.no}</button> (${esc(nm(o.by))})`).join(', ')}</p>`:''}</div></div></section>`}
+function pageChanges(){
+  const rows=[
+   ['Cockpit','Existing landing page','Tiles for accounts to confirm, unmatched quote mail, IOUs; one journey line per lead','Extend'],
+   ['My Work','Existing task list','Next action per lead and step; IOU approve / pay / settle','Extend'],
+   ['Lead record','Existing lead page and stage line','Journey flowchart, time-per-step chart, next action in place, activity, conditions, quotes, spend, audit','Extend'],
+   ['Accounts','Matcher, owner per vertical, learning, client block','Account check queue; create account from the mail; owner set once per account','Extend'],
+   ['RFQs','RFQ record, rate-sourcing lines, task engine','12-step chain with timers that close on events; priority; hold; delay / early reasons','Extend'],
+   ['Quotes','Quote builder, approval, PDF, revise, terms','Revision numbering on the first quote (QUO-2026-0045 / Rev-01); department conditions; leads@ matching','Extend'],
+   ['Funnels','Account-development funnel and activities','Lead channel, expected-RFQ timing, capability check, RFQ date, channel targets','Extend'],
+   ['Reports','Workbench tiles, reports module','RFQ dashboard tiles, bottleneck, workload sheet, reasons, sales spend','Extend'],
+   ['IOU tagged to lead','IOU module in TMS, already linked to TMS leads (created only when a lead is won)','TMS: a "Lead no." field on the IOU form for the CRM lead number. CRM: "Open TMS IOU form" button; spend shown read-only once the CRM–TMS link is built','Extend']];
+  const fields=[['Lead channel','Automatic for 4 channels; dropdown for the rest'],['Expected RFQ timing','Dropdown, once, at "Meeting held"'],['Capability fit','Dropdown, once'],['RFQ expected date','Date, once'],['Delay / good-practice reason','Dropdown, only on late or early steps, pre-selected'],['Department conditions','Tick from the terms library'],['IOU (in TMS)','Lead no. on the TMS IOU form']];
+  return `<div class="hero"><div><h1>What changes in the CRM</h1><p>Additions to the present CRM. Nothing here is a second pipeline or a second master.</p></div></div>
+  <section class="card"><div class="tw"><table><thead><tr><th>Area</th><th>Already in the CRM</th><th>Added</th><th>Fit</th></tr></thead><tbody>${rows.map(r=>`<tr><td><b>${r[0]}</b></td><td class="sub">${r[1]}</td><td class="sub">${r[2]}</td><td><span class="fit fit-${r[3]}">${r[3]}</span></td></tr>`).join('')}</tbody></table></div></section>
+  <div class="g2"><section class="card"><div class="card-h"><h2>Everything a user types</h2><p>All other values come from mail, the account, the quote builder or timestamps.</p></div><div class="tw"><table><tbody>${fields.map(f=>`<tr><td>${f[0]}</td><td class="sub">${f[1]}</td></tr>`).join('')}</tbody></table></div></section>
+  <section class="card"><div class="card-h"><h2>Steps that close themselves</h2></div><div class="tw"><table><tbody>${STEPS.map((s,i)=>`<tr><td>${i+1}. ${s.n}</td><td class="sub">${s.ev}</td></tr>`).join('')}</tbody></table></div></section></div>
+  <section class="card"><div class="card-h"><h2>Open points</h2></div><h3 style="margin-bottom:6px">Decided 24 Oct 2026</h3><ol class="list"><li>IOU: add a "Lead no." field to the TMS IOU form; the CRM–TMS link comes later.</li><li>RFQ targets: per month, per vertical, per salesperson.</li><li>"Project Cargo Management" and "3PL" map to Warehousing.</li><li>Account check: cleared by the vertical head or an admin.</li></ol><h3 style="margin:12px 0 6px">Still open</h3><ol class="list"><li>Installation head: Gowdhaman Rajakrishnan (used here) or Sethupathy Sundaram (CRM vertical list).</li><li>Who does SCM costing and operations per vertical (illustrative here).</li></ol></section>`;
+}
+
+/* ---------- record panel ---------- */
+function openLead(no,tab){S.open=no;S.ptab=tab||'journey';S.sel=null;S.msg=null;render()}
+function record(L){
+  const a=acc(L),R=L.rfq,m=me();
+  let h=`<div class="in"><div class="ph"><h2>Lead #${L.no}</h2>${R&&R.num?`<span class="mono">${R.num}</span>`:''}${R?priChip(R.pri):''} ${stChip(L)}<button class="btn x" type="button" data-act="close">Close</button></div>
+  <div class="meta"><span>Account <b>${esc(a.name)}</b></span><span>Owner <b>${esc(nm(L.owner))}</b> (${esc(L.ownerRule)})</span><span>Vertical <b>${VERT[L.v].n}</b></span><span>Channel <b>${esc(chName(L.ch))}</b>${L.chAuto?' · automatic':''}</span><span>Requirement <b>${esc(L.scope)}</b></span>${R?`<span>Customer deadline <b>${dt(R.deadline)}</b></span>`:''}${L.ious.length?`<span>Spend <b>${fmtI(spent(L))}</b></span>`:''}</div>`;
+  if(R&&R.hold)h+=`<p class="call hold">On hold since ${dt(R.hold.since)} by ${esc(nm(R.hold.by))}: <b>${esc(R.hold.reason)}</b> — ${esc(R.hold.remarks)}. Timers paused.</p>`;
+  if(S.msg)h+=`<p class="err">${esc(S.msg)}</p>`;
+  h+=nextAction(L);
+  h+=`<div class="ptabs" role="tablist">${[['journey','Journey'],['steps','Steps & time'],['activity','Activity'],['conds','Conditions'],['quotes','Quotes'],['spend','Spend (IOU)'],['audit','Audit']].map(([k,l])=>`<button type="button" role="tab" data-ptab="${k}" class="${S.ptab===k?'on':''}">${l}${k==='spend'&&L.ious.length?' ('+L.ious.length+')':''}</button>`).join('')}</div>`;
+  h+={journey:tJourney,steps:tSteps,activity:tActivity,conds:tConds,quotes:tQuotes,spend:tSpend,audit:tAudit}[S.ptab](L);
+  return h+'</div>';
+}
+/* journey flowchart */
+function tJourney(L){const R=L.rfq,cur=curNode(L);
+  const box=(i)=>{let cls='box',sub='';
+    if(i<8){if(L.preSkip[i]){cls+=' skip';sub='skipped — RFQ came direct'}else if(R||i<L.pre){cls+=' done';sub=L.preAt[i]?dd(L.preAt[i]):''}else if(i===L.pre){const r=preRag(L);cls+=' cur '+r.c;sub=r.l}else{sub='target '+(PRE[i].t||'–')+'d'}}
+    else{const s=R&&R.steps[i-8];if(!s){sub='after RFQ'}else if(s.status==='done'){cls+=' done';sub=(i===8?'by mail':esc(nm(s.who)).split(' ')[0]+' · '+fmt(stepDur(s)))}else if(s.status==='na'){cls+=' skip';sub='not needed'}else if(s.status==='closed'){cls+=' skip';sub='closed'}else if(s.status==='active'){const r=rag(R,s);cls+=' cur '+r.c;sub=esc(nm(s.who)).split(' ')[0]+' · '+r.l}else{sub=esc(nm(s.who)).split(' ')[0]}}
+    if(S.sel===i)cls+=' sel';
+    return `<button type="button" class="${cls}" data-node="${i}"><b>${i<8?'':i-7+'. '}${nodeName(i)}</b><span>${sub}</span></button>`};
+  const lane=(from,to)=>{let h='<div class="nodes">';for(let i=from;i<to;i++)h+=`<div class="nd">${box(i)}${i<to-1?'<span class="arr"></span>':''}</div>`;return h+'</div>'};
+  let end='';if(R&&R.outcome==='Won')end=`<div class="nd"><span class="arr"></span><button type="button" class="box end"><b>Won</b><span>PO ${esc(R.po?R.po.no:'')}</span></button></div>`;if(R&&R.outcome==='Lost')end=`<div class="nd"><span class="arr"></span><button type="button" class="box lost"><b>Lost</b><span>${esc(R.lostReason)}</span></button></div>`;
+  let h=`<section class="card flow"><div class="lane"><h3>Before the RFQ ${!R?chip('in progress','c-brand'):''}</h3>${lane(0,8)}</div><div class="lane"><h3>RFQ to order ${R&&!R.outcome?chip('in progress','c-brand'):''}</h3>${lane(8,20).replace(/<\/div>$/,end+'</div>')}</div><p class="sub" style="margin:0">Click any box to see who did it, when, how long it took and what it needs.</p></section>`;
+  if(S.sel!=null)h+=nodeDetail(L,S.sel);
+  if(R)h+=gantt(L);
+  return h;
+}
+function nodeDetail(L,i){const R=L.rfq;let b='';
+  if(i<8){const ac=L.acts.filter(a=>a.at>=(L.preAt[i]||0)&&(i===7||!L.preAt[i+1]||a.at<L.preAt[i+1]));b=`<p class="sub" style="margin:0">${L.preSkip[i]?'Skipped: the customer sent the RFQ directly.':L.preAt[i]?'Reached '+dt(L.preAt[i]):'Not reached yet. Next: '+esc(nextPreAction(L))+'.'}</p>${ac.length?'<ul class="list">'+ac.map(a=>`<li>${dt(a.at)} · ${esc(nm(a.by))} · <b>${esc(a.kind)}</b> ${esc(a.note||'')}</li>`).join('')+'</ul>':''}`}
+  else{const s=R&&R.steps[i-8];if(!s)b='<p class="sub" style="margin:0">Starts when the RFQ mail arrives.</p>';else{const sla=slaOf(s.i,R.pri);b=`<div class="meta"><span>Responsible <b>${esc(nm(s.who))}</b></span><span>Standard <b>${sla?fmt(sla):s.i===0?'automatic':'customer clock'}</b></span>${s.start?`<span>Started <b>${dt(s.start)}</b></span>`:''}${s.end&&s.status==='done'?`<span>Closed <b>${dt(s.end)}</b> (${fmt(stepDur(s))})</span>`:''}${s.result?`<span>Result <b class="${s.result==='Delayed'?'t-red':s.result==='Early'?'t-info':'t-ok'}">${s.result}</b>${s.reason?' — '+esc(s.reason):''}</span>`:''}</div><p class="sub" style="margin:6px 0 0">${STEPS[s.i].ev}.</p>`}}
+  return `<section class="card"><div class="card-h"><h2>${nodeName(i)}</h2></div>${b}</section>`}
+function gantt(L){const R=L.rfq,st=R.steps.filter(s=>s.start&&s.i>0);if(!st.length)return '';const t0=R.received,t1=Math.max(NOW,...st.map(s=>s.end||NOW)),span=Math.max(H,t1-t0);
+  return `<section class="card"><div class="card-h"><h2>Time taken at each step</h2><p>Bar = time held; black mark = standard time. Grey = waiting before the step started.</p></div><div class="gantt">${st.map(s=>{const sla=slaOf(s.i,R.pri),e=s.end||(R.hold?R.hold.since:NOW),left=(s.start-t0)/span*100,w=Math.max(.6,(e-s.start)/span*100),col=s.status==='active'?(rag(R,s).c==='r'?'--bad':rag(R,s).c==='h'?'--hold':'--warn'):s.result==='Delayed'?'--bad':s.result==='Early'?'--info':'--ok';
+    return `<button type="button" class="gr" data-node="${8+s.i}"><span>${s.i+1}. ${STEPS[s.i].s} <span class="sub">${esc(nm(s.who).split(' ')[0])}</span></span><span class="gt"><i style="left:${left}%;width:${Math.min(w,100-left)}%;background:var(${col})"></i>${sla?`<i style="left:${Math.min(99.5,left+sla/span*100)}%;width:2px;background:var(--ink)"></i>`:''}</span><span class="sub">${fmt(e-s.start-(s.paused||0))}</span></button>`}).join('')}</div><div class="legend"><span><i style="background:var(--ok)"></i>On time</span><span><i style="background:var(--info)"></i>Early</span><span><i style="background:var(--bad)"></i>Delayed / overdue</span><span><i style="background:var(--warn)"></i>Running</span></div></section>`}
+function tSteps(L){const R=L.rfq;if(!R)return '<p class="empty">Steps start when the RFQ arrives. Before that, see Journey and Activity.</p>';
+  return `<section class="card"><div class="tw"><table><thead><tr><th>#</th><th>Step</th><th>Responsible</th><th class="n">Standard</th><th>Start</th><th>Closed</th><th class="n">Taken</th><th>Result · reason</th></tr></thead><tbody>${R.steps.map(s=>{const sla=slaOf(s.i,R.pri);let res='<span class="sub">Not started</span>';if(s.status==='done')res=s.result?`<b class="${s.result==='Delayed'?'t-red':s.result==='Early'?'t-info':'t-ok'}">${s.result}</b>${s.reason?`<div class="sub">${esc(s.reason)}</div>`:''}`:'<span class="sub">Done</span>';else if(s.status==='active'){const r=rag(R,s);res=`<span class="rag ${r.t}">${r.l}</span>`}else if(s.status==='na')res='<span class="sub">Not needed</span>';else if(s.status==='closed')res='<span class="sub">Closed — lost</span>';
+    return `<tr class="row" data-node="${8+s.i}"><td class="n">${s.i+1}</td><td>${STEPS[s.i].n}</td><td>${esc(nm(s.who))}</td><td class="n">${sla?fmt(sla):s.i===0?'auto':'customer'}</td><td class="sub">${s.start?dt(s.start):'–'}</td><td class="sub">${s.status==='done'?dt(s.end):'–'}</td><td class="n">${s.status==='done'?fmt(stepDur(s)):s.status==='active'?fmt(elapsed(R,s))+'…':'–'}</td><td>${res}</td></tr>`}).join('')}</tbody></table></div></section>`}
+function tActivity(L){return `<section class="card"><div class="card-h"><h2>Activity</h2><p>Calls, mails, meetings and system events, newest first.</p></div>${[...L.acts.map(a=>({at:a.at,who:nm(a.by),what:a.kind,note:a.note})),...L.audit.filter(a=>!a.action.startsWith('Step closed')).map(a=>({at:a.at,who:a.user,what:a.action,note:[a.prev&&a.next?a.prev+' → '+a.next:a.next,a.remarks].filter(Boolean).join(' · ')}))].sort((a,b)=>b.at-a.at).map(a=>`<div style="display:grid;grid-template-columns:120px 1fr;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><span class="sub">${dt(a.at)}</span><span><b>${esc(a.what)}</b> · ${esc(a.who)}${a.note?`<div class="sub">${esc(a.note)}</div>`:''}</span></div>`).join('')}</section>`}
+function consolidated(R){const c=R.conds.filter(x=>x.vis==='cust'),seen={},out=[];const norm=t=>t.toLowerCase().replace(/[^a-z0-9 ]/g,'').trim();c.forEach(x=>{const n=norm(x.text);if(seen[n]){seen[n].dup++;return}const o={...x,dup:0};seen[n]=o;out.push(o)});return out}
+function tConds(L){const R=L.rfq;if(!R)return '<p class="empty">Departments add conditions while closing their RFQ steps.</p>';
+  return `<section class="card"><div class="card-h"><h2>Conditions by department</h2><p>Internal notes never reach the customer.</p></div>${R.conds.length?`<div class="tw"><table><thead><tr><th>Step</th><th>By</th><th>Type</th><th>Text</th><th>Visibility</th></tr></thead><tbody>${R.conds.map(c=>`<tr><td class="sub">${STEPS[c.step].s}</td><td>${esc(nm(c.by))}</td><td>${esc(c.type)}</td><td>${esc(c.text)}</td><td>${c.vis==='cust'?chip('Customer-facing','c-ok'):chip('Internal','c-brand')}</td></tr>`).join('')}</tbody></table></div><h3 style="margin:14px 0 6px">Goes on the quotation</h3><ul class="list">${consolidated(R).map(c=>`<li>${esc(c.text)}${c.dup?' <span class="sub">(duplicate merged)</span>':''}</li>`).join('')}</ul>`:'<p class="empty">None yet.</p>'}</section>`}
+function tQuotes(L){const R=L.rfq;if(!R||!R.quotes.length)return '<p class="empty">The quotation is created when the cost sheet is saved.</p>';
+  return `<section class="card"><div class="card-h"><h2>Quotation versions</h2><p>Revisions keep the first quote's number.</p><button class="btn s r" type="button" data-act="pdf">${S.pdf?'Hide':'Preview'} PDF</button></div><div class="tw"><table><thead><tr><th>Quotation</th><th class="n">Value</th><th class="n">Margin</th><th>Reason</th><th>Approved</th><th>Status</th><th>Sent</th></tr></thead><tbody>${R.quotes.map(q=>`<tr><td class="mono">${esc(qno(R,q))}${q.rev?`<div class="sub">revision ${q.rev} of Rev-00</div>`:''}</td><td class="n">${fmtM(q.amount,q.cur)}</td><td class="n">${q.buy?Math.round((1-q.buy/q.amount)*100)+'%':'–'}</td><td class="sub">${esc(q.reason)}</td><td class="sub">${q.appBy?esc(nm(q.appBy))+', '+dt(q.appAt):'Pending'}</td><td>${chip(q.status,q.status==='Submitted'?'c-ok':q.status==='Draft'?'c-amb':q.status==='Approved'?'c-info':'')}</td><td class="sub">${q.sentAt?dt(q.sentAt)+' to '+esc(q.sentTo)+'<br>'+esc(q.via):'–'}</td></tr>`).join('')}</tbody></table></div>${S.pdf?pdf(L):''}</section>`}
+function pdf(L){const R=L.rfq,q=last(R),bu=L.v==='PF'?'Procam Worldwide Logistics Pvt. Ltd.':'Procam Logistics Pvt. Ltd.',c=consolidated(R),ex=c.filter(x=>x.type==='Exclusion'),ot=c.filter(x=>x.type!=='Exclusion');
+  return `<div class="qdoc" style="margin-top:12px"><div class="qh"><div class="ql">PRO<i>C</i>AM</div><div style="text-align:right;font-size:11px;color:#555"><b>${bu}</b><br>[Address and GSTIN from the Business Unit master]</div></div>
+  <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px"><div><b>To</b><br>${esc(acc(L).name)}<br><span style="color:#666">${esc(R.contact.n||'Procurement')}</span></div><div style="text-align:right"><b>Quotation ${esc(qno(R,q))}</b><br>Our ref ${esc(R.num||'')} · Lead #${L.no}<br>Date ${dd(q.at)}</div></div>
+  <div><h4>Scope</h4>${esc(L.scope)}</div><div><h4>Commercial offer</h4><table><thead><tr><th>#</th><th>Description</th><th style="text-align:right">Amount (${q.cur})</th></tr></thead><tbody><tr><td>1</td><td>${{HT:'Transportation as per scope, lump sum',PF:'Freight and handling as per scope',INS:'Erection, rigging and supervision as per scope',WH:'Storage and handling as per scope, per month'}[L.v]}</td><td style="text-align:right">${q.amount.toLocaleString('en-IN')}</td></tr></tbody></table><div style="text-align:right;color:#666">GST extra as applicable</div></div>
+  ${ex.length?`<div><h4>Exclusions</h4><ul>${ex.map(x=>`<li>${esc(x.text)}</li>`).join('')}</ul></div>`:''}${ot.length?`<div><h4>Conditions & assumptions</h4><ul>${ot.map(x=>`<li>${esc(x.text)}</li>`).join('')}</ul></div>`:''}
+  <div><h4>Standard terms</h4>As per the approved standard terms for ${VERT[L.v].n} (version printed).</div><div><h4>Confidentiality</h4>This quotation is confidential and meant only for the addressee.</div><div style="text-align:right;margin-top:14px">For ${bu}<br><br><br>Authorised Signatory</div></div>`}
+function tSpend(L){const k=me().k,open=LEADS.flatMap(x=>x.ious).filter(o=>o.by===k&&o.status==='Paid');const bal=open.reduce((a,o)=>a+o.amt,0);
+  return `<section class="card"><div class="card-h"><h2>Sales spend on this lead</h2><p>IOUs are raised, approved, paid and settled in the TMS IOU module with this lead no. (#${L.no}). Read-only here.</p></div>
+  ${L.ious.length?`<div class="tw"><table><thead><tr><th>IOU</th><th>Raised by</th><th>Purpose</th><th class="n">Amount</th><th>Status</th><th>Settle by</th><th></th></tr></thead><tbody>${L.ious.map(o=>`<tr><td class="mono">${o.no}</td><td>${esc(nm(o.by))}<div class="sub">${dt(o.at)}</div></td><td>${esc(o.p)}</td><td class="n">${fmtI(o.amt)}${o.status==='Settled'?`<div class="sub">spent ${fmtI(o.spent)}</div>`:''}</td><td>${chip(o.status,o.status==='Settled'?'c-ok':o.status==='Requested'?'c-amb':o.status==='Rejected'?'c-red':'c-info')}<div class="sub">Approver ${esc(nm(o.app))}</div></td><td class="sub ${o.status==='Paid'&&o.settleBy<NOW?'t-red':''}">${dd(o.settleBy)}${o.status==='Paid'&&o.settleBy<NOW?' · overdue':''}</td><td></td></tr>`).join('')}</tbody></table></div>`:'<p class="empty">No spend yet.</p>'}
+  <div class="action" style="margin-top:12px"><div class="ah"><h2>Raise IOU in the TMS for lead #${L.no}</h2><span class="sub">The TMS IOU form opens with Lead no. #${L.no} filled in; sanction and payment follow the TMS rules. The demo records it here.</span></div>
+  ${bal?`<p class="call warn">You have ${fmtI(bal)} in ${open.length} IOU${open.length>1?'s':''} not yet settled.</p>`:''}
+  <div class="frow"><div class="fld"><label for="iou-p">Purpose</label><select id="iou-p">${opts(IOUP)}</select></div><div class="fld"><label for="iou-a">Amount (₹)</label><input id="iou-a" inputmode="numeric" placeholder="e.g. 8500"></div><div class="fld"><label for="iou-m">Paid as</label><select id="iou-m">${opts(['Bank transfer','Cash','Company card'])}</select></div><div class="fld"><label for="iou-s">I will settle by</label><input id="iou-s" type="date" value="${isoD(NOW+15*D)}" max="${isoD(NOW+15*D)}"><span class="hint">Within 15 days</span></div></div>
+  <div class="acts"><button class="btn p" type="button" data-act="raiseiou">Open TMS IOU form</button></div></div></section>`}
+function iouBtn(o,L){const m=me();if(o.status==='Requested'&&(o.app===m.k||m.role==='admin'))return `<button class="btn s p" type="button" data-iou="approve" data-lead="${L.no}" data-no="${o.no}">Approve</button> <button class="btn s" type="button" data-iou="reject" data-lead="${L.no}" data-no="${o.no}">Reject</button>`;if(o.status==='Approved'&&(m.role==='acct'||m.role==='admin'))return `<button class="btn s p" type="button" data-iou="pay" data-lead="${L.no}" data-no="${o.no}">Mark paid</button>`;if(o.status==='Paid'&&o.by===m.k)return `<button class="btn s p" type="button" data-iou="settle" data-lead="${L.no}" data-no="${o.no}">Settle</button>`;return ''}
+function tAudit(L){return `<section class="card"><div class="tw"><table><thead><tr><th>When</th><th>User</th><th>Action</th><th>Change</th><th>Remarks</th></tr></thead><tbody>${L.audit.slice().reverse().map(e=>`<tr><td class="sub">${dt(e.at)}</td><td>${esc(e.user)}</td><td>${esc(e.action)}</td><td class="sub">${e.prev||e.next?esc(e.prev)+' → '+esc(e.next):''}</td><td class="sub">${esc(e.remarks)}</td></tr>`).join('')}</tbody></table></div></section>`}
+
+/* ---------- next action (inline, dropdown-first) ---------- */
+function reasonRow(res,i){if(res!=='Delayed'&&res!=='Early')return '';const list=res==='Delayed'?DELAY:GOOD,sug={1:'Insufficient RFQ information',2:'Insufficient RFQ information',3:'Technical clarification pending',4:'Route survey required',5:'Awaiting vendor rate',6:'Internal approval pending'}[i]||'Workload / resource constraint',sg=res==='Early'?({5:'Historical rate / database used',2:'Complete customer information'}[i]||'Quick interdepartmental coordination'):sug;
+  return `<div class="frow"><div class="fld"><label for="na-reason">${res==='Delayed'?'Delay reason (required — step is late)':'What helped finish early'}</label><select id="na-reason">${opts(list,sg)}</select><span class="hint">Suggested from this RFQ's activity</span></div><div class="fld"><label for="na-rem">Remarks ${'(only for Others)'}</label><input id="na-rem"></div></div>`}
+function nextAction(L){
+  const R=L.rfq,m=me();
+  if(L.closed)return '';
+  const wrap=(title,sub,body,btn,who)=>`<div class="action"><div class="ah"><h2>Next action: ${title}</h2><span class="sub">${sub}</span></div>${who&&!canAct(L,who)?`<p class="call info">Waiting on ${esc(nm(who))}. You can see it; only they, the vertical head or a director can act.</p>`:body+`<div class="acts">${btn}${mgmtBtns(L)}</div>`}</div>`;
+  if(!R){
+    const k=L.pre;let def={0:'Phone call',1:'Phone call',2:'Meeting planned',3:'Meeting held',4:'Requirement received',5:'Capability check',6:'RFQ expected',7:'Phone call'}[k];
+    const body=`<div class="frow"><div class="fld"><label for="na-kind">What happened</label><select id="na-kind">${opts(ACT,def)}</select></div><div class="fld"><label for="na-date">Date</label><input id="na-date" type="date" value="${isoD(NOW)}"></div><div class="fld"><label for="na-contact">With</label><select id="na-contact">${opts(acc(L).contacts.map(c=>c.n).concat(['Plant Head','Project Manager','New contact']))}</select></div></div>
+    <div class="frow"><div class="fld" data-x="Meeting planned"><label for="na-mdate">Meeting on</label><input id="na-mdate" type="date" value="${isoD(NOW+3*D)}"></div><div class="fld" data-x="Meeting held"><label for="na-timing">RFQ expected</label><select id="na-timing">${opts(TIMING)}</select></div><div class="fld" data-x="Requirement received"><label for="na-svc">Requirement</label><select id="na-svc">${opts(['ODC / heavy transport','Project cargo — sea','Freight forwarding — air','Warehousing','Installation & rigging','3PL / distribution'])}</select></div><div class="fld" data-x="Capability check"><label for="na-fit">Can Procam do it?</label><select id="na-fit">${opts(['Yes — standard solution','Yes — needs site visit','Partly — with a partner','No — outside our capability'])}</select></div><div class="fld" data-x="RFQ expected"><label for="na-rdate">RFQ expected on</label><input id="na-rdate" type="date" value="${isoD(NOW+20*D)}"></div><div class="fld"><label for="na-note">Note (optional)</label><input id="na-note" placeholder="One line"></div></div>`;
+    const sim=k===7?`<button class="btn" type="button" data-act="rfqarrive">Demo: customer RFQ mail arrives</button>`:'';
+    return wrap(nextPreAction(L),'Logging the activity moves the lead along the funnel — no separate stage change.',body,`<button class="btn p" type="button" data-act="logact">Save activity</button>${sim}`,L.owner);
+  }
+  if(R.outcome)return '';
+  if(R.hold)return `<div class="action"><div class="ah"><h2>On hold</h2><span class="sub">Only the vertical head or a director can reactivate.</span></div><div class="acts">${mgmtBtns(L)}</div></div>`;
+  const s=active(R),i=s.i,sla=slaOf(i,R.pri),res=resOf(sla,elapsed(R,s)),who=s.who;let body='',btn='',title=STEPS[i].n,sub=STEPS[i].ev+'.';
+  if(i===1){const sug=R.deadline-NOW<2*D?'Critical':R.deadline-NOW<4*D?'High':R.deadline-NOW<7*D?'Medium':'Low';
+    body=`<div class="frow"><div class="fld"><label for="na-pri">Priority</label><select id="na-pri">${opts(PRIS,sug)}</select><span class="hint">Suggested from the customer deadline</span></div><div class="fld"><label for="na-dl">Customer deadline</label><input id="na-dl" type="datetime-local" value="${new Date(R.deadline+5.5*H).toISOString().slice(0,16)}"><span class="hint">Read from the RFQ mail</span></div></div><div class="acts"><label class="chk"><input type="checkbox" id="na-tech" checked> Technical evaluation needed</label><label class="chk"><input type="checkbox" id="na-survey" ${L.v==='PF'?'':'checked'}> Site / route survey needed</label></div>`+reasonRow(res,i);btn=`<button class="btn p" type="button" data-act="step">Register RFQ</button>`}
+  else if(i===2){body=`<div class="frow"><div class="fld"><label for="na-info">RFQ information</label><select id="na-info">${opts(MISSING)}</select><span class="hint">Choosing "Missing" sends a clarification request to the customer</span></div></div>${s.waiting?`<p class="call warn">Waiting for customer: ${esc(s.waiting)}</p>`:''}`+reasonRow(res,i);btn=`<button class="btn p" type="button" data-act="step">Confirm</button>`}
+  else if(i===3||i===4){const lib=CLIB[L.v]||[];body=`<div class="fld"><span class="lab">Conditions from ${i===3?'technical evaluation':'the survey'} — tick what applies</span>${lib.map((c,k)=>`<label class="chk"><input type="checkbox" data-lib="${k}"${k===(i===3?0:1)?' checked':''}> <span><b>${c[0]}:</b> ${esc(c[1])}</span></label>`).join('')}</div><div class="frow"><div class="fld"><label for="na-ctext">Add one more (optional)</label><input id="na-ctext" placeholder="Text"></div><div class="fld"><label for="na-ctype">Type</label><select id="na-ctype">${opts(CTYPES,'Assumption')}</select></div><div class="fld"><label for="na-cvis">Shown to customer?</label><select id="na-cvis"><option value="cust">Customer-facing</option><option value="int">Internal note</option></select></div></div>`+reasonRow(res,i);btn=`<button class="btn p" type="button" data-act="step">Confirm conditions</button>`}
+  else if(i===5){const mon=amountFor(L.v,rng(L.no)),cur=mon.cur,buy=Math.round(mon.amt*.82),sell=Math.round(buy/(1-(VERT[L.v].floor+6)/100));
+    body=`<div class="frow"><div class="fld"><label for="na-cur">Currency</label><select id="na-cur">${opts(['INR','USD','EUR'],cur)}</select></div><div class="fld"><label for="na-buy">Cost (from rate sourcing)</label><input id="na-buy" inputmode="numeric" value="${buy}"><span class="hint">Lowest of 3 vendor replies on this route</span></div><div class="fld"><label for="na-sell">Quoted price</label><input id="na-sell" inputmode="numeric" value="${sell}"><span class="hint" id="na-mg"></span></div></div>`+reasonRow(res,i);btn=`<button class="btn p" type="button" data-act="step">Save cost sheet</button>`;sub='Saving the cost sheet creates '+(R.qno||'the quote')+' / Rev-00 and closes this step. Margin floor '+VERT[L.v].floorTxt+'.'}
+  else if(i===6){const q=last(R),mg=q.buy?Math.round((1-q.buy/q.amount)*100):null;body=`<p class="call ${mg!=null&&mg<VERT[L.v].floor?'':'info'}">${esc(qno(R,q))} · ${fmtM(q.amount,q.cur)} · margin ${mg}% (floor ${VERT[L.v].floor}%)${mg!=null&&mg<VERT[L.v].floor?' — below floor, director approval needed':''}</p><div class="frow"><div class="fld"><label for="na-dec">Decision</label><select id="na-dec">${opts(['Approve','Return to costing — margin too low','Return to costing — scope unclear'])}</select></div></div>`+reasonRow(res,i);btn=`<button class="btn p" type="button" data-act="step">Submit decision</button>`}
+  else if(i===7){const q=last(R);body=`<div class="frow"><div class="fld"><label for="na-to">Send to</label><select id="na-to">${opts([R.contact.e].concat(acc(L).contacts.map(c=>c.e)).filter((v,k,a)=>v&&a.indexOf(v)===k))}</select></div><div class="fld"><span class="lab">Copy</span><span class="sub">leads@procamgroup.in (always)</span></div><div class="fld"><span class="lab">Attachment</span><span class="sub">${esc(R.qno)}_${rvs(q)}.pdf · ${fmtM(q.amount,q.cur)}</span></div></div>`+reasonRow(res,i);btn=`<button class="btn p" type="button" data-act="step">Send quotation</button>`}
+  else if(i===8){const q=last(R);if(q.status==='Draft'){title='Approve '+rvs(q);sub='Revision waiting for the vertical head.';body=`<p class="call info">${esc(qno(R,q))} · ${fmtM(q.amount,q.cur)} · ${esc(q.reason)}</p>`;btn=`<button class="btn p" type="button" data-act="revapprove">Approve ${rvs(q)}</button>`;return wrap(title,sub,body,btn,VERT[L.v].head)}
+    if(q.status==='Approved'){title='Send '+rvs(q);body=`<p class="call info">${esc(qno(R,q))} approved. Sending marks the earlier revision Superseded.</p>`;btn=`<button class="btn p" type="button" data-act="revsend">Send ${rvs(q)}</button>`;return wrap(title,'Revision approved.',body,btn,who)}
+    body=`<div class="frow"><div class="fld"><label for="na-resp">Customer response</label><select id="na-resp">${opts(['Revision requested','Accepted — move to final bid','Lost'])}</select></div><div class="fld"><label for="na-ramt">Revised price (if revision)</label><input id="na-ramt" inputmode="numeric" value="${Math.round(q.amount*.96)}"></div><div class="fld"><label for="na-rr">Reason</label><select id="na-rr">${opts(['Customer asked for a revised price','Scope changed','Quantity changed'].concat(LOSTR.map(x=>'Lost: '+x)))}</select></div></div>`;btn=`<button class="btn p" type="button" data-act="step">Record response</button>`}
+  else if(i===9){body=`<div class="frow"><div class="fld"><label for="na-aw">Award expected on</label><input id="na-aw" type="date" value="${isoD(NOW+7*D)}"></div></div>`;btn=`<button class="btn p" type="button" data-act="step">Confirm final bid</button>`}
+  else if(i===10){body=`<div class="frow"><div class="fld"><label for="na-po">Customer PO / LOI no.</label><input id="na-po" placeholder="e.g. 4500123456"></div><div class="fld"><label for="na-pod">PO date</label><input id="na-pod" type="date" value="${isoD(NOW)}"></div></div>`;btn=`<button class="btn p" type="button" data-act="step">Record PO — Won</button>`}
+  else if(i===11){body=`<p class="sub" style="margin:0">Handover pack: account, contact, scope, final quote ${esc(R.qno)}, conditions, PO — filled from this record.</p>`;btn=`<button class="btn p" type="button" data-act="step">Send handover pack</button>`}
+  if(res==='Delayed')sub+=' Late — a reason is needed to close.';
+  return wrap(title,sub,body,btn,who);
+}
+function mgmtBtns(L){const m=me(),R=L.rfq;if(!R||R.outcome)return '';const ok=m.role==='admin'||(m.role==='head'&&m.v===L.v);if(!ok)return '';
+  return `<span style="flex:1"></span><label class="sub" for="mg-pri">Priority</label><select class="btn" id="mg-pri">${opts(PRIS,R.pri)}</select><button class="btn s" type="button" data-act="setpri">Change</button>${R.hold?`<button class="btn s" type="button" data-act="release">Reactivate</button>`:`<select class="btn" id="mg-hold">${opts(HOLDR)}</select><button class="btn s" type="button" data-act="hold">Put on hold</button>`}`}
+
+/* ---------- actions ---------- */
+const val=id=>{const e=document.getElementById(id);return e?e.value.trim():''};
+function findL(no){return LEADS.find(L=>L.no===+no)}
+function doLogAct(L){const kind=val('na-kind'),at=new Date(val('na-date')+'T12:00:00+05:30').getTime()||NOW,who=me().k;let note=val('na-note'),to=L.pre;
+  const map={'Phone call':2,'Email':2,'LinkedIn message':2,'Meeting planned':3,'Meeting held':4,'Requirement received':5,'Capability check':6,'RFQ expected':7};
+  if(kind==='Meeting planned')note=('Meeting on '+dd(new Date(val('na-mdate')).getTime())+' '+note).trim();
+  if(kind==='Meeting held'){L.timing=val('na-timing');note=('RFQ expected: '+L.timing+' '+note).trim()}
+  if(kind==='Requirement received')note=(val('na-svc')+' '+note).trim();
+  if(kind==='Capability check'){const f=val('na-fit');L.fit=f;note=(f+' '+note).trim();if(f.startsWith('No')){L.acts.push({at,by:who,kind,note});L.closed='lost';L.pre=Math.max(L.pre,6);log(L,NOW,nm(who),'Lead closed','Open','Not a fit',f);toast('Lead closed: outside capability. It stays in the funnel report.');return}}
+  if(kind==='RFQ expected'){L.rfqDate=new Date(val('na-rdate')).getTime();note=('RFQ expected on '+dd(L.rfqDate)+' '+note).trim()}
+  L.acts.push({at,by:who,kind,note});const nt=Math.max(L.pre,map[kind]);if(L.pre<1)L.pre=1;
+  if(nt>L.pre){for(let s=L.pre+1;s<=nt;s++)L.preAt[s]=NOW;log(L,NOW,nm(who),'Funnel stage moved',PRE[L.pre].n,PRE[nt].n,'From activity: '+kind);L.pre=nt;toast(`Saved. Lead moved to "${PRE[nt].n}".`)}else toast('Activity saved.')}
+function closeStep(L,s,extra){const R=L.rfq,sla=slaOf(s.i,R.pri),res=resOf(sla,elapsed(R,s));const reason=val('na-reason'),rem=val('na-rem');
+  if(reason==='Others'&&!rem){S.msg='Remarks are needed when the reason is Others.';return false}
+  s.end=NOW;s.status='done';s.result=res;s.reason=(res==='Delayed'||res==='Early')?reason:null;
+  log(L,NOW,nm(me().k),'Step closed: '+STEPS[s.i].n,'',res||'Done',[s.reason,rem,extra].filter(Boolean).join(' — '));
+  let nx=s.i+1;while(nx<12&&R.steps[nx].status==='na')nx++;
+  if(nx<12){const n=R.steps[nx];n.start=NOW;n.end=null;n.status='active';log(L,NOW,'System','Passed to '+nm(n.who),'',STEPS[nx].n,'')}
+  return true}
+function doStep(L){const R=L.rfq,s=active(R),i=s.i,who=nm(me().k);S.msg=null;
+  if(i===1){const p=val('na-pri');R.pri=p;R.deadline=new Date(val('na-dl')+':00+05:30').getTime()||R.deadline;if(!document.getElementById('na-tech').checked)R.steps[3].status='na';if(!document.getElementById('na-survey').checked)R.steps[4].status='na';R.num='RFQ-2026-'+String(++SER.rfq).padStart(4,'0');if(!closeStep(L,s))return;log(L,NOW,who,'RFQ registered','',R.num+' · '+p,'');toast(`${R.num} registered as ${p}. Sent to ${nm(R.steps.find(x=>x.status==='active').who)}.`);return}
+  if(i===2){const inf=val('na-info');if(inf.startsWith('Missing')){s.waiting=inf.replace('Missing: ','');log(L,NOW,who,'Clarification asked from customer','',s.waiting,'Mail sent from the CRM');toast('Clarification mail sent to the customer. Close this step once they reply.');return}if(!closeStep(L,s))return;toast('Screening confirmed.');return}
+  if(i===3||i===4){const lib=CLIB[L.v]||[];document.querySelectorAll('[data-lib]').forEach(c=>{if(c.checked){const x=lib[+c.dataset.lib];R.conds.push({step:i,by:s.who,type:x[0],text:x[1],vis:'cust'})}});const t=val('na-ctext');if(t)R.conds.push({step:i,by:s.who,type:val('na-ctype'),text:t,vis:val('na-cvis')});if(!closeStep(L,s,'conditions confirmed'))return;toast('Conditions saved and step closed.');return}
+  if(i===5){const buy=+val('na-buy'),sell=+val('na-sell'),cur=val('na-cur');if(!(sell>0)||!(buy>0)){S.msg='Cost and quoted price are both needed.';return}if(!R.qno)R.qno='QUO-2026-'+String(++SER.quo).padStart(4,'0');const x=R.quotes.length?last(R):null;R.quotes.push({rev:x?x.rev+1:0,amount:sell,buy,cur,at:NOW,reason:x?'Re-costed after return':'Initial offer',status:'Draft',by:s.who});if(!closeStep(L,s))return;log(L,NOW,who,'Cost sheet saved','',fmtM(sell,cur),'Margin '+Math.round((1-buy/sell)*100)+'%');toast(`${qno(R,last(R))} created and sent for approval.`);return}
+  if(i===6){const d=val('na-dec'),q=last(R);if(d!=='Approve'){q.status='Superseded';log(L,NOW,who,'Returned to costing','',d,'');s.end=null;s.status='todo';s.start=null;s.result=null;const c=R.steps[5];c.status='active';c.start=NOW;c.end=null;c.result=null;toast('Returned to costing.');return}q.status='Approved';q.appBy=me().k;q.appAt=NOW;if(!closeStep(L,s))return;toast(`${qno(R,q)} approved.`);return}
+  if(i===7){const q=last(R);Object.assign(q,{status:'Submitted',sentAt:NOW,sentBy:me().k,sentTo:val('na-to'),via:'Sent from CRM',ref:'MSG-'+(100000+NOW%900000)});if(!closeStep(L,s))return;toast(`${qno(R,q)} sent. leads@ copied; step closed.`);return}
+  if(i===8){const r=val('na-resp');if(r==='Lost'){const rs=val('na-rr').replace('Lost: ','');R.outcome='Lost';R.lostReason=LOSTR.includes(rs)?rs:LOSTR[0];s.end=NOW;s.status='closed';log(L,NOW,who,'Lead closed as Lost','Open','Lost',R.lostReason);toast('Closed as Lost.');return}
+    if(r.startsWith('Accepted')){if(!closeStep(L,s))return;toast('Moved to final bid.');return}
+    const o=last(R),amt=+val('na-ramt');if(!(amt>0)){S.msg='Enter the revised price.';return}const n={rev:o.rev+1,amount:amt,buy:o.buy,cur:o.cur,at:NOW,reason:val('na-rr').replace('Lost: ',''),status:'Draft',by:me().k};R.quotes.push(n);log(L,NOW,who,'Revision created '+qno(R,n),fmtM(o.amount,o.cur),fmtM(amt,o.cur),n.reason);toast(`${qno(R,n)} created — waiting for ${nm(VERT[L.v].head)} to approve.`);return}
+  if(i===9){if(!closeStep(L,s,'award expected '+val('na-aw')))return;toast('Final bid recorded.');return}
+  if(i===10){const po=val('na-po');if(!po){S.msg='Enter the PO or LOI number.';return}R.po={no:po,date:NOW};if(!closeStep(L,s,'PO '+po))return;toast('PO recorded. Handover is next.');return}
+  if(i===11){if(!closeStep(L,s))return;R.outcome='Won';log(L,NOW,who,'Won — handover pack sent','','Won','');toast('Handover pack sent. Lead won.');return}
+}
+
+/* ---------- render ---------- */
+const PAGES=[['cockpit','Cockpit'],['mywork','My Work'],['leads','Leads'],['accounts','Accounts'],['rfqs','RFQs'],['quotes','Quotes'],['funnels','Funnels'],['reports','Reports'],['changes','What changes']];
+function render(){
+  const m=me(),iq=iouQueues(),badge={mywork:waitingOnMe().length,accounts:['admin','head'].includes(m.role)?accQueue().length:0,rfqs:['coord','admin','head'].includes(m.role)?MAIL.filter(x=>x.status==='unmatched').length:0};
+  const pages=PAGES.filter(p=>!(p[0]==='reports'&&!['admin','head','coord'].includes(m.role)));
+  if(!pages.some(p=>p[0]===S.page))S.page='cockpit';
+  document.getElementById('nav').innerHTML=pages.map(([k,l])=>`<button type="button" data-go="${k}" class="${S.page===k?'on':''}">${l}${badge[k]?`<span class="badge">${badge[k]}</span>`:''}</button>`).join('');
+  document.getElementById('clock').textContent=dt(NOW);
+  document.getElementById('view').innerHTML={cockpit:pageCockpit,mywork:pageMyWork,leads:pageLeads,accounts:pageAccounts,rfqs:pageRfqs,quotes:pageQuotes,funnels:pageFunnels,reports:pageReports,changes:pageChanges}[S.page]();
+  const L=S.open&&findL(S.open);const P=document.getElementById('panel');
+  if(L){P.innerHTML=record(L);P.hidden=false;document.getElementById('scrim').hidden=false;wire()}else{P.hidden=true;document.getElementById('scrim').hidden=true}
+  const q=document.getElementById('q');if(q){q.oninput=()=>{S.q=q.value;search()};}
+  document.querySelectorAll('[data-acform]').forEach(f=>{const id=f.dataset.acform,tog=()=>{const r=f.querySelector(`input[name=acc-${id}]:checked`);f.querySelector(`[data-newacc="${id}"]`).hidden=!(r&&r.value==='new')};tog();f.onchange=tog});
+}
+function wire(){const k=document.getElementById('na-kind');if(k){const t=()=>document.querySelectorAll('[data-x]').forEach(e=>e.hidden=e.dataset.x!==k.value);t();k.onchange=t}
+  const b=document.getElementById('na-buy'),s=document.getElementById('na-sell'),g=document.getElementById('na-mg');if(b&&s&&g){const L=findL(S.open),u=()=>{const mg=Math.round((1-(+b.value)/(+s.value||1))*100);g.textContent='Margin '+mg+'% · floor '+VERT[L.v].floor+'%'+(mg<VERT[L.v].floor?' — needs director':'');g.className='hint '+(mg<VERT[L.v].floor?'t-red':'t-ok')};u();b.oninput=u;s.oninput=u}}
+function search(){const h=document.getElementById('hits'),q=S.q.trim().toLowerCase();if(q.length<2){h.hidden=true;return}
+  const res=[];allMine().forEach(L=>{const a=acc(L);const keys=['#'+L.no,String(L.no),L.rfq&&L.rfq.num,L.rfq&&L.rfq.qno,a.name,...L.ious.map(o=>o.no)].filter(Boolean).map(x=>x.toLowerCase());if(keys.some(x=>x.includes(q)))res.push(L)});
+  h.innerHTML=res.length?res.slice(0,8).map(L=>`<button type="button" class="hit" data-open="${L.no}"><span class="k">Lead</span><b>${esc(leadRef(L))}</b><span class="sub">${esc(acc(L).name)} · ${esc(nodeName(Math.min(19,curNode(L))))}</span></button>`).join(''):`<div class="hit"><span class="sub">Nothing matches “${esc(S.q)}”.</span></div>`;h.hidden=false}
+
+document.getElementById('viewer').innerHTML=Object.entries(PEOPLE).map(([k,p])=>`<option value="${k}">${p.n} — ${p.t}</option>`).join('');
+document.getElementById('viewer').value=S.viewer;
+document.getElementById('viewer').addEventListener('change',e=>{S.viewer=e.target.value;S.open=null;S.f={v:'',owner:'',node:'',st:'open',person:''};S.page='cockpit';render()});
+document.getElementById('ff').addEventListener('click',()=>{NOW+=4*H;render()});
+document.getElementById('rs').addEventListener('click',()=>{NOW=BASE;build();S.open=null;render()});
+document.getElementById('scrim').addEventListener('click',()=>{S.open=null;render()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&S.open){S.open=null;render()}});
+document.addEventListener('change',e=>{const f=e.target.dataset&&e.target.dataset.f;if(f){S.f[f]=e.target.value;render()}});
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-go],[data-open],[data-act],[data-ptab],[data-node],[data-gonode],[data-goperson],[data-gost],[data-gov],[data-goch],[data-iou],[data-goowner]');if(!t)return;const d=t.dataset;
+  if(d.iou){doIou(d.iou,findL(d.lead),d.no);return}
+  if(d.act){act(d.act,d.id,t);return}
+  if(d.ptab){S.ptab=d.ptab;S.pdf=false;render();return}
+  if(d.node!==undefined&&S.open){S.sel=+d.node;S.ptab='journey';render();return}
+  if(d.open){openLead(d.open,d.tab);return}
+  if(d.gonode!==undefined){S.f.node=String(d.gonode);S.f.person='';S.f.st=d.golist?'all':'open';S.page=d.golist||+d.gonode<8?'leads':'rfqs';S.open=null;render();return}
+  if(d.goperson){S.f.person=d.goperson;S.f.node='';S.page='rfqs';S.open=null;render();return}
+  if(d.gost){S.f.st=d.gost;S.f.node='';S.page='leads';S.open=null;render();return}
+  if(d.gov){S.f.v=d.gov;S.page='leads';S.f.st='all';render();return}
+  if(d.goowner){S.f={v:d.gov2,owner:d.goowner,node:'',st:'all',person:''};S.page='leads';S.open=null;render();return}
+  if(d.goch){S.page='leads';S.f.st='all';render();return}
+  if(d.go){S.page=d.go;S.open=null;render();return}
+});
+function doIou(kind,L,no){const o=L.ious.find(x=>x.no===no),who=me().k;
+  if(kind==='approve'){o.status='Approved';o.appAt=NOW;log(L,NOW,nm(who),'IOU approved '+no,'Requested','Approved','');toast(no+' approved. Accounts will pay it.')}
+  if(kind==='reject'){o.status='Rejected';log(L,NOW,nm(who),'IOU rejected '+no,'Requested','Rejected','');toast(no+' rejected.')}
+  if(kind==='pay'){o.status='Paid';o.paidAt=NOW;log(L,NOW,nm(who),'IOU paid '+no,'Approved','Paid','');toast(no+' paid. Settle-by date '+dd(o.settleBy)+'.')}
+  if(kind==='settle'){o.status='Settled';o.spent=Math.round(o.amt*.95);o.setAt=NOW;log(L,NOW,nm(who),'IOU settled '+no,'Paid','Settled','Spent '+fmtI(o.spent)+'; balance '+fmtI(o.amt-o.spent)+' returned');toast(no+' settled with bills. Balance returned.')}
+  render()}
+function act(a,id,t){const L=S.open&&findL(S.open),m=me();
+  if(a==='close'){S.open=null;render();return}
+  if(a==='pdf'){S.pdf=!S.pdf;render();return}
+  if(a==='clearf'){S.f={v:'',owner:'',node:'',st:'open',person:''};render();return}
+  if(a==='logact'){S.msg=null;doLogAct(L);render();return}
+  if(a==='step'){doStep(L);render();return}
+  if(a==='rfqarrive'){const R=newRfqLead(acc(L),L.v,L.scope,NOW,'system','account email domain');LEADS.splice(LEADS.indexOf(R),1);L.rfq=R.rfq;L.rfq.contact=acc(L).contacts[0];L.acts.push({at:NOW,by:'leads@',kind:'RFQ received',note:'Mail to leads@ — linked by account domain'});log(L,NOW,'leads@ mailbox','RFQ mail received','RFQ expected','RFQ received','Sent to RFQ Coordinator for registration');SER.lead--;toast('RFQ mail linked to this lead. Waiting for the RFQ Coordinator to register it.');render();return}
+  if(a==='revapprove'){const q=last(L.rfq);q.status='Approved';q.appBy=m.k;q.appAt=NOW;log(L,NOW,m.n,'Quotation approved ('+rvs(q)+')','Draft','Approved','');toast(qno(L.rfq,q)+' approved.');render();return}
+  if(a==='revsend'){const R=L.rfq,q=last(R);R.quotes.forEach(z=>{if(z!==q&&z.status==='Submitted')z.status='Superseded'});const prev=R.quotes.filter(z=>z.sentTo).pop();Object.assign(q,{status:'Submitted',sentAt:NOW,sentBy:m.k,sentTo:(prev&&prev.sentTo)||R.contact.e,via:'Sent from CRM'});log(L,NOW,m.n,'Quotation sent ('+rvs(q)+')','Approved','Submitted','leads@ copied');toast(qno(R,q)+' sent.');render();return}
+  if(a==='setpri'){const p=val('mg-pri');if(p!==L.rfq.pri){log(L,NOW,m.n,'Priority changed (management)',L.rfq.pri,p,'');L.rfq.pri=p;toast('Priority now '+p+'. Everyone on this RFQ is told.')}render();return}
+  if(a==='hold'){const s=active(L.rfq);L.rfq.hold={since:NOW,by:m.k,reason:val('mg-hold'),remarks:'',step:s.i};log(L,NOW,m.n,'RFQ put on hold','Active','On hold',L.rfq.hold.reason);toast('On hold. Timers paused.');render();return}
+  if(a==='release'){const s=active(L.rfq),dur=NOW-L.rfq.hold.since;s.paused=(s.paused||0)+dur;L.rfq.holds.push({...L.rfq.hold,until:NOW});log(L,NOW,m.n,'RFQ reactivated','On hold','Active','Held '+fmt(dur));L.rfq.hold=null;toast('Reactivated. Held time is not counted against anyone.');render();return}
+  if(a==='raiseiou'){const amt=+val('iou-a');if(!(amt>0)){S.msg='Enter the IOU amount.';render();return}S.msg=null;const o={no:'IOU-2026-'+String(++SER.iou).padStart(4,'0'),by:m.k,p:val('iou-p'),amt,at:NOW,mode:val('iou-m'),settleBy:new Date(val('iou-s')).getTime(),status:'Requested',app:VERT[L.v].head};L.ious.push(o);log(L,NOW,m.n,'IOU raised '+o.no,'',fmtI(amt),o.p);toast(`TMS IOU form opened with Lead no. #${L.no}. ${o.no} raised there; it shows here once read from the TMS.`);render();return}
+  if(a==='acconfirm'){const it=INBOX.find(x=>x.id===id),f=document.querySelector(`[data-acform="${id}"]`),sel=(f.querySelector(`input[name=acc-${id}]:checked`)||{}).value,g=n=>f.querySelector(`[data-n="${n}"]`).value.trim();
+    if(sel==='new'){const name=g('name');const bl=ACC.find(x=>x.blocked&&sim(name,x.name)>=.5);if(bl){toast(`"${name}" looks like blocked client ${bl.name}. Not created.`);return}const a2={id:ACC.length+1,name,v:it.v,domains:g('dom')?[g('dom')]:[],gstin:g('gst'),contacts:[{n:'Sender',e:it.from}],learned:[],owners:{},owner:null,blocked:null,created:NOW,by:m.n,wins:0};ACC.push(a2);linkIt(it,a2,m.k,'new account created',g('own'))}
+    else{const a2=ACC.find(x=>x.id===+sel),c=it.c.find(x=>x.a.id===a2.id);linkIt(it,a2,m.k,c.rule+' — confirmed',(a2.owners[it.v]||a2.owner)?null:g('own'))}
+    toast('Account confirmed — lead #'+it.lead+' created for '+it.res);render();return}
+  if(a==='nextmail'){const o=INBOX.find(x=>x.id===id),n={...o,id:'i'+NOW+Math.random(),at:NOW,subject:'Follow-up: '+o.subject.replace(/^Follow-up: /,''),st:null,lead:null,res:null};INBOX.push(n);autoMatch(n);toast(n.st==='auto'?'Linked by itself — learned from your confirmation.':'Still needs a check.');render();return}
+  if(a==='linkmail'){const x=MAIL.find(z=>z.id===id),no=val('lk-'+id);if(!no){toast('Choose the lead to link to.');return}const L2=findL(no),R=L2.rfq,s=active(R);x.status='linked';x.lead=+no;x.why='Linked by '+m.n;log(L2,NOW,m.n,'Quote mail linked from queue','',x.subject,x.from+' → '+x.to);
+    if(s&&s.i===7){const q=last(R);Object.assign(q,{status:'Submitted',sentAt:x.at,sentBy:L2.owner,sentTo:x.to,via:'Sent from Outlook — linked from queue'});s.end=Math.max(s.start,x.at);s.status='done';s.result=resOf(slaOf(7,R.pri),stepDur(s));const n=R.steps[8];n.start=s.end;n.status='active'}toast('Linked to #'+no+'; submission recorded.');render();return}
+  if(a==='dismiss'){const x=MAIL.find(z=>z.id===id);x.status='dismissed';x.why='Not a quotation — '+m.n;render();return}
+  if(a==='newlead'){S.open=null;S.page='leads';render();openNewLead();return}
+  if(a==='nlsave'){saveNewLead();return}
+}
+/* new lead — account first, inline */
+function openNewLead(){const v=document.getElementById('view');const d=document.createElement('section');d.className='card';d.id='nl';d.innerHTML=newLeadForm('', 'HT');v.insertBefore(d,v.children[1]);wireNL();document.getElementById('nl-q').focus()}
+function newLeadForm(q,vv){const hits=q?ACC.map(a=>({a,s:Math.max(sim(q,a.name),a.name.toLowerCase().includes(q.toLowerCase())?.9:0)})).filter(x=>x.s>=.4).sort((x,y)=>y.s-x.s).slice(0,5):[];
+  return `<div class="card-h"><h2>New lead</h2><p>Search the account first, so duplicates and blocked clients are caught before anything is created.</p></div><div class="form"><div class="frow"><div class="fld"><label for="nl-q">Customer</label><input id="nl-q" value="${esc(q)}" placeholder="Type a company name"></div><div class="fld"><label for="nl-v">Vertical</label><select id="nl-v">${Object.entries(VERT).map(([k,v])=>`<option value="${k}"${k===vv?' selected':''}>${v.n}</option>`).join('')}</select></div><div class="fld"><label for="nl-ch">How did this lead come?</label><select id="nl-ch">${CH.filter(c=>!AUTO_CH[c[0]]).map(c=>`<option value="${c[0]}">${c[1]}</option>`).join('')}</select><span class="hint">Inbound, repeat, director and tender leads are set automatically</span></div></div><div class="fld"><label for="nl-s">Requirement</label><input id="nl-s" placeholder="e.g. 80 T transformer, Vadodara → Mundra"></div>
+  <div id="nl-res">${q?hits.map((x,k)=>{const [o,r]=ownerFor(x.a,vv);return `<label class="opt"><input type="radio" name="nla" value="${x.a.id}"${k===0&&!x.a.blocked?' checked':''}${x.a.blocked?' disabled':''}><span><b>${esc(x.a.name)}</b> <span class="sub">— owner for ${VERT[vv].n}: ${esc(nm(o))} (${esc(r)})${x.a.blocked?' · BLOCKED: '+esc(x.a.blocked.reason):''}</span></span></label>`}).join('')+`<label class="opt new"><input type="radio" name="nla" value="new"${hits.length?'':' checked'}><span><b>Create new account "${esc(q)}"</b> <span class="sub">— owner: ${esc(nm(VERT[vv].head))} (vertical head) until named</span>${hits.length?' <span class="t-amb">— similar accounts exist above</span>':''}</span></label>`:'<p class="sub" style="margin:0">Start typing — existing accounts appear first.</p>'}</div>
+  <div class="acts"><button class="btn p" type="button" data-act="nlsave">Create lead</button></div></div>`}
+function wireNL(){const q=document.getElementById('nl-q'),v=document.getElementById('nl-v');const up=()=>{const keep={q:q.value,v:v.value,s:document.getElementById('nl-s').value,ch:document.getElementById('nl-ch').value};document.getElementById('nl').innerHTML=newLeadForm(keep.q,keep.v);document.getElementById('nl-s').value=keep.s;document.getElementById('nl-ch').value=keep.ch;wireNL();const nq=document.getElementById('nl-q');nq.focus();nq.setSelectionRange(nq.value.length,nq.value.length)};q.oninput=up;v.onchange=up}
+function saveNewLead(){const sel=(document.querySelector('input[name=nla]:checked')||{}).value,vv=val('nl-v'),s=val('nl-s'),q=val('nl-q'),m=me();
+  if(!q||!sel){toast('Pick or create the customer account first.');return}if(!s){toast('Add the requirement in one line.');return}
+  let a;if(sel==='new'){const bl=ACC.find(x=>x.blocked&&sim(q,x.name)>=.5);if(bl){toast(`"${q}" looks like blocked client ${bl.name}.`);return}a={id:ACC.length+1,name:q,v:vv,domains:[],gstin:'',contacts:[{n:'Contact to add',e:''}],learned:[],owners:{[vv]:VERT[vv].head},owner:VERT[vv].head,blocked:null,created:NOW,by:m.n,wins:0};ACC.push(a)}else a=ACC.find(x=>x.id===+sel);
+  const [o,r]=ownerFor(a,vv),L=mkLead(a,val('nl-ch'),o);L.v=vv;L.scope=s;L.ownerRule=r;L.created=NOW;L.pre=1;L.preAt={0:NOW,1:NOW};L.no=++SER.lead;L.acts.push({at:NOW,by:m.k,kind:'Lead created',note:'Channel: '+chName(L.ch)});log(L,NOW,m.n,'Lead created','',a.name,'Owner '+nm(o)+' ('+r+')');LEADS.push(L);
+  toast(o===m.k?`Lead #${L.no} created in your name.`:`Lead #${L.no} assigned to ${nm(o)} (${r}); you are recorded as creator.`);openLead(L.no)}
+
+build();render();
+})();
+</script>
+
+</body></html>
