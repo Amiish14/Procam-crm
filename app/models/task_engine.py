@@ -160,6 +160,13 @@ class TaskInstance(db.Model):
     #: closing on a question nobody has answered.
     waiting_for_customer = db.Column(db.Boolean, default=False)
 
+    #: What actually closed this step. "Quote sent" is a claim; the
+    #: quotation number, the revision, the amount, who sent it and
+    #: the mail reference are the evidence, and a month later the
+    #: evidence is the only part anybody can check. JSON because
+    #: each step closes on a different kind of fact.
+    closed_evidence = db.Column(db.JSON)
+
     escalated = db.Column(db.Boolean, nullable=False, default=False,
                           index=True)
     #: The role it was escalated to, from TaskDefinition.escalation_role.

@@ -684,7 +684,25 @@ def api_submit_to_client(qid):
     nrules.dispatch('quote.submitted_to_client', q,
                     actor=session.get('emp_code'),
                     detail=f'Quote {q.quote_number} went to the customer.')
-    return jsonify(ok=True, quote=q.to_dict())
+
+    # CRM-RFQ-CHAIN-01 step 8 closes on the quotation going out,
+    # not on anybody saying it did. Wrapped because a chain that
+    # cannot be updated must never stop a quotation reaching a
+    # customer.
+    chain_note = ''
+    try:
+        from app.services import rfq_chain
+        ok, detail = rfq_chain.on_quote_sent(
+            q, actor=session.get('emp_code'))
+        if ok:
+            db.session.commit()
+            chain_note = (f'step 8 closed ({detail.get("result")}), '
+                          f'next step {detail.get("next")}')
+    except Exception:                                     # noqa: BLE001
+        db.session.rollback()
+        current_app.logger.exception(
+            'could not close step 8 for quote %s', q.id)
+    return jsonify(ok=True, quote=q.to_dict(), chain=chain_note)
 
 
 @bp.route('/api/quotes/<int:qid>/revise', methods=['POST'])

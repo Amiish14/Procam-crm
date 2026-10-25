@@ -38,6 +38,7 @@ COLUMNS = (
     ('task_instances', 'good_practice_reason', 'VARCHAR(120)'),
     ('task_instances', 'reason_remarks', 'VARCHAR(400)'),
     ('task_instances', 'waiting_for_customer', 'BOOLEAN'),
+    ('task_instances', 'closed_evidence', 'JSON'),
     ('rfqs', 'priority', 'VARCHAR(16)'),
     ('rfqs', 'customer_deadline', 'DATE'),
     ('rfqs', 'needs_technical', 'BOOLEAN'),

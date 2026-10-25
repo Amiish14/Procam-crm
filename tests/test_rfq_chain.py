@@ -60,6 +60,9 @@ VERTICAL = 'Heavy Transport'
 
 
 def _purge():
+    from app.models.quote import Quote
+    Quote.query.filter(Quote.quote_number.like('QUO-RC-%')).delete(
+        synchronize_session=False)
     TaskInstance.query.filter(
         TaskInstance.entity_type == 'RFQ').delete(
             synchronize_session=False)
@@ -494,6 +497,119 @@ def test_a_confirm_records_its_conditions_with_visibility():
             facing = [c for c in rows if c.customer_facing()]
             assert len(facing) == 1
             assert facing[0].text == 'Crane not included'
+    finally:
+        with flask_app.app_context():
+            _flag(False)
+
+
+# ── step 8 closes when a quotation goes out ──────────────────────────
+def _quote_for(rfq, **kw):
+    from app.models.quote import Quote
+    # Owned by somebody, or the Access Matrix correctly hides it
+    # and the route 404s for a reason that is not the one under
+    # test.
+    kw.setdefault('prepared_by_id', SALES)
+    kw.setdefault('created_by_id', SALES)
+    q = Quote(quote_number=kw.pop('number', 'QUO-RC-0001'),
+              rfq_id=rfq.id, subject='RC quote',
+              total_amount=kw.pop('amount', 125000),
+              currency='INR', status=kw.pop('status', 'Approved'),
+              rev_no=kw.pop('rev_no', 0), **kw)
+    db.session.add(q)
+    db.session.commit()
+    return q
+
+
+def test_sending_a_quotation_closes_step_8_with_its_evidence():
+    with flask_app.app_context():
+        _flag(True)
+        try:
+            rfq = _rfq('Medium')
+            _open(rfq, 8, started_hours_ago=20)
+            quote = _quote_for(rfq, rev_no=1)
+            ok, detail = rc.on_quote_sent(quote, actor=SALES)
+            assert ok, detail
+            db.session.commit()
+
+            task = rc.steps_for(rfq)[8]
+            assert task.status == TaskInstanceStatus.COMPLETED
+            ev = task.closed_evidence or {}
+            # The claim is "quote sent"; these are the evidence.
+            assert ev['quote_number'] == 'QUO-RC-0001'
+            assert ev['rev_no'] == 1
+            assert ev['amount'] == 125000
+            assert ev['sent_by'] == SALES
+            assert ev['sent_at']
+        finally:
+            _flag(False)
+
+
+def test_sending_the_same_quotation_twice_closes_one_step():
+    """The CRM send path and the mail matcher can both see it."""
+    with flask_app.app_context():
+        _flag(True)
+        try:
+            rfq = _rfq('Medium')
+            _open(rfq, 8, started_hours_ago=20)
+            quote = _quote_for(rfq)
+            assert rc.on_quote_sent(quote, actor=SALES)[0] is True
+            db.session.commit()
+            ok, why = rc.on_quote_sent(quote, actor=SALES)
+            assert ok is False and 'already closed' in why
+        finally:
+            _flag(False)
+
+
+def test_a_quote_with_no_rfq_closes_nothing_and_does_not_raise():
+    with flask_app.app_context():
+        _flag(True)
+        try:
+            from app.models.quote import Quote
+            loose = Quote(quote_number='QUO-RC-LOOSE',
+                          subject='no rfq', total_amount=1)
+            db.session.add(loose)
+            db.session.commit()
+            ok, why = rc.on_quote_sent(loose, actor=SALES)
+            assert ok is False and 'not against an RFQ' in why
+            db.session.delete(loose)
+            db.session.commit()
+        finally:
+            _flag(False)
+
+
+def test_with_the_chain_off_sending_changes_no_step():
+    with flask_app.app_context():
+        _flag(False)
+        rfq = _rfq('Medium')
+        _open(rfq, 8, started_hours_ago=20)
+        quote = _quote_for(rfq, number='QUO-RC-OFF')
+        ok, why = rc.on_quote_sent(quote, actor=SALES)
+        assert ok is False and 'off' in why
+        assert rc.steps_for(rfq)[8].status in TaskInstanceStatus.OPEN
+
+
+def test_the_send_route_closes_step_8():
+    with flask_app.app_context():
+        _flag(True)
+        try:
+            rfq = _rfq('Medium')
+            _open(rfq, 8, started_hours_ago=20)
+            quote = _quote_for(rfq, number='QUO-RC-ROUTE',
+                               status='Approved')
+            rfq_id, qid = rfq.id, quote.id
+        except Exception:
+            _flag(False)
+            raise
+    try:
+        r = _client(SALES).post(f'/api/quotes/{qid}/submit-to-client',
+                                json={})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        with flask_app.app_context():
+            from app.models.rfq import RFQ as _R
+            task = rc.steps_for(db.session.get(_R, rfq_id))[8]
+            assert task.status == TaskInstanceStatus.COMPLETED
+            assert (task.closed_evidence or {})['quote_number'] == \
+                'QUO-RC-ROUTE'
     finally:
         with flask_app.app_context():
             _flag(False)

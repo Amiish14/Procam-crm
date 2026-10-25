@@ -387,7 +387,7 @@ def _account_owner(rfq):
 
 
 def close_step(rfq, step_no, *, actor, reason=None, remarks='',
-               event='', owner_next=None):
+               event='', owner_next=None, evidence=None):
     """Close a step and open the next. (ok, detail-or-why).
 
     The reason rules live here rather than in each caller, because
@@ -434,11 +434,13 @@ def close_step(rfq, step_no, *, actor, reason=None, remarks='',
     elif wanted == 'good_practice':
         task.good_practice_reason = reason
     task.reason_remarks = (remarks or '') or None
+    if evidence:
+        task.closed_evidence = dict(evidence)
 
     audit.record('rfq.step_closed', 'rfq', rfq.id,
                  new={'step_no': step_no, 'step': step['title'],
                       'result': result, 'reason': reason or '',
-                      'by': actor},
+                      'by': actor, 'evidence': evidence or {}},
                  actor=actor,
                  reason=f'{step["title"]} closed '
                         f'({result or "no standard time"})')
@@ -697,3 +699,66 @@ def reasons(kind):
     except Exception:                                     # noqa: BLE001
         pass
     return list(LISTS.get(key, ()))
+
+
+# ── events that close a step from elsewhere ─────────────────────────
+def on_quote_sent(quote, *, actor, evidence=None):
+    """Step 8 closes when a quotation actually goes to the customer.
+
+    Called from the CRM's own send path and from a matched quote
+    mail. Returns (ok, detail) and never raises: a chain that
+    cannot be updated must not stop a quotation going out.
+
+    Idempotent. The same quotation sent twice — once through the
+    CRM and once by the matcher seeing it in the mailbox — closes
+    one step, not two.
+    """
+    from app import db
+
+    if not enabled():
+        return False, 'the chain is off'
+    rfq = _rfq_of(quote)
+    if rfq is None:
+        return False, 'the quote is not against an RFQ'
+    task = steps_for(rfq).get(8)
+    if task is None:
+        return False, 'step 8 is not open on this RFQ'
+    from app.models.task_engine import TaskInstanceStatus
+    if task.status not in TaskInstanceStatus.OPEN:
+        return False, 'step 8 is already closed'
+
+    facts = {'quote_id': quote.id,
+             'quote_number': quote.quote_number or '',
+             'display': _display(quote),
+             'rev_no': quote.rev_no if quote.rev_no is not None
+             else max(0, (quote.revision_number or 1) - 1),
+             'amount': float(quote.total_amount or 0),
+             'currency': quote.currency or '',
+             'sent_by': actor,
+             'sent_at': datetime.utcnow().isoformat(timespec='minutes')}
+    facts.update(evidence or {})
+
+    ok, detail = close_step(rfq, 8, actor=actor, event='quote_sent',
+                            reason=(evidence or {}).get('reason', ''),
+                            remarks=(evidence or {}).get('remarks', ''),
+                            evidence=facts)
+    if ok:
+        db.session.flush()
+    return ok, detail
+
+
+def _rfq_of(quote):
+    from app import db
+    from app.models.rfq import RFQ
+
+    if getattr(quote, 'rfq_id', None):
+        return db.session.get(RFQ, quote.rfq_id)
+    return None
+
+
+def _display(quote):
+    try:
+        from app.services import quote_rev
+        return quote_rev.display_number(quote)
+    except Exception:                                     # noqa: BLE001
+        return quote.quote_number or ''
