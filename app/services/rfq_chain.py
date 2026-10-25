@@ -355,12 +355,9 @@ def _owner_for(rfq, step):
     return None
 
 
-def _vertical_of(rfq):
-    try:
-        from app.services import vertical_heads as vh
-        return vh.master_vertical(vh.vertical_of(rfq)) or ''
-    except Exception:                                     # noqa: BLE001
-        return ''
+def _vertical_of(record):
+    from app.services.vertical_scope import vertical_name
+    return vertical_name(record)
 
 
 def _head_of(vertical):

@@ -96,6 +96,15 @@ class Quote(db.Model):
     #: Why this revision exists, from a Master Data list.
     revision_reason = db.Column(db.String(120))
 
+    #: §5.3. What the job costs us, against `total_amount`, which
+    #: is what we are charging. `QuoteLine.cost_amount` already
+    #: holds a per-line cost for freight, where rate tables fill
+    #: it in; this is the sheet total, which every other vertical
+    #: types because it has no rate tables to read.
+    cost_amount = db.Column(db.Numeric(15, 2))
+    cost_saved_at = db.Column(db.DateTime)
+    cost_saved_by = db.Column(db.String(20))
+
     created_by_id   = db.Column(db.String(20))
     created_at      = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at      = db.Column(db.DateTime, default=datetime.utcnow,

@@ -27,7 +27,10 @@ from app import app, db                                   # noqa: E402
 
 COLUMNS = (('root_quote_id', 'INTEGER'),
            ('rev_no', 'INTEGER'),
-           ('revision_reason', 'VARCHAR(120)'))
+           ('revision_reason', 'VARCHAR(120)'),
+           ('cost_amount', 'NUMERIC(15, 2)'),
+           ('cost_saved_at', 'DATETIME'),
+           ('cost_saved_by', 'VARCHAR(20)'))
 TABLE = 'quotes'
 ACTION = 'quote.root_backfilled'
 

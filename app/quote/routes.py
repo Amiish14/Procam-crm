@@ -605,6 +605,15 @@ def api_approve(qid):
        and not _unrestricted():
         return jsonify(ok=False,
                        error='Preparer cannot approve their own quote'), 403
+    # §5.2 — a quotation that says two things about validity must
+    # not be approved; the customer is the one who finds it.
+    from app.services import quote_rev
+    if quote_rev.enabled():
+        _block = quote_rev.approval_block(q)
+        if _block:
+            return jsonify(ok=False, error=_block,
+                           needs='conditions'), 400
+
     old = q.status
     q.status = 'Approved'
     q.approved_by_id = actor
@@ -615,6 +624,17 @@ def api_approve(qid):
         db.session.rollback()
         return jsonify(ok=False, error='commit failed'), 500
     _fire(q, 'Quote', old, 'Approved')
+    # Approval closes step 7. Wrapped: a chain that cannot be
+    # updated must not block an approval.
+    try:
+        from app.services import cost_sheet
+        _ok, _detail = cost_sheet.on_approved(q, actor=actor)
+        if _ok:
+            db.session.commit()
+    except Exception:                                     # noqa: BLE001
+        db.session.rollback()
+        current_app.logger.exception(
+            'could not close step 7 for quote %s', q.id)
     try:
         db.session.commit()
     except Exception:
@@ -703,6 +723,45 @@ def api_submit_to_client(qid):
         current_app.logger.exception(
             'could not close step 8 for quote %s', q.id)
     return jsonify(ok=True, quote=q.to_dict(), chain=chain_note)
+
+
+@bp.route('/api/quotes/<int:qid>/cost-sheet', methods=['GET'])
+@_require_auth
+def api_cost_sheet(qid):
+    """What the panel shows before anybody types (§5.3)."""
+    from app.services import cost_sheet
+
+    q = _quote_or_404(qid)
+    prefill, source = cost_sheet.prefill_cost(q)
+    cost = (float(q.cost_amount) if q.cost_amount is not None
+            else prefill)
+    sell = float(q.total_amount or 0)
+    return jsonify(ok=True,
+                   cost=cost, cost_source=source,
+                   prefilled=q.cost_amount is None and prefill
+                   is not None,
+                   sell=sell, currency=q.currency or 'INR',
+                   margin=cost_sheet.verdict(q, cost or 0, sell))
+
+
+@bp.route('/api/quotes/<int:qid>/cost-sheet', methods=['POST'])
+@_require_auth
+def api_save_cost_sheet(qid):
+    """Saving the cost sheet closes step 6 (§5.3)."""
+    from app.services import cost_sheet
+
+    q = _quote_or_404(qid)
+    d = request.get_json(silent=True) or {}
+    ok, detail = cost_sheet.save(
+        q, cost=d.get('cost'), sell=d.get('sell'),
+        currency=d.get('currency') or q.currency or 'INR',
+        actor=session.get('emp_code'),
+        remarks=(d.get('remarks') or ''))
+    if not ok:
+        db.session.rollback()
+        return jsonify(ok=False, error=detail), 400
+    db.session.commit()
+    return jsonify(ok=True, **detail)
 
 
 @bp.route('/api/quotes/<int:qid>/revise', methods=['POST'])
