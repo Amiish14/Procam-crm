@@ -65,6 +65,19 @@ Before any code, confirm each item with `path:line` evidence and report back:
 | D11 | Target is 98% of steps on time. A step "finished early" means within 50% of its standard time; this is a setting. | 24 Oct |
 | D12 | The Installation vertical head is **Gowdhaman Rajakrishnan**. The CRM vertical list (CRM-VERTICAL-MASTER-01) shows Sethupathy Sundaram. Change it in Admin → Vertical heads (a setting, not code) before R1, and check the Installation account owners and Account check routing that follow from it. | 24 Oct |
 
+## 2a. Decisions since 24 October
+
+These override the sections they touch. The prompt below is left
+as it was written, so the two can be compared.
+
+| # | Decision | Affects | Date |
+|---|---|---|---|
+| D13 | **Seven lost reasons**, not "the existing 5 + Others": No response · Not interested · Price · Lost to competitor · Customer cancelled or postponed · We could not serve it · Others (free text). Master Data holds exactly these seven and is the source; `app.LOST_REASONS_SEED` is only a fallback. "Not interested" stays separate from "No response" — a customer who says it has answered, and 1,213 leads carry it. 1,336 free-text reasons are left as written, being the only record of why those leads closed. | §8 | 25 Oct |
+| D14 | **Pilot is DIR12010 + the Warehousing head (DIR72012)**, by name, not Heavy Transport. Heavy Transport's head would open to 203 queued leads on day one; Warehousing's to 8. Flags now carry a vertical limit as well as a people limit, and the two are an OR. | §11 deploy step 7 | 25 Oct |
+| D15 | **A placeholder account counts as no account.** An account named Unknown / New Lead / Info / Email, or one claiming a Procam domain, does not satisfy §3.1 — a lead filed under one *looks* placed, so it never reaches Account check. #983 "Unknown" held 4,435 leads and listed `procamgroup.in`, which would have matched every internal forward on an exact rule. | §3.1 | 25 Oct |
+| D16 | **The terms library table is `quote_term_sets`**, not `quote_terms`. | §4.6 | 25 Oct |
+| D17 | **Outbound mail is read by its recipient.** Mail from a Procam address to an external one is filed on that customer's open lead; a new lead is created only when they have none, and then with the account on it. Every other rule reads the sender, which is why 167 messages staff sent to customers became orphan leads on 1–3 September. | §3.2 | 25 Oct |
+
 ## 3. Release R1 — Account first (`FEATURE_ACCOUNT_FIRST`)
 
 **Goal.** No one works on a lead until it belongs to an account with an owner for that vertical. Mail leads and manual leads both go through the same check.

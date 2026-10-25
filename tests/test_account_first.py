@@ -1101,3 +1101,35 @@ def test_the_queue_404s_for_somebody_outside_the_pilot():
     finally:
         with flask_app.app_context():
             _limit()
+
+
+def test_an_anonymous_visitor_sees_nothing_during_a_pilot():
+    """Falling back to the global flag when nobody is signed in
+    told a stranger the route existed: the pilot's 404 became a
+    401, which is the one thing a 404 is for."""
+    with flask_app.app_context():
+        _on()
+        _limit(codes=[HEAD], verticals=[])
+    try:
+        anon = flask_app.test_client()      # no session at all
+        assert anon.get('/api/account-check/queue').status_code == 404
+        assert anon.get('/accounts/check').status_code == 404
+    finally:
+        with flask_app.app_context():
+            _limit()
+
+
+def test_somebody_signed_in_but_outside_the_pilot_sees_404():
+    with flask_app.app_context():
+        _on()
+        _limit(codes=[HEAD], verticals=[])
+    try:
+        client = flask_app.test_client()
+        with client.session_transaction() as s:
+            s['emp_code'] = REP
+        assert client.get('/accounts/check').status_code == 404
+        assert client.get(
+            '/api/account-check/queue').status_code == 404
+    finally:
+        with flask_app.app_context():
+            _limit()

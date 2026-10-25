@@ -282,7 +282,9 @@ def enabled(emp_code=None):
     from app.services import flags
 
     if emp_code is None and has_request_context():
-        emp_code = session.get('emp_code')
+        # See account_gate.enabled: inside a request, no session
+        # means no one the limit can admit.
+        return flags.on_for(FLAG, session.get('emp_code'))
     if emp_code is None:
         return flags.on(FLAG)
     return flags.on_for(FLAG, emp_code)

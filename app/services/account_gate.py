@@ -72,7 +72,11 @@ def enabled(emp_code=None):
     from app.services import flags
 
     if emp_code is None and has_request_context():
-        emp_code = session.get('emp_code')
+        # Inside a request, nobody signed in means nobody the limit
+        # can admit — so the feature is not there. Falling back to
+        # the global flag here told an anonymous visitor the route
+        # existed, and the pilot's 404 became a 401.
+        return flags.on_for(FLAG, session.get('emp_code'))
     if emp_code is None:
         return flags.on(FLAG)
     return flags.on_for(FLAG, emp_code)
