@@ -94,6 +94,10 @@ FLAGS = (
     ('FEATURE_RFQ_CHAIN',
      'The 12-step RFQ chain: timers from the priority, holds, and '
      'the chain board (CRM-RFQ-CHAIN-01)', False),
+    ('FEATURE_QUOTE_REV_V2',
+     'A revision keeps the first quote number (Rev-00, Rev-01), '
+     'conditions flow in from the RFQ steps, and the PDF carries '
+     'the letterhead (CRM-QUOTE-REV-02)', False),
     (KILL_SWITCH, 'Stop all outbound CRM email immediately', False),
 )
 

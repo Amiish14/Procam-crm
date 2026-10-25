@@ -82,6 +82,20 @@ class Quote(db.Model):
                                 nullable=True)
     revision_number = db.Column(db.Integer, default=1)
 
+    # ── CRM-QUOTE-REV-02 (R3), D2 ──
+    #: The first quote in the chain; equal to this row's own id for
+    #: Rev-00. `parent_quote_id` already links a revision to the one
+    #: it came from, which answers "what did this change" and not
+    #: "which quotation is this" — a customer looking at Rev-03 has
+    #: never seen the parent and knows only the first number.
+    root_quote_id = db.Column(db.Integer, db.ForeignKey('quotes.id'),
+                              index=True)
+    #: 0 for the first. `revision_number` stays as it is, defaulting
+    #: to 1, because 2,000 rows of reporting read it.
+    rev_no = db.Column(db.Integer, default=0)
+    #: Why this revision exists, from a Master Data list.
+    revision_reason = db.Column(db.String(120))
+
     created_by_id   = db.Column(db.String(20))
     created_at      = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at      = db.Column(db.DateTime, default=datetime.utcnow,

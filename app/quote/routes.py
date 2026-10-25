@@ -226,16 +226,34 @@ def quote_pdf(qid):
     doc = SimpleDocTemplate(buf, pagesize=A4,
                             leftMargin=18 * mm, rightMargin=18 * mm,
                             topMargin=18 * mm, bottomMargin=18 * mm,
-                            title=f'Quote {quote.quote_number}')
+                            title='Quote')
     story = []
-    story.append(Paragraph(f'Quote {quote.quote_number}', hdr))
+
+    # CRM-QUOTE-REV-02 §5.5. Behind the flag the customer copy
+    # gains a letterhead, who it is addressed to, our reference and
+    # a signatory — and loses the internal status line, which told
+    # the customer the quotation was a "Draft".
+    from app.services import quote_pdf_parts as _pdf
+    _rev_on = _pdf.enabled()
+    _title = _pdf.display_number(quote) if _rev_on \
+        else quote.quote_number
+
+    if _rev_on:
+        for flowable in _pdf.letterhead(quote, styles):
+            story.append(flowable)
+    story.append(Paragraph(f'Quote {_title}', hdr))
     story.append(Spacer(1, 6 * mm))
+    if _rev_on:
+        for flowable in _pdf.customer_block(quote, body):
+            story.append(flowable)
     story.append(Paragraph(
         f'<b>Subject:</b> {quote.subject or ""}<br/>'
         f'<b>Date:</b> {quote.quote_date or ""} &nbsp;&nbsp; '
         f'<b>Valid Until:</b> {quote.validity_until or ""}<br/>'
-        f'<b>Currency:</b> {quote.currency}<br/>'
-        f'<b>Status:</b> {quote.status} &nbsp; (rev {quote.revision_number})',
+        f'<b>Currency:</b> {quote.currency}'
+        + ('' if _rev_on else
+           f'<br/><b>Status:</b> {quote.status} &nbsp; '
+           f'(rev {quote.revision_number})'),
         body))
     story.append(Spacer(1, 4 * mm))
 
@@ -312,12 +330,17 @@ def quote_pdf(qid):
                 if para.strip():
                     story.append(Paragraph(_esc(para.strip()), b))
 
+    if _rev_on:
+        for flowable in _pdf.footer(quote, body, styles):
+            story.append(flowable)
+
     doc.build(story)
     buf.seek(0)
     resp = make_response(buf.getvalue())
     resp.headers['Content-Type'] = 'application/pdf'
     resp.headers['Content-Disposition'] = (
-        f'inline; filename="quote_{quote.quote_number}.pdf"')
+        f'inline; filename="quote_'
+        f'{(_title or quote.quote_number).replace(" / ", "_")}.pdf"')
     resp.headers['Cache-Control'] = 'no-store'
     resp.headers['X-Content-Type-Options'] = 'nosniff'
     return resp
@@ -699,8 +722,32 @@ def api_revise(qid):
         revision_number=(old_q.revision_number or 1) + 1,
         created_by_id=actor,
     )
+
+    # CRM-QUOTE-REV-02 (D2). The chain's first quote is the number
+    # the customer knows; every revision carries it.
+    from app.services import quote_rev
+    if quote_rev.enabled():
+        if not reason:
+            return jsonify(ok=False,
+                           error='A revision needs a reason — say '
+                                 'what changed, or the next person '
+                                 'to open this cannot tell Rev-02 '
+                                 'from Rev-03.',
+                           needs='reason',
+                           reasons=list(quote_rev.REVISION_REASONS)), 400
+        root = quote_rev.root_of(old_q)
+        new_q.root_quote_id = root.id if root is not None else old_q.id
+        new_q.rev_no = quote_rev.next_rev_no(root)
+        new_q.revision_reason = reason[:120]
+
     db.session.add(new_q)
     db.session.flush()
+    if quote_rev.enabled() and not old_q.root_quote_id:
+        # The first quote names itself as the root, so the chain
+        # reads the same whether or not the backfill has run.
+        old_q.root_quote_id = old_q.id
+        if old_q.rev_no is None:
+            old_q.rev_no = 0
 
     # Copy lines
     old_lines = QuoteLine.query.filter_by(quote_id=old_q.id).all()
