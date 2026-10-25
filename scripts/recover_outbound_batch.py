@@ -55,21 +55,35 @@ def batch():
             .order_by(Lead.id).all())
 
 
+def is_open(lead):
+    from app.services import sales_rules
+    return (sales_rules.is_open(lead.stage)
+            and not lead.is_archived)
+
+
 def classify(lead):
-    """('linked'|'suggested'|'flagged', account, address, name)."""
+    """('linked'|'suggested'|'flagged'|'closed', account, addr, name).
+
+    A lead that is already closed can still be linked — its
+    history belongs on the right account — but it is not queued
+    for Account check and not flagged for review. Nobody needs to
+    be asked to look at work that finished.
+    """
     from app.services import outbound_mail as om
 
     body = (lead.original_email_body or lead.notes or '')
     _dir, _sender, external = om.direction({}, body=body)
     if not external:
-        return 'flagged', None, '', ''
+        return ('flagged' if is_open(lead) else 'closed',
+                None, '', '')
     account, _rule, address = om.customer_of(external)
     if account is not None:
         return 'linked', account, address, account.name
     from app.services import account_match
     domain = account_match.domain_of(address)
     name = domain.split('.')[0].title() if domain else ''
-    return 'suggested', None, address, name
+    return (('suggested' if is_open(lead) else 'closed'),
+            None, address, name)
 
 
 def apply_plan(rows, *, actor='DIR12010'):
@@ -119,6 +133,8 @@ def apply_plan(rows, *, actor='DIR12010'):
             row.computed_at = datetime.utcnow()
             done['suggested'] += 1
 
+        elif kind == 'closed':
+            done['closed'] += 1          # nothing to do; counted
         else:
             lead.needs_review = True
             audit.record(ACTION_FLAG, 'lead', lead.id,
@@ -185,7 +201,7 @@ def main():
 
         counts = Counter(k for k, *_rest in rows)
         print(f'  batch                {len(rows)}')
-        for key in ('linked', 'suggested', 'flagged'):
+        for key in ('linked', 'suggested', 'flagged', 'closed'):
             print(f'    {key:<18}{counts.get(key, 0):>5}')
 
         print('\n  per vertical and head:')
@@ -205,7 +221,8 @@ def main():
             print(f'    {vertical[:22]:<24}{heads[vertical]:<13}'
                   f'linked {c.get("linked", 0):>4}   '
                   f'suggested {c.get("suggested", 0):>4}   '
-                  f'flagged {c.get("flagged", 0):>4}')
+                  f'flagged {c.get("flagged", 0):>4}   '
+                  f'closed {c.get("closed", 0):>4}')
 
         print('\n  customers recovered:')
         for name, n in Counter(
@@ -221,8 +238,9 @@ def main():
         done = apply_plan(rows, actor=args.actor)
         db.session.commit()
         print(f'\n  linked {done["linked"]}, suggested '
-              f'{done["suggested"]}, flagged {done["flagged"]}. '
-              f'No lead was closed.')
+              f'{done["suggested"]}, flagged {done["flagged"]}, '
+              f'already closed and left alone {done["closed"]}. '
+              f'No lead was closed by this script.')
 
 
 if __name__ == '__main__':
