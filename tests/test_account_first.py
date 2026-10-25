@@ -887,3 +887,109 @@ def test_confirm_one_will_replace_a_placeholder():
         ok, detail = sug.confirm_one(lead, actor=HEAD)
         assert ok is True, detail
         assert detail['account'] == 'ZZ Domain Co'
+
+
+# ── closing what nothing can identify ────────────────────────────────
+def _sweep():
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(_ROOT, 'scripts'))
+    import close_unidentifiable_leads as mod
+    return mod
+
+
+def _old_lead(account, **kw):
+    from datetime import timedelta
+    lead = Lead(company=kw.pop('company', ''), stage='New',
+                procam_vertical=VERTICAL, source='email',
+                company_id=account.id,
+                created_at=datetime.utcnow() - timedelta(days=200),
+                **kw)
+    db.session.add(lead)
+    db.session.commit()
+    return lead
+
+
+def test_an_old_unidentifiable_lead_is_closed():
+    mod = _sweep()
+    with flask_app.app_context():
+        lead = _old_lead(_account(name='Unknown'))
+        close, _keep = mod.plan()
+        assert [e['lead'].id for e in close] == [lead.id]
+        mod.apply_plan(close)
+        db.session.commit()
+        fresh = db.session.get(Lead, lead.id)
+        assert fresh.stage == 'Lost'
+        assert fresh.lost_reason == 'No Response'
+
+
+@pytest.mark.parametrize('field,value', [
+    ('email', 'someone@realcompany.com'),
+    ('company', 'Tata Steel Limited'),
+])
+def test_a_lead_with_any_identifier_is_left_alone(field, value):
+    """However old. The identifier is the one thing that makes a
+    later match possible; closing it destroys that."""
+    mod = _sweep()
+    with flask_app.app_context():
+        lead = _old_lead(_account(name='Unknown'), **{field: value})
+        close, keep = mod.plan()
+        assert close == []
+        assert keep[0]['lead'].id == lead.id
+        assert keep[0]['identifiers']
+
+
+def test_a_gstin_in_the_body_counts_as_an_identifier():
+    mod = _sweep()
+    with flask_app.app_context():
+        lead = _old_lead(_account(name='Unknown'),
+                         notes='Our GSTIN is 27AAFCP6574J1ZW for '
+                               'billing.')
+        close, keep = mod.plan()
+        assert close == []
+        assert any('GSTIN' in i for i in keep[0]['identifiers'])
+
+
+def test_a_recent_lead_stays_in_the_queue():
+    """Bare, like the old ones — only its age saves it."""
+    mod = _sweep()
+    with flask_app.app_context():
+        lead = Lead(company='', stage='New', source='email',
+                    procam_vertical=VERTICAL,
+                    company_id=_account(name='Unknown').id,
+                    created_at=datetime.utcnow())
+        db.session.add(lead)
+        db.session.commit()
+        close, keep = mod.plan()
+        assert close == []
+        assert keep[0]['identifiers'] == []
+        assert 'days old' in keep[0]['reason']
+
+
+def test_a_lead_under_a_real_account_is_out_of_scope():
+    mod = _sweep()
+    with flask_app.app_context():
+        _old_lead(_account(name='ZZ Real Co', owner=REP))
+        close, keep = mod.plan()
+        assert close == [] and keep == []
+
+
+def test_the_placeholder_name_copied_onto_the_lead_is_not_an_identifier():
+    mod = _sweep()
+    with flask_app.app_context():
+        lead = _old_lead(_account(name='New Lead'), company='New Lead')
+        close, _keep = mod.plan()
+        assert [e['lead'].id for e in close] == [lead.id]
+
+
+def test_down_puts_them_back():
+    mod = _sweep()
+    with flask_app.app_context():
+        lead = _old_lead(_account(name='Unknown'))
+        close, _keep = mod.plan()
+        mod.apply_plan(close)
+        db.session.commit()
+        mod.undo()
+        db.session.commit()
+        fresh = db.session.get(Lead, lead.id)
+        assert fresh.stage == 'New'
+        assert not fresh.lost_reason
