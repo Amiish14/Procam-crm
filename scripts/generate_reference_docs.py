@@ -75,6 +75,13 @@ _GATES = (
     # then the Access Matrix per record.
     (re.compile(r"@_crm2\b"), 'FEATURE_CRM2, then signed in; '
                               'records by scope'),
+    # Account check (CRM-ACCOUNT-FIRST-01), the same shape again:
+    # FEATURE_ACCOUNT_FIRST makes the route 404 while it is off, then
+    # the session. Who may *clear* a lead is a second check inside
+    # each write — the vertical head for that vertical, or an admin
+    # (D6) — because it depends on the record, not on the route.
+    (re.compile(r"@_gate\b"), 'FEATURE_ACCOUNT_FIRST, then signed in; '
+                              'clearing is head-of-vertical or admin'),
     (re.compile(r"session\.get\('emp_code'\)|_current_emp_code\(\)|"
                 r"'emp_code' not in session"), 'signed in (checked inline)'),
     (re.compile(r"require_auth|_login_required|_require_login|_authed\(\)"),

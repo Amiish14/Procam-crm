@@ -171,3 +171,58 @@ class OwnerConfirmation(db.Model):
                 if self.confirmed_at else '',
                 'outcome': self.outcome or '',
                 'escalated': bool(self.escalated_at)}
+
+
+class AccountOwnerConfirmation(db.Model):
+    """Asked once per account and vertical, not once per lead.
+
+    CRM-ACCOUNT-FIRST-01 §3.4. `OwnerConfirmation` above asks per
+    lead, and its `lead_id` is unique, so it cannot be widened
+    without changing what every existing row means — it stays
+    exactly as it is and keeps answering the question it was built
+    for. This is the account-level question beside it: once a head
+    has said who serves Tata Steel for Heavy Transport, the next
+    forty Tata Steel leads inherit the answer instead of asking
+    again.
+    """
+    __tablename__ = 'account_owner_confirmation'
+    __table_args__ = (
+        db.UniqueConstraint('account_id', 'vertical',
+                            name='uq_account_vertical_confirmation'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey('companies.id'),
+                           nullable=False, index=True)
+    vertical = db.Column(db.String(60), nullable=False, index=True)
+
+    #: The person the rule chose, and the rule that chose them.
+    emp_code = db.Column(db.String(20), nullable=False, index=True)
+    rule = db.Column(db.String(40))
+
+    #: The lead that first raised the question, for the screen to
+    #: show what prompted it. Not a foreign key: the question
+    #: outlives any one lead.
+    first_lead_id = db.Column(db.Integer, index=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    notified_at = db.Column(db.DateTime)
+    confirmed_at = db.Column(db.DateTime)
+    confirmed_by = db.Column(db.String(20))
+    outcome = db.Column(db.String(16))        # confirmed | reassigned
+    reassigned_to = db.Column(db.String(20))
+
+    def answered(self):
+        return self.confirmed_at is not None
+
+    def to_dict(self):
+        return {'id': self.id, 'account_id': self.account_id,
+                'vertical': self.vertical or '',
+                'emp_code': self.emp_code, 'rule': self.rule or '',
+                'first_lead_id': self.first_lead_id,
+                'created_at': str(self.created_at)[:16]
+                if self.created_at else '',
+                'confirmed_at': str(self.confirmed_at)[:16]
+                if self.confirmed_at else '',
+                'confirmed_by': self.confirmed_by or '',
+                'outcome': self.outcome or ''}

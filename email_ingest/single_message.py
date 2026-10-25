@@ -281,6 +281,42 @@ def auto_assign_owners(lead, sender_email, *, subject='', body=''):
             account, _how = _asdb.resolve_account(
                 sender_email, text_for_gstin=f'{subject}\n{body}')
 
+        # CRM-ACCOUNT-FIRST-01. Until now the account was resolved
+        # and then thrown away: it picked an owner and `company_id`
+        # stayed null, so a third of the open pipeline belongs to
+        # nobody's account and no account-level view can see it.
+        # Written only where linking needs no judgement — a learned
+        # sender, or one exact rule with nothing disagreeing. The
+        # rest go to Account check, which is the point of the queue.
+        try:
+            from app.services import account_gate
+            if account_gate.enabled() and not getattr(lead, 'company_id',
+                                                      None):
+                from app.services import account_match as _am
+                linked, how = _am.auto_link(
+                    sender_email,
+                    company_name=getattr(lead, 'company', ''),
+                    text=f'{subject}\n{body}')
+                if linked is not None:
+                    lead.company_id = linked.id
+                    log.info('lead %s linked to account %s (%s)',
+                             getattr(lead, 'id', '?'), linked.id, how)
+                    try:
+                        from app.services import audit
+                        audit.record(
+                            'lead.account_linked', 'lead',
+                            getattr(lead, 'id', None),
+                            new={'company_id': linked.id,
+                                 'account': linked.name, 'rule': how},
+                            actor='system',
+                            reason=f'linked on intake by {how}')
+                    except Exception:                     # noqa: BLE001
+                        pass
+        except Exception:                                 # noqa: BLE001
+            log.exception('account linking failed for lead %s — the '
+                          'lead still lands, in Account check',
+                          getattr(lead, 'id', '?'))
+
         primary, secondary = _asdb.owners_for(account)
         if not primary:
             # No owner on the account, or no account at all. Rather

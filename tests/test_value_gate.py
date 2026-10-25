@@ -109,9 +109,9 @@ def test_the_line_is_rfq_generated_and_won():
         'RFQ Generated', 'Quoted', 'Under Negotiation', 'Won')
 
 
-@pytest.mark.parametrize('stage', ['New', 'Call Done', 'Profile Sent',
-                                   'Business Discussion', 'Appointment',
-                                   'Visit Done'])
+@pytest.mark.parametrize('stage', ['New', 'Call Done',
+                                   'Business Discussion',
+                                   'New Opportunity'])
 def test_early_stages_ask_for_nothing(stage):
     assert not value_gate.requires_value(stage)
 
@@ -177,7 +177,7 @@ def test_a_lead_that_already_has_a_value_is_not_asked_again(world):
 
 def test_advancing_to_an_early_stage_needs_nothing(world):
     r = _client(ADMIN).post(f'/api/leads/{world["bare"]}/advance',
-                            json={'to_stage': 'Profile Sent'})
+                            json={'to_stage': 'Call Done'})
     assert r.status_code == 200
 
 

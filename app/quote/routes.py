@@ -373,6 +373,16 @@ def api_create_quote():
         if rfq is not None and not records.may_view_rfq(rfq):
             return jsonify(ok=False, error='RFQ not found'), 404
 
+    # CRM-ACCOUNT-FIRST-01, the fourth door.
+    _lead_id = d.get('lead_id') or (rfq.lead_id if rfq else None)
+    if _lead_id:
+        from app import Lead, db as _db
+        from app.services import account_gate
+        _noacct = account_gate.check(_db.session.get(Lead, _lead_id),
+                                     None, action='build a quote')
+        if _noacct:
+            return jsonify(ok=False, error=_noacct, needs='account'), 400
+
     quote = Quote(
         quote_number=_next_quote_number(),
         rfq_id=rfq.id if rfq else None,

@@ -963,7 +963,7 @@ def test_the_rule_passes_a_definition_that_works():
     from app.services import task_health
     good = _Def('lead.qualify',
                 {'entity': 'Lead', 'state': 'New'},
-                {'entity': 'Lead', 'state': 'Profile Sent'})
+                {'entity': 'Lead', 'state': 'Call Done'})
     assert task_health.problems([good]) == []
 
 

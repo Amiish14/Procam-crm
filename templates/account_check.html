@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{% include "_csrf_fetch.html" %}
+<title>Account check — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .ac-wrap { max-width:1080px; margin:0 auto; padding:18px 16px 60px; }
+  .ac-head { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;
+      margin-bottom:4px; }
+  .ac-head h1 { font-family:Barlow,sans-serif; font-size:23px;
+      font-weight:800; margin:0; }
+  .ac-count { background:#fef3c7; color:#92400e; border-radius:999px;
+      padding:2px 10px; font-size:12.5px; font-weight:700; }
+  .ac-lede { color:#6b7280; font-size:13.5px; margin:0 0 18px;
+      max-width:62ch; line-height:1.5; }
+  .ac-card { background:#fff; border:1px solid #e5e7eb; border-radius:11px;
+      padding:15px 17px; margin-bottom:12px; }
+  .ac-top { display:flex; justify-content:space-between; gap:14px;
+      flex-wrap:wrap; align-items:baseline; }
+  .ac-co { font-weight:700; font-size:15.5px; }
+  .ac-why { font-size:11.5px; font-weight:700; text-transform:uppercase;
+      letter-spacing:.04em; color:#92400e; background:#fef3c7;
+      border-radius:5px; padding:2px 8px; white-space:nowrap; }
+  .ac-meta { color:#6b7280; font-size:12.5px; margin:5px 0 0;
+      line-height:1.55; word-break:break-word; }
+  .ac-cands { margin:12px 0 0; border-top:1px solid #f3f4f6; padding-top:11px; }
+  .ac-cand { display:flex; gap:11px; align-items:center; padding:7px 0;
+      border-bottom:1px solid #f9fafb; flex-wrap:wrap; }
+  .ac-cand:last-child { border-bottom:0; }
+  .ac-cand b { font-weight:600; font-size:14px; }
+  .ac-rule { font-size:11px; color:#374151; background:#f3f4f6;
+      border-radius:4px; padding:2px 7px; white-space:nowrap; }
+  .ac-rule.exact { background:#dcfce7; color:#166534; }
+  .ac-note { color:#9ca3af; font-size:12px; }
+  .ac-owner { color:#6b7280; font-size:12px; margin-left:auto; }
+  button { font:inherit; }
+  .ac-btn { border:1px solid #d1d5db; background:#fff; border-radius:7px;
+      padding:5px 12px; cursor:pointer; font-size:13px; font-weight:600; }
+  .ac-btn.go { background:#111827; color:#fff; border-color:#111827; }
+  .ac-btn[disabled] { opacity:.45; cursor:not-allowed; }
+  .ac-blocked { color:#b91c1c; font-size:12px; font-weight:600; }
+  .ac-new { margin-top:12px; border-top:1px solid #f3f4f6; padding-top:11px; }
+  .ac-new input { height:34px; border:1px solid #e5e7eb; border-radius:7px;
+      padding:0 10px; font:inherit; font-size:13.5px; margin:0 7px 7px 0; }
+  .ac-warn { color:#92400e; font-size:12.5px; margin:3px 0 7px; }
+  .ac-empty { color:#6b7280; padding:34px 0; text-align:center;
+      font-size:14px; }
+  .ac-readonly { color:#9ca3af; font-size:12.5px; font-style:italic; }
+  .ac-msg { font-size:13px; margin-top:7px; }
+  .ac-msg.bad { color:#b91c1c; }
+  .ac-msg.good { color:#166534; }
+</style>
+</head>
+<body>
+<div class="ac-wrap">
+  <div class="ac-head">
+    <h1>Account check</h1>
+    <span class="ac-count" id="count">—</span>
+  </div>
+  <p class="ac-lede">
+    Leads waiting for a customer. Nothing moves past New, becomes an
+    RFQ or gets quoted until the account is settled and somebody owns
+    it for that vertical. Confirming one also teaches the CRM the
+    sender, so the next mail from them needs nobody.
+  </p>
+  <div id="list"><p class="ac-empty">Loading…</p></div>
+</div>
+
+<script>
+const P = "{{ url_prefix }}";
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;');
+
+async function load() {
+  const r = await fetch(P + '/api/account-check/queue');
+  if (!r.ok) {
+    document.getElementById('list').innerHTML =
+      '<p class="ac-empty">This page is not switched on.</p>';
+    return;
+  }
+  const j = await r.json();
+  document.getElementById('count').textContent =
+    j.total + (j.total === 1 ? ' lead' : ' leads');
+  const box = document.getElementById('list');
+  if (!j.rows.length) {
+    box.innerHTML = '<p class="ac-empty">Nothing waiting. '
+      + 'Every open lead belongs to an account with an owner.</p>';
+    return;
+  }
+  box.innerHTML = j.rows.map(card).join('');
+}
+
+function card(r) {
+  const cands = r.candidates.length
+    ? r.candidates.map(c => cand(r, c)).join('')
+    : '<p class="ac-note">No account matched this sender.</p>';
+  return `<div class="ac-card" id="lead-${r.lead_id}">
+    <div class="ac-top">
+      <div>
+        <span class="ac-co">${esc(r.company) || '(no name given)'}</span>
+        <span class="ac-note"> · lead #${r.lead_id}</span>
+      </div>
+      <span class="ac-why">${esc(r.why)}</span>
+    </div>
+    <p class="ac-meta">
+      ${esc(r.sender)}${r.vertical ? ' · ' + esc(r.vertical) : ''}
+      ${r.forwarded_by ? ' · forwarded by ' + esc(r.forwarded_by) : ''}
+      ${r.created_at ? ' · ' + esc(r.created_at) : ''}
+      <br>${esc(r.subject)}
+    </p>
+    <div class="ac-cands">${cands}</div>
+    ${r.may_clear ? newAccount(r)
+      : '<p class="ac-readonly">Only the vertical head for '
+        + esc(r.vertical || 'this vertical')
+        + ' or an admin can confirm this.</p>'}
+    <p class="ac-msg" id="msg-${r.lead_id}"></p>
+  </div>`;
+}
+
+function cand(r, c) {
+  const also = c.also.length ? ' + ' + c.also.map(esc).join(' + ') : '';
+  return `<div class="ac-cand">
+    <b>${esc(c.name)}</b>
+    <span class="ac-rule ${c.exact ? 'exact' : ''}">${esc(c.rule)}${esc(also)}</span>
+    ${c.note ? '<span class="ac-note">' + esc(c.note) + '</span>' : ''}
+    <span class="ac-owner">${c.owner ? 'owner ' + esc(c.owner)
+                                     : 'no owner for this vertical'}</span>
+    ${c.blocked
+      ? '<span class="ac-blocked">blocked client</span>'
+      : (r.may_clear
+         ? `<button class="ac-btn go" onclick="confirmIt(${r.lead_id},${c.account_id})">Confirm</button>`
+         : '')}
+  </div>`;
+}
+
+function newAccount(r) {
+  return `<div class="ac-new">
+    <input id="nm-${r.lead_id}" placeholder="New account name"
+           value="${esc(r.company)}" oninput="dupe(${r.lead_id})">
+    <input id="dom-${r.lead_id}" placeholder="Domain" style="width:180px">
+    <input id="gst-${r.lead_id}" placeholder="GSTIN" style="width:160px">
+    <button class="ac-btn" onclick="createIt(${r.lead_id})">Create &amp; link</button>
+    <p class="ac-warn" id="dupe-${r.lead_id}"></p>
+  </div>`;
+}
+
+let dupeTimer = {};
+function dupe(id) {
+  clearTimeout(dupeTimer[id]);
+  dupeTimer[id] = setTimeout(async () => {
+    const name = document.getElementById('nm-' + id).value;
+    const w = document.getElementById('dupe-' + id);
+    if (name.trim().length < 3) { w.textContent = ''; return; }
+    const r = await fetch(P + '/api/account-check/duplicate?name='
+                          + encodeURIComponent(name));
+    const j = await r.json();
+    if (j.blocked) {
+      w.textContent = 'This looks like ' + j.blocked
+        + ', which is on the block register.';
+    } else if (j.duplicates.length) {
+      w.textContent = 'Already on file: ' + j.duplicates
+        .map(d => d.name + ' (' + d.similarity + '%)').join(', ');
+    } else { w.textContent = ''; }
+  }, 280);
+}
+
+function say(id, text, good) {
+  const m = document.getElementById('msg-' + id);
+  m.textContent = text;
+  m.className = 'ac-msg ' + (good ? 'good' : 'bad');
+}
+
+async function confirmIt(leadId, accountId) {
+  const r = await fetch(P + '/api/account-check/' + leadId + '/confirm', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({account_id: accountId})});
+  const j = await r.json();
+  if (!j.ok) { say(leadId, j.error, false); return; }
+  say(leadId, 'Linked to ' + j.account + ', owner ' + j.owner
+      + (j.learned ? ' — the sender is remembered.' : '.'), true);
+  setTimeout(load, 700);
+}
+
+async function createIt(leadId, force) {
+  const body = {
+    name: document.getElementById('nm-' + leadId).value,
+    domain: document.getElementById('dom-' + leadId).value,
+    gstin: document.getElementById('gst-' + leadId).value,
+    force: !!force};
+  const r = await fetch(P + '/api/account-check/' + leadId + '/create', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)});
+  const j = await r.json();
+  if (!j.ok) {
+    if (j.needs === 'confirm'
+        && confirm(j.error + '\n\nCreate it anyway?')) {
+      return createIt(leadId, true);
+    }
+    say(leadId, j.error, false); return;
+  }
+  await confirmIt(leadId, j.account_id);
+}
+
+load();
+</script>
+</body>
+</html>

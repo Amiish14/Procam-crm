@@ -296,6 +296,19 @@ def api_create_rfq():
     if _refusal:
         return _refusal
 
+    # CRM-ACCOUNT-FIRST-01. Registering an RFQ is work starting, so
+    # it needs the customer settled first — an RFQ filed against a
+    # lead with no account cannot be priced, credit-checked or
+    # handed over.
+    _lead_id = d.get('lead_id')
+    if _lead_id:
+        from app import Lead, db as _db
+        from app.services import account_gate
+        _lead = _db.session.get(Lead, _lead_id)
+        _noacct = account_gate.check(_lead, None, action='register an RFQ')
+        if _noacct:
+            return jsonify(ok=False, error=_noacct, needs='account'), 400
+
     actor = session.get('emp_code')
     driver = (d.get('lead_driver') or actor) or None
 

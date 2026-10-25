@@ -115,7 +115,21 @@ def api_cockpit():
         'unlinked': unlinked,
         'pipeline': rows,
         'stage_dates_missing': sum(r['grey'] for r in rows),
+        # CRM-ACCOUNT-FIRST-01 §3.6. `unlinked` above counts leads
+        # with no company_id; this counts the ones the gate is
+        # actually holding, which also includes leads whose account
+        # nobody owns for their vertical. Zero while that flag is
+        # off, so the tile simply does not appear.
+        'accounts_to_confirm': len(_pending_accounts()),
     })
+
+
+def _pending_accounts():
+    from app.services import account_gate
+    try:
+        return account_gate.pending_leads(sc=sc_mod.current())
+    except Exception:                                     # noqa: BLE001
+        return []
 
 
 # ── R1: one search box ───────────────────────────────────────────────

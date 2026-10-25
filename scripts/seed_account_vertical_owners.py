@@ -43,6 +43,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--check', action='store_true')
     ap.add_argument('--apply', action='store_true')
+    ap.add_argument('--list-unresolved', action='store_true',
+                    help='name every account the history cannot '
+                         'answer for, not just how many')
     args = ap.parse_args()
     if args.apply == args.check:
         raise SystemExit('Choose one: --check or --apply.')
@@ -69,6 +72,10 @@ def main():
                  .order_by(Lead.updated_at.desc()).all())
 
         best, skipped = {}, Counter()
+        #: Why each account/vertical could not be answered. Counts
+        #: alone say how big the gap is; this says whose it is, which
+        #: is what somebody needs to close it.
+        unresolved = {}
         for l in leads:
             raw = (l.procam_vertical or '').strip()
             if not raw:
@@ -79,10 +86,15 @@ def main():
                 # Left as is, it seeded 90 Management rows from leads
                 # that simply have no vertical recorded.
                 skipped['lead has no vertical'] += 1
+                unresolved.setdefault((l.company_id, '(none)'),
+                                      'the lead carries no vertical')
                 continue
             vertical = vh.master_vertical(raw)
             if vertical in NOT_A_SERVICE or not (l.assigned_to or '').strip():
                 skipped['not a service vertical'] += 1
+                unresolved.setdefault(
+                    (l.company_id, vertical),
+                    f'{vertical} does not serve customers')
                 continue
             key = (l.company_id, vertical)
             if key in best:
@@ -92,6 +104,9 @@ def main():
                 replacement = auto_assign.replacement_for(owner)
                 if not replacement:
                     skipped['owner has left, no replacement'] += 1
+                    unresolved.setdefault(
+                        (l.company_id, vertical),
+                        f'{owner} has left and has no replacement')
                     continue
                 owner = replacement
                 skipped['owner has left, replacement used'] += 1
@@ -128,6 +143,22 @@ def main():
                 print(f'      {names.get(v["account_id"], v["account_id"])[:34]:<34} '
                       f'{v["vertical"]:<20} set {row.emp_code}, history '
                       f'says {v["emp_code"]}')
+
+        # An account that ended up with an answer is not unresolved,
+        # however many of its leads were skipped along the way.
+        unresolved = {k: why for k, why in unresolved.items()
+                      if k not in best and k[0] not in
+                      {b[0] for b in best}}
+        if unresolved:
+            shown = (sorted(unresolved.items()) if args.list_unresolved
+                     else sorted(unresolved.items())[:30])
+            print(f'\n  cannot be answered from history '
+                  f'({len(shown)} of {len(unresolved)} shown — these '
+                  f'go to Account check, which is where a person '
+                  f'decides):')
+            for (account_id, vertical), why in shown:
+                print(f'      {names.get(account_id, account_id)!s:.34} '
+                      f'{vertical:<20} {why}')
 
         if args.check:
             print('\n  a sample of what would be written:')

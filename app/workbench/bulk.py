@@ -168,6 +168,18 @@ def plan(ids, action, value, sc):
                     'reason': f'no estimated value, and {stored} '
                               f'requires one — open the lead and add it'})
                 continue
+            # CRM-ACCOUNT-FIRST-01, skipped the same way and for the
+            # same reason: a bulk action cannot ask who the customer
+            # is, and guessing in bulk is how 254 leads ended up
+            # filed under nobody.
+            from app.services import account_gate
+            if account_gate.check(lead, stored) is not None:
+                skipped.append({
+                    'id': lid, 'name': lead.company,
+                    'reason': f'{account_gate.why_pending(lead)} — '
+                              f'confirm the customer on Account check '
+                              f'before moving it to {stored}'})
+                continue
         changes.append({'id': lid, 'name': lead.company,
                         'field': ACTIONS[action][2], 'before': before,
                         'after': '' if stored is None else str(stored),

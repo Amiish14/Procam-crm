@@ -88,6 +88,9 @@ FLAGS = (
     ('FEATURE_SENDER_BLOCK',
      'Hold mail from system senders — quarantine digests, bounces, '
      'postmaster notices — instead of making a lead of it', False),
+    ('FEATURE_ACCOUNT_FIRST',
+     'Every lead belongs to an account with an owner before anyone '
+     'works it (CRM-ACCOUNT-FIRST-01)', False),
     (KILL_SWITCH, 'Stop all outbound CRM email immediately', False),
 )
 

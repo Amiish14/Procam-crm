@@ -326,9 +326,18 @@ def main():
         undated = [r for r in live if not r['closing']]
         if undated:
             print(f'  {len(undated)} state no deadline in the mail — '
-                  f'it is in the portal. Not guessed at: two of '
-                  f'these carry an "Eta at Haldia" date, which is '
-                  f'the cargo arriving, not the auction closing.')
+                  f'it is in the portal, not guessed at here.')
+            # Name the ones that DO carry a date we refused to read,
+            # so "no deadline" cannot be mistaken for "no dates in
+            # the mail". A hardcoded sentence here was wrong the
+            # first time the set changed.
+            RX_ANY = re.compile(r'\d{1,2}[/.]\d{1,2}[/.]\d{2,4}')
+            for r in undated:
+                hit = RX_ANY.search(r['subject'] or '')
+                if hit:
+                    print(f"    #{r['lead'].id} carries "
+                          f"{hit.group(0)}, but not as a deadline — "
+                          f"read the subject before trusting it")
 
         if args.check:
             print('\nDRY RUN — nothing written. `--apply` sets the '

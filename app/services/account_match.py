@@ -378,3 +378,154 @@ def _by_name(company_name):
                      'to a person', company_name, len(found))
             return None
     return None
+
+
+# ── CRM-ACCOUNT-FIRST-01: every hit, not just the first ──────────────
+#: Rules that identify a customer exactly. A hit on one of these is a
+#: fact about the sender; the rest are inferences from a name.
+EXACT_RULES = ('learned email', 'contact email', 'learned domain',
+               'account email domain', 'account website domain',
+               'GSTIN')
+
+
+def candidates(from_addr, *, company_name=None, text=None):
+    """Every account this sender could be, each with the rule.
+
+    `resolve` answers "who is this" and stops at the first rule that
+    fires, which is right when the answer is used to pick an owner.
+    It is wrong for a person deciding: they need to see that the
+    domain says one account and the typed name says another, because
+    that disagreement is the whole reason the lead is in the queue.
+
+    Ordered as RULES is — surest first. Never raises: a matcher that
+    throws would empty the queue screen rather than fill it.
+    """
+    from app import Company, Contact, db
+    from app.models.assignment import BY_DOMAIN, BY_EMAIL
+
+    addr = normalise_address(from_addr)
+    domain = domain_of(addr)
+    free = is_free_mail(domain)
+    seen, out = {}, []
+
+    def offer(account, rule, note=''):
+        if account is None:
+            return
+        prior = seen.get(account.id)
+        if prior is not None:
+            # Keep the surest rule, but record that another agreed:
+            # two rules pointing the same way is the strongest signal
+            # the screen can show.
+            if rule not in prior['also']:
+                prior['also'].append(rule)
+            return
+        row = {'account': account, 'account_id': account.id,
+               'name': account.name, 'rule': rule, 'note': note,
+               'also': [], 'exact': rule in EXACT_RULES}
+        seen[account.id] = row
+        out.append(row)
+
+    def account(account_id):
+        return db.session.get(Company, account_id) if account_id else None
+
+    try:
+        if addr:
+            link = _learned(BY_EMAIL, addr)
+            if link is not None:
+                offer(account(link.account_id), 'learned email',
+                      'somebody corrected this exact sender before')
+
+            for contact in Contact.query.filter(
+                    db.func.lower(Contact.email) == addr).all():
+                offer(account(contact.account_id or contact.company_id),
+                      'contact email', f'{contact.name or addr} is on file')
+
+        if domain and not free:
+            link = _learned(BY_DOMAIN, domain)
+            if link is not None:
+                offer(account(link.account_id), 'learned domain',
+                      f'somebody mapped {domain} before')
+            for company in Company.query.filter(
+                    Company.is_active.is_(True)).all():
+                domains = [str(x).lower().strip()
+                           for x in (company.email_domains or [])]
+                if domain in domains:
+                    offer(company, 'account email domain', domain)
+                elif _website_domain(company.website) == domain:
+                    offer(company, 'account website domain',
+                          company.website or domain)
+
+        if text:
+            from app.services import lead_intake as li
+            for number in li.gstins(text):
+                offer(Company.query.filter(
+                    Company.gstin == number).first(), 'GSTIN', number)
+
+        if company_name:
+            offer(_by_name(company_name), 'company name',
+                  f'the sender typed "{company_name}"')
+            for row in _similar_names(company_name):
+                offer(row[0], 'company name',
+                      f'{int(row[1] * 100)}% like "{company_name}"')
+    except Exception:                                     # noqa: BLE001
+        db.session.rollback()
+
+    return out
+
+
+def _similar_names(company_name, *, floor=0.5, limit=5):
+    """[(account, ratio)] for names close to this one.
+
+    Only for a person to look at. Nothing auto-links on a ratio.
+    """
+    from difflib import SequenceMatcher
+
+    from app import Company, db
+
+    raw = strict_norm(company_name or '')
+    if len(raw) < 3:
+        return []
+    try:
+        accounts = Company.query.filter(Company.is_active.is_(True)).all()
+    except Exception:
+        db.session.rollback()
+        return []
+    scored = []
+    for company in accounts:
+        ratio = SequenceMatcher(None, raw,
+                                strict_norm(company.name or '')).ratio()
+        if ratio >= floor:
+            scored.append((company, ratio))
+    scored.sort(key=lambda row: row[1], reverse=True)
+    return scored[:limit]
+
+
+def auto_link(from_addr, *, company_name=None, text=None):
+    """(account, rule) only when linking needs no human judgement.
+
+    §3.2. Two cases are safe, and nothing else is:
+
+      * a learned-contact hit — somebody already decided this one;
+      * exactly one exact-rule hit, with no name-only alternative
+        pointing somewhere else.
+
+    The second condition is the one that matters. A domain hit plus
+    a different account suggested by the typed name is exactly the
+    "likely duplicate" case, and auto-linking it would file the lead
+    under the wrong customer quietly, where a queue entry asks.
+    """
+    rows = candidates(from_addr, company_name=company_name, text=text)
+    if not rows:
+        return None, UNMAPPED
+
+    learned = [r for r in rows if r['rule'] == 'learned email']
+    if learned:
+        return learned[0]['account'], learned[0]['rule']
+
+    exact = [r for r in rows if r['exact']]
+    if len(exact) != 1:
+        return None, UNMAPPED
+    others = [r for r in rows if r['account_id'] != exact[0]['account_id']]
+    if others:
+        return None, UNMAPPED
+    return exact[0]['account'], exact[0]['rule']

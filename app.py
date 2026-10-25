@@ -30,43 +30,6 @@ except Exception:
 # New Opportunity → Qualified → Proposal Due → Negotiation Due →
 # Decision Taken → Won  (Won triggers PM handoff)
 # At any Decision point a deal can also go to Lost / On Hold / Not Interested.
-STAGES_PIPELINE = ['New', 'Call Done', 'Profile Sent',
-                   'Business Discussion', 'Appointment',
-                   'Visit Done', 'RFQ Generated', 'Quoted', 'Under Negotiation']
-STAGES_TERMINAL = ['Won', 'Lost', 'On Hold', 'Not Interested']
-STAGES_ALL      = STAGES_PIPELINE + STAGES_TERMINAL
-# v2026-08 — extended pipeline. Normal flow now is
-#   Profile Sent → Business Discussion → Appointment → Visit Done →
-#   RFQ Generated → Quoted → Under Negotiation → Won.
-# Direct Quoted/Under Negotiation → Won and any-stage → Lost / On Hold /
-# Not Interested remain allowed via api_lead_decision().
-STAGE_NEXT = {
-    'New':                 'Call Done',
-    'Call Done':           'Profile Sent',
-    'Profile Sent':        'Business Discussion',
-    'Business Discussion': 'Appointment',
-    'Appointment':         'Visit Done',
-    'Visit Done':          'RFQ Generated',
-    'RFQ Generated':       'Quoted',
-    'Quoted':              'Under Negotiation',
-    'Under Negotiation':   'Won',
-}
-# Stages that can jump straight to a terminal Won without going through
-# Under Negotiation (spec Part A1 — "some customers award without formal
-# negotiation").
-STAGE_DIRECT_WIN = {'Quoted', 'Under Negotiation'}
-# Legacy stage names → new stage names. Applied automatically when a
-# lead's stage doesn't match STAGES_ALL. Ensures 9,500+ existing leads
-# keep working through the new pipeline without a manual migration.
-LEGACY_STAGE_MAP = {
-    'Pre-Sales':        'New',
-    'New Opportunity':  'Call Done',
-    'Qualified':        'Profile Sent',
-    'Proposal Due':     'Appointment',
-    'Negotiation Due':  'Visit Done',
-    'Decision Taken':   'RFQ Generated',
-}
-DECISION_OUTCOMES = ['Won', 'Lost', 'On Hold', 'Not Interested']
 
 # ProConnect Opportunity stages — used AFTER a Lead reaches
 # 'RFQ Generated' and is converted into an Opportunity.
@@ -170,6 +133,56 @@ app.config['APPLICATION_ROOT'] = os.environ.get('URL_PREFIX') or '/'
 # working for the ~30 scripts and presales/* modules that already use it.
 # Trick: adding __path__ to a module makes Python treat it as a package.
 __path__ = [os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app')]
+
+# The stage lists live here, below __path__, and not at the top of
+# the file: until that line runs, `app` is this module and not a
+# package, so `from app.services import ...` cannot resolve. Every
+# other app.services import in this file is deferred inside a
+# function for the same reason.
+# ── one stage list ───────────────────────────────────────────────────
+# Until 25 October there were three, and they disagreed.
+# `stage_map.JOURNEY` drew the line on the lead page;
+# `STAGES_PIPELINE` decided which leads `sales_rules.open_leads()`
+# considers open; `LEGACY_STAGE_MAP` quietly rewrote stage names on
+# save. "New Opportunity" was a journey stage in the first, absent
+# from the second and legacy in the third — so 156 live leads sat on
+# a stage the CRM's own definition of "open" excluded, invisible to
+# the Workbench, the cockpit and every value report.
+#
+# JOURNEY is now the source. Everything below derives from it, so
+# adding a stage is one edit in one file.
+from app.services import stage_map as _stage_map        # noqa: E402
+
+STAGES_TERMINAL = list(_stage_map.TERMINAL)
+STAGES_PIPELINE = [s for s in _stage_map.JOURNEY
+                   if s not in STAGES_TERMINAL]
+STAGES_ALL      = STAGES_PIPELINE + STAGES_TERMINAL
+# Each stage's successor, read off the journey in order. Direct
+# Quoted/Under Negotiation → Won and any-stage → Lost / On Hold /
+# Not Interested remain allowed via api_lead_decision().
+STAGE_NEXT = {a: b for a, b in zip(_stage_map.JOURNEY,
+                                   _stage_map.JOURNEY[1:])}
+# Stages that can jump straight to a terminal Won without going through
+# Under Negotiation (spec Part A1 — "some customers award without formal
+# negotiation").
+STAGE_DIRECT_WIN = {'Quoted', 'Under Negotiation'}
+# Legacy stage names → stages on the journey. Applied automatically
+# when a lead's stage doesn't match STAGES_ALL.
+#
+# "New Opportunity" is no longer here: it is a journey stage in its
+# own right, and mapping it to Call Done is what moved 156 leads
+# backwards on save. The three stages the journey folds away —
+# Profile Sent, Appointment, Visit Done — come from stage_map.ALIASES
+# rather than being written out again, so the two can never drift.
+LEGACY_STAGE_MAP = {
+    'Pre-Sales':        'New',
+    'Qualified':        'Call Done',
+    'Proposal Due':     'Business Discussion',
+    'Negotiation Due':  'Business Discussion',
+    'Decision Taken':   'RFQ Generated',
+    **_stage_map.ALIASES,
+}
+DECISION_OUTCOMES = ['Won', 'Lost', 'On Hold', 'Not Interested']
 
 db = SQLAlchemy(app)
 
@@ -2394,6 +2407,30 @@ def api_create_lead():
     if requested != session['emp_code'] and not _matrix_can('admin.triage'):
         return jsonify({'error': 'Only admin can assign leads to another rep'}), 403
     assigned_to = requested
+
+    # CRM-ACCOUNT-FIRST-01 §3.5. Account first: a manual lead that
+    # names an account goes to whoever owns that account for the
+    # vertical, not to whoever happened to type it in. The creator
+    # is recorded in the audit row and told where it went, so
+    # entering a lead for somebody else's customer is a visible act
+    # rather than a silent reassignment.
+    _acct_note = ''
+    _account_id = d.get('company_id') or None
+    if _account_id:
+        from app.services import account_gate as _ag
+        _account = db.session.get(Company, _account_id)
+        if _account is None:
+            return jsonify({'error': 'That account does not exist'}), 400
+        _vert = (d.get('procam_vertical') or '').strip()
+        if _ag.enabled():
+            _owner = _ag.owner_for(_account, _vert)
+            if _owner and _owner != assigned_to:
+                assigned_to = _owner
+                _acct_note = (f'Assigned to {_owner} (owner of '
+                              f'{_account.name} for '
+                              f'{_vert or "this vertical"}); you are '
+                              f'recorded as creator.')
+
     lead = Lead(
         source          = d.get('source','manual'),
         company         = d.get('company','').strip(),
@@ -2432,15 +2469,27 @@ def api_create_lead():
         lead_value.apply(lead, d, session.get('emp_code'))
     except lead_value.LeadValueError as exc:
         return jsonify({'error': str(exc)}), 400
+    if _account_id:
+        lead.company_id = _account_id
     db.session.add(lead)
     db.session.commit()
+    if _account_id:
+        from app.services import audit as _audit
+        _audit.record('lead.created_for_account', 'lead', lead.id,
+                      new={'company_id': _account_id,
+                           'assigned_to': assigned_to,
+                           'created_by': session.get('emp_code')},
+                      actor=session.get('emp_code'),
+                      reason='manual lead entered against an account')
+        db.session.commit()
     # v2026-09-04 — Task engine: lead created
     _fire_task_hook(lead, 'Lead', None, '__created__')
     try:
         db.session.commit()
     except Exception:
         db.session.rollback()
-    return jsonify({'ok': True, 'id': lead.id})
+    return jsonify({'ok': True, 'id': lead.id,
+                    'assigned_to': assigned_to, 'note': _acct_note})
 
 @app.route('/api/leads/<int:lid>', methods=['GET'])
 @require_auth
@@ -2548,6 +2597,13 @@ def api_update_lead(lid):
             db.session.rollback()
             return jsonify({'error': _refused,
                             'needs': 'estimated_value',
+                            'stage': d.get('stage')}), 400
+        # CRM-ACCOUNT-FIRST-01, same place and the same shape.
+        from app.services import account_gate
+        _noacct = account_gate.check(lead, d.get('stage'))
+        if _noacct:
+            db.session.rollback()
+            return jsonify({'error': _noacct, 'needs': 'account',
                             'stage': d.get('stage')}), 400
 
     for k, v in fields_map.items():
@@ -3096,6 +3152,12 @@ def api_lead_advance(lid):
         return jsonify({'ok': False, 'error': _refused,
                         'needs': 'estimated_value',
                         'stage': nxt}), 400
+    from app.services import account_gate
+    _noacct = account_gate.check(lead, nxt)
+    if _noacct:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': _noacct,
+                        'needs': 'account', 'stage': nxt}), 400
     _log_stage_change(lead, nxt, note=data.get('note'))
     lead.stage_entered_at = datetime.utcnow()
     # Stamp workflow-specific dates when the corresponding stage is reached
@@ -3170,6 +3232,14 @@ def api_lead_decision(lid):
         return jsonify({'ok': False, 'error': _refused,
                         'needs': 'estimated_value',
                         'stage': outcome}), 400
+    # Won is gated; Lost, On Hold and Not Interested are not, so a
+    # lead that turns out to be nothing can still be closed.
+    from app.services import account_gate
+    _noacct = account_gate.check(lead, outcome)
+    if _noacct:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': _noacct,
+                        'needs': 'account', 'stage': outcome}), 400
     # The Won dialog's business value (₹). It was collected and never sent.
     if outcome == 'Won' and data.get('value') not in (None, ''):
         from app.services import lead_value
@@ -6115,6 +6185,9 @@ for _mod_path, _bp_name in [
     # route answers 404 while FEATURE_CRM2 is off, and nothing on the
     # existing screens changes while it is.
     ('app.crm2.routes',          'crm2_bp'),
+    # Account check: the queue of leads with no confirmed customer.
+    # Every route answers 404 while FEATURE_ACCOUNT_FIRST is off.
+    ('app.account_check.routes', 'account_check_bp'),
     # The TMS integration API. Exempted from CSRF below, because it is
     # authenticated by a bearer token rather than by a session cookie —
     # a CSRF token is a defence against a browser being used as a
