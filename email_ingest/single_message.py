@@ -354,6 +354,66 @@ def auto_assign_owners(lead, sender_email, *, subject='', body=''):
                       getattr(lead, 'id', '?'))
         return None, None
 
+def _attach_outbound(lead, msg, body, account, to_addr, imid):
+    """File our own outbound mail on the customer's open lead.
+
+    Returns the same shape the ingest returns for anything it
+    attaches rather than creates, so the caller and the admin
+    screens see no special case.
+
+    The lead's account is filled in if it was missing — the
+    recipient told us who the customer is, which is the one thing
+    the old path threw away.
+    """
+    from app import LeadEmail, db
+    from app.services import audit
+    from app.services import lead_intake as _li
+
+    try:
+        message_id = (msg.get('internetMessageId') or '').strip() or None
+        if message_id and LeadEmail.query.filter_by(
+                lead_id=lead.id, message_id=message_id).first():
+            return {'status': 'skipped', 'reason': 'already on the trail',
+                    'lead_id': lead.id, 'internet_message_id': imid}
+
+        db.session.add(LeadEmail(
+            lead_id=lead.id, direction='outbound',
+            from_addr=_li.sender(msg) or None,
+            to_addr=', '.join(_li.recipients(msg, 'toRecipients'))
+            or to_addr,
+            cc=', '.join(_li.recipients(msg, 'ccRecipients')) or None,
+            subject=(msg.get('subject') or '')[:500] or None,
+            body=(body or '')[:8000] or None,
+            source='ingested', status='received',
+            message_id=message_id,
+            intake_class='outbound_to_customer'))
+
+        if not lead.company_id:
+            lead.company_id = account.id
+            audit.record('lead.account_linked', 'lead', lead.id,
+                         new={'company_id': account.id,
+                              'account': account.name},
+                         actor='system',
+                         reason=f'our own mail to {to_addr} named the '
+                                f'customer')
+        db.session.commit()
+        _record_ingest('attached', msg, None, lead_id=lead.id,
+                       reason=f'our own mail to {to_addr}, filed on '
+                              f'{account.name}')
+        return {'status': 'attached',
+                'reason': f'outbound mail filed on lead {lead.id}',
+                'lead_id': lead.id,
+                'classification': 'outbound_to_customer',
+                'internet_message_id': imid}
+    except Exception:
+        db.session.rollback()
+        log.exception('could not file outbound mail %s on lead %s',
+                      imid, getattr(lead, 'id', '?'))
+        return {'status': 'error', 'reason': 'outbound filing failed',
+                'lead_id': getattr(lead, 'id', None),
+                'internet_message_id': imid}
+
+
 def process_single_message(graph, mailbox: str, msg: dict, *,
                            force: bool = False,
                            override_classifier: bool = False) -> dict:
@@ -742,6 +802,56 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                     msg, _li.body_text(msg))
             except Exception:
                 log.exception('could not read the client date on %s', imid)
+
+            # CRM-ACCOUNT-FIRST-01 — our own mail going out.
+            #
+            # Every other rule reads the sender, and on outbound mail
+            # the sender is us, so the customer in the To: line was
+            # invisible: 167 such messages became 167 orphan leads
+            # under "Unknown" on 1-3 September. Read the recipient,
+            # attach to that customer's open lead, and create one
+            # only when they have none — with the account on it.
+            _outbound_note = ''
+            try:
+                from app.services import account_gate as _ag
+                from app.services import outbound_mail as _om
+                if _ag.enabled():
+                    _dir, _from, _ext = _om.direction(
+                        msg, body=body)
+                    if _dir == 'outbound' and _ext:
+                        _acct, _rule, _addr = _om.customer_of(_ext)
+                        if _acct is not None:
+                            _target = _om.open_lead_for(
+                                _acct, subject=subject)
+                            if _target is not None:
+                                log.info(
+                                    'outbound mail %s belongs on lead '
+                                    '%s (%s, by %s)', imid, _target.id,
+                                    _acct.name, _rule)
+                                return _attach_outbound(
+                                    _target, msg, body, _acct, _addr,
+                                    imid)
+                            # No open lead for this customer: a new
+                            # one, but never an orphan.
+                            lead_kwargs['company_id'] = _acct.id
+                            lead_kwargs.setdefault('company',
+                                                   _acct.name)
+                            _outbound_note = (
+                                f'our own mail to {_addr}; no open '
+                                f'lead for {_acct.name}, so this is '
+                                f'a new one')
+                        else:
+                            # The recipient could not be placed. The
+                            # lead still lands, and Account check
+                            # gets the address to work from.
+                            lead_kwargs.setdefault('email', _addr)
+                            lead_kwargs['needs_review'] = True
+                            _outbound_note = (
+                                f'our own mail to {_addr}, who is on '
+                                f'no account yet')
+            except Exception:                             # noqa: BLE001
+                log.exception('outbound handling failed for %s — the '
+                              'lead still lands', imid)
 
             # A colleague's forward that named a customer we could not
             # otherwise see.

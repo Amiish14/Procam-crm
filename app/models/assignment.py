@@ -273,6 +273,14 @@ class LeadAccountSuggestion(db.Model):
     #: recomputing, and so a later reader can see what was rejected.
     alternatives = db.Column(db.JSON, default=list)
 
+    #: When no account matched but we know who the mail was with,
+    #: the address and the name to create from. Outbound mail has
+    #: the customer in the To: line; without somewhere to put it,
+    #: Account check shows "nothing matched" for a lead whose
+    #: customer we just read off the header.
+    proposed_domain = db.Column(db.String(200))
+    proposed_name = db.Column(db.String(200))
+
     #: What the suggestion was made from. If the sender changes, or
     #: the matcher has learnt since, the row is stale.
     sender_seen = db.Column(db.String(320))
@@ -288,6 +296,8 @@ class LeadAccountSuggestion(db.Model):
     def to_dict(self):
         return {'lead_id': self.lead_id, 'account_id': self.account_id,
                 'rule': self.rule or '', 'confidence': self.confidence or 0,
+                'proposed_domain': self.proposed_domain or '',
+                'proposed_name': self.proposed_name or '',
                 'candidate_count': self.candidate_count or 0,
                 'exact_single': bool(self.exact_single),
                 'alternatives': self.alternatives or [],
