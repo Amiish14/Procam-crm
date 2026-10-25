@@ -55,9 +55,27 @@ MESSAGE = ('This lead has no confirmed account{why}. Confirm the '
            'the history and the credit position all hang off it.')
 
 
-def enabled():
+def enabled(emp_code=None):
+    """Is the gate live for the person making this request?
+
+    Person-aware, not just flag-aware. During a pilot the flag is
+    limited to a few people and one vertical, and a gate that read
+    only `flags.on()` would hold *everybody's* leads the moment the
+    switch went on for two of them — which is the opposite of a
+    pilot.
+
+    Outside a request there is nobody to ask, so the flag itself is
+    the answer: a batch script sees what the flag says.
+    """
+    from flask import has_request_context, session
+
     from app.services import flags
-    return flags.on(FLAG)
+
+    if emp_code is None and has_request_context():
+        emp_code = session.get('emp_code')
+    if emp_code is None:
+        return flags.on(FLAG)
+    return flags.on_for(FLAG, emp_code)
 
 
 def account_of(lead):

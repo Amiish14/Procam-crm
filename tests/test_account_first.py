@@ -91,8 +91,8 @@ def _purge():
     # this one — which is exactly how test_audit_trail and
     # test_deep_links failed while passing in isolation.
     from app.models.integration import AppSetting
-    AppSetting.query.filter_by(
-        key='flag.FEATURE_ACCOUNT_FIRST').delete(
+    AppSetting.query.filter(AppSetting.key.like(
+        'flag.FEATURE_ACCOUNT_FIRST%')).delete(
             synchronize_session=False)
     db.session.commit()
     flags.cache_clear()
@@ -1012,3 +1012,92 @@ def test_an_erp_link_counts_as_an_identifier():
         assert keep[0]['lead'].id == lead.id
         assert any('ERP' in i for i in keep[0]['identifiers'])
         assert any('VENKATESH' in i for i in keep[0]['identifiers'])
+
+
+# ── the pilot: on for some people, off for the rest ──────────────────
+def _limit(codes=(), verticals=()):
+    flags.limit_to('FEATURE_ACCOUNT_FIRST', codes, actor='test')
+    flags.limit_verticals('FEATURE_ACCOUNT_FIRST', verticals,
+                          actor='test')
+    flags.cache_clear()
+
+
+def test_a_pilot_holds_only_the_pilots_leads():
+    """A gate that read only flags.on() would hold everybody's
+    leads the moment the switch went on for two people."""
+    with flask_app.app_context():
+        _on()
+        _limit(codes=[HEAD], verticals=[])
+        try:
+            assert account_gate.enabled(HEAD) is True
+            assert account_gate.enabled(REP) is False
+            # The same lead, two people: held for the pilot, silent
+            # for everybody else.
+            lead = _lead()
+            assert account_gate.check(lead, 'Quoted') is not None
+            import app.services.account_gate as ag
+            was, ag.enabled = ag.enabled, lambda e=None: False
+            try:
+                assert ag.check(lead, 'Quoted') is None
+            finally:
+                ag.enabled = was
+        finally:
+            _limit()
+
+
+def test_a_vertical_limit_covers_everybody_in_it():
+    with flask_app.app_context():
+        _on()
+        emp = Employee.query.filter_by(emp_code=REP).first()
+        emp.vertical = VERTICAL
+        db.session.commit()
+        _limit(codes=[], verticals=[VERTICAL])
+        try:
+            assert flags.on_for('FEATURE_ACCOUNT_FIRST', REP) is True
+            assert flags.on_for('FEATURE_ACCOUNT_FIRST',
+                                'EMP_NOBODY') is False
+        finally:
+            _limit()
+
+
+def test_the_two_limits_are_an_or_not_an_and():
+    """A pilot is 'this person, and everybody in that vertical'."""
+    with flask_app.app_context():
+        _on()
+        emp = Employee.query.filter_by(emp_code=OTHER).first()
+        emp.vertical = 'Warehousing'
+        db.session.commit()
+        _limit(codes=[HEAD], verticals=['Warehousing'])
+        try:
+            assert flags.on_for('FEATURE_ACCOUNT_FIRST', HEAD) is True
+            assert flags.on_for('FEATURE_ACCOUNT_FIRST', OTHER) is True
+            assert flags.on_for('FEATURE_ACCOUNT_FIRST', REP) is False
+        finally:
+            _limit()
+
+
+def test_a_limit_never_turns_a_dead_flag_on():
+    with flask_app.app_context():
+        _on(False)
+        _limit(codes=[HEAD], verticals=[VERTICAL])
+        try:
+            assert flags.on_for('FEATURE_ACCOUNT_FIRST', HEAD) is False
+        finally:
+            _limit()
+
+
+def test_the_queue_404s_for_somebody_outside_the_pilot():
+    with flask_app.app_context():
+        _on()
+        _limit(codes=[HEAD], verticals=[])
+    try:
+        client = flask_app.test_client()
+        with client.session_transaction() as s:
+            s['emp_code'] = REP
+        assert client.get('/api/account-check/queue').status_code == 404
+        with client.session_transaction() as s:
+            s['emp_code'] = HEAD
+        assert client.get('/api/account-check/queue').status_code == 200
+    finally:
+        with flask_app.app_context():
+            _limit()

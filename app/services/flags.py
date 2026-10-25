@@ -185,6 +185,11 @@ def on(name, default=None):
 #: at. Stored beside the flag as `flag.<NAME>.only`, a list of
 #: employee codes.
 ONLY_SUFFIX = '.only'
+#: The same idea by vertical, so a pilot can be "this
+#: person, plus everybody in Warehousing" without
+#: listing a department one code at a time — and
+#: without the list going stale when somebody joins.
+VERTICAL_SUFFIX = '.only_verticals'
 
 
 def only_for(name):
@@ -209,20 +214,113 @@ def only_for(name):
                          for c in (codes or []) if str(c).strip()}))
 
 
-def on_for(name, emp_code, default=None):
+def only_verticals(name):
+    """Verticals this flag is limited to, or () for everybody."""
+    import json
+
+    try:
+        from app.models.integration import AppSetting
+        row = AppSetting.query.filter_by(
+            key='flag.' + name + VERTICAL_SUFFIX).first()
+    except Exception:                                     # noqa: BLE001
+        return ()
+    if row is None:
+        return ()
+    try:
+        names = json.loads(row.value_json)
+    except Exception:                                     # noqa: BLE001
+        names = []
+    if isinstance(names, str):
+        names = [names]
+    return tuple(sorted({str(v).strip() for v in (names or [])
+                         if str(v).strip()}))
+
+
+def on_for(name, emp_code, default=None, vertical=None):
     """Is this flag on *for this person*?
 
     A flag that is off is off for everybody — the limit narrows, it
     never grants. That ordering matters: a reviewer list left behind
     on a flag somebody later turned off must not quietly switch it
     back on for them.
+
+    Two limits, and they are an OR, not an AND: a pilot reads "this
+    person, and everybody in that vertical". Requiring both would
+    mean naming every member of the vertical as well, which is the
+    list that goes stale the first time somebody joins.
     """
     if not on(name, default):
         return False
     codes = only_for(name)
-    if not codes:
+    verticals = only_verticals(name)
+    if not codes and not verticals:
         return True
-    return bool(emp_code) and str(emp_code).strip().upper() in codes
+    if codes and bool(emp_code) \
+            and str(emp_code).strip().upper() in codes:
+        return True
+    if verticals:
+        if vertical is None:
+            vertical = _vertical_of(emp_code)
+        try:
+            from app.services import vertical_heads as vh
+            if vertical and vh.master_vertical(vertical) in {
+                    vh.master_vertical(v) for v in verticals}:
+                return True
+        except Exception:                                 # noqa: BLE001
+            if vertical and vertical in verticals:
+                return True
+    return False
+
+
+def _vertical_of(emp_code):
+    """The vertical this person belongs to, or ''."""
+    if not emp_code:
+        return ''
+    try:
+        from app import Employee
+        emp = Employee.query.filter_by(
+            emp_code=str(emp_code).strip().upper()).first()
+        return (getattr(emp, 'vertical', '') or '').strip()
+    except Exception:                                     # noqa: BLE001
+        return ''
+
+
+def limit_verticals(name, verticals, *, actor=None):
+    """Limit a flag to these verticals, or pass nothing to lift it."""
+    import json
+
+    from app import db
+    from app.models.integration import AppSetting
+
+    if name not in DEFAULTS:
+        raise ValueError(f'unknown flag {name!r}')
+    clean = sorted({str(v).strip() for v in (verticals or [])
+                    if str(v).strip()})
+    key = 'flag.' + name + VERTICAL_SUFFIX
+    was = only_verticals(name)
+    row = AppSetting.query.filter_by(key=key).first()
+    if not clean:
+        if row is not None:
+            db.session.delete(row)
+    else:
+        if row is None:
+            row = AppSetting(key=key)
+            db.session.add(row)
+        row.value_json = json.dumps(clean)
+        row.updated_by = actor
+    db.session.commit()
+    cache_clear()
+
+    try:
+        from app.services import audit
+        audit.record('flag.limited_verticals', 'AppSetting', key,
+                     old={'verticals': list(was)},
+                     new={'verticals': clean}, actor=actor,
+                     reason=(f'limited to {", ".join(clean)}' if clean
+                             else 'vertical limit lifted'))
+    except Exception:                                     # noqa: BLE001
+        pass
+    return tuple(clean)
 
 
 def limit_to(name, codes, *, actor=None):
