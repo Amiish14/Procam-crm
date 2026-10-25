@@ -31,6 +31,12 @@ from flask import Blueprint, jsonify, render_template, request, session
 
 bp = Blueprint('account_check', __name__)
 
+# Module level: several handlers below ask it for a lead's vertical
+# and its owner, and a per-function import in each is how one of
+# them ends up without it. (It did: bulk-confirm raised NameError
+# on its first real call.)
+from app.services import account_gate                     # noqa: E402
+
 
 def _on():
     from app.services import account_gate
@@ -102,6 +108,7 @@ def _row(lead, *, with_candidates=True):
         'why': why,
         'may_clear': may_clear(lead),
         'candidates': [],
+        'suggestion': _suggestion(lead),
     }
     if not with_candidates:
         return out
@@ -132,6 +139,40 @@ def _row(lead, *, with_candidates=True):
         elif not out['candidates']:
             out['why'] = ('free mail — nothing to match on'
                           if _free(out['sender']) else 'no account')
+    return out
+
+
+def _suggestion(lead):
+    """The recorded suggestion for this lead, if it still holds.
+
+    Re-checked rather than trusted: an account created or an alias
+    learnt since the pass ran makes a stored answer wrong, and a
+    wrong answer behind a one-click button is worse than none.
+    """
+    from app.models.assignment import LeadAccountSuggestion
+    from app.services import account_suggest
+
+    row = LeadAccountSuggestion.query.filter_by(
+        lead_id=lead.id).first()
+    if row is None or row.acted_at is not None:
+        return None
+    if account_suggest.stale(row, lead):
+        fresh = account_suggest.suggest_for(lead)
+        account_suggest.store(fresh)
+        from app import db
+        db.session.commit()
+        row = LeadAccountSuggestion.query.filter_by(
+            lead_id=lead.id).first()
+    if row is None or not row.account_id:
+        return None
+    from app import Company, db as _db
+    account = _db.session.get(Company, row.account_id)
+    if account is None:
+        return None
+    out = row.to_dict()
+    out['name'] = account.name
+    out['blocked'] = _blocked(account)
+    out['trusted'] = (row.confidence or 0) >= account_suggest.TRUSTED
     return out
 
 
@@ -394,3 +435,168 @@ def _blocked_lookalike(name):
         if account is not None and _blocked(account):
             return account.name
     return ''
+
+
+# ── acting on the suggestions ────────────────────────────────────────
+@bp.route('/api/account-check/suggestions')
+@_gate
+def api_suggestions():
+    """What could be confirmed in one go, for this person."""
+    from app.models.assignment import LeadAccountSuggestion
+    from app.services import account_suggest
+
+    rows, blocked_out = [], 0
+    for lead in account_suggest.pending():
+        if not may_clear(lead):
+            continue
+        row = LeadAccountSuggestion.query.filter_by(
+            lead_id=lead.id).first()
+        if row is None or row.acted_at is not None \
+                or not row.exact_single or not row.account_id:
+            continue
+        found = _suggestion(lead)
+        if found is None:
+            continue
+        if found['blocked']:
+            blocked_out += 1
+            continue
+        rows.append({'lead_id': lead.id,
+                     'company': lead.company or '',
+                     'vertical': account_gate.vertical_of(lead),
+                     'account_id': found['account_id'],
+                     'account': found['name'],
+                     'rule': found['rule'],
+                     'confidence': found['confidence']})
+    return jsonify(ok=True, rows=rows, total=len(rows),
+                   blocked=blocked_out)
+
+
+@bp.route('/api/account-check/bulk-confirm', methods=['POST'])
+@_gate
+def api_bulk_confirm():
+    """Confirm several suggestions at once.
+
+    Only the shape `auto_link` would have linked unasked: exactly
+    one exact-rule match, nothing disagreeing, above the confidence
+    floor, not blocked. Every row is re-checked here even though
+    the screen checked it — the screen's copy is seconds old and
+    this writes to live customer records.
+
+    A row that no longer qualifies is skipped and named, not
+    silently dropped: 'confirmed 300' with 4 quietly missing is how
+    somebody later finds a lead nobody owns.
+    """
+    from datetime import datetime
+
+    from app import Company, Lead, db
+    from app.models.assignment import LeadAccountSuggestion
+    from app.services import account_suggest, audit
+
+    d = request.get_json(silent=True) or {}
+    ids = [int(i) for i in (d.get('lead_ids') or [])
+           if str(i).strip().isdigit()]
+    if not ids:
+        return jsonify(ok=False, error='Nothing selected'), 400
+    if len(ids) > 500:
+        return jsonify(ok=False,
+                       error='500 at a time at most'), 400
+
+    done, skipped = [], []
+    for lead_id in ids:
+        lead = db.session.get(Lead, lead_id)
+        if lead is None:
+            skipped.append({'lead_id': lead_id,
+                            'why': 'no such lead'})
+            continue
+        if not may_clear(lead):
+            skipped.append({'lead_id': lead_id,
+                            'why': 'not yours to confirm'})
+            continue
+        if lead.company_id:
+            skipped.append({'lead_id': lead_id,
+                            'why': 'already has an account'})
+            continue
+
+        # Recomputed, not read. This is the guard that makes a bulk
+        # action safe to offer at all.
+        found = account_suggest.suggest_for(lead)
+        if not found['exact_single'] or not found['account_id']:
+            skipped.append({'lead_id': lead_id,
+                            'why': 'no longer a single exact match'})
+            continue
+        if found['confidence'] < account_suggest.TRUSTED:
+            skipped.append({'lead_id': lead_id,
+                            'why': f'confidence {found["confidence"]} '
+                                   f'is below the floor'})
+            continue
+        account = db.session.get(Company, found['account_id'])
+        if account is None or _blocked(account):
+            skipped.append({'lead_id': lead_id,
+                            'why': 'account is blocked or gone'})
+            continue
+
+        vertical = account_gate.vertical_of(lead)
+        owner = account_gate.owner_for(account, vertical) \
+            or _head_of(vertical)
+        if not owner:
+            skipped.append({
+                'lead_id': lead_id,
+                'why': f'nobody owns {account.name} for '
+                       f'{vertical or "this vertical"}'})
+            continue
+
+        lead.company_id = account.id
+        _ensure_vertical_owner(account, vertical, owner,
+                               actor=session['emp_code'])
+        _assign(lead, owner)
+        row = LeadAccountSuggestion.query.filter_by(
+            lead_id=lead.id).first()
+        if row is not None:
+            row.acted_at = datetime.utcnow()
+            row.acted_by = session['emp_code']
+            row.outcome = 'accepted'
+        audit.record('lead.account_confirmed', 'lead', lead.id,
+                     old={'company_id': None},
+                     new={'company_id': account.id,
+                          'account': account.name,
+                          'assigned_to': owner, 'rule': found['rule'],
+                          'confidence': found['confidence']},
+                     actor=session['emp_code'],
+                     reason='bulk-confirmed on Account check from a '
+                            f'single exact match ({found["rule"]})')
+        done.append({'lead_id': lead.id, 'account': account.name,
+                     'owner': owner})
+
+    db.session.commit()
+    return jsonify(ok=True, confirmed=len(done), done=done,
+                   skipped=skipped,
+                   remaining=len(account_gate.pending_leads()))
+
+
+@bp.route('/api/account-check/<int:lead_id>/dismiss', methods=['POST'])
+@_gate
+def api_dismiss(lead_id):
+    """'Pick another' — the suggestion was looked at and rejected.
+
+    Recorded rather than deleted, so the hit rate can be measured
+    later: a suggestion engine nobody can score is one nobody can
+    improve.
+    """
+    from datetime import datetime
+
+    from app import Lead, db
+    from app.models.assignment import LeadAccountSuggestion
+
+    lead = db.session.get(Lead, lead_id)
+    if lead is None:
+        return jsonify(ok=False, error='Lead not found'), 404
+    if not may_clear(lead):
+        return jsonify(ok=False, error='Not yours to confirm'), 403
+    row = LeadAccountSuggestion.query.filter_by(
+        lead_id=lead_id).first()
+    if row is not None:
+        row.acted_at = datetime.utcnow()
+        row.acted_by = session['emp_code']
+        row.outcome = 'replaced'
+        db.session.commit()
+    return jsonify(ok=True)

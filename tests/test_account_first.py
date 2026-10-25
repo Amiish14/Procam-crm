@@ -46,6 +46,7 @@ Lead, Company, Employee = _main.Lead, _main.Company, _main.Employee
 
 from app.models.assignment import (AccountOwnerConfirmation,   # noqa: E402
                                    AccountVerticalOwner,
+                                   LeadAccountSuggestion,
                                    SenderAccountLink)
 from app.models.email_admin import VerticalHead              # noqa: E402
 from app.services import account_gate, account_match, flags   # noqa: E402
@@ -59,7 +60,7 @@ def _purge():
     # sender, and a link left behind makes the next module's matcher
     # answer "learned email" where it should answer by domain.
     for model in (Lead, AccountVerticalOwner, AccountOwnerConfirmation,
-                  SenderAccountLink):
+                  SenderAccountLink, LeadAccountSuggestion):
         model.query.delete()
     Company.query.filter(Company.name.like('ZZ%')).delete(
         synchronize_session=False)
@@ -67,6 +68,16 @@ def _purge():
         (HEAD, REP, OTHER))).delete(synchronize_session=False)
     VerticalHead.query.filter_by(vertical=VERTICAL).delete(
         synchronize_session=False)
+    # And this module's own audit rows. SQLite reuses lead ids
+    # after a purge, so lead #1 in the next test inherits the audit
+    # trail of lead #1 in the last one — which made a one-row
+    # assertion see four.
+    from app.models.audit import AuditEvent
+    AuditEvent.query.filter(AuditEvent.action.in_((
+        'lead.account_confirmed', 'account.vertical_owner_set',
+        'account.owner_confirmed', 'account.created',
+        'lead.created_for_account'))).delete(
+            synchronize_session=False)
     # The flag row, too. The suite shares one database, so a flag
     # left on here arms the gate for every module that runs after
     # this one — which is exactly how test_audit_trail and
@@ -459,3 +470,239 @@ def test_reassigning_writes_the_owner_not_just_the_answer():
         assert AccountVerticalOwner.query.filter_by(
             account_id=account.id, vertical=VERTICAL
         ).first().emp_code == OTHER
+
+
+# ── suggestions: a guess, filed, not a link ──────────────────────────
+def test_the_pass_links_nothing():
+    """The whole point. auto_link would place some of these; doing
+    that to 352 historical leads in a batch is a different act from
+    doing it to mail as it arrives."""
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(_ROOT, 'scripts'))
+    import account_suggestions as pass_
+
+    with flask_app.app_context():
+        _on()
+        _account(name='ZZ Domain Co', domain='zzsteel.com')
+        lead = _lead()                       # no account
+        pass_.run(write=True)
+        assert db.session.get(Lead, lead.id).company_id is None
+
+        from app.models.assignment import LeadAccountSuggestion
+        row = LeadAccountSuggestion.query.filter_by(
+            lead_id=lead.id).first()
+        assert row is not None
+        assert row.exact_single is True
+        assert row.rule == 'account email domain'
+        assert row.confidence == 85
+
+
+def test_confidence_ranks_rules_not_guesses():
+    from app.services import account_suggest as sug
+
+    assert sug.confidence_of('learned email') == 100
+    assert sug.confidence_of('GSTIN') > sug.confidence_of('company name')
+    # A resemblance stays well under the bulk floor however close.
+    assert sug.confidence_of('company name',
+                             note='98% like ZZ Co') < sug.TRUSTED
+
+
+def test_a_lead_with_nothing_to_match_on_still_gets_a_row():
+    """Otherwise 'not looked at' and 'looked at, found nothing' are
+    indistinguishable."""
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(_ROOT, 'scripts'))
+    import account_suggestions as pass_
+
+    with flask_app.app_context():
+        _on()
+        lead = _lead()
+        lead.email = 'nobody@nowhere-at-all-xyz.com'
+        lead.company = ''
+        db.session.commit()
+        pass_.run(write=True)
+        from app.models.assignment import LeadAccountSuggestion
+        row = LeadAccountSuggestion.query.filter_by(
+            lead_id=lead.id).first()
+        assert row is not None
+        assert row.account_id is None
+        assert row.exact_single is False
+
+
+def test_a_rerun_never_overwrites_a_human_answer():
+    import sys as _sys
+    from datetime import datetime as _dt
+    _sys.path.insert(0, os.path.join(_ROOT, 'scripts'))
+    import account_suggestions as pass_
+    from app.models.assignment import LeadAccountSuggestion
+
+    with flask_app.app_context():
+        _on()
+        _account(name='ZZ Domain Co', domain='zzsteel.com')
+        lead = _lead()
+        pass_.run(write=True)
+        row = LeadAccountSuggestion.query.filter_by(
+            lead_id=lead.id).first()
+        row.acted_at, row.outcome = _dt.utcnow(), 'replaced'
+        row.account_id = None
+        db.session.commit()
+
+        pass_.run(write=True)
+        again = LeadAccountSuggestion.query.filter_by(
+            lead_id=lead.id).first()
+        assert again.outcome == 'replaced'
+        assert again.account_id is None
+
+
+def test_a_stale_suggestion_is_spotted():
+    from app.models.assignment import LeadAccountSuggestion
+    from app.services import account_suggest as sug
+
+    with flask_app.app_context():
+        _on()
+        account = _account(name='ZZ Domain Co', domain='zzsteel.com')
+        lead = _lead()
+        sug.store(sug.suggest_for(lead), commit=True)
+        row = LeadAccountSuggestion.query.filter_by(
+            lead_id=lead.id).first()
+        assert sug.stale(row, lead) is False
+
+        # A second account on the same domain: the answer is no
+        # longer a single exact match.
+        _account(name='ZZ Rival Co', domain='zzsteel.com')
+        assert sug.stale(row, lead) is True
+
+
+# ── bulk confirm ─────────────────────────────────────────────────────
+def _bulk(client, ids):
+    return client.post('/api/account-check/bulk-confirm',
+                       json={'lead_ids': ids})
+
+
+def test_bulk_confirm_links_the_clear_ones():
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(_ROOT, 'scripts'))
+    import account_suggestions as pass_
+
+    with flask_app.app_context():
+        _on()
+        account = _account(name='ZZ Domain Co', domain='zzsteel.com',
+                           owner=REP)
+        lead_id = _lead().id
+        account_id = account.id
+        pass_.run(write=True)
+    client = flask_app.test_client()
+    with client.session_transaction() as s:
+        s['emp_code'] = HEAD
+    r = _bulk(client, [lead_id])
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()['confirmed'] == 1
+    with flask_app.app_context():
+        assert db.session.get(Lead, lead_id).company_id == account_id
+
+
+def test_bulk_confirm_rechecks_and_names_what_it_skipped():
+    """A stale row must not ride through on the screen's copy, and
+    a silent drop is how somebody later finds an unowned lead."""
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(_ROOT, 'scripts'))
+    import account_suggestions as pass_
+
+    with flask_app.app_context():
+        _on()
+        _account(name='ZZ Domain Co', domain='zzsteel.com', owner=REP)
+        lead_id = _lead().id
+        pass_.run(write=True)
+        # Something changed after the pass: now two accounts claim
+        # the domain, so it is no longer a single exact match.
+        _account(name='ZZ Rival Co', domain='zzsteel.com', owner=REP)
+    client = flask_app.test_client()
+    with client.session_transaction() as s:
+        s['emp_code'] = HEAD
+    body = _bulk(client, [lead_id]).get_json()
+    assert body['confirmed'] == 0
+    assert body['skipped'][0]['lead_id'] == lead_id
+    assert 'single exact match' in body['skipped'][0]['why']
+    with flask_app.app_context():
+        assert db.session.get(Lead, lead_id).company_id is None
+
+
+def test_a_salesperson_cannot_bulk_confirm():
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(_ROOT, 'scripts'))
+    import account_suggestions as pass_
+
+    with flask_app.app_context():
+        _on()
+        _account(name='ZZ Domain Co', domain='zzsteel.com', owner=REP)
+        lead_id = _lead().id
+        pass_.run(write=True)
+    client = flask_app.test_client()
+    with client.session_transaction() as s:
+        s['emp_code'] = REP
+    r = _bulk(client, [lead_id])
+    assert r.status_code == 200, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body['confirmed'] == 0
+    assert 'not yours' in body['skipped'][0]['why']
+
+
+def test_bulk_confirm_refuses_a_blocked_account():
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(_ROOT, 'scripts'))
+    import account_suggestions as pass_
+
+    with flask_app.app_context():
+        _on()
+        _account(name='ZZ Domain Co', domain='zzsteel.com', owner=REP)
+        lead_id = _lead().id
+        pass_.run(write=True)
+    import app.account_check.routes as ac
+    original = ac._blocked
+    ac._blocked = lambda account: True
+    try:
+        client = flask_app.test_client()
+        with client.session_transaction() as s:
+            s['emp_code'] = HEAD
+        body = _bulk(client, [lead_id]).get_json()
+        assert body['confirmed'] == 0
+        assert 'blocked' in body['skipped'][0]['why']
+    finally:
+        ac._blocked = original
+
+
+def test_bulk_confirm_writes_an_audit_row_each():
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(_ROOT, 'scripts'))
+    import account_suggestions as pass_
+    from app.models.audit import AuditEvent
+
+    with flask_app.app_context():
+        _on()
+        _account(name='ZZ Domain Co', domain='zzsteel.com', owner=REP)
+        ids = [_lead().id]
+        pass_.run(write=True)
+    client = flask_app.test_client()
+    with client.session_transaction() as s:
+        s['emp_code'] = HEAD
+    _bulk(client, ids)
+    with flask_app.app_context():
+        # Scoped to these leads: audit_events is shared across the
+        # suite and earlier tests in this module confirm leads too.
+        rows = (AuditEvent.query
+                .filter(AuditEvent.action == 'lead.account_confirmed',
+                        AuditEvent.entity_id.in_([str(i) for i in ids]))
+                .all())
+        assert len(rows) == len(ids)
+        assert 'bulk-confirmed' in (rows[0].reason or '')
+
+
+def test_bulk_confirm_has_a_ceiling():
+    with flask_app.app_context():
+        _on()
+    client = flask_app.test_client()
+    with client.session_transaction() as s:
+        s['emp_code'] = HEAD
+    r = _bulk(client, list(range(1, 600)))
+    assert r.status_code == 400
+    assert '500' in r.get_json()['error']

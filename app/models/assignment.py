@@ -226,3 +226,71 @@ class AccountOwnerConfirmation(db.Model):
                 if self.confirmed_at else '',
                 'confirmed_by': self.confirmed_by or '',
                 'outcome': self.outcome or ''}
+
+
+class LeadAccountSuggestion(db.Model):
+    """The matcher's best guess at a lead's customer — a guess, filed.
+
+    CRM-ACCOUNT-FIRST-01, before the flag goes on.
+
+    352 open leads carry no account. The matcher can place most of
+    them, and `auto_link` would link a good number without asking —
+    but it is one thing to link mail as it arrives, where a mistake
+    is one lead, and another to link 352 historical leads in a
+    batch, where a mistake is a silent reassignment of somebody's
+    customer. So the answer is written down and a person presses
+    the button.
+
+    `computed_at` and `sender_seen` exist because a suggestion is
+    only as good as the moment it was made: an account created or
+    an alias learnt since makes it stale, and a stale suggestion
+    confirmed in bulk is exactly the silent mistake this table is
+    meant to avoid. The screen re-checks before it writes.
+    """
+    __tablename__ = 'lead_account_suggestion'
+
+    id = db.Column(db.Integer, primary_key=True)
+    #: One standing suggestion per lead. A re-run replaces it.
+    lead_id = db.Column(db.Integer, unique=True, nullable=False,
+                        index=True)
+
+    #: Null is a real answer: "nothing matched". It is the reason a
+    #: row exists at all for those leads — otherwise "not looked at"
+    #: and "looked at, found nothing" are indistinguishable.
+    account_id = db.Column(db.Integer, db.ForeignKey('companies.id'),
+                           index=True)
+    rule = db.Column(db.String(40))
+    #: 0–100. Derived from which rule fired, not from a model.
+    confidence = db.Column(db.Integer, default=0)
+
+    #: How many accounts matched at all, and whether exactly one of
+    #: them matched on an exact rule with nothing disagreeing —
+    #: which is the only shape bulk-confirm will accept.
+    candidate_count = db.Column(db.Integer, default=0)
+    exact_single = db.Column(db.Boolean, default=False, index=True)
+
+    #: The runners-up, so the screen can offer them without
+    #: recomputing, and so a later reader can see what was rejected.
+    alternatives = db.Column(db.JSON, default=list)
+
+    #: What the suggestion was made from. If the sender changes, or
+    #: the matcher has learnt since, the row is stale.
+    sender_seen = db.Column(db.String(320))
+    computed_at = db.Column(db.DateTime, default=datetime.utcnow,
+                            index=True)
+
+    #: Set when somebody acts on it, so a confirmed suggestion is
+    #: not offered again and the hit rate can be measured later.
+    acted_at = db.Column(db.DateTime)
+    acted_by = db.Column(db.String(20))
+    outcome = db.Column(db.String(16))   # accepted | replaced | created
+
+    def to_dict(self):
+        return {'lead_id': self.lead_id, 'account_id': self.account_id,
+                'rule': self.rule or '', 'confidence': self.confidence or 0,
+                'candidate_count': self.candidate_count or 0,
+                'exact_single': bool(self.exact_single),
+                'alternatives': self.alternatives or [],
+                'computed_at': str(self.computed_at)[:16]
+                if self.computed_at else '',
+                'outcome': self.outcome or ''}
