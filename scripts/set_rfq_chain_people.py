@@ -27,7 +27,11 @@ sys.path.insert(0, os.path.dirname(_HERE))
 
 from app import Employee, app, db                         # noqa: E402
 
-COORDINATOR = ('Seema Chattopadhyay', 'EMP1552018')
+#: EMP1552018 was given first and is Abhishek Singh,
+#: inactive. The script refused it rather than
+#: resolving the name over the code, which is why this
+#: line is a correction and not a silent fix.
+COORDINATOR = ('Seema Chattopadhyay', 'EMP2882022')
 
 SCM = {
     'Heavy Transport':    ('Suranjan Aon', None),
