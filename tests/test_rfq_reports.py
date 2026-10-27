@@ -40,6 +40,7 @@ os.environ.setdefault(
 _main = importlib.import_module('app')
 importlib.import_module('app.models')
 importlib.import_module('app.models.rfq')
+importlib.import_module('app.models.rfq_target')
 flask_app = _main.app
 flask_app.config['WTF_CSRF_ENABLED'] = False
 db = _main.db
@@ -330,3 +331,88 @@ def test_every_tile_names_the_list_it_opens():
                 'lost', 'overdue', 'due_today'):
         assert key in body['tiles']
         assert body['opens'].get(key), f'{key} opens nothing'
+
+
+# ── acceptance 13 and 14: the figure equals the list ─────────────────
+def test_the_overdue_tile_agrees_with_the_board():
+    """Acceptance 13. Two code paths count overdue — the tile from
+    rfq_reports and the strip from rfq_chain.board. A dashboard
+    that disagrees with the list it opens is worse than no
+    dashboard, because somebody acts on the number."""
+    with flask_app.app_context():
+        rfq = _rfq('Medium')              # costing standard 50.4h
+        now = datetime.utcnow()
+        db.session.add(TaskInstance(
+            task_key=rc.BY_NO[6]['key'], entity_type='RFQ',
+            entity_id=rfq.id, step_no=6, owner_user_id=A,
+            status=TaskInstanceStatus.PENDING,
+            started_at=now - timedelta(hours=80),
+            created_at=now, paused_seconds=0, priority=3))
+        db.session.commit()
+
+        from_tile = rr.tiles()['overdue']
+        from_board = sum(
+            1 for row in rc.board(rfq)
+            if row['state'] == 'current' and row['colour'] == rc.RED)
+        assert from_tile == from_board == 1
+
+
+def test_the_won_tile_equals_the_rfqs_it_would_list():
+    """Acceptance 13, the other direction: the tile counts exactly
+    the rows its filter selects."""
+    with flask_app.app_context():
+        _rfq(status='Won')
+        _rfq(status='Won')
+        _rfq(status='Lost')
+        tile = rr.tiles()['won']
+        listed = [r for r in rr._visible_rfqs(None)
+                  if (r.status or '') == 'Won']
+        assert tile == len(listed) == 2
+
+
+def test_targets_received_equals_the_rfqs_registered_that_month():
+    """Acceptance 14, counted independently of targets_for()."""
+    from app.models.rfq_target import RfqTarget
+    from app.services import lead_journey as lj
+
+    with flask_app.app_context():
+        month = lj.month_key()
+        db.session.add(RfqTarget(month=month, vertical='Warehousing',
+                                 emp_code=A, target_rfqs=3))
+        now = datetime.utcnow()
+        # An RFQ reaches its vertical through its lead, so give it
+        # one — otherwise the target row and the RFQ land under
+        # different keys and the test proves nothing.
+        lead = _main.Lead(company='RR Co', stage='RFQ Generated',
+                          procam_vertical='Warehousing',
+                          source='manual')
+        db.session.add(lead)
+        db.session.flush()
+        for _ in range(2):
+            r = _rfq('Medium', lead_driver=A, lead_id=lead.id)
+            r.registered_at = now
+        # One registered last month, which must not be counted.
+        old = _rfq('Medium', lead_driver=A, lead_id=lead.id)
+        old.registered_at = now - timedelta(days=45)
+        db.session.commit()
+        try:
+            rows = {(r['emp_code'], r['vertical']): r
+                    for r in lj.targets_for(month=month)}
+            mine = rows.get((A, 'Warehousing'))
+            assert mine is not None, rows
+
+            independent = sum(
+                1 for r in RFQ.query.all()
+                if r.registered_at
+                and lj.month_key(r.registered_at.date()) == month
+                and (r.lead_driver or r.created_by_id) == A)
+            assert mine['received'] == independent == 2
+            assert mine['target'] == 3
+        finally:
+            RfqTarget.query.filter_by(month=month,
+                                      emp_code=A).delete(
+                synchronize_session=False)
+            _main.Lead.query.filter(
+                _main.Lead.company == 'RR Co').delete(
+                    synchronize_session=False)
+            db.session.commit()
