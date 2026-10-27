@@ -842,6 +842,7 @@ def journey(lead):
         for s in STEPS]
     return {'before': before, 'after': after,
             'dev_stage': stage,
+            'rfq_id': getattr(rfq, 'id', None),
             'rfq_number': getattr(rfq, 'rfq_number', '') or '',
             'closed': (lead.stage or '') in ('Won', 'Lost')}
 

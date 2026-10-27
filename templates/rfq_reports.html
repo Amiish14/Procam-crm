@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{% include "_csrf_fetch.html" %}
+<title>RFQ Reports — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .rp { max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
+  .rp h1 { font-family:Barlow,sans-serif; font-size:23px;
+      font-weight:800; margin:0 0 4px; }
+  .rp .lede { color:#6b7280; font-size:13.5px; margin:0 0 20px;
+      max-width:64ch; line-height:1.5; }
+  .rp h2 { font-family:Barlow,sans-serif; font-size:15px;
+      font-weight:700; margin:26px 0 10px; }
+  .tiles { display:grid; gap:10px;
+      grid-template-columns:repeat(auto-fit,minmax(142px,1fr)); }
+  .tile { background:#fff; border:1px solid #e5e7eb;
+      border-radius:10px; padding:13px 15px; text-decoration:none;
+      color:inherit; display:block; }
+  .tile:hover { border-color:#111827; }
+  .tile b { display:block; font-size:25px; font-weight:800;
+      font-variant-numeric:tabular-nums; line-height:1.15; }
+  .tile span { color:#6b7280; font-size:12px; }
+  .tile.warn b { color:#b91c1c; }
+  .tile.none b { color:#9ca3af; font-size:19px; font-weight:700; }
+  table { width:100%; border-collapse:collapse; background:#fff;
+      border:1px solid #e5e7eb; border-radius:10px; font-size:13px; }
+  th { text-align:left; font-size:11px; text-transform:uppercase;
+      letter-spacing:.04em; color:#6b7280; padding:8px 10px;
+      border-bottom:1px solid #e5e7eb; font-weight:700; }
+  td { padding:7px 10px; border-bottom:1px solid #f3f4f6;
+      font-variant-numeric:tabular-nums; }
+  tr:last-child td { border-bottom:0; }
+  .muted { color:#9ca3af; }
+  .bad { color:#b91c1c; font-weight:600; }
+  .good { color:#15803d; font-weight:600; }
+  .slow { background:#fef3c7; border:1px solid #fde68a;
+      border-radius:9px; padding:11px 14px; font-size:13.5px; }
+  .cell { display:inline-block; min-width:46px; text-align:center;
+      border-radius:4px; padding:2px 5px; font-size:12px; }
+  .note { color:#6b7280; font-size:12.5px; margin-top:8px; }
+  .rp-empty { color:#6b7280; padding:30px 0; text-align:center; }
+</style>
+</head>
+<body>
+<div class="rp">
+  <h1>RFQ reports</h1>
+  <p class="lede">
+    Every figure here is computed from the chain's own timestamps —
+    when a step started, when it closed, and how long it was held.
+    Nothing on this page is typed by the people it measures.
+  </p>
+  <div class="tiles" id="tiles"></div>
+
+  <h2>Time per step, against standard</h2>
+  <div id="slow"></div>
+  <div id="steps"></div>
+
+  <h2>Workload and completion</h2>
+  <div id="workload"></div>
+
+  <h2>Person × step</h2>
+  <div id="heatmap"></div>
+
+  <h2>Why steps ran late</h2>
+  <div id="reasons"></div>
+</div>
+
+<script>
+const P = "{{ url_prefix }}";
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const hrs = v => v == null ? '—' : (v >= 48 ? (v/24).toFixed(0)+'d'
+                                            : v.toFixed(1)+'h');
+const money = v => !v ? '—'
+  : '₹' + (v >= 10000000 ? (v/10000000).toFixed(2)+' cr'
+         : v >= 100000 ? (v/100000).toFixed(1)+' lakh'
+         : v.toLocaleString('en-IN'));
+
+async function get(path) {
+  const r = await fetch("{{ url_prefix }}" + path);
+  if (!r.ok) return null;
+  return r.json();
+}
+
+function tile(label, value, opens, opts) {
+  opts = opts || {};
+  const none = value === null || value === undefined;
+  const cls = 'tile' + (none ? ' none' : (opts.warn && value ? ' warn' : ''));
+  const shown = none ? (opts.nothing || 'nothing yet')
+    : (opts.fmt ? opts.fmt(value) : value);
+  const href = opens ? P + opens : null;
+  const inner = `<b>${esc(shown)}</b><span>${esc(label)}</span>`;
+  return href ? `<a class="${cls}" href="${href}">${inner}</a>`
+              : `<div class="${cls}">${inner}</div>`;
+}
+
+async function load() {
+  const t = await get('/api/reports/tiles');
+  if (!t) {
+    document.getElementById('tiles').innerHTML =
+      '<p class="rp-empty">This page is not switched on.</p>';
+    return;
+  }
+  const d = t.tiles, o = t.opens;
+  document.getElementById('tiles').innerHTML = [
+    tile('RFQs received', d.received, o.received),
+    tile('Active', d.active, o.active),
+    tile('On hold', d.on_hold, o.on_hold),
+    tile('Quoted', d.quoted, o.quoted),
+    tile('Won', d.won, o.won),
+    tile('Lost', d.lost, o.lost),
+    tile('Overdue', d.overdue, o.overdue, {warn: true}),
+    tile('Due soon', d.due_today, o.due_today),
+    tile('Avg response', d.avg_response_hours, null,
+         {fmt: hrs, nothing: 'none quoted'}),
+    tile('Prospective', d.prospective_value, null, {fmt: money}),
+    tile('Won revenue', d.won_value, null, {fmt: money}),
+    tile('Conversion', d.conversion, null,
+         {fmt: v => v + '%', nothing: 'none closed'}),
+  ].join('');
+
+  const s = await get('/api/reports/steps');
+  if (s) {
+    document.getElementById('slow').innerHTML = s.slowest
+      ? `<div class="slow"><b>Slowest step:</b> ${esc(s.slowest.title)} —
+         averaging ${hrs(s.slowest.avg_hours)} against a
+         ${hrs(s.slowest.avg_standard)} standard
+         (${s.slowest.ratio}× over ${s.slowest.closed} closes).</div>`
+      : '<p class="note">No step is over its standard yet — a step '
+        + 'is only named after three closes, so one slow week does '
+        + 'not label it.</p>';
+    document.getElementById('steps').innerHTML = `<table>
+      <tr><th>Step</th><th>Closed</th><th>Average</th>
+          <th>Standard</th><th>Ratio</th><th>On time</th></tr>
+      ${s.steps.map(r => `<tr>
+        <td>${r.step_no}. ${esc(r.title)}</td>
+        <td>${r.closed || '<span class="muted">—</span>'}</td>
+        <td>${hrs(r.avg_hours)}</td>
+        <td>${hrs(r.avg_standard)}</td>
+        <td class="${r.ratio > 1 ? 'bad' : (r.ratio ? 'good' : '')}">${
+          r.ratio == null ? '<span class="muted">—</span>' : r.ratio + '×'}</td>
+        <td>${r.on_time_pct == null ? '<span class="muted">—</span>'
+              : r.on_time_pct + '%'}</td></tr>`).join('')}
+    </table>`;
+  }
+
+  const w = await get('/api/reports/workload');
+  if (w) {
+    document.getElementById('workload').innerHTML = w.rows.length
+      ? `<table>
+      <tr><th>Person</th><th>Closed</th><th>On time</th><th>Early</th>
+          <th>Delayed</th><th>Open</th><th>Late now</th>
+          <th>On-time %</th><th>Std. ${w.target_pct}%</th>
+          <th>Gap</th></tr>
+      ${w.rows.map(r => `<tr>
+        <td>${esc(r.emp_code)}</td><td>${r.closed}</td>
+        <td>${r.on_time}</td><td>${r.early}</td>
+        <td class="${r.delayed ? 'bad' : ''}">${r.delayed}</td>
+        <td>${r.open}</td>
+        <td class="${r.late_open ? 'bad' : ''}">${r.late_open}</td>
+        <td>${r.on_time_pct == null
+              ? '<span class="muted">not measured</span>'
+              : r.on_time_pct + '%'}</td>
+        <td class="${r.verdict === 'Achieved' ? 'good'
+                   : (r.verdict ? 'bad' : '')}">${
+          r.verdict ? esc(r.verdict) : '<span class="muted">—</span>'}</td>
+        <td>${r.gap == null ? '<span class="muted">—</span>'
+              : (r.gap > 0 ? r.gap + ' pts' : '0')}</td></tr>`).join('')}
+    </table>
+    <p class="note">A person with fewer than ${w.min_for_rate} closed
+      steps shows "not measured" rather than a percentage — two steps
+      is not a 50% record.${w.unmeasured
+      ? ' ' + w.unmeasured + ' of ' + w.rows.length + ' are below that today.'
+      : ''}</p>`
+      : '<p class="rp-empty">No closed steps yet.</p>';
+  }
+
+  const h = await get('/api/reports/heatmap');
+  if (h) {
+    const box = document.getElementById('heatmap');
+    if (!h.people.length) {
+      box.innerHTML = '<p class="rp-empty">Nothing closed yet.</p>';
+    } else {
+      const at = {};
+      h.cells.forEach(c => { at[c.emp_code + '|' + c.step_no] = c; });
+      box.innerHTML = `<table>
+        <tr><th>Person</th>${h.steps.map(s =>
+          `<th title="${esc(s.title)}">${s.step_no}</th>`).join('')}</tr>
+        ${h.people.map(p => `<tr><td>${esc(p)}</td>${
+          h.steps.map(s => {
+            const c = at[p + '|' + s.step_no];
+            if (!c) return '<td class="muted">·</td>';
+            const bg = c.ratio > 1 ? '#fee2e2'
+                     : c.ratio > 0.75 ? '#fef3c7' : '#dcfce7';
+            return `<td><span class="cell" style="background:${bg}"
+              title="${c.n} close(s)">${c.ratio}×</span></td>`;
+          }).join('')}</tr>`).join('')}
+      </table>
+      <p class="note">Average time ÷ standard. A dot means that
+        person has closed none of that step.</p>`;
+    }
+  }
+
+  const rs = await get('/api/reports/reasons');
+  if (rs) {
+    const cuts = Object.keys(rs.delay || {});
+    document.getElementById('reasons').innerHTML = cuts.length
+      ? cuts.map(cut => `<h2 style="font-size:13px">${esc(cut)}</h2>
+        <table>${Object.entries(rs.delay[cut]).map(([k, n]) =>
+          `<tr><td>${esc(k)}</td><td style="width:70px">${n}</td></tr>`
+        ).join('')}</table>`).join('')
+      : '<p class="rp-empty">No step has closed late yet.</p>';
+  }
+}
+load();
+</script>
+</body>
+</html>

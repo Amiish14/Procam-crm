@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{% include "_csrf_fetch.html" %}
+<title>Lead journey — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .lj { max-width:1080px; margin:0 auto; padding:18px 16px 60px; }
+  .lj h1 { font-family:Barlow,sans-serif; font-size:22px;
+      font-weight:800; margin:0 0 3px; }
+  .hdr { background:#fff; border:1px solid #e5e7eb;
+      border-radius:11px; padding:14px 16px; margin-bottom:16px; }
+  .hdr .row { color:#6b7280; font-size:13px; line-height:1.7; }
+  .chip { display:inline-block; background:#f3f4f6; color:#374151;
+      border-radius:5px; padding:2px 8px; font-size:11.5px;
+      font-weight:700; margin-right:6px; }
+  .chip.auto { background:#dbeafe; color:#1e40af; }
+  .lane { margin:18px 0 6px; font-family:Barlow,sans-serif;
+      font-size:13px; font-weight:700; color:#374151; }
+  .boxes { display:flex; gap:4px; flex-wrap:wrap; }
+  .bx { min-width:30px; height:30px; padding:0 6px; border-radius:6px;
+      display:flex; align-items:center; justify-content:center;
+      font-size:11px; font-weight:700; color:#fff; cursor:default; }
+  .bx.grey { background:#e5e7eb; color:#9ca3af; }
+  .bx.green { background:#16a34a; }
+  .bx.orange { background:#f59e0b; }
+  .bx.red { background:#dc2626; }
+  .bx.purple { background:#7c3aed; }
+  .bx.blue { background:#2563eb; }
+  .bx.done { background:#16a34a; }
+  .bx.current { outline:2px solid #111827; outline-offset:1px; }
+  .bx.future { background:#f3f4f6; color:#9ca3af; }
+  .tabs { display:flex; gap:4px; margin:22px 0 12px;
+      border-bottom:1px solid #e5e7eb; flex-wrap:wrap; }
+  .tab { padding:7px 13px; font-size:13px; font-weight:600;
+      cursor:pointer; border-bottom:2px solid transparent;
+      color:#6b7280; }
+  .tab.on { color:#111827; border-bottom-color:#111827; }
+  .pane { display:none; } .pane.on { display:block; }
+  .bar { display:flex; align-items:center; gap:9px; margin:5px 0;
+      font-size:12.5px; }
+  .bar .name { width:170px; color:#374151; }
+  .bar .track { flex:1; background:#f3f4f6; border-radius:4px;
+      height:17px; position:relative; }
+  .bar .fill { height:17px; border-radius:4px; }
+  .bar .mark { position:absolute; top:-2px; bottom:-2px; width:2px;
+      background:#111827; opacity:.45; }
+  .bar .val { width:112px; text-align:right; color:#6b7280;
+      font-variant-numeric:tabular-nums; }
+  form.act { background:#fff; border:1px solid #e5e7eb;
+      border-radius:11px; padding:14px 16px; }
+  form.act label { display:block; font-size:12px; color:#6b7280;
+      margin:9px 0 3px; font-weight:600; }
+  form.act select, form.act input, form.act textarea {
+      font:inherit; font-size:13.5px; border:1px solid #e5e7eb;
+      border-radius:7px; padding:7px 9px; width:100%;
+      max-width:360px; }
+  .lj-btn { border:1px solid #111827; background:#111827; color:#fff;
+      border-radius:7px; padding:7px 15px; font-weight:700;
+      font-size:13.5px; cursor:pointer; margin-top:13px; }
+  .msg { font-size:13px; margin-top:9px; }
+  .msg.bad { color:#b91c1c; } .msg.good { color:#166534; }
+  .note { color:#6b7280; font-size:12.5px; }
+</style>
+</head>
+<body>
+<div class="lj">
+  <div id="hdr"></div>
+  <div id="journey"></div>
+
+  <div class="tabs" id="tabs"></div>
+  <div class="pane on" id="pane-journey"></div>
+  <div class="pane" id="pane-steps"></div>
+  <div class="pane" id="pane-activity"></div>
+  <div class="pane" id="pane-spend">
+    <p class="note">IOUs for this lead are in the TMS. The spend
+      figures appear here once the CRM–TMS link exists.</p>
+  </div>
+</div>
+
+<script>
+const P = "{{ url_prefix }}";
+const LEAD = {{ lead_id|int }};
+let DATA = null;
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const hrs = v => v == null ? '—'
+  : (v >= 48 ? (v/24).toFixed(1)+'d' : v.toFixed(1)+'h');
+
+async function load() {
+  const r = await fetch(P + '/api/journey/' + LEAD);
+  if (!r.ok) {
+    document.getElementById('hdr').innerHTML =
+      '<p class="note">This page is not switched on, or the lead '
+      + 'is not one you can see.</p>';
+    return;
+  }
+  DATA = await r.json();
+  header(); journey(); tabs(); activity(); chart();
+}
+
+function header() {
+  const l = DATA.lead, j = DATA.journey;
+  document.getElementById('hdr').innerHTML = `
+    <h1>${esc(l.company) || 'Lead #' + l.id}</h1>
+    <div class="row">
+      <span class="chip">Lead #${l.id}</span>
+      ${j.rfq_number ? `<span class="chip">${esc(j.rfq_number)}</span>` : ''}
+      <span class="chip">${esc(l.stage)}</span>
+      ${l.channel ? `<span class="chip ${l.channel_auto ? 'auto' : ''}">${
+        esc(l.channel)}${l.channel_auto ? ' · automatic' : ''}</span>` : ''}
+      <br>
+      ${l.account ? 'Account ' + esc(l.account) : '<b>no account yet</b>'}
+      · owner ${esc(l.owner) || '—'}
+      · ${esc(l.vertical) || 'no vertical'}
+      ${j.dev_stage ? ' · ' + esc(j.dev_stage) : ''}
+    </div>`;
+}
+
+function journey() {
+  const j = DATA.journey;
+  document.getElementById('journey').innerHTML = `
+    <div class="lane">Before the RFQ</div>
+    <div class="boxes">${j.before.map((b, i) =>
+      `<div class="bx ${b.state}" title="${esc(b.title)}">${i + 1}</div>`
+    ).join('')}</div>
+    <div class="lane">RFQ to order</div>
+    <div class="boxes">${j.after.map(b => {
+      const cls = b.state === 'done' ? 'done'
+        : b.state === 'current' ? (b.colour + ' current') : 'future';
+      const tip = `${b.step_no}. ${b.title}`
+        + (b.words ? ' — ' + b.words : '')
+        + (b.owner ? ' (' + b.owner + ')' : '');
+      return `<div class="bx ${cls}" title="${esc(tip)}">${b.step_no}</div>`;
+    }).join('')}</div>`;
+}
+
+function tabs() {
+  const names = [['journey','Journey'], ['steps','Steps & time'],
+                 ['activity','Activity'], ['spend','Spend']];
+  document.getElementById('tabs').innerHTML = names.map(([k, label], i) =>
+    `<div class="tab ${i === 0 ? 'on' : ''}" data-k="${k}"
+       onclick="pick('${k}')">${label}</div>`).join('');
+  document.getElementById('pane-journey').innerHTML =
+    '<p class="note">Each box above shows where this enquiry has '
+    + 'reached. Hover one for who holds it and how long it has '
+    + 'been there.</p>';
+}
+
+function pick(k) {
+  document.querySelectorAll('.tab').forEach(t =>
+    t.classList.toggle('on', t.dataset.k === k));
+  document.querySelectorAll('.pane').forEach(p =>
+    p.classList.toggle('on', p.id === 'pane-' + k));
+}
+
+async function chart() {
+  const j = DATA.journey;
+  if (!j.rfq_number) {
+    document.getElementById('pane-steps').innerHTML =
+      '<p class="note">No RFQ yet, so there is nothing timed.</p>';
+    return;
+  }
+  const r = await fetch(P + '/api/reports/rfq/'
+                        + (DATA.journey.rfq_id || 0) + '/chart');
+  let bars = null;
+  if (r.ok) bars = (await r.json()).bars;
+  if (!bars) {
+    document.getElementById('pane-steps').innerHTML =
+      '<p class="note">The time chart needs the reports switched '
+      + 'on.</p>';
+    return;
+  }
+  const most = Math.max(1, ...bars.map(b =>
+    Math.max(b.hours || 0, b.standard || 0)));
+  document.getElementById('pane-steps').innerHTML = bars.map(b => {
+    if (b.hours == null) return `<div class="bar">
+      <div class="name">${b.step_no}. ${esc(b.title)}</div>
+      <div class="track"></div>
+      <div class="val">not started</div></div>`;
+    const colour = {red:'#dc2626', orange:'#f59e0b', green:'#16a34a',
+                    purple:'#7c3aed', blue:'#2563eb'}[b.colour] || '#9ca3af';
+    return `<div class="bar">
+      <div class="name">${b.step_no}. ${esc(b.title)}</div>
+      <div class="track">
+        <div class="fill" style="width:${(b.hours/most)*100}%;
+             background:${colour}"></div>
+        ${b.standard ? `<div class="mark"
+          style="left:${(b.standard/most)*100}%"></div>` : ''}
+      </div>
+      <div class="val">${hrs(b.hours)}${b.standard
+        ? ' / ' + hrs(b.standard) : ''}</div></div>`;
+  }).join('') + '<p class="note">The dark line is the standard time '
+    + 'for that step. Time on hold is not counted.</p>';
+}
+
+function activity() {
+  const asks = DATA.asks, lists = DATA.lists;
+  document.getElementById('pane-activity').innerHTML = `
+    <form class="act" onsubmit="return logIt(event)">
+      <label>What happened</label>
+      <select id="kind" onchange="conditional()">
+        <option value="">Choose…</option>
+        ${DATA.kinds.map(k => `<option>${esc(k)}</option>`).join('')}
+      </select>
+      <div id="cond"></div>
+      <label>Note (optional)</label>
+      <textarea id="note" rows="2"></textarea>
+      <button class="lj-btn" type="submit">Log it</button>
+      <p class="msg" id="msg"></p>
+    </form>`;
+}
+
+function conditional() {
+  const kind = document.getElementById('kind').value;
+  const field = DATA.asks[kind];
+  const box = document.getElementById('cond');
+  if (!field) { box.innerHTML = ''; return; }
+  if (field === 'rfq_expected_date') {
+    box.innerHTML = '<label>RFQ expected date</label>'
+      + '<input type="date" id="value">';
+    return;
+  }
+  const opts = DATA.lists[field] || [];
+  box.innerHTML = `<label>${field === 'capability_fit'
+    ? 'Can we do it?' : 'Expected RFQ timing'}</label>
+    <select id="value"><option value="">Choose…</option>
+    ${opts.map(o => `<option>${esc(o)}</option>`).join('')}</select>`;
+}
+
+async function logIt(ev) {
+  ev.preventDefault();
+  const msg = document.getElementById('msg');
+  const value = document.getElementById('value');
+  const r = await fetch(P + '/api/journey/' + LEAD + '/activity', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      kind: document.getElementById('kind').value,
+      note: document.getElementById('note').value,
+      value: value ? value.value : null})});
+  const j = await r.json();
+  if (!j.ok) { msg.className = 'msg bad'; msg.textContent = j.error;
+               return false; }
+  msg.className = 'msg good';
+  msg.textContent = j.moved_to
+    ? 'Logged. The account has moved to ' + j.moved_to + '.'
+    : 'Logged.';
+  setTimeout(load, 900);
+  return false;
+}
+
+load();
+</script>
+</body>
+</html>
