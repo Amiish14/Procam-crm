@@ -40,14 +40,24 @@ def main():
             print(f'  {list_key:<28}{len(have):>3} present, '
                   f'{len(missing):>2} to add')
 
+        from app.models.task_engine import TaskDefinition
+        on_file = TaskDefinition.query.filter_by(
+            module='rfq_chain').count()
+        print(f'  {"task definitions":<28}{on_file:>3} present, '
+              f'{len(rc.STEPS) - on_file:>2} to add')
+
         if args.check:
             print('\nCHECK ONLY — nothing written.')
             return
 
         added, present = rc.seed_lists(actor='CRM-RFQ-CHAIN-01')
+        defs, defs_present = rc.seed_definitions(
+            actor='CRM-RFQ-CHAIN-01')
         db.session.commit()
         print(f'\n  {len(added)} value(s) written, {present} were '
               f'already there and were left alone.')
+        print(f'  {len(defs)} task definition(s) written, '
+              f'{defs_present} already on file.')
         for key in rc.LISTS:
             n = MasterItem.query.filter_by(list_key=key,
                                            is_active=True).count()

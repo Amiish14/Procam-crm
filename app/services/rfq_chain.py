@@ -9,10 +9,16 @@ and a workload table per person. Nobody can see where an RFQ is
 stuck, who is holding it, or how long each person took, because
 the timestamps that would answer that are in nobody's hands.
 
-This is not a second engine. The steps are `TaskDefinition` rows
-and the live ones are `TaskInstance` rows, the same engine that
-already runs twenty definitions and 3,693 instances. What R2 adds
-is the four things that engine has no word for: which step of a
+This is not a second engine. A live step is a `TaskInstance`
+row on the same engine that already runs twenty definitions and
+3,693 instances, and the twelve definitions are seeded into
+`task_definitions` by `seed_definitions()` so an administrator
+can see and tune them.
+
+`STEPS` below stays the shape of the chain — the order, the
+shares, the event each closes on — and the catalogue rows carry
+the same facts where a person can read them. What R2 adds to the
+engine is the four things it has no word for: which step of a
 chain a task is, how long it was held, whether it finished early
 or late, and why.
 
@@ -1068,3 +1074,79 @@ def proposed_conditions(rfq):
         note = (f'The {vertical} terms are still marked DRAFT — '
                 f'read each line before ticking it.')
     return out, note
+
+
+# ── §4.1: the twelve as TaskDefinition rows ─────────────────────────
+#: Which Admin setting names the person for each `who`, so the
+#: definition carries the rule rather than a name (§4.1).
+OWNER_RULE = {
+    'sales':       {'kind': 'field', 'path': 'lead_driver'},
+    'coordinator': {'kind': 'setting', 'key': 'rfq_coordinator'},
+    'scm':         {'kind': 'setting_by_vertical',
+                    'key': 'rfq_scm_by_vertical'},
+    'ops':         {'kind': 'setting_by_vertical',
+                    'key': 'rfq_ops_by_vertical'},
+    'head':        {'kind': 'vertical_head'},
+}
+
+
+def seed_definitions(*, actor='system'):
+    """Write the twelve steps into `task_definitions`.
+
+    §4.1 calls them seeded task definitions and until now they
+    were a tuple in this module — which worked, and meant an
+    administrator could not see a step, change its SLA or read who
+    it routes to without a release.
+
+    The rows are the catalogue; `STEPS` stays as the shape of the
+    chain and the fallback when a row is missing. A definition
+    already on file is left alone: its `sla_hours` may have been
+    tuned, and a seed that overwrites undoes that every deploy.
+    """
+    from app import db
+    from app.models.task_engine import TaskDefinition
+
+    added, present = [], 0
+    for step in STEPS:
+        row = TaskDefinition.query.filter_by(
+            task_key=step['key']).first()
+        if row is not None:
+            present += 1
+            continue
+        nxt = next((s for s in STEPS if s['no'] == step['no'] + 1),
+                   None)
+        db.session.add(TaskDefinition(
+            task_key=step['key'],
+            title=f"{step['no']}. {step['title']}",
+            module='rfq_chain',
+            description=(
+                f"Step {step['no']} of the RFQ chain. Closes on "
+                f"{step['event']}."
+                + ('' if step.get('share') is None else
+                   f" Standard time is {int(step['share'] * 100)}% "
+                   f"of the priority window.")),
+            allowed_roles=[],
+            start_state={'entity': 'RFQ', 'step': step['no']},
+            completion_state={'entity': 'RFQ',
+                              'event': step['event']},
+            next_task_key=(nxt or {}).get('key'),
+            next_owner_rule=OWNER_RULE.get(step.get('who')),
+            action_route='/rfqs/{entity_id}',
+            # A share of a window, not a fixed SLA: the real due
+            # date is computed per RFQ from its priority, and a
+            # number here would be read as the answer.
+            sla_hours=None,
+            priority=3, is_active=True))
+        added.append(step['key'])
+    return added, present
+
+
+def definition_for(step_no):
+    """The admin-editable row for a step, or None."""
+    from app.models.task_engine import TaskDefinition
+
+    step = BY_NO.get(step_no)
+    if step is None:
+        return None
+    return TaskDefinition.query.filter_by(
+        task_key=step['key']).first()

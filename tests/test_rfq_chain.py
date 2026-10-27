@@ -715,3 +715,101 @@ def test_a_clause_already_recorded_is_not_proposed_again():
     finally:
         with flask_app.app_context():
             _flag(False)
+
+
+# ── §4.1: the twelve as admin-editable definitions ──────────────────
+def test_all_twelve_steps_are_seeded_as_definitions():
+    from app.models.task_engine import TaskDefinition
+
+    with flask_app.app_context():
+        added, _present = rc.seed_definitions(actor='test')
+        db.session.commit()
+        try:
+            rows = TaskDefinition.query.filter_by(
+                module='rfq_chain').all()
+            assert len(rows) == 12
+            assert {r.task_key for r in rows} == {
+                s['key'] for s in rc.STEPS}
+            # The catalogue reads in step order, not insertion order.
+            first = rc.definition_for(1)
+            assert first.title.startswith('1. RFQ Received')
+        finally:
+            TaskDefinition.query.filter_by(
+                module='rfq_chain').delete(
+                    synchronize_session=False)
+            db.session.commit()
+
+
+def test_a_definition_already_tuned_is_left_alone():
+    """A seed that overwrites undoes an admin's change on every
+    deploy."""
+    from app.models.task_engine import TaskDefinition
+
+    with flask_app.app_context():
+        rc.seed_definitions(actor='test')
+        db.session.commit()
+        try:
+            row = rc.definition_for(3)
+            row.sla_hours = 99
+            row.title = 'Renamed by an admin'
+            db.session.commit()
+
+            added, present = rc.seed_definitions(actor='test')
+            db.session.commit()
+            assert added == [] and present == 12
+            again = rc.definition_for(3)
+            assert again.sla_hours == 99
+            assert again.title == 'Renamed by an admin'
+        finally:
+            TaskDefinition.query.filter_by(
+                module='rfq_chain').delete(
+                    synchronize_session=False)
+            db.session.commit()
+
+
+def test_each_definition_carries_the_rule_not_a_name():
+    """§4.1 — who holds a step comes from a setting, so no
+    person's code is written into the catalogue."""
+    from app.models.task_engine import TaskDefinition
+
+    with flask_app.app_context():
+        rc.seed_definitions(actor='test')
+        db.session.commit()
+        try:
+            rows = TaskDefinition.query.filter_by(
+                module='rfq_chain').all()
+            for row in rows:
+                rule = row.next_owner_rule or {}
+                assert rule, row.task_key
+                blob = str(rule)
+                # A real employee code would look like EMP123456.
+                assert 'EMP' not in blob and 'DIR' not in blob
+            assert rc.definition_for(2).next_owner_rule['key'] == \
+                'rfq_coordinator'
+        finally:
+            TaskDefinition.query.filter_by(
+                module='rfq_chain').delete(
+                    synchronize_session=False)
+            db.session.commit()
+
+
+def test_the_chain_still_runs_without_the_definitions():
+    """The rows are a catalogue, not a dependency — a chain must
+    not stop because somebody deleted a definition."""
+    from app.models.task_engine import TaskDefinition
+
+    with flask_app.app_context():
+        TaskDefinition.query.filter_by(module='rfq_chain').delete(
+            synchronize_session=False)
+        db.session.commit()
+        rfq = _rfq('Medium')
+        task = rc.open_step(rfq, 3, owner=SCM, actor='test')
+        assert task is not None
+        assert rc.standard_hours(3, 'Medium') > 0
+
+
+def test_the_docstring_no_longer_claims_what_was_not_true():
+    import inspect
+    text = inspect.getdoc(rc) or ''
+    assert 'seed_definitions' in text
+    assert 'The steps are `TaskDefinition` rows' not in text
