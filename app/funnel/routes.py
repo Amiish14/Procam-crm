@@ -865,6 +865,29 @@ def sales_funnel_page():
         sources=[i.label for i in md.items('source')])
 
 
+@bp.route('/api/funnel/rfq-panels', methods=['GET'])
+@_require_auth
+def api_funnel_rfq_panels():
+    """§6.3's four panels. 404 while FEATURE_PRE_RFQ_FUNNEL is off."""
+    from flask import jsonify, request
+
+    from app.services import lead_journey as lj
+
+    if not lj.funnel_on():
+        return jsonify(ok=False, error='Not found'), 404
+
+    month = (request.args.get('month') or '').strip() or None
+    vertical = (request.args.get('vertical') or '').strip() or None
+    return jsonify(
+        ok=True, month=month or lj.month_key(),
+        targets=lj.targets_for(month=month, vertical=vertical),
+        channels=lj.channel_plan(month=month, vertical=vertical),
+        stages=lj.stage_funnel(vertical=vertical),
+        timing=lj.timing_counts(vertical=vertical),
+        forecast=lj.rfq_forecast(vertical=vertical),
+        opens={'leads': '/leads', 'rfqs': '/rfqs'})
+
+
 @bp.route('/api/funnel/count-vs-value', methods=['GET'])
 @_require_auth
 def api_funnel_count_vs_value():

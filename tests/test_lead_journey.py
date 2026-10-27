@@ -350,3 +350,121 @@ def test_the_flowchart_has_eight_boxes_then_twelve():
         assert len(got['before']) == 8
         assert len(got['after']) == 12
         assert all(b['state'] == 'future' for b in got['after'])
+
+
+# ── §6.3: the Funnels panels ────────────────────────────────────────
+def test_expected_rfqs_are_not_rounded_per_row():
+    """Rounding twelve rows and adding them gives a total nobody
+    can reproduce by hand, and then the sheet and the screen
+    disagree about the plan."""
+    with flask_app.app_context():
+        account = _account()
+        for _ in range(3):
+            lead = _lead(account)
+            lead.lead_channel = 'Cold Calling'      # 5%
+            db.session.commit()
+        rows = {r['channel']: r for r in lj.channel_plan()}
+        cold = rows['Cold Calling']
+        assert cold['leads'] == 3
+        assert cold['expected_rfqs'] == pytest.approx(0.15)
+        assert cold['expected_rfqs'] != 0           # not rounded away
+
+
+def test_every_channel_appears_even_with_no_leads():
+    with flask_app.app_context():
+        rows = lj.channel_plan()
+        assert len(rows) == len(lj.CHANNELS)
+        assert all('conversion' in r for r in rows)
+
+
+def test_the_stage_funnel_does_not_punish_leads_that_skip_the_start():
+    """An inbound lead never had a 'Researching' stage, so counting
+    it as a drop-off makes the first stages look catastrophic.
+
+    Measured as a delta, because stage_funnel reads every lead in
+    the database and other modules leave their own behind.
+    """
+    with flask_app.app_context():
+        before = {r['stage']: r for r in lj.stage_funnel()}
+
+        account = _account()
+        account.dev_stage = 'Opportunity Identified'
+        inbound = _lead(account)
+        inbound.lead_channel = 'Inbound Enquiries'
+        db.session.commit()
+
+        after = {r['stage']: r for r in lj.stage_funnel()}
+        # The inbound lead adds nothing to the early stages…
+        assert (after['Researching']['eligible']
+                == before['Researching']['eligible'])
+        # …and is counted where it genuinely reached.
+        assert (after['Opportunity Identified']['reached']
+                == before['Opportunity Identified']['reached'] + 1)
+
+
+def test_an_ordinary_lead_is_counted_against_the_early_stages():
+    """The skip is for the three channels that earn it, not for
+    everyone — otherwise the funnel has no drop-off at all."""
+    with flask_app.app_context():
+        before = {r['stage']: r for r in lj.stage_funnel()}
+        account = _account()
+        account.dev_stage = 'Contact Established'
+        lead = _lead(account)
+        lead.lead_channel = 'Cold Calling'
+        db.session.commit()
+        after = {r['stage']: r for r in lj.stage_funnel()}
+        assert (after['Researching']['eligible']
+                == before['Researching']['eligible'] + 1)
+
+
+def test_timing_is_counted_as_labels():
+    with flask_app.app_context():
+        account = _account()
+        lead = _lead(account)
+        lj.log(lead, kind='Meeting held', actor=SALES,
+               value='Immediate (≤ 1 month)')
+        db.session.commit()
+        rows = {r['timing']: r['count'] for r in lj.timing_counts()}
+        assert rows['Immediate (≤ 1 month)'] == 1
+        # Every option is listed, so a zero is visible as a zero.
+        assert len(rows) == len(lj.EXPECTED_TIMING)
+
+
+def test_the_forecast_groups_by_the_month_on_the_lead():
+    with flask_app.app_context():
+        account = _account()
+        lead = _lead(account)
+        when = date.today() + timedelta(days=40)
+        lj.log(lead, kind='RFQ expected', actor=SALES,
+               value=str(when))
+        db.session.commit()
+        rows = {r['month']: r['count'] for r in lj.rfq_forecast()}
+        assert rows.get(lj.month_key(when)) == 1
+
+
+def test_the_panels_endpoint_404s_while_the_flag_is_off():
+    with flask_app.app_context():
+        _flags(False)
+    client = flask_app.test_client()
+    with client.session_transaction() as s:
+        s['emp_code'] = SALES
+    assert client.get(
+        '/api/funnel/rfq-panels').status_code == 404
+
+
+def test_the_panels_endpoint_answers_for_a_pilot_user():
+    with flask_app.app_context():
+        _flags(True)
+        account = _account()
+        lead = _lead(account)
+        lead.lead_channel = 'Inbound Enquiries'
+        db.session.commit()
+    client = flask_app.test_client()
+    with client.session_transaction() as s:
+        s['emp_code'] = SALES
+    r = client.get('/api/funnel/rfq-panels')
+    assert r.status_code == 200, r.get_data(as_text=True)
+    body = r.get_json()
+    for key in ('targets', 'channels', 'stages', 'timing',
+                'forecast'):
+        assert key in body, key

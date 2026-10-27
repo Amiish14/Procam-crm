@@ -200,9 +200,21 @@ def review_pack(emp_code, *, today=None):
             sections.append(digests._section(cond, rows, label=title,
                                              limit=MAX_ROWS))
 
+    # §7 — the chain's own three additions, left out entirely when
+    # the chain has produced nothing: three empty tables make a
+    # working chain look broken.
+    chain = None
+    try:
+        from app.services import rfq_chain, rfq_reports
+        if rfq_chain.enabled(emp_code) and rfq_reports.enabled(emp_code):
+            chain = rfq_reports.weekly_additions(sc)
+    except Exception:                                     # noqa: BLE001
+        chain = None
+
     return {
         'report': 'weekly_pack',
         'template': 'email/weekly_pack.html',
+        'chain': chain,
         'restrictions': register_summary(),
         'date': str(today),
         'week': week_label(today),

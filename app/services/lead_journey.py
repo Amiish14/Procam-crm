@@ -442,3 +442,125 @@ def channel_mix(emp_code, vertical, *, months=6):
     if not total:
         return {}
     return {c: n / total for c, n in counts.items()}
+
+
+# ── §6.3: the Funnels page panels ───────────────────────────────────
+def channel_plan(month=None, vertical=None):
+    """Plan against actual, per channel.
+
+    `expected_rfqs` is deliberately not rounded per row: rounding
+    twelve rows and adding them gives a different total from the
+    one anybody computes by hand, and then the sheet and the
+    screen disagree about the plan.
+    """
+    from collections import Counter
+
+    from app import Lead
+
+    month = month or month_key()
+    rows = (Lead.query
+            .filter(Lead.lead_channel.isnot(None),
+                    Lead.is_archived.isnot(True)).all())
+    if vertical:
+        rows = [l for l in rows
+                if (l.procam_vertical or '') == vertical]
+
+    actual = Counter(l.lead_channel for l in rows)
+    this_month = Counter(
+        l.lead_channel for l in rows
+        if l.created_at and month_key(l.created_at.date()) == month)
+
+    out = []
+    for channel in CHANNELS:
+        rate = conversion_for(channel)
+        leads = actual.get(channel, 0)
+        out.append({
+            'channel': channel,
+            'conversion': rate,
+            'leads': leads,
+            'leads_this_month': this_month.get(channel, 0),
+            'expected_rfqs': leads * rate,
+            'automatic': channel in AUTOMATIC,
+        })
+    return out
+
+
+def stage_funnel(vertical=None):
+    """How many leads reach each development stage (§6.3).
+
+    Inbound, repeat and tender leads skip the early stages by
+    their nature, so the stage-to-stage percentage is computed
+    against the leads that could have been there — otherwise the
+    first two stages look like a catastrophic drop-off when they
+    are simply not on those leads' path.
+    """
+    from collections import Counter
+
+    from app import Company, Lead
+    from presales.models import ACCOUNT_DEV_STAGES
+
+    SKIPS_EARLY = {'Inbound Enquiries', 'Existing Customer / Repeat',
+                   'Tender / E-Procurement Portals'}
+    EARLY = set(ACCOUNT_DEV_STAGES[:4])
+
+    leads = (Lead.query
+             .filter(Lead.company_id.isnot(None),
+                     Lead.is_archived.isnot(True)).all())
+    if vertical:
+        leads = [l for l in leads
+                 if (l.procam_vertical or '') == vertical]
+
+    stages = {c.id: (c.dev_stage or '') for c in Company.query.all()}
+    reached, eligible = Counter(), Counter()
+    for lead in leads:
+        stage = stages.get(lead.company_id, '')
+        here = stage_rank(stage)
+        skips = (lead.lead_channel or '') in SKIPS_EARLY
+        for name in ACCOUNT_DEV_STAGES[:10]:
+            if skips and name in EARLY:
+                continue
+            eligible[name] += 1
+            if here >= stage_rank(name) >= 0:
+                reached[name] += 1
+
+    out = []
+    for name in ACCOUNT_DEV_STAGES[:10]:
+        could, got = eligible.get(name, 0), reached.get(name, 0)
+        out.append({
+            'stage': name, 'reached': got, 'eligible': could,
+            'pct': (round(got * 100 / could) if could else None),
+        })
+    return out
+
+
+def timing_counts(vertical=None):
+    """Expected RFQ timing as labels. Never a timer colour (§6.3)."""
+    from collections import Counter
+
+    from app import Lead
+
+    rows = Lead.query.filter(
+        Lead.expected_rfq_timing.isnot(None)).all()
+    if vertical:
+        rows = [l for l in rows
+                if (l.procam_vertical or '') == vertical]
+    counts = Counter(l.expected_rfq_timing for l in rows)
+    return [{'timing': t, 'count': counts.get(t, 0)}
+            for t in EXPECTED_TIMING]
+
+
+def rfq_forecast(months=3, vertical=None):
+    """RFQs expected, by the month somebody put on the lead."""
+    from collections import Counter
+
+    from app import Lead
+
+    rows = Lead.query.filter(
+        Lead.rfq_expected_date.isnot(None),
+        Lead.is_archived.isnot(True)).all()
+    if vertical:
+        rows = [l for l in rows
+                if (l.procam_vertical or '') == vertical]
+    counts = Counter(month_key(l.rfq_expected_date) for l in rows)
+    return [{'month': m, 'count': n}
+            for m, n in sorted(counts.items())]

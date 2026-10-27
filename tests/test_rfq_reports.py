@@ -416,3 +416,35 @@ def test_targets_received_equals_the_rfqs_registered_that_month():
                 _main.Lead.company == 'RR Co').delete(
                     synchronize_session=False)
             db.session.commit()
+
+
+# ── §7: spend, and what the Thursday pack adds ──────────────────────
+def test_spend_says_it_is_not_available_rather_than_zero():
+    """Zero spend on a lead somebody has worked for a month is a
+    figure a head would act on, and it would be false."""
+    with flask_app.app_context():
+        got = rr.spend()
+        assert got['available'] is False
+        assert got['rows'] == []
+        assert 'CRM–TMS link' in got['why']
+
+
+def test_the_weekly_additions_are_left_out_when_there_is_nothing():
+    with flask_app.app_context():
+        assert rr.weekly_additions() is None
+
+
+def test_the_weekly_additions_carry_the_three_things():
+    with flask_app.app_context():
+        rfq = _rfq('Medium')
+        for _ in range(3):
+            _done(rfq, 3, A, hours=60, result=rc.DELAYED)
+        task = _done(rfq, 6, A, hours=99, result=rc.DELAYED)
+        task.delay_reason = 'Awaiting vendor rate'
+        db.session.commit()
+        got = rr.weekly_additions()
+        assert got is not None
+        assert got['slowest']['step_no'] == 3
+        assert got['workload']
+        assert got['top_delays'][0][0] == 'Awaiting vendor rate'
+        assert got['target_pct'] == 98

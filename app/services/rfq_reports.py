@@ -391,3 +391,56 @@ def time_chart(rfq):
     return {'bars': bars,
             'from': floor.isoformat(timespec='minutes')
             if floor else None}
+
+
+# ── §7: sales spend, which the TMS will answer ──────────────────────
+def spend(sc=None):
+    """Spend by lead, vertical and channel — once the TMS link exists.
+
+    D7 put the IOU in the TMS and said the CRM shows the spend
+    read-only. That link is explicitly out of this build, so there
+    is nothing to show and nothing to compute. Returning an empty
+    panel with the reason beats returning zeros: zero spend on a
+    lead somebody has been working for a month is a figure a head
+    would act on, and it would be false.
+    """
+    return {
+        'available': False,
+        'why': ('Spend comes from the TMS, and the CRM–TMS link is '
+                'not built yet. IOUs for a lead are raised and seen '
+                'there; this panel fills in once the link exists.'),
+        'rows': [],
+    }
+
+
+# ── §7: what the Thursday pack adds ─────────────────────────────────
+def weekly_additions(sc=None, *, limit=5):
+    """The bottleneck step, the workload table and the top delays.
+
+    Returns None when the chain has produced nothing yet, so the
+    pack leaves the section out rather than printing three empty
+    tables that make the chain look broken.
+    """
+    rows = workload(sc)
+    slowest = slowest_step(sc)
+    why = reasons(sc)
+    top = list((why.get('delay') or {}).get('reason', {}).items())
+
+    measured = [r for r in rows if r['measured']]
+    if not rows and slowest is None and not top:
+        return None
+    return {
+        'slowest': slowest,
+        'workload': rows[:20],
+        'measured': len(measured),
+        'unmeasured': len(rows) - len(measured),
+        'top_delays': top[:limit],
+        # The chain owns this number; a second copy here would
+        # drift the day somebody changes the setting.
+        'target_pct': round(_target_pct()),
+    }
+
+
+def _target_pct():
+    from app.services import rfq_chain as rc
+    return rc.ON_TIME_TARGET * 100
