@@ -1007,3 +1007,64 @@ def next_action(rfq, *, emp_code):
         'held': bool(rfq.held_at),
         'rfq_id': rfq.id, 'rfq_number': rfq.rfq_number or '',
     }
+
+
+# ── §4.6: conditions proposed from the terms library ────────────────
+#: A line that is a heading or a warning rather than a clause.
+_NOT_A_CLAUSE = ('draft', 'terms and conditions', 'standard terms')
+
+
+def proposed_conditions(rfq):
+    """Tickable clauses from this vertical's current term set.
+
+    §4.6 says the tick list comes from the terms library. The
+    library stores one body of text per vertical, so the clauses
+    are split out of it — numbered lines, which is how all six
+    current sets are written.
+
+    Every clause comes back with `ticked: False`. Pre-ticking the
+    standard terms would put a page of conditions on a quotation
+    nobody read, which is the thing a tick list is supposed to
+    prevent.
+
+    The vertical's terms are the proposal, never the record: what
+    a person ticks is written to `rfq_conditions` with their name
+    on it.
+    """
+    import re
+
+    from app.models.quote_terms import QuoteTermSet
+
+    vertical = _vertical_of(rfq)
+    if not vertical:
+        return [], ''
+    row = (QuoteTermSet.query
+           .filter_by(vertical=vertical, is_current=True)
+           .order_by(QuoteTermSet.version.desc()).first())
+    if row is None:
+        return [], (f'No standard terms on file for {vertical} — '
+                    f'type the conditions, or ask an admin to add '
+                    f'a term set.')
+
+    out, draft = [], False
+    for raw in (row.body or '').splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        low = line.lower()
+        if any(low.startswith(p) for p in _NOT_A_CLAUSE):
+            draft = draft or low.startswith('draft')
+            continue
+        # "1. Rates are valid …" -> the clause without its number.
+        text = re.sub(r'^\s*\(?\d{1,2}[.)]\s*', '', line).strip()
+        if len(text) < 12:
+            continue
+        out.append({'text': text, 'ticked': False,
+                    'type': 'Condition', 'visibility': 'customer',
+                    'source': f'{vertical} terms v{row.version}'})
+
+    note = ''
+    if draft:
+        note = (f'The {vertical} terms are still marked DRAFT — '
+                f'read each line before ticking it.')
+    return out, note

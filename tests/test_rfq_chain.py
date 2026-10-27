@@ -61,6 +61,12 @@ VERTICAL = 'Heavy Transport'
 
 def _purge():
     from app.models.quote import Quote
+    from app.models.quote_terms import QuoteTermSet
+    QuoteTermSet.query.filter(
+        QuoteTermSet.title == 'Standard Terms').delete(
+            synchronize_session=False)
+    _main.Lead.query.filter(_main.Lead.company == 'RC Co').delete(
+        synchronize_session=False)
     Quote.query.filter(Quote.quote_number.like('QUO-RC-%')).delete(
         synchronize_session=False)
     TaskInstance.query.filter(
@@ -610,6 +616,102 @@ def test_the_send_route_closes_step_8():
             assert task.status == TaskInstanceStatus.COMPLETED
             assert (task.closed_evidence or {})['quote_number'] == \
                 'QUO-RC-ROUTE'
+    finally:
+        with flask_app.app_context():
+            _flag(False)
+
+
+# ── §4.6: the tick list comes from the terms library ────────────────
+def _terms(vertical, body, version=1):
+    from app.models.quote_terms import QuoteTermSet
+    row = QuoteTermSet(vertical=vertical, version=version,
+                       title='Standard Terms', body=body,
+                       is_current=True)
+    db.session.add(row)
+    db.session.commit()
+    return row
+
+
+def _rfq_in(vertical):
+    """An RFQ whose vertical resolves, via its lead."""
+    lead = _main.Lead(company='RC Co', stage='RFQ Generated',
+                      procam_vertical=vertical, source='manual')
+    db.session.add(lead)
+    db.session.flush()
+    rfq = _rfq('Medium', lead_id=lead.id)
+    return rfq
+
+
+def test_clauses_are_proposed_from_the_vertical_terms():
+    with flask_app.app_context():
+        _terms(VERTICAL,
+               'DRAFT — replace before issuing.\n'
+               '1. Rates are valid for the period stated.\n'
+               '2. Detention is chargeable beyond the free period.\n')
+        rfq = _rfq_in(VERTICAL)
+        rows, note = rc.proposed_conditions(rfq)
+        assert [r['text'] for r in rows] == [
+            'Rates are valid for the period stated.',
+            'Detention is chargeable beyond the free period.']
+        # The numbering is ours; the customer never sees "1."
+        assert not any(r['text'][0].isdigit() for r in rows)
+        assert 'DRAFT' in note
+
+
+def test_nothing_is_pre_ticked():
+    """Pre-ticking puts a page of conditions on a quotation nobody
+    read, which is what a tick list is meant to prevent."""
+    with flask_app.app_context():
+        _terms(VERTICAL, '1. Rates exclude duties and taxes.\n')
+        rows, _note = rc.proposed_conditions(_rfq_in(VERTICAL))
+        assert rows and all(r['ticked'] is False for r in rows)
+
+
+def test_a_vertical_with_no_terms_says_so():
+    with flask_app.app_context():
+        rfq = _rfq_in('Nowhere Vertical')
+        rows, note = rc.proposed_conditions(rfq)
+        assert rows == []
+        assert 'No standard terms on file' in note
+
+
+def test_headings_are_not_offered_as_clauses():
+    with flask_app.app_context():
+        _terms(VERTICAL,
+               'Standard Terms and Conditions\n'
+               'DRAFT — replace before issuing.\n'
+               '1. A real clause that is long enough to keep.\n'
+               '2. ok\n')
+        rows, _n = rc.proposed_conditions(_rfq_in(VERTICAL))
+        assert len(rows) == 1
+        assert rows[0]['text'].startswith('A real clause')
+
+
+def test_a_clause_already_recorded_is_not_proposed_again():
+    with flask_app.app_context():
+        _flag(True)
+        try:
+            _terms(VERTICAL,
+                   '1. Rates exclude duties and taxes.\n'
+                   '2. Detention is chargeable beyond free time.\n')
+            rfq = _rfq_in(VERTICAL)
+            db.session.add(RfqCondition(
+                rfq_id=rfq.id, step_no=4,
+                text='Rates exclude duties and taxes.',
+                visibility=RfqCondition.CUSTOMER))
+            db.session.commit()
+            rfq_id = rfq.id
+        except Exception:
+            _flag(False)
+            raise
+    try:
+        body = _client(SCM).get(
+            f'/api/chain/{rfq_id}/conditions').get_json()
+        assert body['ok'] is True
+        texts = [r['text'] for r in body['proposed']]
+        assert 'Rates exclude duties and taxes.' not in texts
+        assert len(body['recorded']) == 1
+        assert body['types']
     finally:
         with flask_app.app_context():
             _flag(False)

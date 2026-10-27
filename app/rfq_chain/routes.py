@@ -123,13 +123,44 @@ def api_one(rfq_id):
              'registered_at': str(rfq.registered_at or '')[:16]},
         steps=rc.board(rfq),
         may_hold=rc.may_hold(session['emp_code'], rfq),
+        proposed=_proposed(rfq),
         lists={'delay': rc.reasons('delay'),
                'good_practice': rc.reasons('good_practice'),
                'hold': rc.reasons('hold'),
                'screening': rc.reasons('screening'),
+               'condition_type': rc.reasons('condition_type'),
                'priority': list(rc.PRIORITY_DAYS)},
         suggested_delay={str(s['no']): rc.suggest_reason(rfq, s['no'])
                          for s in rc.STEPS})
+
+
+def _proposed(rfq):
+    """§4.6's tick list, with whatever the library could not give."""
+    rows, note = rc.proposed_conditions(rfq)
+    return {'rows': rows, 'note': note}
+
+
+@bp.route('/api/chain/<int:rfq_id>/conditions')
+@_gate
+def api_conditions(rfq_id):
+    """What steps 4-7 may tick, and what is already recorded."""
+    from app.models.rfq import RfqCondition
+
+    rfq, refusal = _rfq_or_404(rfq_id)
+    if refusal:
+        return refusal
+    rows, note = rc.proposed_conditions(rfq)
+    recorded = (RfqCondition.query.filter_by(rfq_id=rfq.id)
+                .order_by(RfqCondition.step_no, RfqCondition.id)
+                .all())
+    # A clause already recorded is not proposed again.
+    seen = {' '.join((c.text or '').lower().split())
+            for c in recorded}
+    rows = [r for r in rows
+            if ' '.join(r['text'].lower().split()) not in seen]
+    return jsonify(ok=True, proposed=rows, note=note,
+                   recorded=[c.to_dict() for c in recorded],
+                   types=rc.reasons('condition_type'))
 
 
 # ── step 2: registration ─────────────────────────────────────────────
