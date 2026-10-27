@@ -45,7 +45,8 @@ from app.services import rfq_chain as rc                  # noqa: E402
 PILOT = 'PP_PILOT'
 FLAGS = ('FEATURE_ACCOUNT_FIRST', 'FEATURE_RFQ_CHAIN',
          'FEATURE_QUOTE_REV_V2', 'FEATURE_PRE_RFQ_FUNNEL',
-         'FEATURE_LEAD_JOURNEY', 'FEATURE_RFQ_REPORTS')
+         'FEATURE_LEAD_JOURNEY', 'FEATURE_RFQ_REPORTS',
+         'FEATURE_CRM2')
 
 
 def _purge():
@@ -234,3 +235,97 @@ def test_with_the_flags_off_the_new_pages_are_gone(world):
     # My Work still works; it simply has no chain bucket.
     html = client.get('/my-work/tasks').get_data(as_text=True)
     assert 'Waiting on me — RFQ steps' not in html
+
+
+# ── §6.5: the cockpit's panels, and search finding a number ─────────
+def test_the_cockpit_renders_with_its_panels(world):
+    html = _body('/crm2')
+    assert 'id="panels"' in html
+    assert 'waiting on me' in html
+    assert 'RFQs expected' in html
+
+
+def test_the_cockpit_payload_carries_the_panels(world):
+    body = _client().get('/api/crm2/cockpit').get_json()
+    panels = body['cockpit']['panels']
+    for key in ('waiting_on_me', 'overdue', 'accounts_to_confirm',
+                'unmatched_quote_mail', 'rfqs_expected_30d'):
+        assert key in panels, key
+        assert 'count' in panels[key] and panels[key]['opens']
+
+
+def test_with_the_chain_off_the_cockpit_has_no_panels(world):
+    with flask_app.app_context():
+        _flags(False)
+    body = _client().get('/api/crm2/cockpit')
+    # The cockpit itself is behind FEATURE_CRM2, which this suite
+    # does not switch on, so the route is gone with it.
+    assert body.status_code in (200, 404)
+    if body.status_code == 200:
+        assert body.get_json()['cockpit'].get('panels') in ({}, None)
+
+
+def test_search_finds_an_rfq_by_its_number(world):
+    body = _client().get('/api/crm2/search?q=PP-RFQ').get_json()
+    hits = [r for r in body['results'] if r['kind'] == 'rfq']
+    assert hits, body['results']
+    assert hits[0]['title'] == 'PP-RFQ-1'
+    # It opens the lead record, which is where the work is.
+    assert hits[0]['url'].endswith('/journey')
+
+
+def test_search_finds_a_quotation_by_its_displayed_number(world):
+    from app.models.quote import Quote
+
+    with flask_app.app_context():
+        quote = Quote(quote_number='PP-QUO-0045',
+                      rfq_id=world['rfq_id'],
+                      lead_id=world['lead_id'], subject='pp',
+                      total_amount=50000, currency='INR',
+                      rev_no=0, prepared_by_id=PILOT,
+                      created_by_id=PILOT)
+        db.session.add(quote)
+        db.session.flush()
+        quote.root_quote_id = quote.id
+        db.session.commit()
+    try:
+        body = _client().get(
+            '/api/crm2/search?q=PP-QUO').get_json()
+        hits = [r for r in body['results'] if r['kind'] == 'quote']
+        assert hits, body['results']
+        # The displayed number, which is what a customer quotes back.
+        assert hits[0]['title'] == 'PP-QUO-0045 / Rev-00'
+    finally:
+        with flask_app.app_context():
+            Quote.query.filter(
+                Quote.quote_number.like('PP-QUO%')).delete(
+                    synchronize_session=False)
+            db.session.commit()
+
+
+def test_search_is_unchanged_while_the_chain_is_off(world):
+    with flask_app.app_context():
+        _flags(False)
+        import json
+        from app.models.integration import AppSetting
+        from app.services import flags
+        # The cockpit's own flag stays on so the route answers.
+        row = AppSetting.query.filter_by(key='flag.FEATURE_CRM2').first()
+        if row is None:
+            row = AppSetting(key='flag.FEATURE_CRM2')
+            db.session.add(row)
+        row.value_json = json.dumps(True)
+        db.session.commit()
+        flags.cache_clear()
+    try:
+        body = _client().get('/api/crm2/search?q=PP-RFQ').get_json()
+        assert not [r for r in body['results'] if r['kind'] == 'rfq']
+    finally:
+        with flask_app.app_context():
+            from app.models.integration import AppSetting
+            from app.services import flags
+            AppSetting.query.filter_by(
+                key='flag.FEATURE_CRM2').delete(
+                    synchronize_session=False)
+            db.session.commit()
+            flags.cache_clear()

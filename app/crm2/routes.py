@@ -121,7 +121,31 @@ def api_cockpit():
         # nobody owns for their vertical. Zero while that flag is
         # off, so the tile simply does not appear.
         'accounts_to_confirm': len(_pending_accounts()),
+        # §6.5. Empty dict while the chain is off, so the cockpit
+        # is exactly the page it was.
+        'panels': _chain_panels(),
     })
+
+
+def _chain_panels():
+    """Waiting on me, overdue, unmatched mail, RFQs expected."""
+    from flask import session
+
+    try:
+        from app.services import rfq_chain, rfq_reports
+        if not rfq_chain.enabled():
+            return {}
+        if not rfq_reports.enabled():
+            # The counts come from the reports service; without it
+            # the panels would be half-filled, which is worse than
+            # absent.
+            return {}
+        from app.rfq_reports.routes import api_cockpit
+        body = api_cockpit()
+        data = body.get_json() if hasattr(body, 'get_json') else {}
+        return (data or {}).get('panels', {})
+    except Exception:                                     # noqa: BLE001
+        return {}
 
 
 def _pending_accounts():
@@ -186,11 +210,74 @@ def api_search():
                     'url': f'/company/{p.company_id}'
                            if p.company_id else ''})
 
+    # §6.5 — an RFQ or quotation number is the thing people have in
+    # front of them when they search. Behind the chain's own flag,
+    # so a search is exactly what it was until that goes on.
+    out.extend(_rfq_and_quote_hits(q, like, sc))
+
     counts = {}
     for r in out:
         counts[r['kind']] = counts.get(r['kind'], 0) + 1
     return jsonify(ok=True, query=q, results=out, counts=counts,
                    capped=PER_KIND)
+
+
+def _rfq_and_quote_hits(q, like, sc):
+    """RFQ numbers, and quotations by their displayed number.
+
+    A customer quotes "QUO-2026-0045 / Rev-01" back at us, and the
+    revision's own stored number is a different string — so the
+    search matches the root's number and then names the revision,
+    which is what the person holding the mail typed.
+    """
+    out = []
+    try:
+        from app.services import rfq_chain
+        if not rfq_chain.enabled():
+            return out
+    except Exception:                                     # noqa: BLE001
+        return out
+
+    try:
+        from app.access import records
+        from app.models.quote import Quote
+        from app.models.rfq import RFQ
+
+        for rfq in (records.rfqs(sc=sc)
+                    .filter(db_or(RFQ.rfq_number.ilike(like),
+                                  RFQ.subject.ilike(like)))
+                    .order_by(RFQ.id.desc()).limit(PER_KIND).all()):
+            out.append({
+                'kind': 'rfq', 'id': rfq.id,
+                'title': rfq.rfq_number or f'RFQ #{rfq.id}',
+                'detail': (rfq.subject or '')[:70]
+                          or (rfq.priority or ''),
+                'url': (f'/leads/{rfq.lead_id}/journey'
+                        if rfq.lead_id else '/rfqs/chain')})
+
+        from app.services import quote_rev
+        roots = (records.quotes(sc=sc)
+                 .filter(Quote.quote_number.ilike(like))
+                 .order_by(Quote.id.desc()).limit(PER_KIND).all())
+        seen = set()
+        for quote in roots:
+            for row in (quote_rev.chain(quote) or [quote]):
+                if row.id in seen:
+                    continue
+                seen.add(row.id)
+                out.append({
+                    'kind': 'quote', 'id': row.id,
+                    'title': quote_rev.display_number(row),
+                    'detail': f'{row.status or ""} '
+                              f'{row.currency or ""} '
+                              f'{float(row.total_amount or 0):,.0f}'
+                              .strip(),
+                    'url': f'/quotes/{row.id}'})
+                if len(seen) >= PER_KIND:
+                    break
+    except Exception:                                     # noqa: BLE001
+        pass
+    return out
 
 
 def db_or(*clauses):

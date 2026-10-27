@@ -97,6 +97,9 @@
   </div>
 
   <div class="ck-tiles" id="tiles"></div>
+  {# §6.5 — the chain's own panels, each opening its list. Absent
+     entirely while FEATURE_RFQ_CHAIN is off. #}
+  <div class="ck-tiles" id="panels" style="margin-top:10px"></div>
 
   <div class="ck-work" id="work"></div>
 
@@ -259,6 +262,22 @@ document.getElementById('work').addEventListener('click', async ev => {
     + tile(c.value_missing, 'no estimated value')
     + tile(c.unowned, 'no owner')
     + tile(c.unlinked, 'no account');
+
+  const PANELS = [
+    ['waiting_on_me',        'waiting on me'],
+    ['overdue',              'overdue steps'],
+    ['accounts_to_confirm',  'accounts to confirm'],
+    ['unmatched_quote_mail', 'unmatched quote mail'],
+    ['rfqs_expected_30d',    'RFQs expected ≤ 30 days'],
+  ];
+  const panels = c.panels || {};
+  document.getElementById('panels').innerHTML =
+    PANELS.filter(([k]) => panels[k])
+      .map(([k, label]) => {
+        const p = panels[k];
+        return '<a class="ck-tile" href="' + crmUrl + p.opens + '">'
+          + '<b>' + p.count + '</b>' + esc(label) + '</a>';
+      }).join('');
 
   document.getElementById('map').innerHTML = c.pipeline.map(r =>
     '<div class="ck-row"><div class="ck-name">' + esc(r.stage)
