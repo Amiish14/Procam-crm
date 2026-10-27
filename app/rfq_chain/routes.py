@@ -237,12 +237,26 @@ def api_screening(rfq_id):
         audit.record('rfq.screening_incomplete', 'rfq', rfq.id,
                      new={'outcome': outcome},
                      actor=session['emp_code'],
-                     reason=f'{outcome} — the customer has been '
+                     reason=f'{outcome} — the customer is being '
                             f'asked; the step stays open')
+
+        # §4.5 — actually ask them. Until now the step recorded
+        # "waiting for customer" and nobody was chased.
+        from app import Lead
+        from app.services import rfq_clarify
+        lead = (db.session.get(Lead, rfq.lead_id)
+                if rfq.lead_id else None)
+        status, detail = rfq_clarify.send(
+            rfq, lead, outcome, actor=session['emp_code'],
+            extra=(d.get('extra') or ''))
         db.session.commit()
         return jsonify(ok=True, closed=False, outcome=outcome,
-                       note='The step stays open until the customer '
-                            'answers.')
+                       mail=status, mail_detail=detail,
+                       note=('The step stays open until the customer '
+                             'answers.'
+                             if status == 'queued' else
+                             'The step stays open — and the mail was '
+                             'NOT sent, see below.'))
 
     task.waiting_for_customer = False
     ok, detail = rc.close_step(rfq, 3, actor=session['emp_code'],
