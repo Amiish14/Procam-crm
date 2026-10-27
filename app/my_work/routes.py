@@ -39,6 +39,19 @@ def _serialize_bucket(rows):
     return out
 
 
+def _chain_steps(emp):
+    """The RFQ steps waiting on this person (§4.8).
+
+    Empty list when FEATURE_RFQ_CHAIN is off for them, so the page
+    is exactly what it was.
+    """
+    try:
+        from app.services import rfq_chain
+        return rfq_chain.waiting_on(getattr(emp, 'emp_code', None))
+    except Exception:                                     # noqa: BLE001
+        return []
+
+
 @bp.route('/my-work/tasks')
 def my_work_home():
     emp = _current_emp()
@@ -49,6 +62,7 @@ def my_work_home():
     return render_template('my_work/home.html',
                            emp=emp,
                            counts=counts,
+                           chain_steps=_chain_steps(emp),
                            action_required=buckets['action_required'],
                            due_today=buckets['due_today'],
                            overdue=buckets['overdue'],
@@ -68,6 +82,7 @@ def my_work_json():
         ok=True,
         emp={'emp_code': emp.emp_code, 'name': emp.name, 'role': emp.role},
         counts=counts,
+        chain_steps=_chain_steps(emp),
         buckets={
             'action_required':    _serialize_bucket(buckets['action_required']),
             'due_today':          _serialize_bucket(buckets['due_today']),

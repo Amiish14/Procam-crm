@@ -6,6 +6,19 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  /* §4.8. Page-local and named so they cannot collide with a
+     crm.css component. */
+  .chain-when { font-weight:600; }
+  .chain-red { color:#dc2626; } .chain-orange { color:#b45309; }
+  .chain-green { color:#15803d; } .chain-purple { color:#6d28d9; }
+  .chain-blue { color:#1d4ed8; } .chain-grey { color:#6b7280; }
+  .chain-act { align-self:center; border:1px solid #111827;
+      border-radius:7px; padding:4px 13px; font-size:12.5px;
+      font-weight:700; color:#111827; white-space:nowrap; }
+  #bucket-chain .task-row { display:flex; gap:12px;
+      justify-content:space-between; }
+</style>
 </head>
 <body>
 {% include "_crm_topbar.html" %}
@@ -37,6 +50,36 @@
     <a class="kpi success" href="#bucket-action"><div class="label">Follow-ups Due</div>
       <div class="value">{{ counts.followups_due }}</div></a>
   </div>
+
+  {# §4.8 — the RFQ chain steps waiting on this person, above the
+     ordinary buckets because a step with a running clock is the
+     thing to do first. Absent entirely when FEATURE_RFQ_CHAIN is
+     off for them, so the page is what it always was. #}
+  {% if chain_steps %}
+  <div class="bucket" id="bucket-chain" style="margin-bottom:16px">
+    <h3>Waiting on me — RFQ steps
+      <span class="count">{{ chain_steps|length }}</span></h3>
+    {% for s in chain_steps %}
+      <a class="task-row" href="{{ crm_url(s.act) }}">
+        <div class="task-body">
+          <div class="task-title">
+            {{ s.step_no }}. {{ s.title }}
+            {% if s.customer %}— {{ s.customer }}{% endif %}
+          </div>
+          <div class="task-meta">
+            <span class="task-key">{{ s.rfq_number or 'RFQ' }}</span>
+            {% if s.priority %}<span class="badge">{{ s.priority }}</span>{% endif %}
+            <span class="chain-when chain-{{ s.colour }}">{{ s.words }}</span>
+            {% if s.held %}<span class="badge">on hold</span>{% endif %}
+            {% if s.waiting_for_customer %}
+              <span class="badge">waiting for the customer</span>{% endif %}
+          </div>
+        </div>
+        <span class="chain-act">Act</span>
+      </a>
+    {% endfor %}
+  </div>
+  {% endif %}
 
   <div class="buckets">
 

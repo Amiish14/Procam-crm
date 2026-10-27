@@ -851,3 +851,159 @@ def _rfq_of_lead(lead):
     from app.models.rfq import RFQ
     return (RFQ.query.filter_by(lead_id=lead.id)
             .order_by(RFQ.id.desc()).first())
+
+
+# ── §4.8: what is waiting on one person ──────────────────────────────
+def waiting_on(emp_code, *, limit=60):
+    """This person's open chain steps, soonest first.
+
+    My Work already lists these — they are TaskInstance rows like
+    any other — but it lists them as bare task titles with a due
+    date. A chain step without its timer and its RFQ is a line
+    somebody skims past: "RFQ Registration" says nothing about
+    whether it is three hours late or due on Friday.
+
+    So this adds what the row needs to be acted on: the colour and
+    the words behind it, the RFQ, the customer, and where the
+    Act button goes.
+    """
+    from app import Company, db
+    from app.models.rfq import RFQ
+    from app.models.task_engine import TaskInstance, TaskInstanceStatus
+
+    if not enabled(emp_code) or not emp_code:
+        return []
+
+    rows = (TaskInstance.query
+            .filter(TaskInstance.owner_user_id == emp_code,
+                    TaskInstance.step_no.isnot(None),
+                    TaskInstance.entity_type == 'RFQ',
+                    TaskInstance.status.in_(TaskInstanceStatus.OPEN))
+            .order_by(TaskInstance.due_at.asc().nullslast())
+            .limit(limit).all())
+
+    out = []
+    for task in rows:
+        rfq = db.session.get(RFQ, task.entity_id)
+        if rfq is None:
+            continue
+        colour, words = verdict(task, priority=rfq.priority)
+        account = (db.session.get(Company, rfq.account_id)
+                   if rfq.account_id else None)
+        step = BY_NO.get(task.step_no, {})
+        out.append({
+            'task_id': task.id, 'step_no': task.step_no,
+            'title': step.get('title', task.task_key),
+            'rfq_id': rfq.id, 'rfq_number': rfq.rfq_number or '',
+            'lead_id': rfq.lead_id,
+            'customer': getattr(account, 'name', '') or '',
+            'subject': (rfq.subject or '')[:80],
+            'priority': rfq.priority or '',
+            'colour': colour, 'words': words,
+            'held': bool(rfq.held_at),
+            'due_at': str(task.due_at or '')[:16],
+            # The Act button opens the lead record on this step,
+            # which is where its own form lives. Falling back to
+            # the RFQ when a step somehow has no lead keeps the
+            # button from going nowhere.
+            'act': (f'/leads/{rfq.lead_id}/journey?step={task.step_no}'
+                    if rfq.lead_id else f'/rfqs/{rfq.id}'),
+            'confirmable': task.step_no in CONFIRMABLE,
+            'waiting_for_customer': bool(
+                getattr(task, 'waiting_for_customer', False)),
+        })
+    # Red first, then orange, then by due date: the order somebody
+    # would work them in.
+    rank = {RED: 0, ORANGE: 1, GREEN: 2, BLUE: 3, PURPLE: 4, GREY: 5}
+    out.sort(key=lambda r: (rank.get(r['colour'], 9),
+                            r['due_at'] or '9999'))
+    return out
+
+
+def step_detail(rfq, step_no):
+    """Everything a person wants when they click a box (§6.4).
+
+    Who held it, when it closed, how long against the standard,
+    the result and the reason. A box that opens and says only
+    "done" is a box nobody clicks twice.
+    """
+    from app import Employee, db
+    from app.models.task_engine import TaskInstanceStatus
+
+    step = BY_NO.get(step_no)
+    if step is None:
+        return None
+    task = steps_for(rfq).get(step_no)
+    out = {'step_no': step_no, 'title': step['title'],
+           'responsible': step.get('who', ''),
+           'confirmable': step_no in CONFIRMABLE,
+           'event': step.get('event', '')}
+    if task is None:
+        out.update({'state': 'future', 'owner': '',
+                    'words': 'not reached yet'})
+        return out
+
+    standard = standard_hours(step_no, rfq.priority)
+    spent = elapsed_hours(task)
+    who = task.owner_user_id or task.completed_by_id or ''
+    name = ''
+    if who:
+        emp = Employee.query.filter_by(emp_code=who).first()
+        name = getattr(emp, 'name', '') or ''
+    open_now = task.status in TaskInstanceStatus.OPEN
+    colour, words = (verdict(task, priority=rfq.priority)
+                     if open_now else (GREEN, task.result or 'done'))
+    out.update({
+        'state': 'current' if open_now else 'done',
+        'owner': who, 'owner_name': name,
+        'started_at': str(task.started_at or '')[:16],
+        'closed_at': str(task.completed_at or '')[:16],
+        'closed_by': task.completed_by_id or '',
+        'hours': round(spent, 1),
+        'standard': round(standard, 1) if standard else None,
+        'held_hours': round(int(task.paused_seconds or 0) / 3600, 1),
+        'result': task.result or '',
+        'reason': (task.delay_reason or task.good_practice_reason
+                   or ''),
+        'remarks': task.reason_remarks or '',
+        'evidence': task.closed_evidence or {},
+        'colour': colour, 'words': words,
+        'waiting_for_customer': bool(
+            getattr(task, 'waiting_for_customer', False)),
+    })
+    return out
+
+
+def next_action(rfq, *, emp_code):
+    """The one thing to do now, and whether this person can do it.
+
+    §6.4's panel. "Waiting on X" for a viewer who cannot act is
+    more use than a disabled form: it says who to chase.
+    """
+    from app.models.task_engine import TaskInstanceStatus
+
+    if rfq is None:
+        return {'step_no': None, 'title': '', 'can_act': False,
+                'words': 'no RFQ on this lead yet', 'owner': ''}
+    live = [t for t in steps_for(rfq).values()
+            if t.status in TaskInstanceStatus.OPEN]
+    if not live:
+        return {'step_no': None, 'title': '', 'can_act': False,
+                'words': ('on hold' if rfq.held_at
+                          else 'nothing open on this chain'),
+                'owner': ''}
+    task = min(live, key=lambda t: t.step_no)
+    step = BY_NO.get(task.step_no, {})
+    colour, words = verdict(task, priority=rfq.priority)
+    owner = task.owner_user_id or ''
+    return {
+        'step_no': task.step_no, 'title': step.get('title', ''),
+        'owner': owner,
+        'can_act': bool(emp_code) and (not owner or owner == emp_code
+                                       or may_hold(emp_code, rfq)),
+        'confirmable': task.step_no in CONFIRMABLE,
+        'event': step.get('event', ''),
+        'colour': colour, 'words': words,
+        'held': bool(rfq.held_at),
+        'rfq_id': rfq.id, 'rfq_number': rfq.rfq_number or '',
+    }

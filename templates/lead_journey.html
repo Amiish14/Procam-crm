@@ -64,20 +64,40 @@
   .msg { font-size:13px; margin-top:9px; }
   .msg.bad { color:#b91c1c; } .msg.good { color:#166534; }
   .note { color:#6b7280; font-size:12.5px; }
+  .next { background:#fff; border:1px solid #e5e7eb;
+      border-radius:11px; padding:13px 16px; margin-bottom:14px;
+      display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .next b { font-size:14.5px; }
+  .next .when { font-weight:600; }
+  .next .who { color:#6b7280; font-size:13px; }
+  .next .sp { margin-left:auto; display:flex; gap:7px; }
+  .detail { background:#f9fafb; border:1px solid #e5e7eb;
+      border-radius:10px; padding:12px 15px; margin:10px 0 0;
+      font-size:13px; line-height:1.7; }
+  .detail b { font-weight:700; }
+  .bx { cursor:pointer; }
+  a.lj-btn { text-decoration:none; display:inline-block; }
 </style>
 </head>
 <body>
 <div class="lj">
   <div id="hdr"></div>
+  <div id="next"></div>
   <div id="journey"></div>
+  <div id="detail"></div>
 
   <div class="tabs" id="tabs"></div>
   <div class="pane on" id="pane-journey"></div>
   <div class="pane" id="pane-steps"></div>
   <div class="pane" id="pane-activity"></div>
+  <div class="pane" id="pane-conditions"></div>
+  <div class="pane" id="pane-quotes"></div>
+  <div class="pane" id="pane-audit"></div>
   <div class="pane" id="pane-spend">
     <p class="note">IOUs for this lead are in the TMS. The spend
       figures appear here once the CRM–TMS link exists.</p>
+    <p><a class="lj-btn" id="iou" href="#" target="_blank"
+          rel="noopener">Open TMS IOU form</a></p>
   </div>
 </div>
 
@@ -99,7 +119,11 @@ async function load() {
     return;
   }
   DATA = await r.json();
-  header(); journey(); tabs(); activity(); chart();
+  header(); nextAction(); journey(); tabs(); activity(); chart();
+  const iou = document.getElementById('iou');
+  if (iou) iou.href = '/tms/iou/new?crm_lead_no=' + LEAD;
+  const want = new URLSearchParams(location.search).get('step');
+  if (want) showStep(parseInt(want, 10));
 }
 
 function header() {
@@ -120,6 +144,60 @@ function header() {
     </div>`;
 }
 
+function nextAction() {
+  const n = DATA.next_action || {};
+  const box = document.getElementById('next');
+  if (!n.step_no) {
+    box.innerHTML = `<div class="next"><span class="who">${
+      esc(n.words || 'nothing open')}</span></div>`;
+    return;
+  }
+  const colour = {red:'#dc2626', orange:'#b45309', green:'#15803d',
+                  purple:'#6d28d9', blue:'#1d4ed8'}[n.colour] || '#6b7280';
+  box.innerHTML = `<div class="next">
+    <b>Next: ${n.step_no}. ${esc(n.title)}</b>
+    <span class="when" style="color:${colour}">${esc(n.words)}</span>
+    <span class="who">${n.can_act ? 'yours to do'
+      : 'waiting on ' + (esc(n.owner) || 'nobody')}</span>
+    <span class="sp">
+      <button class="lj-btn" onclick="showStep(${n.step_no})">Open it</button>
+      ${DATA.may_hold ? `<button class="lj-btn"
+        onclick="pick('activity')">Hold / priority on the RFQ page</button>` : ''}
+    </span></div>`;
+}
+
+async function showStep(stepNo) {
+  const box = document.getElementById('detail');
+  const r = await fetch(P + '/api/journey/' + LEAD + '/step/' + stepNo);
+  if (!r.ok) { box.innerHTML = ''; return; }
+  const s = (await r.json()).step;
+  const bits = [`<b>${s.step_no}. ${esc(s.title)}</b>`];
+  if (s.state === 'future') {
+    bits.push(`Not reached yet. It will sit with ${
+      esc(s.responsible) || 'whoever the rules choose'}.`);
+  } else {
+    bits.push(`${s.state === 'done' ? 'Closed' : 'Open'} ·
+      ${esc(s.owner_name || s.owner) || 'nobody'} ·
+      ${s.hours}h${s.standard ? ' against a ' + s.standard + 'h standard' : ''}`);
+    if (s.held_hours) bits.push(`${s.held_hours}h of that was on hold
+      and is not counted.`);
+    if (s.result) bits.push(`Result: <b>${esc(s.result)}</b>`);
+    if (s.reason) bits.push(`Reason: ${esc(s.reason)}${
+      s.remarks ? ' — ' + esc(s.remarks) : ''}`);
+    if (s.closed_at) bits.push(`Closed ${esc(s.closed_at)} by ${
+      esc(s.closed_by) || 'the system'}`);
+    const ev = s.evidence || {};
+    if (Object.keys(ev).length) {
+      bits.push('Evidence: ' + Object.entries(ev)
+        .filter(([, v]) => v !== null && v !== '')
+        .map(([k, v]) => esc(k) + ' ' + esc(v)).join(' · '));
+    }
+    if (s.waiting_for_customer) bits.push('Waiting for the customer.');
+  }
+  box.innerHTML = `<div class="detail">${bits.join('<br>')}</div>`;
+  box.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
 function journey() {
   const j = DATA.journey;
   document.getElementById('journey').innerHTML = `
@@ -134,13 +212,16 @@ function journey() {
       const tip = `${b.step_no}. ${b.title}`
         + (b.words ? ' — ' + b.words : '')
         + (b.owner ? ' (' + b.owner + ')' : '');
-      return `<div class="bx ${cls}" title="${esc(tip)}">${b.step_no}</div>`;
+      return `<div class="bx ${cls}" title="${esc(tip)}"
+        onclick="showStep(${b.step_no})">${b.step_no}</div>`;
     }).join('')}</div>`;
 }
 
 function tabs() {
   const names = [['journey','Journey'], ['steps','Steps & time'],
-                 ['activity','Activity'], ['spend','Spend']];
+                 ['activity','Activity'], ['conditions','Conditions'],
+                 ['quotes','Quotes'], ['audit','Audit'],
+                 ['spend','Spend']];
   document.getElementById('tabs').innerHTML = names.map(([k, label], i) =>
     `<div class="tab ${i === 0 ? 'on' : ''}" data-k="${k}"
        onclick="pick('${k}')">${label}</div>`).join('');
@@ -155,6 +236,41 @@ function pick(k) {
     t.classList.toggle('on', t.dataset.k === k));
   document.querySelectorAll('.pane').forEach(p =>
     p.classList.toggle('on', p.id === 'pane-' + k));
+  if (['conditions', 'quotes', 'audit'].includes(k)) loadTab(k);
+}
+
+async function loadTab(name) {
+  const box = document.getElementById('pane-' + name);
+  if (box.dataset.loaded) return;
+  const r = await fetch(P + '/api/journey/' + LEAD + '/tab/' + name);
+  if (!r.ok) { box.innerHTML = '<p class="note">Not available.</p>';
+               return; }
+  const rows = (await r.json()).rows || [];
+  box.dataset.loaded = '1';
+  if (!rows.length) {
+    box.innerHTML = '<p class="note">Nothing here yet.</p>';
+    return;
+  }
+  if (name === 'conditions') {
+    box.innerHTML = rows.map(c => `<p style="font-size:13px">
+      <b>${c.step_no}. ${esc(c.type) || 'Condition'}</b> —
+      ${esc(c.text)}
+      <span class="chip">${c.customer_facing
+        ? 'customer-facing' : 'internal only'}</span>
+      ${c.approved ? '<span class="chip">approved</span>' : ''}
+      </p>`).join('');
+  } else if (name === 'quotes') {
+    box.innerHTML = rows.map(q => `<p style="font-size:13px">
+      <b>${esc(q.number)}</b> — ${esc(q.status)} ·
+      ${q.currency} ${q.amount.toLocaleString('en-IN')}
+      ${q.reason ? '· ' + esc(q.reason) : ''}
+      <a class="lj-btn" href="${P + q.pdf}" target="_blank"
+         rel="noopener">PDF</a></p>`).join('');
+  } else {
+    box.innerHTML = rows.map(a => `<p style="font-size:12.5px">
+      <span class="note">${esc(a.at)} · ${esc(a.actor)}</span><br>
+      <b>${esc(a.action)}</b> ${esc(a.reason)}</p>`).join('');
+  }
 }
 
 async function chart() {

@@ -89,11 +89,97 @@ def api_journey(lead_id):
               'capability_fit': lead.capability_fit or '',
               'rfq_expected_date': str(lead.rfq_expected_date or '')},
         journey=rfq_chain.journey(lead),
+        next_action=rfq_chain.next_action(
+            rfq_chain._rfq_of_lead(lead), emp_code=session['emp_code']),
+        may_hold=_may_hold(lead),
         kinds=list(lj.KINDS),
         asks={k: v[0] for k, v in lj.ASKS.items()},
         lists={'expected_rfq_timing': list(lj.EXPECTED_TIMING),
                'capability_fit': list(lj.CAPABILITY_FIT),
                'manual_channels': list(lj.MANUAL_CHANNELS)})
+
+
+def _may_hold(lead):
+    from app.services import rfq_chain
+    rfq = rfq_chain._rfq_of_lead(lead)
+    if rfq is None:
+        return False
+    try:
+        return rfq_chain.may_hold(session['emp_code'], rfq)
+    except Exception:                                     # noqa: BLE001
+        return False
+
+
+@bp.route('/api/journey/<int:lead_id>/step/<int:step_no>')
+@_journey
+def api_step_detail(lead_id, step_no):
+    """What one box says when it is clicked (§6.4)."""
+    from app.services import rfq_chain
+
+    lead, refusal = _lead_or_404(lead_id)
+    if refusal:
+        return refusal
+    rfq = rfq_chain._rfq_of_lead(lead)
+    if rfq is None:
+        return jsonify(ok=False,
+                       error='no RFQ on this lead yet'), 404
+    detail = rfq_chain.step_detail(rfq, step_no)
+    if detail is None:
+        return jsonify(ok=False, error='no such step'), 404
+    return jsonify(ok=True, step=detail)
+
+
+@bp.route('/api/journey/<int:lead_id>/tab/<name>')
+@_journey
+def api_tab(lead_id, name):
+    """Conditions, Quotes and Audit, each read-only."""
+    from app import db
+    from app.services import rfq_chain
+
+    lead, refusal = _lead_or_404(lead_id)
+    if refusal:
+        return refusal
+    rfq = rfq_chain._rfq_of_lead(lead)
+
+    if name == 'conditions':
+        from app.models.rfq import RfqCondition
+        rows = (RfqCondition.query.filter_by(rfq_id=rfq.id)
+                .order_by(RfqCondition.step_no, RfqCondition.id).all()
+                if rfq is not None else [])
+        return jsonify(ok=True, rows=[c.to_dict() for c in rows])
+
+    if name == 'quotes':
+        from app.models.quote import Quote
+        from app.services import quote_rev
+        rows = []
+        q = Quote.query.filter_by(lead_id=lead.id).order_by(
+            Quote.id.asc()).all()
+        for quote in q:
+            rows.append({
+                'id': quote.id,
+                'number': quote_rev.display_number(quote),
+                'status': quote.status or '',
+                'amount': float(quote.total_amount or 0),
+                'currency': quote.currency or '',
+                'reason': quote.revision_reason or '',
+                'pdf': f'/quotes/{quote.id}/pdf'})
+        return jsonify(ok=True, rows=rows)
+
+    if name == 'audit':
+        from app.models.audit import AuditEvent
+        rows = (AuditEvent.query
+                .filter(AuditEvent.entity_type.in_(('lead', 'rfq')),
+                        AuditEvent.entity_id.in_(
+                            [str(lead.id)]
+                            + ([str(rfq.id)] if rfq is not None
+                               else [])))
+                .order_by(AuditEvent.id.desc()).limit(80).all())
+        return jsonify(ok=True, rows=[{
+            'at': str(getattr(r, 'occurred_at', '') or '')[:16],
+            'actor': r.actor or '', 'action': r.action or '',
+            'reason': (r.reason or '')[:200]} for r in rows])
+
+    return jsonify(ok=False, error='unknown tab'), 404
 
 
 @bp.route('/api/journey/<int:lead_id>/activity', methods=['POST'])
