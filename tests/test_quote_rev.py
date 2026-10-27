@@ -316,3 +316,92 @@ def test_the_internal_status_line_is_gone_from_the_customer_copy():
                 src.index('hdrs = [')]
     assert "_rev_on else" in block
     assert "<b>Status:</b>" in block        # still there, flag off
+
+
+# ── §5.5: the document the customer actually received ───────────────
+def test_the_sent_pdf_is_kept_as_bytes(tmp_path, monkeypatch):
+    """A regenerated PDF is a reconstruction. In an argument about
+    what was quoted, only the original answers."""
+    from app.services import quote_archive as qa
+
+    monkeypatch.setattr(qa, '_root', lambda: str(tmp_path))
+    with flask_app.app_context():
+        quote = _quote('QR-0045')
+        quote.root_quote_id, quote.rev_no = quote.id, 0
+        db.session.commit()
+        ok, detail = qa.store(quote, b'%PDF-1.4 pretend',
+                              actor=ACTOR)
+        db.session.commit()
+        assert ok is True
+        assert os.path.exists(detail['path'])
+        assert open(detail['path'], 'rb').read() == b'%PDF-1.4 pretend'
+        assert quote.sent_pdf_sha256 == detail['sha256']
+
+
+def test_one_file_per_revision(tmp_path, monkeypatch):
+    from app.services import quote_archive as qa
+
+    monkeypatch.setattr(qa, '_root', lambda: str(tmp_path))
+    with flask_app.app_context():
+        first = _quote('QR-0045')
+        first.root_quote_id, first.rev_no = first.id, 0
+        db.session.commit()
+        second = _revise(first)
+        qa.store(first, b'%PDF rev0', actor=ACTOR)
+        qa.store(second, b'%PDF rev1', actor=ACTOR)
+        db.session.commit()
+        assert qa.path_for(first) != qa.path_for(second)
+        assert open(qa.path_for(first), 'rb').read() == b'%PDF rev0'
+        assert open(qa.path_for(second), 'rb').read() == b'%PDF rev1'
+
+
+def test_a_second_send_never_overwrites_the_first(tmp_path,
+                                                  monkeypatch):
+    """If the document really changed it should have been a new
+    revision; replacing destroys the only record of what the
+    customer first received."""
+    from app.services import quote_archive as qa
+
+    monkeypatch.setattr(qa, '_root', lambda: str(tmp_path))
+    with flask_app.app_context():
+        quote = _quote('QR-0045')
+        quote.root_quote_id, quote.rev_no = quote.id, 0
+        db.session.commit()
+        qa.store(quote, b'%PDF original', actor=ACTOR)
+        ok, detail = qa.store(quote, b'%PDF different', actor=ACTOR)
+        db.session.commit()
+        assert ok is False
+        assert detail['why'] == 'already archived'
+        assert open(qa.path_for(quote), 'rb').read() == b'%PDF original'
+
+
+def test_archived_reports_nothing_before_a_send(tmp_path,
+                                                monkeypatch):
+    from app.services import quote_archive as qa
+
+    monkeypatch.setattr(qa, '_root', lambda: str(tmp_path))
+    with flask_app.app_context():
+        quote = _quote('QR-0045')
+        assert qa.archived(quote) == (None, None)
+
+
+def test_the_archive_is_audited_with_its_digest(tmp_path,
+                                                monkeypatch):
+    from app.models.audit import AuditEvent
+    from app.services import quote_archive as qa
+
+    monkeypatch.setattr(qa, '_root', lambda: str(tmp_path))
+    with flask_app.app_context():
+        quote = _quote('QR-0045')
+        quote.root_quote_id, quote.rev_no = quote.id, 0
+        db.session.commit()
+        qa.store(quote, b'%PDF audited', actor=ACTOR)
+        db.session.commit()
+        # Newest first: quote ids repeat across tests, so .first()
+        # on insertion order returns an earlier test's row.
+        row = (AuditEvent.query
+               .filter(AuditEvent.action == 'quote.pdf_archived',
+                       AuditEvent.entity_id == str(quote.id))
+               .order_by(AuditEvent.id.desc()).first())
+        assert row is not None
+        assert row.new_value['sha256'] == quote.sent_pdf_sha256

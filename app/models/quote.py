@@ -101,6 +101,13 @@ class Quote(db.Model):
     #: holds a per-line cost for freight, where rate tables fill
     #: it in; this is the sheet total, which every other vertical
     #: types because it has no rate tables to read.
+    #: §5.5 — where the PDF the customer actually received is kept,
+    #: and its digest. On disk rather than in the row: a 200 KB
+    #: blob per revision would bloat every backup of a table that
+    #: is read constantly.
+    sent_pdf_path = db.Column(db.String(600))
+    sent_pdf_sha256 = db.Column(db.String(64))
+
     cost_amount = db.Column(db.Numeric(15, 2))
     cost_saved_at = db.Column(db.DateTime)
     cost_saved_by = db.Column(db.String(20))

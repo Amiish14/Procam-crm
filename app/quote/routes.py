@@ -705,6 +705,25 @@ def api_submit_to_client(qid):
                     actor=session.get('emp_code'),
                     detail=f'Quote {q.quote_number} went to the customer.')
 
+    # §5.5 — keep the document exactly as it goes out. Before the
+    # step closes, so the archive exists for anything the close
+    # writes, and wrapped: a quotation must reach the customer
+    # even if the archive cannot be written.
+    try:
+        from app.services import quote_archive, quote_rev
+        if quote_rev.enabled():
+            data = quote_archive.render(q)
+            if data:
+                quote_archive.store(
+                    data=data, quote=q,
+                    actor=session.get('emp_code'),
+                    sent_to=(q.account_id and str(q.account_id)) or '')
+                db.session.commit()
+    except Exception:                                     # noqa: BLE001
+        db.session.rollback()
+        current_app.logger.exception(
+            'could not archive the PDF for quote %s', q.id)
+
     # CRM-RFQ-CHAIN-01 step 8 closes on the quotation going out,
     # not on anybody saying it did. Wrapped because a chain that
     # cannot be updated must never stop a quotation reaching a

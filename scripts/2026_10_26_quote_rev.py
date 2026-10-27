@@ -30,7 +30,9 @@ COLUMNS = (('root_quote_id', 'INTEGER'),
            ('revision_reason', 'VARCHAR(120)'),
            ('cost_amount', 'NUMERIC(15, 2)'),
            ('cost_saved_at', 'DATETIME'),
-           ('cost_saved_by', 'VARCHAR(20)'))
+           ('cost_saved_by', 'VARCHAR(20)'),
+           ('sent_pdf_path', 'VARCHAR(600)'),
+           ('sent_pdf_sha256', 'VARCHAR(64)'))
 TABLE = 'quotes'
 ACTION = 'quote.root_backfilled'
 
