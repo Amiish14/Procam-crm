@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{% include "_csrf_fetch.html" %}
+<title>Department steps — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body class="rfq-page">
+{% include "_crm_topbar.html" %}
+<div class="rfq-ui">
+  <div class="rfq-hero">
+    <div>
+      <h1>Department steps</h1>
+      <p>The twelve steps of the RFQ chain: which desk each one
+        routes to, how long it is given, and what closes it. Steps
+        close on events, not on somebody remembering — only the
+        three marked "a person confirms it" take a click.</p>
+    </div>
+  </div>
+
+  <section class="rfq-card">
+    <div class="rfq-card-h">
+      <h2>Steps that close themselves</h2>
+      <p>Read-only. The settings behind the routing are written by
+        scripts that check the employee code, so a text box here
+        would undo that.</p>
+    </div>
+    <div class="rfq-tw">
+      <table>
+        <thead><tr>
+          <th class="n">#</th><th>Step</th><th>Desk</th>
+          <th>Who, exactly</th><th>Standard time</th>
+          <th>Closes when</th><th>In the catalogue</th>
+        </tr></thead>
+        <tbody>
+        {% for s in steps %}
+          <tr>
+            <td class="n">{{ s.no }}</td>
+            <td><b>{{ s.title }}</b>
+              {% if s.optional %}
+                <div class="rfq-sub">only when
+                  {{ s.optional|replace('_', ' ') }} is ticked at
+                  registration</div>
+              {% endif %}
+              <div class="rfq-sub rfq-mono">{{ s.key }}</div></td>
+            <td>{{ s.desk }}</td>
+            <td class="rfq-sub">{{ s.routing }}</td>
+            <td class="rfq-sub">{{ s.standard }}</td>
+            <td>{{ s.closes }}
+              {% if s.confirmable %}
+                <span class="rfq-chip rfq-c-amb">a click</span>
+              {% endif %}</td>
+            <td>{% if s.catalogued %}
+                  <span class="rfq-rag rfq-t-ok">On file</span>
+                {% else %}
+                  <span class="rfq-rag rfq-t-amb">Not seeded</span>
+                  <div class="rfq-sub">the chain still runs — the
+                    rows are a catalogue, not a dependency</div>
+                {% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="rfq-g2">
+    <section class="rfq-card">
+      <div class="rfq-card-h">
+        <h2>How long the whole chain gets</h2>
+        <p>RFQ received to quotation sent, by priority. Each step
+          takes its share of that window.</p>
+      </div>
+      <div class="rfq-tw"><table>
+        <thead><tr><th>Priority</th><th class="n">Days to quote</th>
+          <th class="n">Response clock</th></tr></thead>
+        <tbody>
+        {% for name, days in priorities.items() %}
+          <tr><td>{{ name }}</td><td class="n">{{ days }}</td>
+            <td class="n">{{ response.get(name, '—') }} h</td></tr>
+        {% endfor %}
+        </tbody></table></div>
+    </section>
+
+    <section class="rfq-card">
+      <div class="rfq-card-h">
+        <h2>When a reason is asked</h2>
+      </div>
+      <ul class="rfq-list">
+        <li>A step closed inside {{ early }}% of its standard time is
+          <b>Early</b>, and asks what helped.</li>
+        <li>A step closed past its standard time is <b>Delayed</b>,
+          and asks why before it will close.</li>
+        <li>Everything in between is <b>On time</b> and asks
+          nothing — a step that always asks "why" trains people to
+          pick the first option.</li>
+        <li>The standard the workload table measures against is
+          <b>{{ target }}%</b> on time.</li>
+      </ul>
+    </section>
+  </div>
+</div>
+</body>
+</html>
