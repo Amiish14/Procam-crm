@@ -149,7 +149,7 @@ def test_the_reports_page_renders():
     html = _body('/rfqs/reports')
     assert '<title>RFQ Reports' in html
     assert 'api/reports/tiles' in html
-    assert 'Workload and completion' in html
+    assert 'Workload &amp; completion' in html
 
 
 def test_the_lead_record_renders(world):
@@ -157,8 +157,8 @@ def test_the_lead_record_renders(world):
     assert '<title>Lead journey' in html
     assert 'Before the RFQ' in html and 'RFQ to order' in html
     # §6.4's pieces, not just the shell
-    for piece in ('nextAction', 'showStep', 'Conditions', 'Quotes',
-                  'Audit', 'Open TMS IOU form'):
+    for piece in ('nextAction', 'selectNode', 'Conditions', 'Quotes',
+                  'Audit', 'Spend (IOU)'):
         assert piece in html, piece
 
 
