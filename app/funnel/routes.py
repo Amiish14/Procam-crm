@@ -636,7 +636,8 @@ def _sales_funnel(f, with_ids=False):
 
     leads_q = _apply_opp_filters.__self__ if False else None  # noqa
     from app import Lead as _Lead
-    lead_rows = _Lead.query.filter(_Lead.company_id.isnot(None))
+    lead_rows = _Lead.query.filter(_Lead.company_id.isnot(None),
+                                   _Lead.junk_deleted.isnot(True))
     if f.get('pic'):
         lead_rows = lead_rows.filter(_Lead.assigned_to == f['pic'])
     if f.get('vertical'):

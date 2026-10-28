@@ -161,16 +161,26 @@ def _narrow(q, column, sc, *, extra_columns=()):
     return q.filter(or_(*[c.in_(sc.codes) for c in cols]))
 
 
-def leads(q=None, sc=None):
+def leads(q=None, sc=None, *, include_deleted=False):
     """Leads the viewer may see — primary or secondary PIC counts.
 
     Secondary is included deliberately: WP5 made the secondary PIC a
     monitor, and a monitor who cannot open the lead cannot monitor it.
+
+    Leads marked "Delete – not relevant" (CRM-JUNK-DELETE-01) are
+    excluded here rather than at each caller, and for everybody
+    including an unrestricted scope. This one function is what every
+    board, count, digest and report goes through, so excluding them
+    here is what makes "it disappears from everywhere" true instead
+    of true in the places somebody remembered. The Admin bin passes
+    `include_deleted=True`; it is the only caller that does.
     """
     from app import Lead
     sc = sc or current()
-    return _narrow(q if q is not None else Lead.query,
-                   Lead.assigned_to, sc,
+    q = q if q is not None else Lead.query
+    if not include_deleted:
+        q = q.filter(Lead.junk_deleted.isnot(True))
+    return _narrow(q, Lead.assigned_to, sc,
                    extra_columns=(Lead.secondary_owner,))
 
 

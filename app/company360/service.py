@@ -76,7 +76,8 @@ def header(company):
 
 def _leads_for(company_id):
     from app import Lead
-    return Lead.query.filter(Lead.company_id == company_id)
+    return Lead.query.filter(Lead.company_id == company_id,
+                             Lead.junk_deleted.isnot(True))
 
 
 def kpis(company):

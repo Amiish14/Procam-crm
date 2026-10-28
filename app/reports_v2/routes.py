@@ -1197,7 +1197,9 @@ def rep_overseas_partner_contribution():
 @_accounts
 def rep_network_contribution():
     from app import Lead
-    _q = Lead.query
+    # CRM-JUNK-DELETE-01: a mail that was never an enquiry is not a
+    # network contribution.
+    _q = Lead.query.filter(Lead.junk_deleted.isnot(True))
     _sc = _scope()
     if _sc is not None:
         _q = _q.filter(_lead_scope_clause(_sc))

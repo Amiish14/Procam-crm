@@ -62,7 +62,8 @@ def rows_for(confirmations):
     if not confirmations:
         return []
     lead_ids = [c.lead_id for c in confirmations]
-    leads = {l.id: l for l in Lead.query.filter(Lead.id.in_(lead_ids)).all()}
+    leads = {l.id: l for l in Lead.query.filter(
+        Lead.id.in_(lead_ids), Lead.junk_deleted.isnot(True)).all()}
     account_ids = {l.company_id for l in leads.values() if l.company_id}
     accounts = {}
     if account_ids:

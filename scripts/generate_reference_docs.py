@@ -91,6 +91,14 @@ _GATES = (
                               'records by scope'),
     (re.compile(r"@_funnel\b"), 'FEATURE_PRE_RFQ_FUNNEL, then signed '
                                 'in; records by scope'),
+    # Delete - not relevant (CRM-JUNK-DELETE-01). The flag first, so
+    # every route 404s while FEATURE_JUNK_DELETE is off, then the
+    # session. Who may delete a given lead is a second check inside
+    # each write - its owner, its vertical head, or an admin - and
+    # the Admin bin adds @_admin_only on top.
+    (re.compile(r"@_junk\b"), 'FEATURE_JUNK_DELETE, then signed in; '
+                              'deleting is owner, head-of-vertical '
+                              'or admin'),
     # Admin -> CRM rules. Not behind a feature flag on purpose: a
     # readiness check that is itself switched off tells nobody
     # anything. Admins and directors, read-only.

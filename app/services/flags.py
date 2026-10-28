@@ -108,6 +108,16 @@ FLAGS = (
      'RFQ dashboard, the slowest step, the workload table and the '
      'delay reasons — all from timestamps (CRM-RFQ-REPORTS-01)',
      False),
+    ('FEATURE_JUNK_DELETE',
+     'Delete – not relevant: take a newsletter or a personal mail off '
+     'the board without filing it as a lost deal (CRM-JUNK-DELETE-01)',
+     False),
+    ('FEATURE_JUNK_SUGGEST',
+     'Mark a new mail lead "Possible junk" so a person can look — it '
+     'only suggests, it never deletes', False),
+    ('FEATURE_JUNK_PURGE',
+     'Allow an administrator to purge deleted leads older than 90 '
+     'days, after an export', False),
     (KILL_SWITCH, 'Stop all outbound CRM email immediately', False),
 )
 

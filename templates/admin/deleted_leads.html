@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Deleted leads — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+{% include "_csrf_fetch.html" %}
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .db { max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
+  .db h1 { font-family:Barlow,sans-serif; font-size:23px;
+      font-weight:800; margin:0 0 4px; }
+  .db .lede { color:#6b7280; font-size:13.5px; margin:0 0 18px;
+      max-width:66ch; line-height:1.55; }
+  .db-f { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
+  .db-f input, .db-f select { border:1px solid #e5e7eb;
+      border-radius:8px; padding:7px 10px; font-size:13px;
+      font-family:inherit; }
+  .db-f button { border:0; background:#111827; color:#fff;
+      border-radius:8px; padding:7px 14px; font-size:13px;
+      font-weight:600; cursor:pointer; }
+  .db-f a.exp { align-self:center; font-size:12.5px; color:#374151; }
+  .db-sum { background:#111827; color:#fff; border-radius:10px;
+      padding:12px 16px; font-size:13.5px; margin-bottom:14px; }
+  table.db-t { width:100%; border-collapse:collapse; background:#fff;
+      border:1px solid #e5e7eb; border-radius:10px; overflow:hidden;
+      font-size:13px; }
+  .db-t th { text-align:left; background:#f9fafb; color:#374151;
+      font-weight:700; font-size:11.5px; letter-spacing:.04em;
+      text-transform:uppercase; padding:9px 11px;
+      border-bottom:1px solid #e5e7eb; }
+  .db-t td { padding:9px 11px; border-bottom:1px solid #f3f4f6;
+      vertical-align:top; color:#374151; }
+  .db-t tr:last-child td { border-bottom:0; }
+  .db-sub { color:#6b7280; font-size:12px; }
+  .db-rsn { display:inline-block; background:#f3f4f6; color:#374151;
+      border-radius:5px; padding:2px 7px; font-size:11.5px;
+      font-weight:600; white-space:nowrap; }
+  .db-rst { border:1px solid #d1d5db; background:#fff; color:#111827;
+      border-radius:7px; padding:5px 11px; font-size:12.5px;
+      font-weight:600; cursor:pointer; }
+  .db-rst:hover { background:#f9fafb; }
+  .db-none { color:#6b7280; padding:34px 0; }
+  .db-purge { margin-top:26px; border:1px solid #fde68a;
+      background:#fffbeb; border-radius:10px; padding:13px 16px;
+      font-size:13px; color:#92400e; line-height:1.55; }
+  .db-purge button { margin-top:8px; border:0; background:#b45309;
+      color:#fff; border-radius:7px; padding:6px 13px; font-size:12.5px;
+      font-weight:600; cursor:pointer; }
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="db">
+  <h1>Deleted leads</h1>
+  <p class="lede">
+    Mail that was never an enquiry, taken off the boards without being
+    filed as a deal somebody lost. Nothing here was destroyed — every
+    row is the lead itself, and Restore puts it back at New Opportunity
+    with its original owner.
+  </p>
+
+  <form class="db-f" method="get">
+    <input type="date" name="from" value="{{ filters.get('from','') }}"
+           title="Deleted on or after">
+    <input type="date" name="to" value="{{ filters.get('to','') }}"
+           title="Deleted on or before">
+    <input type="text" name="by" placeholder="Deleted by (code)"
+           value="{{ filters.get('by','') }}">
+    <select name="reason">
+      <option value="">Any reason</option>
+      {% for code, label, _b in reasons %}
+      <option value="{{ code }}"
+        {% if filters.get('reason') == code %}selected{% endif %}>
+        {{ label }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="sender" placeholder="Sender contains"
+           value="{{ filters.get('sender','') }}">
+    <button type="submit">Filter</button>
+    <a class="exp" href="{{ url_prefix }}/api/admin/deleted-leads/export?{{ request.query_string.decode() }}">Export</a>
+  </form>
+
+  <div class="db-sum"><b>{{ rows|length }}</b>
+    deleted lead{{ '' if rows|length == 1 else 's' }}{% if filters %}
+    matching these filters{% endif %}.</div>
+
+  {% if rows %}
+  <table class="db-t">
+    <thead><tr>
+      <th>Lead</th><th>Company</th><th>Sender &amp; subject</th>
+      <th>Reason</th><th>Deleted</th><th></th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr id="row-{{ r.id }}">
+        <td>#{{ r.id }}</td>
+        <td>{{ r.company }}
+          {% if r.vertical %}<div class="db-sub">{{ r.vertical }}</div>
+          {% endif %}</td>
+        <td>{{ r.sender }}
+          {% if r.subject %}<div class="db-sub">{{ r.subject }}</div>
+          {% endif %}</td>
+        <td><span class="db-rsn">{{ r.reason_label }}</span>
+          {% if r.note %}<div class="db-sub">{{ r.note }}</div>{% endif %}
+        </td>
+        <td>{{ r.by }}<div class="db-sub">{{ r.at }}</div></td>
+        <td><button class="db-rst"
+              onclick="restore({{ r.id }})">Restore</button></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="db-none">Nothing has been deleted.</div>
+  {% endif %}
+
+  {% if purge_on %}
+  <div class="db-purge">
+    <b>Purge</b> — rows older than {{ purge_days }} days can be taken
+    out of this bin. Even then the lead is not destroyed: it is closed
+    as Lost with its reason and kept, because CRM-NO-DELETE-01 has no
+    exceptions. Export first; the confirm will ask.
+    <div><button onclick="purge()">Purge older than
+      {{ purge_days }} days</button></div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+const PREFIX = {{ (url_prefix or '')|tojson }};
+function crmUrl(path){ return PREFIX + path; }
+
+async function restore(id){
+  const r = await fetch(
+    crmUrl('/api/admin/deleted-leads/' + id + '/restore'),
+    {method:'POST', headers:{'Content-Type':'application/json'},
+     body:'{}'});
+  const out = await r.json().catch(() => ({}));
+  if (out && out.ok){
+    const row = document.getElementById('row-' + id);
+    if (row) row.remove();
+  } else {
+    alert((out && out.error) || 'Could not restore it.');
+  }
+}
+
+async function purge(){
+  const stage = await fetch(crmUrl('/api/admin/deleted-leads/purge'),
+    {method:'POST', headers:{'Content-Type':'application/json'},
+     body: JSON.stringify({})});
+  const first = await stage.json().catch(() => ({}));
+  if (!first || !first.ok){
+    alert((first && first.error) || 'Purge is not available.');
+    return;
+  }
+  if (!first.count){ alert('Nothing is old enough to purge.'); return; }
+  if (!confirm(first.message + '\n\nExport them now?')) return;
+  window.location = crmUrl('/api/admin/deleted-leads/export');
+  if (!confirm('Once the export has downloaded, confirm the purge of '
+               + first.count + ' lead(s)?')) return;
+  const done = await fetch(crmUrl('/api/admin/deleted-leads/purge'),
+    {method:'POST', headers:{'Content-Type':'application/json'},
+     body: JSON.stringify({confirm:true, exported:true})});
+  const out = await done.json().catch(() => ({}));
+  alert(out && out.ok ? out.purged + ' purged.'
+                      : ((out && out.error) || 'Purge failed.'));
+  if (out && out.ok) window.location.reload();
+}
+</script>
+</body>
+</html>

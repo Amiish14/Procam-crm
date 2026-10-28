@@ -35,7 +35,8 @@ def workload(emp_code):
     """§22 — what this person is carrying right now."""
     from app import Lead, Opportunity, Company, Contact
 
-    leads = Lead.query.filter(Lead.assigned_to == emp_code)
+    leads = Lead.query.filter(Lead.assigned_to == emp_code,
+                              Lead.junk_deleted.isnot(True))
     opps = Opportunity.query.filter(Opportunity.owner_emp_code == emp_code)
     won = opps.filter(Opportunity.stage == 'Won').all()
     lost = opps.filter(Opportunity.stage == 'Lost').count()

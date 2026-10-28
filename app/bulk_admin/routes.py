@@ -29,7 +29,10 @@ def page():
     show = (request.args.get('show') or 'active').strip()
     q = Lead.query
     if show == 'archived':
-        q = q.filter(Lead.is_archived.is_(True))
+        # Junk is archived too, but it belongs in Admin → Deleted
+        # leads, not mixed in with leads somebody archived on purpose.
+        q = q.filter(Lead.is_archived.is_(True),
+                     Lead.junk_deleted.isnot(True))
     else:
         q = q.filter(Lead.is_archived.isnot(True))
 

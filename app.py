@@ -474,6 +474,30 @@ class Lead(db.Model):
     archived_at      = db.Column(db.DateTime)
     archived_by      = db.Column(db.String(20))
     archive_reason   = db.Column(db.String(200))
+    # ── CRM-JUNK-DELETE-01 · "Delete – not relevant" ──────────────
+    # Mail ingestion makes a lead of every message, so newsletters,
+    # quarantine digests and a colleague's personal mail arrive as
+    # "Unknown" at New Opportunity. Closing those as Lost is the only
+    # action there has been, and it is the wrong one: they then sit in
+    # the Lost reports and the win/loss ratio, which is a measurement
+    # of sales made out of things that were never enquiries.
+    #
+    # This marks them deleted *for the reader* without destroying
+    # anything — CRM-NO-DELETE-01 still holds, and its guard still
+    # passes, because no row is removed. `is_archived` is set too, so
+    # the twenty-six modules that already hide archived leads hide
+    # these without being changed; `junk_deleted` is what tells a
+    # junk item apart from an ordinary archive, and what the Admin bin
+    # lists. Eligibility (§3) requires a lead nobody has worked, so a
+    # restore can simply clear both.
+    junk_deleted     = db.Column(db.Boolean, default=False, index=True)
+    junk_deleted_at  = db.Column(db.DateTime)
+    junk_deleted_by  = db.Column(db.String(20))
+    #: One of junk_delete.REASONS — a code, not free text.
+    junk_reason      = db.Column(db.String(60))
+    #: The free text "Others" asks for, or the lead number a duplicate
+    #: points at. Kept apart from the code so the bin can group.
+    junk_reason_note = db.Column(db.String(400))
     project          = db.Column(db.String(300))
     industry         = db.Column(db.String(100))
     cost_million     = db.Column(db.Float, default=0)
@@ -6250,6 +6274,9 @@ for _mod_path, _bp_name in [
     # and not behind a feature flag: a readiness check that is
     # itself switched off tells nobody anything.
     ('app.admin_rules.routes',   'admin_rules_bp'),
+    # Delete – not relevant, and the Admin bin that makes every one
+    # of them reversible. 404 while FEATURE_JUNK_DELETE is off.
+    ('app.junk.routes',          'junk_bp'),
     # The TMS integration API. Exempted from CSRF below, because it is
     # authenticated by a bearer token rather than by a session cookie —
     # a CSRF token is a defence against a browser being used as a

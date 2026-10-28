@@ -110,8 +110,12 @@ def search_notes(query, *, author=None, date_from=None, date_to=None,
     scored.sort(key=lambda s: (-s[0], -(s[1].id or 0)))
     top = scored[:limit]
     lead_ids = {n.lead_id for _s, n in top}
-    leads = {l.id: l for l in Lead.query.filter(Lead.id.in_(lead_ids))
-             .all()} if lead_ids else {}
+    # CRM-JUNK-DELETE-01: search does not find a deleted lead. The
+    # note is kept, but its lead is gone from everywhere a person
+    # looks, and a hit that opens nothing is worse than no hit.
+    leads = {l.id: l for l in Lead.query.filter(
+        Lead.id.in_(lead_ids),
+        Lead.junk_deleted.isnot(True)).all()} if lead_ids else {}
     authors = {n.author for _s, n in top if n.author}
     names = {e.emp_code: e.name for e in Employee.query.filter(
         Employee.emp_code.in_(authors)).all()} if authors else {}
