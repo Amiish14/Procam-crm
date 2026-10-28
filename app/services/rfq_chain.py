@@ -50,33 +50,45 @@ FLAG = 'FEATURE_RFQ_CHAIN'
 #: not a Procam delay and must never be coloured as one.
 STEPS = (
     {'no': 1,  'key': 'rfq.received',     'title': 'RFQ Received',
+     'short': 'Received',
      'who': 'sales',       'share': 0.00, 'event': 'rfq_mail_linked'},
     {'no': 2,  'key': 'rfq.registration', 'title': 'RFQ Registration',
+     'short': 'Register',
      'who': 'coordinator', 'share': 0.05, 'event': 'registered'},
     {'no': 3,  'key': 'rfq.screening',    'title': 'Initial Screening',
+     'short': 'Screen',
      'who': 'scm',         'share': 0.05, 'event': 'confirm'},
     {'no': 4,  'key': 'rfq.technical',    'title': 'Technical Evaluation',
+     'short': 'Tech eval',
      'who': 'ops',         'share': 0.15, 'event': 'confirm',
      'optional': 'needs_technical'},
     {'no': 5,  'key': 'rfq.survey',       'title': 'Site / Route Survey',
+     'short': 'Survey',
      'who': 'ops',         'share': 0.15, 'event': 'confirm',
      'optional': 'needs_survey'},
     {'no': 6,  'key': 'rfq.costing',      'title': 'Cost Estimation',
+     'short': 'Costing',
      'who': 'scm',         'share': 0.30, 'event': 'cost_sheet_saved'},
     {'no': 7,  'key': 'rfq.approval',     'title': 'Commercial Approval',
+     'short': 'Approval',
      'who': 'head',        'share': 0.10, 'event': 'quote_approved'},
     {'no': 8,  'key': 'rfq.submission',   'title': 'Quotation Submission',
+     'short': 'Submit',
      'who': 'sales',       'share': 0.20, 'event': 'quote_sent'},
     {'no': 9,  'key': 'rfq.negotiation',  'title': 'Negotiation',
+     'short': 'Negotiate',
      'who': 'sales',       'share': None, 'event': 'customer_replied',
      'response_clock': True},
     {'no': 10, 'key': 'rfq.final_bid',    'title': 'Final Bid / Closure',
+     'short': 'Final bid',
      'who': 'sales',       'share': None, 'event': 'award_date_recorded',
      'response_clock': True},
     {'no': 11, 'key': 'rfq.award',        'title': 'Award / PO',
+     'short': 'PO',
      'who': 'sales',       'share': None, 'event': 'po_recorded',
      'customer_clock': True},
     {'no': 12, 'key': 'rfq.handover',     'title': 'Handover',
+     'short': 'Handover',
      'who': 'sales',       'share': None, 'event': 'handover_sent',
      'fixed_hours': 24},
 )
@@ -614,10 +626,22 @@ def board(rfq):
         else:
             state, colour = 'done', GREEN
             words = task.result or 'done'
+        from app.services import rfq_board
+        # Whoever holds it, or — once it is closed — whoever
+        # closed it. A finished box with no name on it is the one
+        # box people ask about.
+        owner = (getattr(task, 'owner_user_id', '')
+                 or getattr(task, 'completed_by_id', '') or '')
         out.append({
             'step_no': step['no'], 'title': step['title'],
             'state': state, 'colour': colour, 'words': words,
-            'owner': getattr(task, 'owner_user_id', '') or '',
+            'owner': owner,
+            # The flowchart box names a person, not an employee code.
+            'owner_name': rfq_board.name_of(owner),
+            'hours': (round(elapsed_hours(task), 1)
+                      if task is not None and task.started_at
+                      else None),
+            'standard': standard_hours(step['no'], rfq.priority),
             'result': getattr(task, 'result', '') or '',
             'closed_at': str(getattr(task, 'completed_at', '') or '')[:16],
             'confirmable': step['no'] in CONFIRMABLE,
@@ -830,20 +854,28 @@ def journey(lead):
     stage = getattr(account, 'dev_stage', None) or ''
     here = lj.stage_rank(stage)
 
+    rfq = _rfq_of_lead(lead)
     before = []
     from presales.models import ACCOUNT_DEV_STAGES
+    #: An RFQ that arrived without any of this happening did not
+    #: skip the work; the work never applied. The flowchart says
+    #: so rather than showing eight boxes nobody will ever tick.
+    direct = rfq is not None and here < 0
     for name in ACCOUNT_DEV_STAGES[:8]:
         rank = lj.stage_rank(name)
-        before.append({
-            'title': name,
-            'state': ('done' if here > rank else
-                      'current' if here == rank else 'future'),
-        })
-
-    rfq = _rfq_of_lead(lead)
+        if direct:
+            state, sub = 'skipped', 'skipped — the RFQ came direct'
+        elif rfq is not None or here > rank:
+            state, sub = 'done', ''
+        elif here == rank:
+            state, sub = 'current', 'where the account is now'
+        else:
+            state, sub = 'future', 'not reached'
+        before.append({'title': name, 'state': state, 'sub': sub})
     after = board(rfq) if rfq is not None else [
         {'step_no': s['no'], 'title': s['title'], 'state': 'future',
-         'colour': GREY, 'words': '', 'owner': '', 'result': '',
+         'colour': GREY, 'words': '', 'owner': '', 'owner_name': '',
+         'hours': None, 'standard': None, 'result': '',
          'closed_at': '', 'confirmable': s['no'] in CONFIRMABLE}
         for s in STEPS]
     return {'before': before, 'after': after,
@@ -908,6 +940,14 @@ def waiting_on(emp_code, *, limit=60):
             'colour': colour, 'words': words,
             'held': bool(rfq.held_at),
             'due_at': str(task.due_at or '')[:16],
+            # Since when it has been sitting here, and what will
+            # close it — the two things the demo's row shows and
+            # the bare task title does not.
+            'since': str(task.started_at or '')[:16],
+            'event': step.get('event', ''),
+            'tone': {RED: 'rfq-t-red', ORANGE: 'rfq-t-amb',
+                     GREEN: 'rfq-t-ok', BLUE: 'rfq-t-info',
+                     PURPLE: 'rfq-t-hold'}.get(colour, 'rfq-t-grey'),
             # The Act button opens the lead record on this step,
             # which is where its own form lives. Falling back to
             # the RFQ when a step somehow has no lead keeps the
@@ -1002,9 +1042,10 @@ def next_action(rfq, *, emp_code):
     step = BY_NO.get(task.step_no, {})
     colour, words = verdict(task, priority=rfq.priority)
     owner = task.owner_user_id or ''
+    from app.services import rfq_board
     return {
         'step_no': task.step_no, 'title': step.get('title', ''),
-        'owner': owner,
+        'owner': owner, 'owner_name': rfq_board.name_of(owner),
         'can_act': bool(emp_code) and (not owner or owner == emp_code
                                        or may_hold(emp_code, rfq)),
         'confirmable': task.step_no in CONFIRMABLE,
