@@ -92,7 +92,7 @@ def may_clear(lead, emp_code=None):
 
 # ── the queue ────────────────────────────────────────────────────────
 def _row(lead, *, with_candidates=True):
-    from app.services import account_gate, account_match
+    from app.services import account_gate, account_match, rfq_board
 
     why = account_gate.why_pending(lead)
     out = {
@@ -125,8 +125,13 @@ def _row(lead, *, with_candidates=True):
             'also': row['also'],
             'note': row['note'],
             'exact': row['exact'],
-                'owner': account_gate.owner_for(
+            'owner': account_gate.owner_for(
                 account, account_gate.vertical_of(lead)),
+            # A name beside the code: the person reading this row
+            # is deciding whether to hand the lead to them, and
+            # callers that match on the code keep working.
+            'owner_name': rfq_board.name_of(account_gate.owner_for(
+                account, account_gate.vertical_of(lead))),
             'blocked': _blocked(account),
         })
     # Say which of the three cases this is, so the person is not
@@ -558,3 +563,122 @@ def api_dismiss(lead_id):
         row.outcome = 'replaced'
         db.session.commit()
     return jsonify(ok=True)
+
+
+# ── the two panels beside the queue ──────────────────────────────────
+@bp.route('/api/account-check/settled')
+@_gate
+def api_settled():
+    """What the CRM and the heads placed today, and how.
+
+    RFQ-DEMO-PARITY. The queue showed only what is still waiting,
+    so the work of clearing it was invisible: a head who confirmed
+    nine accounts this morning saw the same empty page as one who
+    confirmed none, and nobody could tell an account the matcher
+    placed by itself from one a person had to settle.
+    """
+    from datetime import datetime, timedelta
+
+    from app import Company, Lead, db
+    from app.access import scope as sc_mod
+    from app.models.audit import AuditEvent
+    from app.services import rfq_board
+
+    since = datetime.utcnow() - timedelta(days=1)
+    rows = (AuditEvent.query
+            .filter(AuditEvent.entity_type == 'lead',
+                    AuditEvent.action.in_(
+                        ('lead.account_linked', 'lead.account_created',
+                         'account.linked', 'account.created')),
+                    AuditEvent.occurred_at >= since)
+            .order_by(AuditEvent.id.desc()).limit(60).all())
+    reachable = {lead.id for lead in
+                 sc_mod.leads().with_entities(Lead.id).all()}
+    out = []
+    for row in rows:
+        try:
+            lead_id = int(row.entity_id)
+        except (TypeError, ValueError):
+            continue
+        if reachable and lead_id not in reachable:
+            continue
+        lead = db.session.get(Lead, lead_id)
+        if lead is None:
+            continue
+        account = (db.session.get(Company, lead.company_id)
+                   if lead.company_id else None)
+        by = (row.actor or '').strip()
+        out.append({
+            'lead_id': lead_id,
+            'at': str(getattr(row, 'occurred_at', '') or '')[:16],
+            'company': getattr(account, 'name', '') or lead.company or '',
+            'subject': (lead.notes or '')[:120],
+            'owner': rfq_board.name_of(lead.assigned_to),
+            'how': ('Linked automatically' if by in ('', 'system',
+                                                     'System')
+                    else 'Confirmed'),
+            'by': rfq_board.name_of(by) if by else 'the matcher',
+            'why': (row.reason or '')[:160],
+            'journey': f'/leads/{lead_id}/journey',
+        })
+    return jsonify(ok=True, rows=out, total=len(out))
+
+
+@bp.route('/api/account-check/owners')
+@_gate
+def api_owners():
+    """Account owners per vertical, newest first.
+
+    The demo's third card. "New this week" is the Thursday review
+    list — accounts are not approved, they are read.
+    """
+    from datetime import datetime, timedelta
+
+    from app import Company, Lead, db
+    from app.models.assignment import AccountVerticalOwner
+    from app.services import rfq_board
+
+    week = datetime.utcnow() - timedelta(days=7)
+    accounts = (Company.query
+                .order_by(Company.id.desc()).limit(120).all())
+    ids = [a.id for a in accounts]
+    owners = {}
+    if ids:
+        for row in (AccountVerticalOwner.query
+                    .filter(AccountVerticalOwner.account_id.in_(ids))
+                    .all()):
+            owners.setdefault(row.account_id, []).append(
+                (row.vertical, row.emp_code))
+    rfq_board.names_for([code for pairs in owners.values()
+                         for _v, code in pairs])
+
+    open_leads = {}
+    if ids:
+        from app.services import sales_rules
+        for lead in (db.session.query(Lead.company_id)
+                     .filter(Lead.company_id.in_(ids),
+                             Lead.is_archived.isnot(True),
+                             Lead.stage.in_(sales_rules.open_stages()))
+                     .all()):
+            open_leads[lead[0]] = open_leads.get(lead[0], 0) + 1
+
+    out = []
+    for account in accounts:
+        created = getattr(account, 'created_at', None)
+        out.append({
+            'id': account.id,
+            'name': account.name or '',
+            # `_blocked` already answers this safely, including
+            # when the register cannot be read.
+            'blocked': _blocked(account),
+            'new_this_week': bool(created and created >= week),
+            'owners': [{'vertical': v,
+                        'owner': rfq_board.name_of(code)}
+                       for v, code in sorted(owners.get(account.id, []))],
+            'open_leads': open_leads.get(account.id, 0),
+            'created': str(created or '')[:10],
+        })
+    out.sort(key=lambda r: (not r['new_this_week'], r['name'].lower()))
+    return jsonify(ok=True, rows=out, total=len(out),
+                   new_this_week=sum(1 for r in out
+                                     if r['new_this_week']))

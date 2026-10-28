@@ -75,11 +75,21 @@ def api_journey(lead_id):
         return refusal
     account = (db.session.get(Company, lead.company_id)
                if lead.company_id else None)
+    from app.services import rfq_board
+    the_rfq = rfq_chain._rfq_of_lead(lead)
     return jsonify(
         ok=True,
+        # The record header reads the same words as every list:
+        # the priority chip, and whether this lead is before the
+        # RFQ, running, held, won or lost.
+        priority=getattr(the_rfq, 'priority', '') or '',
+        state=rfq_board.status_of(lead, the_rfq),
+        po=getattr(the_rfq, 'po_number', '') or '',
+        lost_reason=getattr(lead, 'lost_reason', '') or '',
         lead={'id': lead.id, 'company': lead.company or '',
               'stage': lead.stage or '',
-              'owner': lead.assigned_to or '',
+              'owner': rfq_board.name_of(lead.assigned_to),
+              'owner_code': lead.assigned_to or '',
               'vertical': lead.procam_vertical or '',
               'channel': lead.lead_channel or '',
               'channel_auto': bool(lead.lead_channel_auto),
@@ -90,7 +100,7 @@ def api_journey(lead_id):
               'rfq_expected_date': str(lead.rfq_expected_date or '')},
         journey=rfq_chain.journey(lead),
         next_action=rfq_chain.next_action(
-            rfq_chain._rfq_of_lead(lead), emp_code=session['emp_code']),
+            the_rfq, emp_code=session['emp_code']),
         may_hold=_may_hold(lead),
         kinds=list(lj.KINDS),
         asks={k: v[0] for k, v in lj.ASKS.items()},
@@ -143,10 +153,29 @@ def api_tab(lead_id, name):
 
     if name == 'conditions':
         from app.models.rfq import RfqCondition
+        from app.services import rfq_board, rfq_chain as rc
         rows = (RfqCondition.query.filter_by(rfq_id=rfq.id)
                 .order_by(RfqCondition.step_no, RfqCondition.id).all()
                 if rfq is not None else [])
-        return jsonify(ok=True, rows=[c.to_dict() for c in rows])
+        out = []
+        for c in rows:
+            item = c.to_dict()
+            item['by_name'] = rfq_board.name_of(c.created_by)
+            step = rc.BY_NO.get(c.step_no or 0) or {}
+            item['step_title'] = step.get('title', '')
+            out.append(item)
+        return jsonify(ok=True, rows=out,
+                       consolidated=_consolidated(rows))
+
+    if name == 'spend':
+        # The IOUs live in the TMS. Until the CRM-TMS link is
+        # built there is nothing to read, and the screen says who
+        # will fill it rather than showing an empty table.
+        return jsonify(
+            ok=True, rows=[], linked=False,
+            form=f'/tms/iou/new?crm_lead_no={lead.id}',
+            missing='Not set yet — the TMS IOU module, once the '
+                    'CRM-TMS link is built')
 
     if name == 'quotes':
         from app.models.quote import Quote
@@ -154,14 +183,29 @@ def api_tab(lead_id, name):
         rows = []
         q = Quote.query.filter_by(lead_id=lead.id).order_by(
             Quote.id.asc()).all()
+        from app.services import rfq_board
         for quote in q:
+            cost = getattr(quote, 'cost_amount', None)
+            sell = float(quote.total_amount or 0)
+            margin = (round((1 - float(cost) / sell) * 100)
+                      if cost and sell else None)
             rows.append({
                 'id': quote.id,
                 'number': quote_rev.display_number(quote),
                 'status': quote.status or '',
-                'amount': float(quote.total_amount or 0),
+                'amount': sell,
+                'money': rfq_board.money(sell, quote.currency),
                 'currency': quote.currency or '',
+                'margin': margin,
                 'reason': quote.revision_reason or '',
+                'approved_by': rfq_board.name_of(
+                    getattr(quote, 'approved_by_id', '')),
+                'approved_at': str(
+                    getattr(quote, 'approved_at', '') or '')[:16],
+                'sent_by': rfq_board.name_of(
+                    getattr(quote, 'submitted_by_id', '')),
+                'sent_at': str(
+                    getattr(quote, 'submitted_at', '') or '')[:16],
                 'pdf': f'/quotes/{quote.id}/pdf'})
         return jsonify(ok=True, rows=rows)
 
@@ -180,6 +224,31 @@ def api_tab(lead_id, name):
             'reason': (r.reason or '')[:200]} for r in rows])
 
     return jsonify(ok=False, error='unknown tab'), 404
+
+
+def _consolidated(rows):
+    """What actually prints on the quotation.
+
+    Two departments routinely write the same condition in
+    different words; the quotation must carry it once. Internal
+    notes never reach the customer, so they are dropped here and
+    not merely hidden on the screen.
+    """
+    import re
+
+    seen, out = {}, []
+    for row in rows:
+        if (row.visibility or '') != 'customer':
+            continue
+        key = re.sub(r'[^a-z0-9 ]', '', (row.text or '').lower()).strip()
+        if key in seen:
+            seen[key]['duplicates'] += 1
+            continue
+        item = {'type': row.type or 'Condition', 'text': row.text or '',
+                'duplicates': 0}
+        seen[key] = item
+        out.append(item)
+    return out
 
 
 @bp.route('/api/journey/<int:lead_id>/activity', methods=['POST'])

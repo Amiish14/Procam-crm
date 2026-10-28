@@ -263,13 +263,18 @@ def workload(sc=None):
             row['delayed'] += 1
 
     target = rc.ON_TIME_TARGET
+    from app.services import rfq_board
+    rfq_board.names_for(list(people))
     out = []
     for code, row in people.items():
         closed = row['closed']
         pct = (round(row['on_time'] * 100 / closed)
                if closed >= MIN_FOR_RATE else None)
         out.append({
-            'emp_code': code, 'closed': closed,
+            'emp_code': code,
+            # The sheet this replaces names people, not codes.
+            'name': rfq_board.name_of(code),
+            'closed': closed,
             'on_time': row['on_time'], 'early': row['early'],
             'delayed': row['delayed'], 'open': row['open'],
             'late_open': row['late_open'],
@@ -304,9 +309,15 @@ def heatmap(sc=None):
             rc.elapsed_hours(task) / standard)
 
     people = sorted({k[0] for k in cells})
+    from app.services import rfq_board
+    rfq_board.names_for(people)
     return {
         'people': people,
-        'steps': [{'step_no': s['no'], 'title': s['title']}
+        'names': {code: rfq_board.name_of(code) for code in people},
+        # The heat table has eleven columns on one screen, so it
+        # carries the short name the sheet uses.
+        'steps': [{'step_no': s['no'], 'title': s['title'],
+                   'short': s.get('short', s['title'])}
                   for s in rc.STEPS],
         'cells': [{'emp_code': who, 'step_no': step,
                    'ratio': round(sum(v) / len(v), 2),
@@ -332,6 +343,10 @@ def reasons(sc=None):
         delay['step'][f'{task.step_no}. '
                       f'{rc.BY_NO.get(task.step_no, {}).get("title", "")}'] += 1
         delay['person'][who] += 1
+        # Which desk the lateness sat on, which is the cut the
+        # weekly review actually acts on — a person is told, a
+        # function is staffed.
+        delay['function'][_function(task.step_no)] += 1
         delay['vertical'][_vertical(rfq) or '(none)'] += 1
         delay['customer'][_customer(rfq) or '(none)'] += 1
         if when:
@@ -339,6 +354,19 @@ def reasons(sc=None):
     return {'delay': {k: dict(v.most_common())
                       for k, v in delay.items()},
             'good_practice': dict(good.most_common())}
+
+
+#: The twelve steps belong to five desks. `who` on the step is
+#: the role the chain routes to, so it is the honest grouping.
+FUNCTIONS = {'sales': 'Sales / BD', 'coordinator': 'RFQ Coordinator',
+             'scm': 'SCM', 'ops': 'Operations',
+             'head': 'Vertical Head'}
+
+
+def _function(step_no):
+    from app.services import rfq_chain as rc
+    step = rc.BY_NO.get(step_no) or {}
+    return FUNCTIONS.get(step.get('who', ''), 'Other')
 
 
 def _vertical(rfq):

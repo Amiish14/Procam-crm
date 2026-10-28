@@ -71,13 +71,17 @@ def chain_page():
 @bp.route('/api/chain/board')
 @_gate
 def api_board():
-    """Where every RFQ in view is sitting now."""
-    from collections import Counter
+    """Where every RFQ in view is sitting now.
 
+    One row per RFQ in the shape `rfq_board.row` gives every other
+    list, so the chain board and the cockpit cannot disagree about
+    which step a lead is on.
+    """
+    from app import Lead, db
     from app.models.rfq import RFQ
-    from app.models.task_engine import TaskInstanceStatus
+    from app.services import rfq_board as rb
 
-    rows, per_step = [], Counter()
+    rfqs = []
     for rfq in RFQ.query.order_by(RFQ.id.desc()).limit(400).all():
         try:
             from app.access import records
@@ -85,26 +89,40 @@ def api_board():
                 continue
         except Exception:                                 # noqa: BLE001
             pass
-        live = [t for t in rc.steps_for(rfq).values()
-                if t.status in TaskInstanceStatus.OPEN]
-        here = min((t.step_no for t in live), default=None)
-        task = next((t for t in live if t.step_no == here), None)
-        colour, words = (rc.verdict(task, priority=rfq.priority)
-                         if task is not None else (rc.GREY, 'not started'))
-        if here:
-            per_step[here] += 1
-        rows.append({
-            'rfq_id': rfq.id, 'rfq_number': rfq.rfq_number or '',
-            'subject': (rfq.subject or '')[:90],
-            'priority': rfq.priority or '',
-            'held': bool(rfq.held_at),
-            'step_no': here, 'colour': colour, 'words': words,
-            'holder': getattr(task, 'owner_user_id', '') or '',
-            'strip': rc.board(rfq),
-        })
-    bars = [{'step_no': s['no'], 'title': s['title'],
-             'count': per_step.get(s['no'], 0)} for s in rc.STEPS]
-    return jsonify(ok=True, rows=rows, bars=bars, total=len(rows))
+        rfqs.append(rfq)
+
+    leads = {}
+    ids = [r.lead_id for r in rfqs if r.lead_id]
+    if ids:
+        for lead in Lead.query.filter(Lead.id.in_(ids)).all():
+            leads[lead.id] = lead
+    rb.names_for([r.lead_driver for r in rfqs]
+                 + [lead.assigned_to for lead in leads.values()])
+
+    rows = []
+    for rfq in rfqs:
+        lead = leads.get(rfq.lead_id)
+        if lead is None:
+            continue
+        rows.append(rb.row(lead, rfq))
+    rows.sort(key=_soonest)
+    panel = rb.sitting(rows)
+    return jsonify(ok=True, rows=rows, total=len(rows),
+                   bars=panel['bars'], bottleneck=panel['bottleneck'],
+                   steps=[{'step_no': s['no'], 'title': s['title']}
+                          for s in rc.STEPS],
+                   may_clear_mail=_may_clear_mail())
+
+
+#: Overdue first, then due soonest; closed rows last. The board is
+#: read top-down by somebody deciding what to do next.
+_ORDER = {'rfq-t-red': 0, 'rfq-t-amb': 1, 'rfq-t-ok': 2,
+          'rfq-t-info': 3, 'rfq-t-hold': 4}
+
+
+def _soonest(row):
+    return (_ORDER.get((row.get('now') or {}).get('tone'), 9),
+            -(row.get('step_no') or 0))
 
 
 @bp.route('/api/chain/<int:rfq_id>')

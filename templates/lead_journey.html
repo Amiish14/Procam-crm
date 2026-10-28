@@ -7,344 +7,514 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
-<style>
-  .lj { max-width:1080px; margin:0 auto; padding:18px 16px 60px; }
-  .lj h1 { font-family:Barlow,sans-serif; font-size:22px;
-      font-weight:800; margin:0 0 3px; }
-  .hdr { background:#fff; border:1px solid #e5e7eb;
-      border-radius:11px; padding:14px 16px; margin-bottom:16px; }
-  .hdr .row { color:#6b7280; font-size:13px; line-height:1.7; }
-  .chip { display:inline-block; background:#f3f4f6; color:#374151;
-      border-radius:5px; padding:2px 8px; font-size:11.5px;
-      font-weight:700; margin-right:6px; }
-  .chip.auto { background:#dbeafe; color:#1e40af; }
-  .lane { margin:18px 0 6px; font-family:Barlow,sans-serif;
-      font-size:13px; font-weight:700; color:#374151; }
-  .boxes { display:flex; gap:4px; flex-wrap:wrap; }
-  .bx { min-width:30px; height:30px; padding:0 6px; border-radius:6px;
-      display:flex; align-items:center; justify-content:center;
-      font-size:11px; font-weight:700; color:#fff; cursor:default; }
-  .bx.grey { background:#e5e7eb; color:#9ca3af; }
-  .bx.green { background:#16a34a; }
-  .bx.orange { background:#f59e0b; }
-  .bx.red { background:#dc2626; }
-  .bx.purple { background:#7c3aed; }
-  .bx.blue { background:#2563eb; }
-  .bx.done { background:#16a34a; }
-  .bx.current { outline:2px solid #111827; outline-offset:1px; }
-  .bx.future { background:#f3f4f6; color:#9ca3af; }
-  .tabs { display:flex; gap:4px; margin:22px 0 12px;
-      border-bottom:1px solid #e5e7eb; flex-wrap:wrap; }
-  .tab { padding:7px 13px; font-size:13px; font-weight:600;
-      cursor:pointer; border-bottom:2px solid transparent;
-      color:#6b7280; }
-  .tab.on { color:#111827; border-bottom-color:#111827; }
-  .pane { display:none; } .pane.on { display:block; }
-  .bar { display:flex; align-items:center; gap:9px; margin:5px 0;
-      font-size:12.5px; }
-  .bar .name { width:170px; color:#374151; }
-  .bar .track { flex:1; background:#f3f4f6; border-radius:4px;
-      height:17px; position:relative; }
-  .bar .fill { height:17px; border-radius:4px; }
-  .bar .mark { position:absolute; top:-2px; bottom:-2px; width:2px;
-      background:#111827; opacity:.45; }
-  .bar .val { width:112px; text-align:right; color:#6b7280;
-      font-variant-numeric:tabular-nums; }
-  form.act { background:#fff; border:1px solid #e5e7eb;
-      border-radius:11px; padding:14px 16px; }
-  form.act label { display:block; font-size:12px; color:#6b7280;
-      margin:9px 0 3px; font-weight:600; }
-  form.act select, form.act input, form.act textarea {
-      font:inherit; font-size:13.5px; border:1px solid #e5e7eb;
-      border-radius:7px; padding:7px 9px; width:100%;
-      max-width:360px; }
-  .lj-btn { border:1px solid #111827; background:#111827; color:#fff;
-      border-radius:7px; padding:7px 15px; font-weight:700;
-      font-size:13.5px; cursor:pointer; margin-top:13px; }
-  .msg { font-size:13px; margin-top:9px; }
-  .msg.bad { color:#b91c1c; } .msg.good { color:#166534; }
-  .note { color:#6b7280; font-size:12.5px; }
-  .next { background:#fff; border:1px solid #e5e7eb;
-      border-radius:11px; padding:13px 16px; margin-bottom:14px;
-      display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-  .next b { font-size:14.5px; }
-  .next .when { font-weight:600; }
-  .next .who { color:#6b7280; font-size:13px; }
-  .next .sp { margin-left:auto; display:flex; gap:7px; }
-  .detail { background:#f9fafb; border:1px solid #e5e7eb;
-      border-radius:10px; padding:12px 15px; margin:10px 0 0;
-      font-size:13px; line-height:1.7; }
-  .detail b { font-weight:700; }
-  .bx { cursor:pointer; }
-  a.lj-btn { text-decoration:none; display:inline-block; }
-</style>
 </head>
-<body>
-<div class="lj">
-  <div id="hdr"></div>
+<body class="rfq-page">
+{% include "_crm_topbar.html" %}
+<div class="rfq-ui">
+  <div id="head"></div>
   <div id="next"></div>
-  <div id="journey"></div>
-  <div id="detail"></div>
 
-  <div class="tabs" id="tabs"></div>
-  <div class="pane on" id="pane-journey"></div>
-  <div class="pane" id="pane-steps"></div>
-  <div class="pane" id="pane-activity"></div>
-  <div class="pane" id="pane-conditions"></div>
-  <div class="pane" id="pane-quotes"></div>
-  <div class="pane" id="pane-audit"></div>
-  <div class="pane" id="pane-spend">
-    <p class="note">IOUs for this lead are in the TMS. The spend
-      figures appear here once the CRM–TMS link exists.</p>
-    <p><a class="lj-btn" id="iou" href="#" target="_blank"
-          rel="noopener">Open TMS IOU form</a></p>
-  </div>
+  <div class="rfq-ptabs" role="tablist" id="tabs"></div>
+  <div class="rfq-pane on" id="pane-journey"></div>
+  <div class="rfq-pane" id="pane-steps"></div>
+  <div class="rfq-pane" id="pane-activity"></div>
+  <div class="rfq-pane" id="pane-conditions"></div>
+  <div class="rfq-pane" id="pane-quotes"></div>
+  <div class="rfq-pane" id="pane-spend"></div>
+  <div class="rfq-pane" id="pane-audit"></div>
 </div>
 
+<script src="{{ url_prefix }}/static/js/rfq_ui.js"></script>
 <script>
 const P = "{{ url_prefix }}";
 const LEAD = {{ lead_id|int }};
-let DATA = null;
-const esc = s => String(s == null ? '' : s)
-  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-const hrs = v => v == null ? '—'
-  : (v >= 48 ? (v/24).toFixed(1)+'d' : v.toFixed(1)+'h');
+const esc = RFQ.esc;
+let DATA = null, SELECTED = null, TAB = 'journey';
+
+const TABS = [['journey', 'Journey'], ['steps', 'Steps & time'],
+              ['activity', 'Activity'], ['conditions', 'Conditions'],
+              ['quotes', 'Quotes'], ['spend', 'Spend (IOU)'],
+              ['audit', 'Audit']];
 
 async function load() {
   const r = await fetch(P + '/api/journey/' + LEAD);
   if (!r.ok) {
-    document.getElementById('hdr').innerHTML =
-      '<p class="note">This page is not switched on, or the lead '
-      + 'is not one you can see.</p>';
+    document.getElementById('head').innerHTML =
+      '<p class="rfq-empty">This page is not switched on, or the '
+      + 'lead is not one you can see.</p>';
     return;
   }
   DATA = await r.json();
-  header(); nextAction(); journey(); tabs(); activity(); chart();
-  const iou = document.getElementById('iou');
-  if (iou) iou.href = '/tms/iou/new?crm_lead_no=' + LEAD;
+  head(); nextAction(); tabs(); journey(); activity();
   const want = new URLSearchParams(location.search).get('step');
-  if (want) showStep(parseInt(want, 10));
+  if (want) selectNode('after', parseInt(want, 10));
 }
 
-function header() {
+/* ── header ───────────────────────────────────────────────────── */
+function head() {
   const l = DATA.lead, j = DATA.journey;
-  document.getElementById('hdr').innerHTML = `
-    <h1>${esc(l.company) || 'Lead #' + l.id}</h1>
-    <div class="row">
-      <span class="chip">Lead #${l.id}</span>
-      ${j.rfq_number ? `<span class="chip">${esc(j.rfq_number)}</span>` : ''}
-      <span class="chip">${esc(l.stage)}</span>
-      ${l.channel ? `<span class="chip ${l.channel_auto ? 'auto' : ''}">${
-        esc(l.channel)}${l.channel_auto ? ' · automatic' : ''}</span>` : ''}
-      <br>
-      ${l.account ? 'Account ' + esc(l.account) : '<b>no account yet</b>'}
-      · owner ${esc(l.owner) || '—'}
-      · ${esc(l.vertical) || 'no vertical'}
-      ${j.dev_stage ? ' · ' + esc(j.dev_stage) : ''}
-    </div>`;
+  const bits = [
+    ['Account', l.account || l.company || '—'],
+    ['Owner', l.owner || '—'],
+    ['Vertical', l.vertical || '—'],
+    ['Channel', (l.channel || '—')
+      + (l.channel_auto ? ' · automatic' : '')],
+  ];
+  if (l.expected_rfq_timing) bits.push(['RFQ expected',
+    l.expected_rfq_timing]);
+  document.getElementById('head').innerHTML = `
+    <div class="rfq-ph">
+      <h1>Lead #${l.id}</h1>
+      ${j.rfq_number
+        ? `<span class="rfq-mono">${esc(j.rfq_number)}</span>` : ''}
+      ${RFQ.priorityChip(DATA.priority || '')}
+      ${RFQ.statusChip(DATA.state || '')}
+    </div>
+    <div class="rfq-meta">${bits.map(([k, v]) =>
+      `<span>${esc(k)} <b>${esc(v)}</b></span>`).join('')}</div>`;
 }
 
+/* ── next action ──────────────────────────────────────────────── */
 function nextAction() {
   const n = DATA.next_action || {};
   const box = document.getElementById('next');
-  if (!n.step_no) {
-    box.innerHTML = `<div class="next"><span class="who">${
-      esc(n.words || 'nothing open')}</span></div>`;
+  if (DATA.state === 'won' || DATA.state === 'lost') {
+    // A closed lead has no next action, and a card saying
+    // "nothing open" is noise on the one screen that should
+    // read as finished.
+    box.innerHTML = '';
     return;
   }
-  const colour = {red:'#dc2626', orange:'#b45309', green:'#15803d',
-                  purple:'#6d28d9', blue:'#1d4ed8'}[n.colour] || '#6b7280';
-  box.innerHTML = `<div class="next">
-    <b>Next: ${n.step_no}. ${esc(n.title)}</b>
-    <span class="when" style="color:${colour}">${esc(n.words)}</span>
-    <span class="who">${n.can_act ? 'yours to do'
-      : 'waiting on ' + (esc(n.owner) || 'nobody')}</span>
-    <span class="sp">
-      <button class="lj-btn" onclick="showStep(${n.step_no})">Open it</button>
-      ${DATA.may_hold ? `<button class="lj-btn"
-        onclick="pick('activity')">Hold / priority on the RFQ page</button>` : ''}
-    </span></div>`;
-}
-
-async function showStep(stepNo) {
-  const box = document.getElementById('detail');
-  const r = await fetch(P + '/api/journey/' + LEAD + '/step/' + stepNo);
-  if (!r.ok) { box.innerHTML = ''; return; }
-  const s = (await r.json()).step;
-  const bits = [`<b>${s.step_no}. ${esc(s.title)}</b>`];
-  if (s.state === 'future') {
-    bits.push(`Not reached yet. It will sit with ${
-      esc(s.responsible) || 'whoever the rules choose'}.`);
-  } else {
-    bits.push(`${s.state === 'done' ? 'Closed' : 'Open'} ·
-      ${esc(s.owner_name || s.owner) || 'nobody'} ·
-      ${s.hours}h${s.standard ? ' against a ' + s.standard + 'h standard' : ''}`);
-    if (s.held_hours) bits.push(`${s.held_hours}h of that was on hold
-      and is not counted.`);
-    if (s.result) bits.push(`Result: <b>${esc(s.result)}</b>`);
-    if (s.reason) bits.push(`Reason: ${esc(s.reason)}${
-      s.remarks ? ' — ' + esc(s.remarks) : ''}`);
-    if (s.closed_at) bits.push(`Closed ${esc(s.closed_at)} by ${
-      esc(s.closed_by) || 'the system'}`);
-    const ev = s.evidence || {};
-    if (Object.keys(ev).length) {
-      bits.push('Evidence: ' + Object.entries(ev)
-        .filter(([, v]) => v !== null && v !== '')
-        .map(([k, v]) => esc(k) + ' ' + esc(v)).join(' · '));
-    }
-    if (s.waiting_for_customer) bits.push('Waiting for the customer.');
+  if (!n.step_no) {
+    box.innerHTML = `<div class="rfq-action"><div class="ah">
+      <h2>Next action</h2><span class="rfq-sub">${
+        esc(n.words || 'Nothing is open on this lead.')}</span>
+      </div></div>`;
+    return;
   }
-  box.innerHTML = `<div class="detail">${bits.join('<br>')}</div>`;
-  box.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  const tone = {red: 'rfq-t-red', orange: 'rfq-t-amb',
+                green: 'rfq-t-ok', purple: 'rfq-t-hold',
+                blue: 'rfq-t-info'}[n.colour] || 'rfq-t-grey';
+  const mine = n.can_act;
+  box.innerHTML = `<div class="rfq-action">
+    <div class="ah">
+      <h2>Next action: ${n.step_no}. ${esc(n.title)}</h2>
+      <span class="rfq-sub">${esc(n.event || '')}</span>
+      <span class="rfq-rag ${tone}">${esc(n.words)}</span>
+    </div>
+    ${mine ? '' : `<p class="rfq-call info">Waiting on ${
+      esc(n.owner_name || n.owner || 'nobody')}. You can see it;
+      only they, the vertical head or a director can act.</p>`}
+    <div class="rfq-acts">
+      <button class="rfq-btn p" type="button"
+        onclick="selectNode('after', ${n.step_no})">Open the step</button>
+      ${DATA.may_hold ? `<a class="rfq-btn"
+        href="${P}/rfqs/chain">Hold / priority on the chain board</a>`
+        : ''}
+    </div></div>`;
 }
 
-function journey() {
-  const j = DATA.journey;
-  document.getElementById('journey').innerHTML = `
-    <div class="lane">Before the RFQ</div>
-    <div class="boxes">${j.before.map((b, i) =>
-      `<div class="bx ${b.state}" title="${esc(b.title)}">${i + 1}</div>`
-    ).join('')}</div>
-    <div class="lane">RFQ to order</div>
-    <div class="boxes">${j.after.map(b => {
-      const cls = b.state === 'done' ? 'done'
-        : b.state === 'current' ? (b.colour + ' current') : 'future';
-      const tip = `${b.step_no}. ${b.title}`
-        + (b.words ? ' — ' + b.words : '')
-        + (b.owner ? ' (' + b.owner + ')' : '');
-      return `<div class="bx ${cls}" title="${esc(tip)}"
-        onclick="showStep(${b.step_no})">${b.step_no}</div>`;
-    }).join('')}</div>`;
-}
-
+/* ── tabs ─────────────────────────────────────────────────────── */
 function tabs() {
-  const names = [['journey','Journey'], ['steps','Steps & time'],
-                 ['activity','Activity'], ['conditions','Conditions'],
-                 ['quotes','Quotes'], ['audit','Audit'],
-                 ['spend','Spend']];
-  document.getElementById('tabs').innerHTML = names.map(([k, label], i) =>
-    `<div class="tab ${i === 0 ? 'on' : ''}" data-k="${k}"
-       onclick="pick('${k}')">${label}</div>`).join('');
-  document.getElementById('pane-journey').innerHTML =
-    '<p class="note">Each box above shows where this enquiry has '
-    + 'reached. Hover one for who holds it and how long it has '
-    + 'been there.</p>';
+  document.getElementById('tabs').innerHTML = TABS.map(([k, label]) =>
+    `<button type="button" role="tab" data-ptab="${k}"
+      class="${TAB === k ? 'on' : ''}">${label}</button>`).join('');
 }
 
 function pick(k) {
-  document.querySelectorAll('.tab').forEach(t =>
-    t.classList.toggle('on', t.dataset.k === k));
-  document.querySelectorAll('.pane').forEach(p =>
+  TAB = k;
+  tabs();
+  document.querySelectorAll('.rfq-pane').forEach(p =>
     p.classList.toggle('on', p.id === 'pane-' + k));
-  if (['conditions', 'quotes', 'audit'].includes(k)) loadTab(k);
+  if (k === 'steps') steps();
+  if (['conditions', 'quotes', 'audit', 'spend'].includes(k)) {
+    loadTab(k);
+  }
 }
 
+/* ── the flowchart ────────────────────────────────────────────── */
+function journey() {
+  const j = DATA.journey;
+  const before = j.before.map((b, i) =>
+    node('before', i, b.title, beforeClass(b), b.sub || ''));
+  const after = j.after.map(b =>
+    node('after', b.step_no, b.step_no + '. ' + b.title,
+         afterClass(b), afterSub(b)));
+  let end = '';
+  if (DATA.state === 'won') {
+    end = `<div class="rfq-nd"><span class="rfq-arr"></span>
+      <span class="rfq-box end"><b>Won</b><span>${
+        esc(DATA.po || 'PO recorded')}</span></span></div>`;
+  } else if (DATA.state === 'lost') {
+    end = `<div class="rfq-nd"><span class="rfq-arr"></span>
+      <span class="rfq-box lost"><b>Lost</b><span>${
+        esc(DATA.lost_reason || '')}</span></span></div>`;
+  }
+  document.getElementById('pane-journey').innerHTML = `
+    <section class="rfq-card rfq-flow">
+      <div class="rfq-lane">
+        <h3 class="rfq-h3">Before the RFQ ${
+          DATA.state === 'pre'
+            ? RFQ.chip('in progress', 'rfq-c-brand') : ''}</h3>
+        <div class="rfq-nodes">${before.join('')}</div>
+      </div>
+      <div class="rfq-lane">
+        <h3 class="rfq-h3">RFQ to order ${
+          DATA.state === 'rfq'
+            ? RFQ.chip('in progress', 'rfq-c-brand') : ''}</h3>
+        <div class="rfq-nodes">${after.join('')}${end}</div>
+      </div>
+      <p class="rfq-sub" style="margin:0">Click any box to see who
+        did it, when, how long it took and what it needs.</p>
+    </section>
+    <div id="detail"></div>
+    <div id="gantt"></div>`;
+  if (SELECTED) showDetail(SELECTED.lane, SELECTED.no);
+  chart();
+}
+
+function node(lane, no, title, cls, sub) {
+  const sel = SELECTED && SELECTED.lane === lane && SELECTED.no === no
+    ? ' sel' : '';
+  const last = lane === 'after' && no === DATA.journey.after.length;
+  const arrow = (lane === 'before' && no < 7) || (lane === 'after'
+    && !last) ? '<span class="rfq-arr"></span>' : '';
+  return `<div class="rfq-nd">
+    <button type="button" class="rfq-box ${cls}${sel}"
+      data-lane="${lane}" data-no="${no}">
+      <b>${esc(title)}</b><span>${esc(sub)}</span></button>
+    ${arrow}</div>`;
+}
+
+function beforeClass(b) {
+  if (b.state === 'skipped') return 'skip';
+  if (b.state === 'done') return 'done';
+  if (b.state === 'current') return 'cur g';
+  return '';
+}
+
+function afterClass(b) {
+  if (b.state === 'done') return 'done';
+  if (b.state === 'current') {
+    return 'cur ' + ({red: 'r', orange: 'o', green: 'g',
+                      purple: 'h', blue: 'w'}[b.colour] || 'g');
+  }
+  return '';
+}
+
+function afterSub(b) {
+  const who = (b.owner_name || '').split(' ')[0];
+  if (b.state === 'done') {
+    return (who ? who + ' · ' : '') + RFQ.hours(b.hours);
+  }
+  if (b.state === 'current') {
+    return (who ? who + ' · ' : '') + (b.words || '');
+  }
+  return who || 'not started';
+}
+
+function selectNode(lane, no) {
+  SELECTED = {lane: lane, no: no};
+  if (TAB !== 'journey') pick('journey'); else journey();
+  const box = document.getElementById('detail');
+  if (box) box.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
+async function showDetail(lane, no) {
+  const box = document.getElementById('detail');
+  if (!box) return;
+  if (lane === 'before') {
+    const b = DATA.journey.before[no];
+    box.innerHTML = `<section class="rfq-card">
+      <div class="rfq-card-h"><h2>${esc(b.title)}</h2></div>
+      <p class="rfq-sub" style="margin:0">${
+        esc(b.sub || 'An account-development stage. Logging an '
+            + 'activity moves the account along it.')}</p></section>`;
+    return;
+  }
+  const r = await fetch(P + '/api/journey/' + LEAD + '/step/' + no);
+  if (!r.ok) {
+    const b = DATA.journey.after.find(x => x.step_no === no) || {};
+    box.innerHTML = `<section class="rfq-card">
+      <div class="rfq-card-h"><h2>${no}. ${esc(b.title || '')}</h2></div>
+      <p class="rfq-sub" style="margin:0">Starts when the RFQ mail
+        arrives.</p></section>`;
+    return;
+  }
+  const s = (await r.json()).step;
+  const meta = [
+    ['Responsible', s.owner_name || s.owner || s.responsible || '—'],
+    ['Standard', s.standard ? RFQ.hours(s.standard) : 'customer clock'],
+  ];
+  if (s.started_at) meta.push(['Started', s.started_at]);
+  if (s.closed_at) meta.push(['Closed', s.closed_at
+    + ' (' + RFQ.hours(s.hours) + ')']);
+  if (s.result) meta.push(['Result', s.result]);
+  box.innerHTML = `<section class="rfq-card">
+    <div class="rfq-card-h"><h2>${s.step_no}. ${esc(s.title)}</h2></div>
+    <div class="rfq-meta">${meta.map(([k, v]) =>
+      `<span>${esc(k)} <b>${esc(v)}</b></span>`).join('')}</div>
+    ${s.reason ? `<p class="rfq-sub" style="margin:6px 0 0">${
+      esc(s.reason)}${s.remarks ? ' — ' + esc(s.remarks) : ''}</p>` : ''}
+    ${s.held_hours ? `<p class="rfq-sub" style="margin:6px 0 0">${
+      RFQ.hours(s.held_hours)} of that was on hold and is not
+      counted.</p>` : ''}
+    ${s.waiting_for_customer
+      ? '<p class="rfq-call info">Waiting for the customer.</p>' : ''}
+  </section>`;
+}
+
+/* ── time taken at each step ──────────────────────────────────── */
+async function chart() {
+  const box = document.getElementById('gantt');
+  if (!box || !DATA.journey.rfq_id) return;
+  const r = await fetch(P + '/api/reports/rfq/'
+                        + DATA.journey.rfq_id + '/chart');
+  if (!r.ok) {
+    box.innerHTML = '<p class="rfq-empty">The time chart needs the '
+      + 'reports switched on.</p>';
+    return;
+  }
+  const j = await r.json();
+  const bars = j.bars.filter(b => b.start);
+  if (!bars.length) { box.innerHTML = ''; return; }
+  const t0 = Date.parse(j.from);
+  const ends = bars.map(b => Date.parse(b.start) + b.hours * 3600e3);
+  const t1 = Math.max.apply(null, ends.concat([Date.now()]));
+  const span = Math.max(3600e3, t1 - t0);
+  const COLOUR = {red: '--p-danger', orange: '--p-warning',
+                  green: '--p-success', blue: '--p-info',
+                  purple: '--p-hold', grey: '--p-grey'};
+  box.innerHTML = `<section class="rfq-card">
+    <div class="rfq-card-h"><h2>Time taken at each step</h2>
+      <p>Bar = time held; black mark = standard time.</p></div>
+    <div class="rfq-gantt">${bars.map(b => {
+      const left = (Date.parse(b.start) - t0) / span * 100;
+      const width = Math.max(0.6, b.hours * 3600e3 / span * 100);
+      const mark = b.standard
+        ? `<i style="left:${Math.min(99.5, left
+            + b.standard * 3600e3 / span * 100)}%;width:2px;
+            background:var(--p-ink)"></i>` : '';
+      return `<button type="button" class="rfq-gr"
+        data-lane="after" data-no="${b.step_no}">
+        <span>${b.step_no}. ${esc(b.title)}</span>
+        <span class="rfq-gt">
+          <i style="left:${left}%;width:${Math.min(width,
+             100 - left)}%;background:var(${
+             COLOUR[b.colour] || '--p-grey'})"></i>${mark}</span>
+        <span class="rfq-sub">${RFQ.hours(b.hours)}</span>
+      </button>`;
+    }).join('')}</div>
+    <div class="rfq-legend">
+      <span><i style="background:var(--p-success)"></i>On time</span>
+      <span><i style="background:var(--p-danger)"></i>Delayed /
+        overdue</span>
+      <span><i style="background:var(--p-warning)"></i>Running</span>
+      <span><i style="background:var(--p-hold)"></i>On hold</span>
+    </div></section>`;
+}
+
+/* ── steps and time ───────────────────────────────────────────── */
+function steps() {
+  const box = document.getElementById('pane-steps');
+  if (box.dataset.loaded) return;
+  const rows = DATA.journey.after;
+  if (!DATA.journey.rfq_number) {
+    box.innerHTML = '<p class="rfq-empty">Steps start when the RFQ '
+      + 'arrives. Before that, see Journey and Activity.</p>';
+    return;
+  }
+  box.dataset.loaded = '1';
+  box.innerHTML = `<section class="rfq-card"><div class="rfq-tw">
+    <table><thead><tr><th class="n">#</th><th>Step</th>
+      <th>Responsible</th><th class="n">Standard</th><th>Closed</th>
+      <th class="n">Taken</th><th>Result · reason</th></tr></thead>
+    <tbody>${rows.map(b => `<tr class="row" data-lane="after"
+      data-no="${b.step_no}">
+      <td class="n">${b.step_no}</td><td>${esc(b.title)}</td>
+      <td>${esc(b.owner_name || b.owner || '—')}</td>
+      <td class="n">${b.standard ? RFQ.hours(b.standard)
+        : '<span class="rfq-sub">customer</span>'}</td>
+      <td class="rfq-sub">${esc(b.closed_at || '–')}</td>
+      <td class="n">${b.hours == null ? '–' : RFQ.hours(b.hours)}</td>
+      <td>${result(b)}</td></tr>`).join('')}</tbody></table>
+    </div></section>`;
+}
+
+function result(b) {
+  if (b.state === 'done') {
+    const tone = b.result === 'Delayed' ? 'rfq-t-red'
+      : b.result === 'Early' ? 'rfq-t-info' : 'rfq-t-ok';
+    return b.result
+      ? `<b class="${tone}">${esc(b.result)}</b>`
+      : '<span class="rfq-sub">Done</span>';
+  }
+  if (b.state === 'current') {
+    const tone = {red: 'rfq-t-red', orange: 'rfq-t-amb',
+                  green: 'rfq-t-ok', purple: 'rfq-t-hold',
+                  blue: 'rfq-t-info'}[b.colour] || 'rfq-t-grey';
+    return `<span class="rfq-rag ${tone}">${esc(b.words)}</span>`;
+  }
+  return '<span class="rfq-sub">Not started</span>';
+}
+
+/* ── the read-only tabs ───────────────────────────────────────── */
 async function loadTab(name) {
   const box = document.getElementById('pane-' + name);
   if (box.dataset.loaded) return;
   const r = await fetch(P + '/api/journey/' + LEAD + '/tab/' + name);
-  if (!r.ok) { box.innerHTML = '<p class="note">Not available.</p>';
-               return; }
-  const rows = (await r.json()).rows || [];
+  if (!r.ok) {
+    box.innerHTML = '<p class="rfq-empty">Not available.</p>';
+    return;
+  }
+  const j = await r.json();
   box.dataset.loaded = '1';
-  if (!rows.length) {
-    box.innerHTML = '<p class="note">Nothing here yet.</p>';
-    return;
-  }
-  if (name === 'conditions') {
-    box.innerHTML = rows.map(c => `<p style="font-size:13px">
-      <b>${c.step_no}. ${esc(c.type) || 'Condition'}</b> —
-      ${esc(c.text)}
-      <span class="chip">${c.customer_facing
-        ? 'customer-facing' : 'internal only'}</span>
-      ${c.approved ? '<span class="chip">approved</span>' : ''}
-      </p>`).join('');
-  } else if (name === 'quotes') {
-    box.innerHTML = rows.map(q => `<p style="font-size:13px">
-      <b>${esc(q.number)}</b> — ${esc(q.status)} ·
-      ${q.currency} ${q.amount.toLocaleString('en-IN')}
-      ${q.reason ? '· ' + esc(q.reason) : ''}
-      <a class="lj-btn" href="${P + q.pdf}" target="_blank"
-         rel="noopener">PDF</a></p>`).join('');
-  } else {
-    box.innerHTML = rows.map(a => `<p style="font-size:12.5px">
-      <span class="note">${esc(a.at)} · ${esc(a.actor)}</span><br>
-      <b>${esc(a.action)}</b> ${esc(a.reason)}</p>`).join('');
-  }
+  if (name === 'conditions') return conditions(box, j);
+  if (name === 'quotes') return quotes(box, j);
+  if (name === 'spend') return spend(box, j);
+  return audit(box, j);
 }
 
-async function chart() {
-  const j = DATA.journey;
-  if (!j.rfq_number) {
-    document.getElementById('pane-steps').innerHTML =
-      '<p class="note">No RFQ yet, so there is nothing timed.</p>';
+function conditions(box, j) {
+  if (!j.rows.length) {
+    box.innerHTML = `<section class="rfq-card">
+      <div class="rfq-card-h"><h2>Conditions by department</h2></div>
+      <p class="rfq-empty">None yet. Departments add conditions
+        while closing their RFQ steps.</p></section>`;
     return;
   }
-  const r = await fetch(P + '/api/reports/rfq/'
-                        + (DATA.journey.rfq_id || 0) + '/chart');
-  let bars = null;
-  if (r.ok) bars = (await r.json()).bars;
-  if (!bars) {
-    document.getElementById('pane-steps').innerHTML =
-      '<p class="note">The time chart needs the reports switched '
-      + 'on.</p>';
-    return;
-  }
-  const most = Math.max(1, ...bars.map(b =>
-    Math.max(b.hours || 0, b.standard || 0)));
-  document.getElementById('pane-steps').innerHTML = bars.map(b => {
-    if (b.hours == null) return `<div class="bar">
-      <div class="name">${b.step_no}. ${esc(b.title)}</div>
-      <div class="track"></div>
-      <div class="val">not started</div></div>`;
-    const colour = {red:'#dc2626', orange:'#f59e0b', green:'#16a34a',
-                    purple:'#7c3aed', blue:'#2563eb'}[b.colour] || '#9ca3af';
-    return `<div class="bar">
-      <div class="name">${b.step_no}. ${esc(b.title)}</div>
-      <div class="track">
-        <div class="fill" style="width:${(b.hours/most)*100}%;
-             background:${colour}"></div>
-        ${b.standard ? `<div class="mark"
-          style="left:${(b.standard/most)*100}%"></div>` : ''}
-      </div>
-      <div class="val">${hrs(b.hours)}${b.standard
-        ? ' / ' + hrs(b.standard) : ''}</div></div>`;
-  }).join('') + '<p class="note">The dark line is the standard time '
-    + 'for that step. Time on hold is not counted.</p>';
+  box.innerHTML = `<section class="rfq-card">
+    <div class="rfq-card-h"><h2>Conditions by department</h2>
+      <p>Internal notes never reach the customer.</p></div>
+    <div class="rfq-tw"><table><thead><tr><th>Step</th><th>By</th>
+      <th>Type</th><th>Text</th><th>Visibility</th></tr></thead>
+    <tbody>${j.rows.map(c => `<tr>
+      <td class="rfq-sub">${c.step_no}. ${esc(c.step_title)}</td>
+      <td>${esc(c.by_name || '—')}</td><td>${esc(c.type)}</td>
+      <td>${esc(c.text)}</td>
+      <td>${c.customer_facing
+        ? RFQ.chip('Customer-facing', 'rfq-c-ok')
+        : RFQ.chip('Internal', 'rfq-c-brand')}</td></tr>`).join('')}
+    </tbody></table></div>
+    <h3 class="rfq-h3" style="margin:14px 0 6px">Goes on the
+      quotation</h3>
+    ${j.consolidated.length
+      ? `<ul class="rfq-list">${j.consolidated.map(c =>
+          `<li>${esc(c.text)}${c.duplicates
+            ? ' <span class="rfq-sub">(duplicate merged)</span>'
+            : ''}</li>`).join('')}</ul>`
+      : '<p class="rfq-empty">Nothing customer-facing yet.</p>'}
+    </section>`;
 }
 
+function quotes(box, j) {
+  if (!j.rows.length) {
+    box.innerHTML = `<section class="rfq-card">
+      <div class="rfq-card-h"><h2>Quotation versions</h2></div>
+      <p class="rfq-empty">The quotation is created when the cost
+        sheet is saved.</p></section>`;
+    return;
+  }
+  const tone = s => s === 'Submitted' ? 'rfq-c-ok'
+    : s === 'Draft' ? 'rfq-c-amb'
+    : s === 'Approved' ? 'rfq-c-info' : '';
+  box.innerHTML = `<section class="rfq-card">
+    <div class="rfq-card-h"><h2>Quotation versions</h2>
+      <p>Revisions keep the first quote's number.</p></div>
+    <div class="rfq-tw"><table><thead><tr><th>Quotation</th>
+      <th class="n">Value</th><th class="n">Margin</th><th>Reason</th>
+      <th>Approved</th><th>Status</th><th>Sent</th><th></th>
+      </tr></thead><tbody>${j.rows.map(q => `<tr>
+      <td class="rfq-mono">${esc(q.number)}</td>
+      <td class="n">${esc(q.money || q.amount)}</td>
+      <td class="n">${q.margin == null ? '–' : q.margin + '%'}</td>
+      <td class="rfq-sub">${esc(q.reason || '–')}</td>
+      <td class="rfq-sub">${q.approved_by
+        ? esc(q.approved_by) + ', ' + esc(q.approved_at) : 'Pending'}</td>
+      <td>${RFQ.chip(q.status, tone(q.status))}</td>
+      <td class="rfq-sub">${q.sent_at
+        ? esc(q.sent_at) + '<br>' + esc(q.sent_by) : '–'}</td>
+      <td><a class="rfq-btn s" href="${P}${esc(q.pdf)}"
+        target="_blank" rel="noopener">PDF</a></td>
+      </tr>`).join('')}</tbody></table></div></section>`;
+}
+
+function spend(box, j) {
+  box.innerHTML = `<section class="rfq-card">
+    <div class="rfq-card-h"><h2>Sales spend on this lead</h2>
+      <p>IOUs are raised, approved, paid and settled in the TMS IOU
+        module with this lead no. (#${LEAD}). Read-only here.</p></div>
+    <div class="rfq-tw"><table><thead><tr><th>IOU</th>
+      <th>Raised by</th><th>Purpose</th><th class="n">Amount</th>
+      <th>Status</th><th>Settle by</th></tr></thead>
+      <tbody><tr><td colspan="6" class="rfq-sub">${esc(j.missing)} ·
+        <a class="rfq-lnk" href="${P}/admin/crm-rules">what the
+        pilot still needs</a></td></tr></tbody></table></div>
+    <div class="rfq-action" style="margin-top:12px">
+      <div class="ah"><h2>Raise IOU in the TMS for lead #${LEAD}</h2>
+        <span class="rfq-sub">The TMS IOU form opens with the lead
+          number filled in; sanction and payment follow the TMS
+          rules.</span></div>
+      <div class="rfq-acts"><a class="rfq-btn p" id="iou"
+        href="${esc(j.form)}" target="_blank" rel="noopener">Open TMS
+        IOU form</a></div></div></section>`;
+}
+
+function audit(box, j) {
+  if (!j.rows.length) {
+    box.innerHTML = '<p class="rfq-empty">Nothing recorded yet.</p>';
+    return;
+  }
+  box.innerHTML = `<section class="rfq-card"><div class="rfq-tw">
+    <table><thead><tr><th>When</th><th>User</th><th>Action</th>
+      <th>Remarks</th></tr></thead><tbody>${j.rows.map(a => `<tr>
+      <td class="rfq-sub">${esc(a.at)}</td>
+      <td>${esc(a.actor)}</td><td>${esc(a.action)}</td>
+      <td class="rfq-sub">${esc(a.reason)}</td></tr>`).join('')}
+    </tbody></table></div></section>`;
+}
+
+/* ── activity ─────────────────────────────────────────────────── */
 function activity() {
-  const asks = DATA.asks, lists = DATA.lists;
   document.getElementById('pane-activity').innerHTML = `
-    <form class="act" onsubmit="return logIt(event)">
-      <label>What happened</label>
-      <select id="kind" onchange="conditional()">
-        <option value="">Choose…</option>
-        ${DATA.kinds.map(k => `<option>${esc(k)}</option>`).join('')}
-      </select>
-      <div id="cond"></div>
-      <label>Note (optional)</label>
-      <textarea id="note" rows="2"></textarea>
-      <button class="lj-btn" type="submit">Log it</button>
-      <p class="msg" id="msg"></p>
-    </form>`;
+    <section class="rfq-card">
+      <div class="rfq-card-h"><h2>Activity</h2>
+        <p>Logging an activity moves the lead along the funnel —
+          there is no separate stage change.</p></div>
+      <form class="rfq-form" onsubmit="return logIt(event)">
+        <div class="rfq-frow">
+          <div class="rfq-fld"><label for="kind">What happened</label>
+            <select id="kind" onchange="conditional()">
+              <option value="">Choose…</option>
+              ${DATA.kinds.map(k =>
+                `<option>${esc(k)}</option>`).join('')}
+            </select></div>
+          <div class="rfq-fld" id="cond"></div>
+          <div class="rfq-fld"><label for="note">Note
+            (optional)</label><input id="note" placeholder="One line">
+          </div>
+        </div>
+        <div class="rfq-acts">
+          <button class="rfq-btn p" type="submit">Save activity</button>
+        </div>
+        <p class="rfq-err" id="msg" hidden></p>
+      </form></section>`;
 }
 
 function conditional() {
-  const kind = document.getElementById('kind').value;
-  const field = DATA.asks[kind];
+  const field = DATA.asks[document.getElementById('kind').value];
   const box = document.getElementById('cond');
   if (!field) { box.innerHTML = ''; return; }
   if (field === 'rfq_expected_date') {
-    box.innerHTML = '<label>RFQ expected date</label>'
+    box.innerHTML = '<label for="value">RFQ expected date</label>'
       + '<input type="date" id="value">';
     return;
   }
-  const opts = DATA.lists[field] || [];
-  box.innerHTML = `<label>${field === 'capability_fit'
-    ? 'Can we do it?' : 'Expected RFQ timing'}</label>
+  const options = DATA.lists[field] || [];
+  box.innerHTML = `<label for="value">${field === 'capability_fit'
+    ? 'Can Procam do it?' : 'RFQ expected'}</label>
     <select id="value"><option value="">Choose…</option>
-    ${opts.map(o => `<option>${esc(o)}</option>`).join('')}</select>`;
+    ${options.map(o => `<option>${esc(o)}</option>`).join('')}</select>`;
 }
 
 async function logIt(ev) {
@@ -358,15 +528,25 @@ async function logIt(ev) {
       note: document.getElementById('note').value,
       value: value ? value.value : null})});
   const j = await r.json();
-  if (!j.ok) { msg.className = 'msg bad'; msg.textContent = j.error;
+  msg.hidden = false;
+  if (!j.ok) { msg.className = 'rfq-err'; msg.textContent = j.error;
                return false; }
-  msg.className = 'msg good';
+  msg.className = 'rfq-sub';
   msg.textContent = j.moved_to
     ? 'Logged. The account has moved to ' + j.moved_to + '.'
     : 'Logged.';
-  setTimeout(load, 900);
+  setTimeout(() => location.reload(), 900);
   return false;
 }
+
+document.addEventListener('click', e => {
+  const tab = e.target.closest('[data-ptab]');
+  if (tab) { pick(tab.dataset.ptab); return; }
+  const node = e.target.closest('[data-lane]');
+  if (node) {
+    selectNode(node.dataset.lane, Number(node.dataset.no));
+  }
+});
 
 load();
 </script>

@@ -7,17 +7,11 @@
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
 <style>
-  /* §4.8. Page-local and named so they cannot collide with a
-     crm.css component. */
-  .chain-when { font-weight:600; }
-  .chain-red { color:#dc2626; } .chain-orange { color:#b45309; }
-  .chain-green { color:#15803d; } .chain-purple { color:#6d28d9; }
-  .chain-blue { color:#1d4ed8; } .chain-grey { color:#6b7280; }
-  .chain-act { align-self:center; border:1px solid #111827;
-      border-radius:7px; padding:4px 13px; font-size:12.5px;
-      font-weight:700; color:#111827; white-space:nowrap; }
-  #bucket-chain .task-row { display:flex; gap:12px;
-      justify-content:space-between; }
+  /* §4.8's chain bucket now uses the shared .rfq-* components
+     from crm.css, so only the table's own breathing room is
+     page-local. */
+  #bucket-chain table { margin-top:var(--s-2); }
+  #bucket-chain td { vertical-align:top; }
 </style>
 </head>
 <body>
@@ -59,25 +53,39 @@
   <div class="bucket" id="bucket-chain" style="margin-bottom:16px">
     <h3>Waiting on me — RFQ steps
       <span class="count">{{ chain_steps|length }}</span></h3>
-    {% for s in chain_steps %}
-      <a class="task-row" href="{{ crm_url(s.act) }}">
-        <div class="task-body">
-          <div class="task-title">
-            {{ s.step_no }}. {{ s.title }}
-            {% if s.customer %}— {{ s.customer }}{% endif %}
-          </div>
-          <div class="task-meta">
-            <span class="task-key">{{ s.rfq_number or 'RFQ' }}</span>
-            {% if s.priority %}<span class="badge">{{ s.priority }}</span>{% endif %}
-            <span class="chain-when chain-{{ s.colour }}">{{ s.words }}</span>
-            {% if s.held %}<span class="badge">on hold</span>{% endif %}
+    {# RFQ-DEMO-PARITY: the demo shows these as a table — the lead,
+       what closes the step, how long it has been sitting here and
+       the timer — because a bare task title does not say whether
+       it is three hours late or due on Friday. #}
+    <div class="rfq-tw"><table>
+      <thead><tr><th>Lead</th><th>Next action</th><th>Since</th>
+        <th>Timer</th><th></th></tr></thead>
+      <tbody>
+      {% for s in chain_steps %}
+        <tr class="row">
+          <td>
+            <a class="rfq-lnk" href="{{ crm_url(s.act) }}">#{{
+              s.lead_id }}{% if s.rfq_number %} · {{ s.rfq_number }}{%
+              endif %}</a>
+            <div class="rfq-sub">{{ s.customer or s.subject }}</div>
+          </td>
+          <td>{{ s.step_no }}. {{ s.title }}
+            {% if s.priority %}
+              <span class="rfq-chip">{{ s.priority }}</span>{% endif %}
+            <div class="rfq-sub">{{ s.event|replace('_', ' ') }}</div>
+          </td>
+          <td class="rfq-sub">{{ s.since or '—' }}</td>
+          <td>
+            <span class="rfq-rag {{ s.tone }}">{{ s.words }}</span>
             {% if s.waiting_for_customer %}
-              <span class="badge">waiting for the customer</span>{% endif %}
-          </div>
-        </div>
-        <span class="chain-act">Act</span>
-      </a>
-    {% endfor %}
+              <div class="rfq-sub">waiting for the customer</div>
+            {% endif %}
+          </td>
+          <td><a class="rfq-btn p s"
+                 href="{{ crm_url(s.act) }}">Act</a></td>
+        </tr>
+      {% endfor %}
+      </tbody></table></div>
   </div>
   {% endif %}
 

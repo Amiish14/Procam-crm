@@ -7,215 +7,286 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
-<style>
-  .rp { max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
-  .rp h1 { font-family:Barlow,sans-serif; font-size:23px;
-      font-weight:800; margin:0 0 4px; }
-  .rp .lede { color:#6b7280; font-size:13.5px; margin:0 0 20px;
-      max-width:64ch; line-height:1.5; }
-  .rp h2 { font-family:Barlow,sans-serif; font-size:15px;
-      font-weight:700; margin:26px 0 10px; }
-  .tiles { display:grid; gap:10px;
-      grid-template-columns:repeat(auto-fit,minmax(142px,1fr)); }
-  .tile { background:#fff; border:1px solid #e5e7eb;
-      border-radius:10px; padding:13px 15px; text-decoration:none;
-      color:inherit; display:block; }
-  .tile:hover { border-color:#111827; }
-  .tile b { display:block; font-size:25px; font-weight:800;
-      font-variant-numeric:tabular-nums; line-height:1.15; }
-  .tile span { color:#6b7280; font-size:12px; }
-  .tile.warn b { color:#b91c1c; }
-  .tile.none b { color:#9ca3af; font-size:19px; font-weight:700; }
-  table { width:100%; border-collapse:collapse; background:#fff;
-      border:1px solid #e5e7eb; border-radius:10px; font-size:13px; }
-  th { text-align:left; font-size:11px; text-transform:uppercase;
-      letter-spacing:.04em; color:#6b7280; padding:8px 10px;
-      border-bottom:1px solid #e5e7eb; font-weight:700; }
-  td { padding:7px 10px; border-bottom:1px solid #f3f4f6;
-      font-variant-numeric:tabular-nums; }
-  tr:last-child td { border-bottom:0; }
-  .muted { color:#9ca3af; }
-  .bad { color:#b91c1c; font-weight:600; }
-  .good { color:#15803d; font-weight:600; }
-  .slow { background:#fef3c7; border:1px solid #fde68a;
-      border-radius:9px; padding:11px 14px; font-size:13.5px; }
-  .cell { display:inline-block; min-width:46px; text-align:center;
-      border-radius:4px; padding:2px 5px; font-size:12px; }
-  .note { color:#6b7280; font-size:12.5px; margin-top:8px; }
-  .rp-empty { color:#6b7280; padding:30px 0; text-align:center; }
-</style>
 </head>
-<body>
-<div class="rp">
-  <h1>RFQ reports</h1>
-  <p class="lede">
-    Every figure here is computed from the chain's own timestamps —
-    when a step started, when it closed, and how long it was held.
-    Nothing on this page is typed by the people it measures.
-  </p>
-  <div class="tiles" id="tiles"></div>
+<body class="rfq-page">
+{% include "_crm_topbar.html" %}
+<div class="rfq-ui">
+  <div class="rfq-hero">
+    <div>
+      <h1>Reports</h1>
+      <p>Management view. Every figure is computed from the chain's
+        own timestamps — when a step started, when it closed, and how
+        long it was held. Nothing here is typed by the people it
+        measures.</p>
+    </div>
+  </div>
 
-  <h2>Time per step, against standard</h2>
-  <div id="slow"></div>
-  <div id="steps"></div>
+  <div class="rfq-tiles" id="tiles"></div>
 
-  <h2>Workload and completion</h2>
-  <div id="workload"></div>
+  <div class="rfq-g2">
+    <section class="rfq-card">
+      <div class="rfq-card-h">
+        <h2>Time per step against standard</h2>
+        <p>Black mark = standard time.</p>
+      </div>
+      <div id="slow"></div>
+      <div id="steps"></div>
+    </section>
+    <section class="rfq-card">
+      <div class="rfq-card-h">
+        <h2>Delay &amp; good-practice reasons</h2>
+        <p>From the one dropdown asked only on late or early steps.</p>
+      </div>
+      <h3 class="rfq-h3">Why steps ran late</h3>
+      <div id="late"></div>
+      <p class="rfq-sub" id="byfunction" style="margin:8px 0 0"></p>
+      <h3 class="rfq-h3" style="margin:14px 0 8px">What made steps
+        early</h3>
+      <div id="early"></div>
+    </section>
+  </div>
 
-  <h2>Person × step</h2>
-  <div id="heatmap"></div>
+  <section class="rfq-card">
+    <div class="rfq-card-h">
+      <h2>Workload &amp; completion</h2>
+      <p>The same layout as the "200+ RFQs Analysis" sheet, worked
+        out from step timestamps.</p>
+    </div>
+    <div id="workload"></div>
+  </section>
 
-  <h2>Why steps ran late</h2>
-  <div id="reasons"></div>
+  <section class="rfq-card">
+    <div class="rfq-card-h">
+      <h2>Person × step: average time against standard</h2>
+      <p>Click a cell to see that person's RFQs.</p>
+    </div>
+    <div id="heatmap"></div>
+  </section>
+
+  <section class="rfq-card">
+    <div class="rfq-card-h">
+      <h2>Sales spend tagged to leads (IOU)</h2>
+      <p>From the TMS IOU module, grouped by the lead number on each
+        IOU.</p>
+    </div>
+    <div id="spend"></div>
+  </section>
 </div>
 
+<script src="{{ url_prefix }}/static/js/rfq_ui.js"></script>
 <script>
 const P = "{{ url_prefix }}";
-const esc = s => String(s == null ? '' : s)
-  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-const hrs = v => v == null ? '—' : (v >= 48 ? (v/24).toFixed(0)+'d'
-                                            : v.toFixed(1)+'h');
-const money = v => !v ? '—'
-  : '₹' + (v >= 10000000 ? (v/10000000).toFixed(2)+' cr'
-         : v >= 100000 ? (v/100000).toFixed(1)+' lakh'
-         : v.toLocaleString('en-IN'));
+const esc = RFQ.esc;
+const money = v => !v ? '–'
+  : '₹' + (v >= 1e7 ? (v / 1e7).toFixed(2) + ' Cr'
+         : v >= 1e5 ? (v / 1e5).toFixed(2) + ' L'
+         : Math.round(v).toLocaleString('en-IN'));
 
 async function get(path) {
+  // The prefix is written out here rather than through P so the
+  // guard in test_url_prefix_links can see it: a helper that
+  // hides the prefix one level down is how three pages shipped
+  // rendering fine and loading nothing.
   const r = await fetch("{{ url_prefix }}" + path);
-  if (!r.ok) return null;
-  return r.json();
+  return r.ok ? r.json() : null;
 }
 
-function tile(label, value, opens, opts) {
-  opts = opts || {};
-  const none = value === null || value === undefined;
-  const cls = 'tile' + (none ? ' none' : (opts.warn && value ? ' warn' : ''));
-  const shown = none ? (opts.nothing || 'nothing yet')
-    : (opts.fmt ? opts.fmt(value) : value);
-  const href = opens ? P + opens : null;
-  const inner = `<b>${esc(shown)}</b><span>${esc(label)}</span>`;
-  return href ? `<a class="${cls}" href="${href}">${inner}</a>`
-              : `<div class="${cls}">${inner}</div>`;
+function tile(label, value, sub, cls, opens) {
+  const shown = (value === null || value === undefined)
+    ? '–' : value;
+  const body = `<span class="l">${esc(label)}</span>
+    <span class="v">${esc(shown)}</span>
+    <span class="s">${esc(sub || '')}</span>`;
+  return opens
+    ? `<a class="rfq-tile ${cls || ''}" href="${P}${opens}">${body}</a>`
+    : `<div class="rfq-tile ${cls || ''}">${body}</div>`;
 }
 
 async function load() {
   const t = await get('/api/reports/tiles');
   if (!t) {
     document.getElementById('tiles').innerHTML =
-      '<p class="rp-empty">This page is not switched on.</p>';
+      '<p class="rfq-empty">This page is not switched on.</p>';
     return;
   }
   const d = t.tiles, o = t.opens;
   document.getElementById('tiles').innerHTML = [
-    tile('RFQs received', d.received, o.received),
-    tile('Active', d.active, o.active),
-    tile('On hold', d.on_hold, o.on_hold),
-    tile('Quoted', d.quoted, o.quoted),
-    tile('Won', d.won, o.won),
-    tile('Lost', d.lost, o.lost),
-    tile('Overdue', d.overdue, o.overdue, {warn: true}),
-    tile('Due soon', d.due_today, o.due_today),
-    tile('Avg response', d.avg_response_hours, null,
-         {fmt: hrs, nothing: 'none quoted'}),
-    tile('Prospective', d.prospective_value, null, {fmt: money}),
-    tile('Won revenue', d.won_value, null, {fmt: money}),
-    tile('Conversion', d.conversion, null,
-         {fmt: v => v + '%', nothing: 'none closed'}),
+    tile('RFQs received', d.received, '', '', o.received),
+    tile('Active', d.active, 'timer running', '', o.active),
+    tile('On hold', d.on_hold, 'timer paused', 'hold', o.on_hold),
+    tile('Quoted', d.quoted, 'sent at least once', '', o.quoted),
+    tile('Won', d.won, '', 'ok', o.won),
+    tile('Lost', d.lost, '', '', o.lost),
+    tile('Overdue', d.overdue, 'current step late',
+         d.overdue ? 'bad' : '', o.overdue),
+    tile('Due today', d.due_today, '',
+         d.due_today ? 'warn' : '', o.due_today),
+    tile('Avg response', RFQ.hours(d.avg_response_hours),
+         'RFQ → quote sent'),
+    tile('Prospective revenue', money(d.prospective_value),
+         'open quotes, latest revision'),
+    tile('Won revenue', money(d.won_value), '', 'ok'),
+    tile('Conversion', d.conversion == null ? '–' : d.conversion + '%',
+         'won ÷ closed'),
+    tile('Sales spend (IOU)', '–', 'not set yet — the TMS', ''),
   ].join('');
 
-  const s = await get('/api/reports/steps');
-  if (s) {
-    document.getElementById('slow').innerHTML = s.slowest
-      ? `<div class="slow"><b>Slowest step:</b> ${esc(s.slowest.title)} —
-         averaging ${hrs(s.slowest.avg_hours)} against a
-         ${hrs(s.slowest.avg_standard)} standard
-         (${s.slowest.ratio}× over ${s.slowest.closed} closes).</div>`
-      : '<p class="note">No step is over its standard yet — a step '
-        + 'is only named after three closes, so one slow week does '
-        + 'not label it.</p>';
-    document.getElementById('steps').innerHTML = `<table>
-      <tr><th>Step</th><th>Closed</th><th>Average</th>
-          <th>Standard</th><th>Ratio</th><th>On time</th></tr>
-      ${s.steps.map(r => `<tr>
-        <td>${r.step_no}. ${esc(r.title)}</td>
-        <td>${r.closed || '<span class="muted">—</span>'}</td>
-        <td>${hrs(r.avg_hours)}</td>
-        <td>${hrs(r.avg_standard)}</td>
-        <td class="${r.ratio > 1 ? 'bad' : (r.ratio ? 'good' : '')}">${
-          r.ratio == null ? '<span class="muted">—</span>' : r.ratio + '×'}</td>
-        <td>${r.on_time_pct == null ? '<span class="muted">—</span>'
-              : r.on_time_pct + '%'}</td></tr>`).join('')}
-    </table>`;
-  }
-
-  const w = await get('/api/reports/workload');
-  if (w) {
-    document.getElementById('workload').innerHTML = w.rows.length
-      ? `<table>
-      <tr><th>Person</th><th>Closed</th><th>On time</th><th>Early</th>
-          <th>Delayed</th><th>Open</th><th>Late now</th>
-          <th>On-time %</th><th>Std. ${w.target_pct}%</th>
-          <th>Gap</th></tr>
-      ${w.rows.map(r => `<tr>
-        <td>${esc(r.emp_code)}</td><td>${r.closed}</td>
-        <td>${r.on_time}</td><td>${r.early}</td>
-        <td class="${r.delayed ? 'bad' : ''}">${r.delayed}</td>
-        <td>${r.open}</td>
-        <td class="${r.late_open ? 'bad' : ''}">${r.late_open}</td>
-        <td>${r.on_time_pct == null
-              ? '<span class="muted">not measured</span>'
-              : r.on_time_pct + '%'}</td>
-        <td class="${r.verdict === 'Achieved' ? 'good'
-                   : (r.verdict ? 'bad' : '')}">${
-          r.verdict ? esc(r.verdict) : '<span class="muted">—</span>'}</td>
-        <td>${r.gap == null ? '<span class="muted">—</span>'
-              : (r.gap > 0 ? r.gap + ' pts' : '0')}</td></tr>`).join('')}
-    </table>
-    <p class="note">A person with fewer than ${w.min_for_rate} closed
-      steps shows "not measured" rather than a percentage — two steps
-      is not a 50% record.${w.unmeasured
-      ? ' ' + w.unmeasured + ' of ' + w.rows.length + ' are below that today.'
-      : ''}</p>`
-      : '<p class="rp-empty">No closed steps yet.</p>';
-  }
-
-  const h = await get('/api/reports/heatmap');
-  if (h) {
-    const box = document.getElementById('heatmap');
-    if (!h.people.length) {
-      box.innerHTML = '<p class="rp-empty">Nothing closed yet.</p>';
-    } else {
-      const at = {};
-      h.cells.forEach(c => { at[c.emp_code + '|' + c.step_no] = c; });
-      box.innerHTML = `<table>
-        <tr><th>Person</th>${h.steps.map(s =>
-          `<th title="${esc(s.title)}">${s.step_no}</th>`).join('')}</tr>
-        ${h.people.map(p => `<tr><td>${esc(p)}</td>${
-          h.steps.map(s => {
-            const c = at[p + '|' + s.step_no];
-            if (!c) return '<td class="muted">·</td>';
-            const bg = c.ratio > 1 ? '#fee2e2'
-                     : c.ratio > 0.75 ? '#fef3c7' : '#dcfce7';
-            return `<td><span class="cell" style="background:${bg}"
-              title="${c.n} close(s)">${c.ratio}×</span></td>`;
-          }).join('')}</tr>`).join('')}
-      </table>
-      <p class="note">Average time ÷ standard. A dot means that
-        person has closed none of that step.</p>`;
-    }
-  }
-
-  const rs = await get('/api/reports/reasons');
-  if (rs) {
-    const cuts = Object.keys(rs.delay || {});
-    document.getElementById('reasons').innerHTML = cuts.length
-      ? cuts.map(cut => `<h2 style="font-size:13px">${esc(cut)}</h2>
-        <table>${Object.entries(rs.delay[cut]).map(([k, n]) =>
-          `<tr><td>${esc(k)}</td><td style="width:70px">${n}</td></tr>`
-        ).join('')}</table>`).join('')
-      : '<p class="rp-empty">No step has closed late yet.</p>';
-  }
+  steps();
+  reasons();
+  workload();
+  heatmap();
+  spend();
 }
+
+/* ── time per step ────────────────────────────────────────────── */
+async function steps() {
+  const s = await get('/api/reports/steps');
+  if (!s) return;
+  document.getElementById('slow').innerHTML = s.slowest
+    ? `<p class="rfq-call" style="margin-bottom:10px">Slowest:
+       <b>${esc(s.slowest.title)}</b> at ${s.slowest.ratio}× standard
+       over ${s.slowest.closed} closes.</p>`
+    : '<p class="rfq-sub" style="margin-bottom:10px">No step is over '
+      + 'its standard yet — a step is only named after three closes, '
+      + 'so one slow week does not label it.</p>';
+  const rows = s.steps.filter(r => r.step_no > 1);
+  const most = Math.max.apply(null,
+    [2].concat(rows.map(r => r.ratio || 0)));
+  document.getElementById('steps').innerHTML =
+    `<div class="rfq-bars">${rows.map(r => {
+      const colour = r.ratio == null ? '--p-info'
+        : r.ratio > 1.5 ? '--p-danger'
+        : r.ratio > 1 ? '--p-warning' : '--p-success';
+      const hot = s.slowest && s.slowest.step_no === r.step_no
+        ? ' hot' : '';
+      return `<a class="rfq-bar${hot}"
+        href="${P}/rfqs/chain">
+        <span class="rfq-lbl">${r.step_no}. ${esc(r.title)}</span>
+        <span class="rfq-track">
+          <i style="width:${(r.ratio || 0) / most * 100}%;
+             background:var(${colour})"></i>
+          ${r.ratio == null ? ''
+            : `<span class="sla" style="left:${100 / most}%"></span>`}
+        </span>
+        <span class="rfq-sub">${r.ratio == null
+          ? (r.closed ? '–' : 'customer') : r.ratio + '×'}</span></a>`;
+    }).join('')}</div>`;
+}
+
+/* ── reasons ──────────────────────────────────────────────────── */
+function bars(entries, colour) {
+  if (!entries.length) {
+    return '<p class="rfq-empty">None.</p>';
+  }
+  const most = Math.max.apply(null,
+    [1].concat(entries.map(e => e[1])));
+  return `<div class="rfq-bars">${entries.map(([k, v]) =>
+    `<div class="rfq-bar" data-static>
+      <span class="rfq-lbl">${esc(k)}</span>
+      <span class="rfq-track"><i style="width:${v / most * 100}%;
+        background:var(${colour})"></i></span>
+      <span class="rfq-sub">${v}</span></div>`).join('')}</div>`;
+}
+
+async function reasons() {
+  const rs = await get('/api/reports/reasons');
+  if (!rs) return;
+  const late = Object.entries((rs.delay || {}).reason || {});
+  const early = Object.entries(rs.good_practice || {});
+  document.getElementById('late').innerHTML =
+    bars(late, '--p-danger');
+  document.getElementById('early').innerHTML =
+    bars(early, '--p-info');
+  const fn = Object.entries((rs.delay || {}).function || {});
+  document.getElementById('byfunction').textContent = fn.length
+    ? 'By function: ' + fn.map(([k, v]) => k + ' ' + v).join(' · ')
+    : '';
+}
+
+/* ── workload ─────────────────────────────────────────────────── */
+const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
+
+async function workload() {
+  const w = await get('/api/reports/workload');
+  if (!w) return;
+  const box = document.getElementById('workload');
+  if (!w.rows.length) {
+    box.innerHTML = '<p class="rfq-empty">No closed steps yet.</p>';
+    return;
+  }
+  box.innerHTML = `<div class="rfq-tw"><table><thead><tr>
+    <th>Person</th><th class="n">Steps</th>
+    ${PRIORITIES.map(p => `<th class="n">${p}</th>`).join('')}
+    <th class="n">On time</th><th class="n">Early</th>
+    <th>Std. ${w.target_pct}%</th><th class="n">Gap</th>
+    <th class="n">Open / late</th></tr></thead>
+    <tbody>${w.rows.map(r => `<tr>
+      <td>${esc(r.name || r.emp_code)}</td>
+      <td class="n">${r.closed + r.open}</td>
+      ${PRIORITIES.map(p =>
+        `<td class="n">${(r.by_priority || {})[p] || 0}</td>`).join('')}
+      <td class="n">${r.on_time_pct == null
+        ? '<span class="rfq-sub">not measured</span>'
+        : r.on_time_pct + '%'}</td>
+      <td class="n">${r.early}</td>
+      <td>${r.verdict
+        ? `<span class="rfq-rag ${r.verdict === 'Achieved'
+            ? 'rfq-t-ok' : 'rfq-t-red'}">${esc(r.verdict)}</span>`
+        : '<span class="rfq-sub">—</span>'}</td>
+      <td class="n">${r.gap == null ? '–'
+        : Math.max(0, r.gap) + '%'}</td>
+      <td class="n">${r.open} / ${r.late_open}</td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="rfq-sub" style="margin:8px 0 0">A person with fewer
+      than ${w.min_for_rate} closed steps shows "not measured" rather
+      than a percentage — two steps is not a 50% record.</p>`;
+}
+
+/* ── person × step ────────────────────────────────────────────── */
+async function heatmap() {
+  const h = await get('/api/reports/heatmap');
+  if (!h) return;
+  const box = document.getElementById('heatmap');
+  if (!h.people.length) {
+    box.innerHTML = '<p class="rfq-empty">Nothing closed yet.</p>';
+    return;
+  }
+  const at = {};
+  h.cells.forEach(c => { at[c.emp_code + '|' + c.step_no] = c; });
+  const steps = h.steps.filter(s => s.step_no > 1);
+  box.innerHTML = `<div class="rfq-tw">
+    <table class="rfq-heat"><thead><tr><th>Person</th>
+    ${steps.map(s => `<th class="n" title="${esc(s.title)}">${
+      s.step_no}. ${esc(s.short || s.title)}</th>`)
+      .join('')}</tr></thead>
+    <tbody>${h.people.map(p => `<tr>
+      <td>${esc((h.names || {})[p] || p)}</td>
+      ${steps.map(s => {
+        const c = at[p + '|' + s.step_no];
+        if (!c) return '<td class="h"></td>';
+        const cls = c.ratio > 1.5 ? 'rfq-heat-3'
+          : c.ratio > 1 ? 'rfq-heat-2' : 'rfq-heat-1';
+        return `<td class="h ${cls}" title="${c.n} close(s)">${
+          c.ratio}</td>`;
+      }).join('')}</tr>`).join('')}</tbody></table></div>
+    <div class="rfq-legend">
+      <span><i class="rfq-heat-1"></i>Within</span>
+      <span><i class="rfq-heat-2"></i>Up to 1.5×</span>
+      <span><i class="rfq-heat-3"></i>Over 1.5×</span></div>`;
+}
+
+/* ── sales spend ──────────────────────────────────────────────── */
+function spend() {
+  document.getElementById('spend').innerHTML = `<div class="rfq-g2">
+    <div><h3 class="rfq-h3">By purpose</h3>
+      <p class="rfq-sub">Not set yet — the TMS IOU module, once the
+        CRM-TMS link is built.</p></div>
+    <div><h3 class="rfq-h3">By vertical</h3>
+      <p class="rfq-sub">Not set yet — the TMS IOU module.
+        <a class="rfq-lnk" href="${P}/admin/crm-rules">What the pilot
+        still needs</a> lists it.</p></div></div>`;
+}
+
 load();
 </script>
 </body>
