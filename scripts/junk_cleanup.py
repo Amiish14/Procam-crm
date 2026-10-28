@@ -85,6 +85,18 @@ def report(rows):
     return '\n'.join(lines)
 
 
+def _block_live():
+    """Is the block list actually in force?
+
+    `system_senders.enabled()` reads FEATURE_SENDER_BLOCK, and the
+    ingest only consults the list when it is on. Adding an address
+    while the flag is off writes a row that does nothing, which is
+    the kind of silence this codebase has been bitten by before.
+    """
+    from app.services import system_senders
+    return system_senders.enabled()
+
+
 def mail(body, *, to=None):
     from app.services import outbox
 
@@ -100,22 +112,34 @@ def mail(body, *, to=None):
     return to
 
 
-def apply(ids, *, reason, note, actor, day):
-    done, refused = [], []
+def apply(ids, *, reason, note, actor, day, block=False):
+    """Mark the approved numbers. Nothing else is touched.
+
+    `block` adds each lead's sender to the Master Data block list —
+    the address, never the domain, and never one of ours. It is off
+    unless asked for, because deleting twelve messages and silencing
+    an address are two decisions and only one of them is reversible
+    by clicking Restore.
+    """
+    done, refused, blocked = [], [], {}
     for lid in ids:
         lead = Lead.query.get(lid)
         if lead is None:
             refused.append((lid, 'no such lead'))
             continue
         try:
-            jd.mark_not_relevant(lead, reason=reason,
-                      note=note or f'{REMARK} {day}',
-                      actor=actor, block_sender=False, commit=False)
+            out = jd.mark_not_relevant(
+                lead, reason=reason, note=note or f'{REMARK} {day}',
+                actor=actor, block_sender=block, commit=False)
             done.append(lid)
+            if out['sender_blocked']:
+                blocked[out['sender']] = 'blocked'
+            elif out['block_refused']:
+                blocked[out['sender']] = 'refused — a Procam address'
         except ValueError as exc:
             refused.append((lid, str(exc)))
     db.session.commit()
-    return done, refused
+    return done, refused, blocked
 
 
 def main():
@@ -131,6 +155,8 @@ def main():
     ap.add_argument('--reason', default='spam', choices=jd.CODES)
     ap.add_argument('--note', default='')
     ap.add_argument('--actor', default='')
+    ap.add_argument('--block', action='store_true',
+                    help='also add each sender to the block list')
     ap.add_argument('--day', default='26-Oct-2026',
                     help='the date in the audit remark')
     args = ap.parse_args()
@@ -161,12 +187,22 @@ def main():
         if not args.actor:
             raise SystemExit('--apply needs --actor (an emp_code): '
                              'every delete is signed.')
-        done, refused = apply(ids, reason=args.reason, note=args.note,
-                              actor=args.actor, day=args.day)
+        done, refused, blocked = apply(
+            ids, reason=args.reason, note=args.note, actor=args.actor,
+            day=args.day, block=args.block)
         print(f'\n  {len(done)} deleted: '
               f'{", ".join("#" + str(i) for i in done) or "none"}')
         for lid, why in refused:
             print(f'  !! #{lid}: {why}')
+        for sender, what in sorted(blocked.items()):
+            print(f'  sender {sender}: {what}')
+        if blocked and not _block_live():
+            print('\n  !! The block list is NOT in force: '
+                  'FEATURE_SENDER_BLOCK is off, so nothing is held '
+                  'and the next message from that address becomes a '
+                  'lead exactly as before. The address is on the '
+                  'list and will take effect the moment the flag '
+                  'is switched on.')
         print('\n  Every one is in Admin → Deleted leads and can '
               'be restored.')
 

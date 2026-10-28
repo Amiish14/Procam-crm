@@ -83,6 +83,8 @@ def _purge():
         synchronize_session=False)
     AppSetting.query.filter(AppSetting.key.like(
         'flag.FEATURE_JUNK%')).delete(synchronize_session=False)
+    AppSetting.query.filter(AppSetting.key =='flag.FEATURE_SENDER_BLOCK').delete(
+        synchronize_session=False)
     db.session.commit()
     flags.cache_clear()
 
@@ -810,20 +812,57 @@ def test_the_cleanup_applies_only_the_numbers_it_is_given():
         one = _lead(sender='nikusi@zzjunk-mail.com')
         two = _lead(sender='nikusi@zzjunk-mail.com', company='ZZ Two')
         mod = _cleanup()
-        done, refused = mod.apply([one.id], reason='internal', note='',
-                                  actor=ADMIN, day='26-Oct-2026')
+        done, refused, _blocked = mod.apply(
+            [one.id], reason='internal', note='', actor=ADMIN,
+            day='26-Oct-2026')
         assert done == [one.id] and refused == []
         assert Lead.query.get(one.id).junk_deleted is True
         assert Lead.query.get(two.id).junk_deleted is not True
         assert '26-Oct-2026' in Lead.query.get(one.id).junk_reason_note
 
 
+def test_the_cleanup_blocks_the_sender_only_when_asked():
+    with flask_app.app_context():
+        one = _lead(sender='tracker@zzjunk-mail.com')
+        two = _lead(sender='tracker@zzjunk-mail.com', company='ZZ Two')
+        mod = _cleanup()
+        _done, _ref, blocked = mod.apply(
+            [one.id], reason='internal', note='', actor=ADMIN,
+            day='26-Oct-2026')
+        assert blocked == {}
+        assert MasterItem.query.filter_by(
+            list_key='system_sender',
+            code='tracker@zzjunk-mail.com').first() is None
+        _done, _ref, blocked = mod.apply(
+            [two.id], reason='internal', note='', actor=ADMIN,
+            day='26-Oct-2026', block=True)
+        assert blocked == {'tracker@zzjunk-mail.com': 'blocked'}
+        assert MasterItem.query.filter_by(
+            list_key='system_sender',
+            code='tracker@zzjunk-mail.com').first() is not None
+
+
+def test_the_cleanup_says_so_when_the_block_list_is_not_in_force():
+    """An address added while FEATURE_SENDER_BLOCK is off is a row
+    that does nothing. Saying nothing about that is how a person
+    concludes the feature is broken a week later."""
+    with flask_app.app_context():
+        _on('FEATURE_SENDER_BLOCK', False)
+        mod = _cleanup()
+        assert mod._block_live() is False
+        _on('FEATURE_SENDER_BLOCK', True)
+        flags.cache_clear()
+        assert mod._block_live() is True
+        _on('FEATURE_SENDER_BLOCK', False)
+
+
 def test_the_cleanup_refuses_a_lead_that_was_worked():
     with flask_app.app_context():
         worked = _lead(stage='Quoted')
         mod = _cleanup()
-        done, refused = mod.apply([worked.id], reason='spam', note='',
-                                  actor=ADMIN, day='26-Oct-2026')
+        done, refused, _blocked = mod.apply(
+            [worked.id], reason='spam', note='', actor=ADMIN,
+            day='26-Oct-2026')
         assert done == []
         assert refused and 'New Opportunity' in refused[0][1]
 
