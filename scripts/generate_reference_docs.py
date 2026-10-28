@@ -91,6 +91,10 @@ _GATES = (
                               'records by scope'),
     (re.compile(r"@_funnel\b"), 'FEATURE_PRE_RFQ_FUNNEL, then signed '
                                 'in; records by scope'),
+    # Admin -> CRM rules. Not behind a feature flag on purpose: a
+    # readiness check that is itself switched off tells nobody
+    # anything. Admins and directors, read-only.
+    (re.compile(r"@_admin_only\b"), 'admin or director; read-only'),
     (re.compile(r"session\.get\('emp_code'\)|_current_emp_code\(\)|"
                 r"'emp_code' not in session"), 'signed in (checked inline)'),
     (re.compile(r"require_auth|_login_required|_require_login|_authed\(\)"),

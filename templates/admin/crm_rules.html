@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CRM rules — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .cr { max-width:900px; margin:0 auto; padding:18px 16px 60px; }
+  .cr h1 { font-family:Barlow,sans-serif; font-size:23px;
+      font-weight:800; margin:0 0 4px; }
+  .cr .lede { color:#6b7280; font-size:13.5px; margin:0 0 20px;
+      max-width:62ch; line-height:1.55; }
+  .cr h2 { font-family:Barlow,sans-serif; font-size:14px;
+      font-weight:700; margin:24px 0 8px; letter-spacing:.02em; }
+  .cr h2 small { color:#6b7280; font-weight:500;
+      text-transform:none; letter-spacing:0; }
+  .cr-row { background:#fff; border:1px solid #e5e7eb;
+      border-radius:10px; padding:11px 14px; margin-bottom:7px;
+      display:flex; gap:12px; align-items:flex-start; }
+  .cr-tag { font-size:10.5px; font-weight:800; letter-spacing:.05em;
+      border-radius:5px; padding:3px 8px; white-space:nowrap;
+      min-width:66px; text-align:center; }
+  .cr-ok      { background:#dcfce7; color:#166534; }
+  .cr-missing { background:#fee2e2; color:#991b1b; }
+  .cr-warn    { background:#fef3c7; color:#92400e; }
+  .cr-body b { font-weight:700; font-size:13.5px; }
+  .cr-body div { color:#374151; font-size:13px; line-height:1.55; }
+  .cr-ask { color:#6b7280; font-size:12.5px; margin-top:3px; }
+  .cr-sum { background:#111827; color:#fff; border-radius:10px;
+      padding:13px 16px; font-size:13.5px; margin-bottom:18px; }
+  .cr-sum b { font-size:16px; }
+  .cr-none { color:#6b7280; padding:26px 0; }
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="cr">
+  <h1>CRM rules</h1>
+  <p class="lede">
+    What the RFQ chain still needs before a vertical can run it.
+    Most of it is not code — a person nobody has named, a table
+    with a gap, a switch nobody has turned on. Each fails quietly,
+    so they are listed here rather than discovered by a customer.
+  </p>
+
+  {% if data.no_pilot %}
+    <p class="cr-none">No vertical has the RFQ chain switched on
+      for an active person, so there is nothing to be ready for
+      yet.</p>
+  {% else %}
+    <div class="cr-sum">
+      {% if data.ready %}
+        <b>Everything the pilot needs is set.</b>
+      {% else %}
+        <b>{{ data.missing }} missing</b>{% if data.warnings %},
+        {{ data.warnings }} warning(s){% endif %} — the pilot will
+        run, but each missing line fails without saying so.
+      {% endif %}
+    </div>
+
+    {% macro row(c) %}
+      <div class="cr-row">
+        <span class="cr-tag cr-{{ c.state|lower }}">{{ c.state }}</span>
+        <div class="cr-body">
+          <b>{{ c.key }}</b>
+          <div>{{ c.detail }}</div>
+          {% if c.state != 'OK' and c.who %}
+            <div class="cr-ask">Ask {{ c.who }}{% if c.fix %} ·
+              {{ c.fix }}{% endif %}</div>
+          {% endif %}
+        </div>
+      </div>
+    {% endmacro %}
+
+    <h2>Company-wide</h2>
+    {% for c in data.company %}{{ row(c) }}{% endfor %}
+
+    {% for vertical, checks in data.verticals.items() %}
+      <h2>{{ vertical }}
+        <small>— {{ data.people[vertical]|join(', ') }}</small></h2>
+      {% for c in checks %}{{ row(c) }}{% endfor %}
+    {% endfor %}
+  {% endif %}
+</div>
+</body>
+</html>

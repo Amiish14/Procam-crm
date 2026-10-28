@@ -6246,6 +6246,10 @@ for _mod_path, _bp_name in [
     ('app.journey.routes',       'journey_bp'),
     # The RFQ reports. 404 while FEATURE_RFQ_REPORTS is off.
     ('app.rfq_reports.routes',   'rfq_reports_bp'),
+    # Admin -> CRM rules: what the pilot still needs. Read-only,
+    # and not behind a feature flag: a readiness check that is
+    # itself switched off tells nobody anything.
+    ('app.admin_rules.routes',   'admin_rules_bp'),
     # The TMS integration API. Exempted from CSRF below, because it is
     # authenticated by a bearer token rather than by a session cookie —
     # a CSRF token is a defence against a browser being used as a

@@ -24,12 +24,31 @@ def vertical_name(record):
         raw = (vh.vertical_of(record) or '').strip()
         if not raw:
             return ''
-        master = (vh.master_vertical(raw) or '').strip()
-        if master and master.lower() != raw.lower() \
-                and master == getattr(vh, 'FALLBACK_VERTICAL',
-                                      'Management'):
-            return raw
-        return master or raw
+        return master_name(raw)
     except Exception:                                     # noqa: BLE001
         return (getattr(record, 'procam_vertical', '')
                 or getattr(record, 'vertical', '') or '').strip()
+
+
+def master_name(raw):
+    """The master spelling of a vertical name, without the fallback.
+
+    `vertical_heads.master_vertical` answers Management for
+    anything it cannot place, which is right for routing a stray
+    notification and wrong wherever a real vertical is being
+    named. This has now caught three callers — the margin floor,
+    the chain's step owners and the readiness check — so it lives
+    in one place.
+    """
+    raw = (raw or '').strip()
+    if not raw:
+        return ''
+    try:
+        from app.services import vertical_heads as vh
+        master = (vh.master_vertical(raw) or '').strip()
+        fallback = getattr(vh, 'FALLBACK_VERTICAL', 'Management')
+        if master and master != raw and master == fallback:
+            return raw
+        return master or raw
+    except Exception:                                     # noqa: BLE001
+        return raw
