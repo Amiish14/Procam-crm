@@ -4111,12 +4111,23 @@ function laChangeAccount(){
 function laAskOwner(q){
   if(!q || LA_ASKED[activeId]) return;
   LA_ASKED[activeId] = true;
-  const keep = confirm(
-    'Lead PIC is ' + q.lead_pic_name + ', account owner is '
-    + q.account_owner_name + '.\n\nOK — keep ' + q.lead_pic_name
-    + ' on this lead.\nCancel — switch the lead to '
-    + q.account_owner_name + '.');
-  const want = keep ? q.lead_pic : q.account_owner;
+  let keep, want;
+  if (q.unowned){
+    // Nobody holds this lead. "Keep nobody" is not a choice, so
+    // this is an offer rather than a question.
+    if (!confirm('This lead has no owner.\n\nThe owner of '
+        + q.account + ' is ' + q.account_owner_name
+        + '.\n\nOK — give them this lead.\nCancel — leave it '
+        + 'unowned.')) return;
+    keep = false; want = q.account_owner;
+  } else {
+    keep = confirm(
+      'Lead PIC is ' + q.lead_pic_name + ', account owner is '
+      + q.account_owner_name + '.\n\nOK — keep ' + q.lead_pic_name
+      + ' on this lead.\nCancel — switch the lead to '
+      + q.account_owner_name + '.');
+    want = keep ? q.lead_pic : q.account_owner;
+  }
   const sel = g('lAsgn');
   if(sel) sel.value = want;
   api('/api/leads/'+activeId+'/account/owner-choice', {method:'POST',

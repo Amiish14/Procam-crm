@@ -536,6 +536,61 @@ def test_the_owner_question_is_asked_once(beml):
     assert question['account_owner_name'] == 'James Francis Xavier'
 
 
+def test_an_unowned_lead_is_offered_the_account_owner(beml):
+    """Live, 29 Oct. #12397 linked to BEML LIMITED and came out
+    owned by nobody: `assigned_to` was empty, so the keep-or-switch
+    prompt never fired and the lead sat with no PIC. Half the leads
+    in this CRM are unowned, so this is the common shape, not the
+    edge case."""
+    with flask_app.app_context():
+        lead = db.session.get(Lead, beml['lead_id'])
+        lead.assigned_to = None
+        db.session.get(Company,
+                       beml['account_id']).pic_emp_code = HEAD
+        db.session.commit()
+    body = _post(f'/api/leads/{beml["lead_id"]}/account/link',
+                 {'account_id': beml['account_id']}).get_json()
+    question = body['owner_question']
+    assert question is not None, 'an unowned lead was left unowned'
+    assert question['unowned'] is True
+    assert question['account_owner_name'] == 'James Francis Xavier'
+
+
+def test_the_offer_assigns_the_account_owner(beml):
+    with flask_app.app_context():
+        lead = db.session.get(Lead, beml['lead_id'])
+        lead.assigned_to = None
+        db.session.get(Company,
+                       beml['account_id']).pic_emp_code = HEAD
+        db.session.commit()
+    _post(f'/api/leads/{beml["lead_id"]}/account/link',
+          {'account_id': beml['account_id']})
+    _post(f'/api/leads/{beml["lead_id"]}/account/owner-choice',
+          {'chose': HEAD, 'keep': False})
+    with flask_app.app_context():
+        assert db.session.get(
+            Lead, beml['lead_id']).assigned_to == HEAD
+
+
+def test_nothing_is_offered_when_the_account_has_no_owner_either(beml):
+    """Then the account is the thing to fix, not the lead."""
+    with flask_app.app_context():
+        lead = db.session.get(Lead, beml['lead_id'])
+        lead.assigned_to = None
+        db.session.get(Company,
+                       beml['account_id']).pic_emp_code = None
+        db.session.commit()
+    body = _post(f'/api/leads/{beml["lead_id"]}/account/link',
+                 {'account_id': beml['account_id']}).get_json()
+    assert body['owner_question'] is None
+
+
+def test_the_sheet_words_the_offer_as_an_offer(beml):
+    html = open(os.path.join(_ROOT, 'templates', 'app.html')).read()
+    assert 'q.unowned' in html
+    assert 'This lead has no owner' in html
+
+
 def test_no_question_when_they_already_agree(beml):
     body = _post(f'/api/leads/{beml["lead_id"]}/account/link',
                  {'account_id': beml['account_id']}).get_json()

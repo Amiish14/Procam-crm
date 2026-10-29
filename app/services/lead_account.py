@@ -523,15 +523,27 @@ def link(lead, account, *, actor, reason='', learn=True):
 
 
 def owner_question(lead, account):
-    """The one prompt §2.4 asks: the lead's PIC is X, the account's
-    owner is Y. Returns None when they agree or either is missing."""
+    """§2.4's prompt, in its two shapes.
+
+    The spec names one: the lead's PIC is X, the account's owner is
+    Y, keep or switch. Live data has a second and commoner one —
+    the lead has no PIC at all. #12397, the BEML tender this was
+    built for, was linked and left owned by nobody, and asking
+    "keep nobody or switch?" is not a question. It becomes an
+    offer: the account owner, one click.
+
+    None when they already agree, or when the account has no owner
+    either — then there is nothing to offer and the account is the
+    thing to fix.
+    """
     from app.services import rfq_board
 
     pic = (getattr(lead, 'assigned_to', '') or '').strip()
     owner = (getattr(account, 'pic_emp_code', '') or '').strip()
-    if not pic or not owner or pic == owner:
+    if not owner or pic == owner:
         return None
     return {
+        'unowned': not pic,
         'lead_pic': pic, 'lead_pic_name': rfq_board.name_of(pic),
         'account_owner': owner,
         'account_owner_name': rfq_board.name_of(owner),
