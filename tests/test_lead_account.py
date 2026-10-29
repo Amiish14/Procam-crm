@@ -1086,26 +1086,36 @@ def test_a_group_with_no_matching_account_needs_one():
 
 def test_two_accounts_answering_to_one_name_are_duplicate_candidates():
     """Never merged, only listed: merging two accounts is not this
-    script's business, and doing it by guess is unrecoverable."""
+    script's business, and doing it by guess is unrecoverable.
+
+    Both accounts hold the sender's own domain, so both are matched
+    on evidence rather than on a resemblance — which is exactly the
+    live shape: Praj, Hacklin, Meiden and L&T each have two or three
+    accounts, and the duplicate is the finding.
+    """
     script = _script()
     with flask_app.app_context():
         for name in ('LA Sankyu', 'LA Sankyu India Logistics'):
-            db.session.add(Company(name=name, is_active=True,
-                                   pic_emp_code=SALES,
-                                   vertical=VERTICAL))
+            account = Company(name=name, is_active=True,
+                              pic_emp_code=SALES, vertical=VERTICAL)
+            account.email_domains = ['sankyu-test.co.jp']
+            db.session.add(account)
         db.session.flush()
-        _unlinked('LA Sankyu India Logistics & Engineering Pvt Ltd.')
+        _unlinked('LA Sankyu India Logistics & Engineering Pvt Ltd.',
+                  email='projects@sankyu-test.co.jp')
         db.session.commit()
         found = [g for g in script.groups()
                  if g['stem'].startswith('la sankyu')]
         assert found
         group = found[0]
-        if len(group['accounts']) > 1:
-            assert group['verdict'] == script.CHOOSE
-            assert len(group['duplicate_candidates']) > 1
-            assert group['account_id'] is None
-        else:
-            assert group['verdict'] == script.OBVIOUS
+        assert len(group['accounts']) > 1
+        assert group['verdict'] == script.CHOOSE
+        assert len(group['duplicate_candidates']) > 1
+        assert group['account_id'] is None
+        assert group['resemblance_only'] is False
+        text = script.group_report([group])
+        assert 'more than one account answers to this name' in text
+        assert 'nothing here merges accounts' in text
 
 
 def test_the_sweep_includes_leads_that_have_an_owner():
@@ -1201,3 +1211,76 @@ def test_the_command_line_sweep_writes_nothing():
     assert 'Nothing was changed' in out.getvalue()
     with flask_app.app_context():
         assert db.session.get(Lead, lead_id).company_id is None
+
+
+# ── a resemblance is not a match ─────────────────────────────────────
+#
+# The first live run of --unlinked called 26 groups OBVIOUS, and
+# roughly half were wrong in the same way: "Balaji Wafers Pvt Ltd"
+# offered for a lead read as "Balaji Power Tech", "Hind Terminal"
+# for "Indo-German", "Liftec" for "Lntecc". Each was the only
+# answer, and the rule text read "company name" exactly as a real
+# name match does. One answer is not a confident one.
+def test_a_resemblance_carries_its_kind_through_to_the_caller():
+    with flask_app.app_context():
+        db.session.add(Company(name='LA Balaji Wafers Pvt Ltd',
+                               is_active=True, pic_emp_code=SALES,
+                               vertical=VERTICAL))
+        db.session.flush()
+        lead = _unlinked('LA Balaji Power Tech')
+        db.session.commit()
+        rows = la.suggest(lead)
+        assert rows, 'the matcher should still offer the resemblance'
+        for row in rows:
+            assert 'kind' in row and 'note' in row
+
+
+def test_a_lone_resemblance_is_not_obvious():
+    """It is offered — it might be right — but a person decides."""
+    script = _script()
+    with flask_app.app_context():
+        db.session.add(Company(name='LA Balaji Wafers Pvt Ltd',
+                               is_active=True, pic_emp_code=SALES,
+                               vertical=VERTICAL))
+        db.session.flush()
+        _unlinked('LA Balaji Power Tech')
+        db.session.commit()
+        found = [g for g in script.groups()
+                 if 'balaji power' in g['stem']]
+        assert found
+        group = found[0]
+        if group['accounts']:
+            assert group['verdict'] != script.OBVIOUS
+            assert group['resemblance_only'] is True
+            assert group['account_id'] is None
+
+
+def test_the_report_says_a_resemblance_is_only_a_resemblance():
+    script = _script()
+    with flask_app.app_context():
+        db.session.add(Company(name='LA Balaji Wafers Pvt Ltd',
+                               is_active=True, pic_emp_code=SALES,
+                               vertical=VERTICAL))
+        db.session.flush()
+        _unlinked('LA Balaji Power Tech')
+        db.session.commit()
+        found = [g for g in script.groups()
+                 if 'balaji power' in g['stem']]
+        if found and found[0]['accounts']:
+            text = script.group_report(found)
+            assert 'resemblance only' in text
+            assert 'nothing but a resemblance' in text
+            assert 'Probably a new account' in text
+
+
+def test_evidence_is_still_obvious(beml):
+    """The fix must not swallow the real matches: the BEML tender is
+    found by the sender's own domain, which is evidence."""
+    script = _script()
+    with flask_app.app_context():
+        found = [g for g in script.groups()
+                 if beml['lead_id'] in g['lead_ids']][0]
+        if found['verdict'] == script.OBVIOUS:
+            assert found['account_id'] == beml['account_id']
+            kinds = {a['kind'] for a in found['accounts']}
+            assert kinds != {'resemblance'}

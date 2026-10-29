@@ -287,3 +287,29 @@ notifications.
 **Taken:** notifying is the default, because a lead somebody owns
 without knowing it is the problem this is fixing. `--quiet`
 suppresses it when a batch would be noise rather than news.
+
+---
+
+### 21. A resemblance is not a match
+
+The first live `--unlinked` run called 26 groups OBVIOUS and about
+half were wrong in the same way: "Balaji Wafers Pvt Ltd" offered
+for a lead read as "Balaji Power Tech", "Hind Terminal" for
+"Indo-German", "Liftec" for "Lntecc", "WHEEL INDIA LTD." for
+"Rktrwheels". Each was the only answer the matcher had, so the
+group counted as unambiguous.
+
+The matcher was not wrong — `account_match` tags these
+`kind='resemblance'` and says in its own docstring that a
+resemblance is "no evidence at all". `lead_account.suggest()` was
+dropping that tag, and the rule text cannot be told apart: a real
+name match and a 62%-alike guess both read "company name".
+
+**Taken:** `suggest()` now carries `kind` and `note`, and OBVIOUS
+requires exactly one candidate **matched on evidence** — a sender
+domain, a contact's address, a learned correction, a GSTIN or an
+actual name match. A lone resemblance is CHOOSE, printed as
+"nothing but a resemblance — probably a new account, not one of
+these", and the group carries no pre-filled account id, because a
+question with the answer already in it gets agreed to rather than
+read.

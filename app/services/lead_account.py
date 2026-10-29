@@ -298,7 +298,9 @@ def _from_the_mail(lead):
             if name:
                 rule = f'{rule} (read as "{name}")'
             out.append(_row(account, rule,
-                            exact=bool(item.get('exact'))))
+                            exact=bool(item.get('exact')),
+                            kind=item.get('kind') or 'name',
+                            note=item.get('note') or ''))
     return out
 
 
@@ -409,7 +411,7 @@ def _why_name(account, query):
     return 'website matches'
 
 
-def _row(account, rule, *, exact=False):
+def _row(account, rule, *, exact=False, kind='name', note=''):
     from app.services import account_match, rfq_board
 
     owner = (getattr(account, 'pic_emp_code', '') or '')
@@ -418,6 +420,13 @@ def _row(account, rule, *, exact=False):
         'name': account.name or '',
         'rule': rule,
         'exact': exact,
+        # 'exact', 'name' or 'resemblance'. The matcher is explicit
+        # that a resemblance is "these two strings are 60% alike" and
+        # no evidence at all, and the rule string cannot be told
+        # apart from a real name match — both read "company name".
+        # Anything deciding on its own needs this, not the words.
+        'kind': kind,
+        'note': note,
         'owner': owner,
         'owner_name': rfq_board.name_of(owner),
         'vertical': getattr(account, 'vertical', '') or '',

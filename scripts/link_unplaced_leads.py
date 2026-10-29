@@ -242,27 +242,44 @@ def groups(lead_ids=()):
                 spellings.append(name)
             for found in row['suggestions']:
                 accounts.setdefault(found['account_id'], found)
-        if not accounts:
+        picked = list(accounts.values())
+        # A resemblance is not a match. The matcher says so itself:
+        # "these two strings are 60% alike" is useful to show a
+        # person and no evidence at all. It reads identically to a
+        # real name match in the rule text — both say "company
+        # name" — so the first live run offered "Balaji Wafers" for
+        # a lead read as "Balaji Power Tech", and called it OBVIOUS
+        # because it was the only answer. One answer is not the same
+        # as a confident one.
+        solid = [a for a in picked if a.get('kind') != 'resemblance']
+        if not picked:
             verdict = NEW_ACCOUNT
-        elif len(accounts) == 1:
+        elif len(picked) == 1 and solid:
             verdict = OBVIOUS
         else:
             verdict = CHOOSE
-        picked = list(accounts.values())
         out.append({
             'stem': key,
             'spellings': spellings,
             'lead_ids': sorted(r['lead'].id for r in rows),
             'leads': [r['lead'] for r in rows],
             'accounts': picked,
-            'account_id': picked[0]['account_id'] if len(picked) == 1
-                          else None,
-            'name': picked[0]['name'] if len(picked) == 1
-                    else (spellings[0] if spellings else key),
+            # Named only when the verdict is OBVIOUS: anything
+            # else is a question, and a question with an answer
+            # already filled in gets agreed to rather than read.
+            'account_id': (picked[0]['account_id']
+                           if verdict == OBVIOUS else None),
+            'name': (picked[0]['name'] if verdict == OBVIOUS
+                     else (spellings[0] if spellings else key)),
             # Two accounts answering to one customer's name is a
             # duplicate-account question. It is listed, never acted
             # on: merging accounts is not this script's business.
             'duplicate_candidates': picked if len(picked) > 1 else [],
+            # Nothing but resemblances: a person still has to look,
+            # but this is not two accounts competing for one name.
+            # The two need different words or the real duplicates
+            # are lost among the guesses.
+            'resemblance_only': bool(picked) and not solid,
             'verdict': verdict,
         })
     out.sort(key=lambda g: (GROUP_VERDICTS.index(g['verdict']),
@@ -311,12 +328,21 @@ def group_report(found):
                              f'--actor <EMP> --apply')
             elif verdict == CHOOSE:
                 for found_one in group['accounts']:
+                    mark = (' [resemblance only]'
+                            if found_one.get('kind') == 'resemblance'
+                            else '')
                     out.append(f'      candidate: {found_one["name"]} '
                                f'(id {found_one["account_id"]}) — '
-                               f'{found_one["rule"]}')
-                out.append('      two accounts answer to this name. '
-                           'Pick one, or they are duplicates — '
-                           'nothing here merges accounts.')
+                               f'{found_one["rule"]}{mark}')
+                if group['resemblance_only']:
+                    out.append('      nothing but a resemblance — the '
+                               'names are merely alike. Probably a new '
+                               'account, not one of these.')
+                else:
+                    out.append('      more than one account answers to '
+                               'this name. Pick one, or they are '
+                               'duplicates — nothing here merges '
+                               'accounts.')
             else:
                 out.append('      no account matches — create one from '
                            'the lead sheet, then link the rest')
