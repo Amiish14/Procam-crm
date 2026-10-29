@@ -240,3 +240,50 @@ lead data, which needs your approval first.
 
 Its apply path is tested, not just its refusal: a gate that was
 never built reports a clean dry run and writes nothing.
+
+---
+
+### 18. A fifth verdict: NO OWNER
+
+The backfill brief names four verdicts — OBVIOUS, CHOOSE, NO
+ACCOUNT, OWNER INACTIVE. A lead can also sit under an account that
+has nobody at all: no vertical owner, no PIC.
+
+**Taken:** that case gets its own verdict, `NO OWNER`, rather than
+being folded into NO ACCOUNT. The two look alike in a count and
+differ completely in the fix — NO ACCOUNT is corrected on the lead,
+NO OWNER on the account — and folding them would have sent somebody
+to the wrong screen.
+
+---
+
+### 19. The missing row for #12397 is the lead's, not the account's
+
+The brief asks for the missing `AccountAssignmentHistory` row for
+lead #12397. `account_assignments` records who owns an **account**;
+BEML LIMITED's owner did not change on 29 October, and that change,
+when it happened, was already recorded.
+
+What the SQL `UPDATE` skipped was the **lead's** trail:
+`lead_assignment_history`, the table every assignment through the
+screen writes. That is the row `--history-only` writes — owner
+DIR22010, actor DIR12010, reason "Manual correction 29 Oct" — plus
+an audit event.
+
+**Taken:** I wrote the row the lost trail actually belongs in and
+said so here rather than writing an account row that would claim a
+change that never happened. Say the word if you want an
+`account_assignments` row as well.
+
+---
+
+### 20. A backfilled owner is told about it
+
+`--apply` goes through `lead_assignment.assign()`, the lead sheet's
+own path, so it notifies the new owner exactly as the screen does.
+Backfilling a hundred leads at once therefore sends a hundred
+notifications.
+
+**Taken:** notifying is the default, because a lead somebody owns
+without knowing it is the problem this is fixing. `--quiet`
+suppresses it when a batch would be noise rather than news.
