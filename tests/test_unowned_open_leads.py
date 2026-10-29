@@ -580,3 +580,90 @@ def test_history_only_writes_when_fully_armed():
             lead_id=lead_id).one()
         assert row.note == 'Manual correction 29 Oct'
         assert row.changed_by == ACTOR
+
+
+# ── On Hold: counted, apart, and still not assignable ────────────────
+def test_on_hold_is_left_out_unless_asked_for():
+    with flask_app.app_context():
+        account = _account('Parked Ltd', pic=ONE)
+        live = _lead('Parked live', account)
+        _lead('Parked held', account, stage='On Hold')
+        db.session.commit()
+        got = [r['lead_id'] for r in uol.unowned()
+               if (r['company'] or '').startswith(PREFIX)]
+        assert got == [live.id]
+
+
+def test_on_hold_is_included_when_asked_for():
+    with flask_app.app_context():
+        account = _account('Asked Ltd', pic=ONE)
+        live = _lead('Asked live', account)
+        held = _lead('Asked held', account, stage='On Hold')
+        db.session.commit()
+        rows = [r for r in uol.unowned(include_on_hold=True)
+                if (r['company'] or '').startswith(PREFIX)]
+        assert {r['lead_id'] for r in rows} == {live.id, held.id}
+        assert [r['lead_id'] for r in uol.on_hold_rows(rows)] == [held.id]
+        assert [r['lead_id'] for r in uol.pipeline_rows(rows)] == [live.id]
+
+
+def test_a_held_lead_still_gets_a_verdict():
+    with flask_app.app_context():
+        account = _account('Verdict Held Ltd', pic=ONE)
+        _lead('Verdict held', account, stage='On Hold')
+        db.session.commit()
+        row = [r for r in uol.unowned(include_on_hold=True)
+               if (r['company'] or '').startswith(PREFIX)][0]
+        assert row['verdict'] == uol.OBVIOUS
+        assert row['owner'] == ONE
+        assert row['on_hold'] is True
+
+
+def test_the_two_populations_are_counted_apart():
+    """A single total would mix the live pipeline with work somebody
+    decided to stop, and nobody could act on the number."""
+    with flask_app.app_context():
+        account = _account('Apart Ltd', pic=ONE)
+        _lead('Apart live', account)
+        _lead('Apart held one', account, stage='On Hold')
+        _lead('Apart held two', account, stage='On Hold')
+        db.session.commit()
+        rows = uol.unowned(include_on_hold=True)
+        text = uol.report(rows)
+        assert 'ON HOLD' in text
+        assert 'parked on hold with no owner' in text
+        head = text.split('ON HOLD')[0]
+        assert '1 open lead(s) with no owner' in head
+
+
+def test_the_report_says_nothing_about_on_hold_when_there_is_none():
+    with flask_app.app_context():
+        account = _account('Quiet Ltd', pic=ONE)
+        _lead('Quiet live', account)
+        db.session.commit()
+        assert 'ON HOLD' not in uol.report(uol.unowned())
+
+
+def test_including_on_hold_does_not_make_it_assignable():
+    """Counting them and assigning them are different decisions:
+    reviving a held lead is about the lead, not about its owner."""
+    with flask_app.app_context():
+        account = _account('Held Apply Ltd', pic=ONE)
+        lead = _lead('Held apply', account, stage='On Hold')
+        db.session.commit()
+        done, refused = uol.apply([lead.id], actor=ACTOR, notify=False)
+        assert done == []
+        assert 'On Hold' in refused[0][1]
+        assert db.session.get(Lead, lead.id).assigned_to in (None, '')
+
+
+def test_the_command_line_flag_reaches_the_report():
+    with flask_app.app_context():
+        account = _account('CLI Held Ltd', pic=ONE)
+        _lead('CLI held', account, stage='On Hold')
+        db.session.commit()
+    code, text = _run(['--include-on-hold'])
+    assert code == 0
+    assert 'ON HOLD' in text
+    code, text = _run([])
+    assert 'ON HOLD' not in text

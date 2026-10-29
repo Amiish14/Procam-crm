@@ -996,3 +996,208 @@ def test_save_is_refused_in_the_form_as_well_as_the_server():
     html = open(os.path.join(_ROOT, 'templates', 'app.html')).read()
     assert 'LA && LA.blocked' in html
     assert 'Link or create the account before saving' in html
+
+
+# ── the wider sweep: unlinked leads grouped by customer ──────────────
+#
+# The backlog the placeholder report could not see: on 29 October
+# 2026, 293 open leads had no account and most carried a real
+# company name. The same customer arrives many times under many
+# spellings, so the sweep groups before it asks.
+def _unlinked(company, *, stage='New Opportunity', owner=SALES,
+              email=''):
+    lead = Lead(company=company, stage=stage, source='email',
+                procam_vertical=VERTICAL, assigned_to=owner,
+                email=email or 'enquiry@example.com',
+                created_at=datetime.utcnow())
+    db.session.add(lead)
+    db.session.flush()
+    return lead
+
+
+def test_a_name_reduces_to_what_distinguishes_it():
+    script = _script()
+    assert script.stem('ANDRITZ HYDRO Private Limited') == 'andritz hydro'
+    assert script.stem('Andritz Hydro Pvt. Ltd.') == 'andritz hydro'
+    assert script.stem('Indo-Tech') == 'indo tech'
+    assert script.stem('Siemens Energy India Ltd.') == 'siemens energy'
+    assert script.stem('Hyup-Jin Co.') == 'hyup jin'
+
+
+def test_a_name_that_is_all_noise_keeps_something():
+    """"Limited" alone is a bad name, not an empty one — reducing it
+    to '' would pool every such lead under one group."""
+    script = _script()
+    assert script.stem('Limited') != ''
+    assert script.stem('L&T') != ''
+
+
+def test_spellings_of_one_name_become_one_group():
+    script = _script()
+    with flask_app.app_context():
+        for name in ('LA Indo Tech Transformers', 'LA Indo-Tech',
+                     'LA Indo Tech Transformers Ltd'):
+            _unlinked(name)
+        db.session.commit()
+        found = [g for g in script.groups()
+                 if g['stem'].startswith('la indo')]
+        assert len(found) == 1
+        assert len(found[0]['lead_ids']) == 3
+        assert len(found[0]['spellings']) == 3
+
+
+def test_two_different_companies_sharing_a_first_word_do_not_merge():
+    """ANDRITZ HYDRO and ANDRITZ Schuler are different customers.
+    "Andritz" alone could be either, so it merges into neither — a
+    wrong merge is invisible once it has happened."""
+    script = _script()
+    with flask_app.app_context():
+        _unlinked('LA Andritz Hydro Private Limited')
+        _unlinked('LA Andritz Schuler India Private Limited')
+        _unlinked('LA Andritz')
+        db.session.commit()
+        stems = {g['stem'] for g in script.groups()
+                 if g['stem'].startswith('la andritz')}
+        assert stems == {'la andritz hydro', 'la andritz schuler',
+                         'la andritz'}
+
+
+def test_a_group_with_one_matching_account_is_obvious(beml):
+    script = _script()
+    with flask_app.app_context():
+        _unlinked('LA BEML LIMITED', email='tender@beml.co.in')
+        db.session.commit()
+        found = [g for g in script.groups()
+                 if g['stem'].startswith('la beml')]
+        assert found and found[0]['verdict'] == script.OBVIOUS
+        assert found[0]['account_id'] == beml['account_id']
+
+
+def test_a_group_with_no_matching_account_needs_one():
+    script = _script()
+    with flask_app.app_context():
+        _unlinked('LA Nobody Has Heard Of Them')
+        db.session.commit()
+        found = [g for g in script.groups()
+                 if 'nobody' in g['stem']]
+        assert found and found[0]['verdict'] == script.NEW_ACCOUNT
+        assert found[0]['accounts'] == []
+
+
+def test_two_accounts_answering_to_one_name_are_duplicate_candidates():
+    """Never merged, only listed: merging two accounts is not this
+    script's business, and doing it by guess is unrecoverable."""
+    script = _script()
+    with flask_app.app_context():
+        for name in ('LA Sankyu', 'LA Sankyu India Logistics'):
+            db.session.add(Company(name=name, is_active=True,
+                                   pic_emp_code=SALES,
+                                   vertical=VERTICAL))
+        db.session.flush()
+        _unlinked('LA Sankyu India Logistics & Engineering Pvt Ltd.')
+        db.session.commit()
+        found = [g for g in script.groups()
+                 if g['stem'].startswith('la sankyu')]
+        assert found
+        group = found[0]
+        if len(group['accounts']) > 1:
+            assert group['verdict'] == script.CHOOSE
+            assert len(group['duplicate_candidates']) > 1
+            assert group['account_id'] is None
+        else:
+            assert group['verdict'] == script.OBVIOUS
+
+
+def test_the_sweep_includes_leads_that_have_an_owner():
+    """The 233 nobody could see: the salesperson has the lead on
+    their own list, so the missing account is never noticed."""
+    script = _script()
+    with flask_app.app_context():
+        owned = _unlinked('LA Owned But Unlinked', owner=SALES)
+        db.session.commit()
+        ids = [i for g in script.groups() for i in g['lead_ids']]
+        assert owned.id in ids
+
+
+def test_the_sweep_leaves_closed_and_linked_leads_alone(beml):
+    script = _script()
+    with flask_app.app_context():
+        won = _unlinked('LA Closed Already', stage='Won')
+        lost = _unlinked('LA Lost Already', stage='Lost')
+        db.session.commit()
+        ids = [i for g in script.groups() for i in g['lead_ids']]
+        assert won.id not in ids and lost.id not in ids
+        # The BEML fixture's five linked leads are not unlinked work.
+        assert beml['lead_id'] in ids          # the "To review" one is
+        linked = Lead.query.filter(
+            Lead.company_id == beml['account_id']).all()
+        for lead in linked:
+            assert lead.id not in ids
+
+
+def test_the_grouped_report_changes_nothing_and_says_so():
+    script = _script()
+    with flask_app.app_context():
+        lead = _unlinked('LA Report Only')
+        db.session.commit()
+        text = script.group_report(script.groups())
+        assert 'Nothing was changed' in text
+        assert 'By verdict:' in text
+        assert db.session.get(Lead, lead.id).company_id is None
+
+
+def test_the_report_gives_the_whole_group_one_link_line(beml):
+    """One decision, one command: the point of grouping is that
+    eight leads are not eight decisions."""
+    script = _script()
+    with flask_app.app_context():
+        for _ in range(3):
+            _unlinked('LA BEML LIMITED', email='tender@beml.co.in')
+        db.session.commit()
+        found = [g for g in script.groups()
+                 if g['verdict'] == script.OBVIOUS
+                 and g['stem'].startswith('la beml')][0]
+        text = script.group_report([found])
+        line = [l for l in text.splitlines() if '--account' in l][0]
+        for lead_id in found['lead_ids']:
+            assert str(lead_id) in line
+        assert f'--account {found["account_id"]}' in line
+
+
+def test_the_counts_are_per_verdict_in_customers_and_leads():
+    script = _script()
+    with flask_app.app_context():
+        _unlinked('LA Unheard One')
+        _unlinked('LA Unheard One Ltd')
+        db.session.commit()
+        found = [g for g in script.groups() if 'unheard' in g['stem']]
+        counts, leads = script.group_counts(found)
+        assert counts[script.NEW_ACCOUNT] == 1
+        assert leads[script.NEW_ACCOUNT] == 2
+
+
+def test_the_grouped_report_is_honest_when_there_is_nothing():
+    script = _script()
+    assert 'Nothing unlinked' in script.group_report([])
+
+
+def test_the_command_line_sweep_writes_nothing():
+    script = _script()
+    import contextlib
+    import io
+    with flask_app.app_context():
+        lead = _unlinked('LA CLI Sweep')
+        db.session.commit()
+        lead_id = lead.id
+    out = io.StringIO()
+    old = sys.argv
+    sys.argv = ['link_unplaced_leads.py', '--unlinked']
+    try:
+        with contextlib.redirect_stdout(out):
+            code = script.main()
+    finally:
+        sys.argv = old
+    assert code == 0
+    assert 'Nothing was changed' in out.getvalue()
+    with flask_app.app_context():
+        assert db.session.get(Lead, lead_id).company_id is None

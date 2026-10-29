@@ -23,6 +23,14 @@ Read-only by default. It prints and changes nothing:
     .venv/bin/python scripts/unowned_open_leads.py
     .venv/bin/python scripts/unowned_open_leads.py --ids 12397
 
+On Hold is terminal in the stage map, so leads parked there are in
+no pipeline figure and not in the sweep either. 59 of them had no
+owner, and a lead nobody owns is a lead nobody will pick back up.
+--include-on-hold counts them, in their own section, apart from the
+pipeline:
+
+    .venv/bin/python scripts/unowned_open_leads.py --include-on-hold
+
 Assigning needs the leads named, an actor, and --apply together — no
 "assign everything it worked out", because a wrong owner is worse
 than no owner: the lead now looks worked:
@@ -170,6 +178,7 @@ def read(lead):
         'company': lead.company or '',
         'stage': lead.stage or '',
         'open': sales_rules.is_open(lead.stage),
+        'on_hold': (lead.stage or '') == ON_HOLD,
         'owned': bool((lead.assigned_to or '').strip()),
         'vertical': written or '(none)',
         'account': account,
@@ -183,7 +192,15 @@ def read(lead):
     }
 
 
-def unowned(lead_ids=()):
+#: On Hold is terminal in the stage map, so it is in no pipeline
+#: figure and not in the sweep either. 59 leads were parked there
+#: with no owner: a lead goes on hold to be picked up later, and
+#: nobody picks up a lead nobody owns. --include-on-hold counts
+#: them. It does not make them assignable — see `apply`.
+ON_HOLD = 'On Hold'
+
+
+def unowned(lead_ids=(), include_on_hold=False):
     """Every open lead with no PIC, read. Or just the ones named."""
     from app import Lead, db
     from app.services import sales_rules
@@ -192,13 +209,24 @@ def unowned(lead_ids=()):
         leads = [db.session.get(Lead, int(x)) for x in lead_ids]
         leads = [x for x in leads if x is not None]
     else:
+        stages = list(sales_rules.open_stages())
+        if include_on_hold:
+            stages.append(ON_HOLD)
         leads = (Lead.query
                  .filter(db.or_(Lead.assigned_to.is_(None),
                                 Lead.assigned_to == ''),
                          Lead.is_archived.isnot(True),
-                         Lead.stage.in_(sales_rules.open_stages()))
+                         Lead.stage.in_(stages))
                  .order_by(Lead.id.desc()).all())
     return [read(lead) for lead in leads]
+
+
+def pipeline_rows(rows):
+    return [r for r in rows if not r['on_hold']]
+
+
+def on_hold_rows(rows):
+    return [r for r in rows if r['on_hold']]
 
 
 def counts(rows):
@@ -212,11 +240,9 @@ def counts(rows):
     return by_verdict, by_vertical
 
 
-def report(rows):
-    if not rows:
-        return 'Nothing unowned. Every open lead has a PIC.'
-
-    out = [f'{len(rows)} open lead(s) with no owner:', '']
+def _listing(rows):
+    """The verdict blocks, and the two count tables under them."""
+    out = []
     for verdict in VERDICTS:
         group = [r for r in rows if r['verdict'] == verdict]
         if not group:
@@ -255,7 +281,43 @@ def report(rows):
     out.append('By vertical:')
     for name in sorted(by_vertical, key=lambda k: (-by_vertical[k], k)):
         out.append(f'  {name:<16} {by_vertical[name]:>4}')
-    out.append('')
+    return out
+
+
+def report(rows):
+    """The pipeline first, then the leads parked on hold.
+
+    Two populations, counted apart and never added together: one is
+    the live pipeline, the other is work somebody decided to stop.
+    A single total would be a number nobody could act on.
+    """
+    pipeline = pipeline_rows(rows)
+    parked = on_hold_rows(rows)
+    if not pipeline and not parked:
+        return 'Nothing unowned. Every open lead has a PIC.'
+
+    out = []
+    if pipeline or not parked:
+        out.append(f'{len(pipeline)} open lead(s) with no owner:')
+        out.append('')
+        out += _listing(pipeline)
+        out.append('')
+
+    if parked:
+        out.append('═══ ON HOLD ═══')
+        out.append(f'{len(parked)} lead(s) parked on hold with no '
+                   f'owner. On Hold is terminal in the stage map, so '
+                   f'none of these are in any pipeline figure — and a '
+                   f'lead nobody owns is a lead nobody will pick back '
+                   f'up.')
+        out.append('')
+        out += _listing(parked)
+        out.append('')
+        out.append('These are counted, not assignable: --apply refuses '
+                   'a closed stage. Reviving one is a decision about '
+                   'the lead, not about its owner.')
+        out.append('')
+
     out.append('Nothing was changed. To assign the OBVIOUS ones, name '
                'them:')
     out.append('  --ids <lead ids> --actor <EMP> --apply')
@@ -413,6 +475,9 @@ def main():
                     help='with --history-only, the note on the row')
     ap.add_argument('--quiet', action='store_true',
                     help='assign without notifying the new owners')
+    ap.add_argument('--include-on-hold', action='store_true',
+                    help='also count the leads parked on hold, '
+                         'reported separately')
     args = ap.parse_args()
 
     import app as main_app
@@ -436,7 +501,9 @@ def main():
             return 0
 
         if not args.apply:
-            print(report(unowned(args.ids)))
+            print(report(unowned(
+                args.ids,
+                include_on_hold=args.include_on_hold)))
             return 0
 
         if not args.ids or not args.actor:
