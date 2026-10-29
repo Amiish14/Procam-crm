@@ -118,6 +118,9 @@ FLAGS = (
     ('FEATURE_JUNK_PURGE',
      'Allow an administrator to purge deleted leads older than 90 '
      'days, after an export', False),
+    ('FEATURE_LEAD_ACCOUNT',
+     'Name the account from the lead sheet: link it, create it, or '
+     'correct who owns it (CRM-LEAD-ACCOUNT-01)', False),
     (KILL_SWITCH, 'Stop all outbound CRM email immediately', False),
 )
 

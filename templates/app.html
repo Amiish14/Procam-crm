@@ -1336,9 +1336,16 @@ catch (err) { console.error('Employee list could not start loading', err); }
          padding:9px 14px;border-top:1px solid var(--line);
          background:#fffbeb">
       <span id="junkBarN" style="font-size:13px;font-weight:600"></span>
-      <button class="btn btn-ghost btn-sm" onclick="junkBulk()"
+      <button class="btn btn-ghost btn-sm" id="junkBulkBtn"
+              onclick="junkBulk()" style="display:none"
               title="Only leads nobody has worked are deleted; the rest
                      are listed and left alone.">Delete – not relevant</button>
+      <!-- CRM-LEAD-ACCOUNT-01 §2.6. The same selection, a second
+           action: the clean-up of leads filed under "To review" is
+           hundreds of rows, and one at a time is not a clean-up. -->
+      <button class="btn btn-ghost btn-sm" id="laBulkBtn"
+              onclick="laBulk()" style="display:none"
+              title="Link every selected lead to one account.">Link to account</button>
       <button class="btn btn-ghost btn-sm" onclick="junkClear()">Clear</button>
     </div>
     <div class="tw"><table><thead><tr><th class="junkCol" style="display:none;width:28px"></th><th>#</th><th>Company / Project</th><th>Industry</th><th>State</th><th title="Lakh; values of ₹1 crore and above show in crore">₹ L</th><th>Contact</th><th>Stage</th><th>Vertical</th><th>Followup</th><th>Opp#</th><th>Onboarded</th><th></th></tr></thead><tbody id="lTb"></tbody></table></div>
@@ -2002,6 +2009,7 @@ async function init(){
   // CRM-JUNK-DELETE-01: one probe, so the shell knows whether to draw
   // the select column and the bulk bar. A 404 means it does not.
   try{ await junkAvailable(); } catch(_){}
+  try{ await laAvailable(); } catch(_){}
   if(!ME || !ME.emp_code){ console.error('No session - redirecting'); window.location.href=crmUrl('/login'); return; }
   const ini=ME.name?.split(' ').map(w=>w[0]).slice(0,2).join('')||'?';
   g('tAv').textContent=ini;
@@ -2733,7 +2741,7 @@ async function rLeads(){
   if(!Array.isArray(leads))leads=[];
   g('lCnt').textContent=leads.length+' leads';
   g('lTb').innerHTML=leads.length?leads.map((l,i)=>`<tr onclick="openLd(${l.id})">
-    <td class="junkCol" style="display:${JUNK_ON?'':'none'}" onclick="event.stopPropagation()"><input type="checkbox" class="junkCb" onchange="junkPick(${l.id},this.checked)"></td>
+    <td class="junkCol" style="display:${(JUNK_ON||LA_ON)?'':'none'}" onclick="event.stopPropagation()"><input type="checkbox" class="junkCb" onchange="junkPick(${l.id},this.checked)"></td>
     <td class="tbl-num">${i+1}</td>
     <td><div class="td-m">${e(l.company)}</div><div class="td-s">${e(l.project||'')}</div></td>
     <td>${e(l.industry||'—')}</td><td>${e(l.state||'—')}</td>
@@ -3043,6 +3051,9 @@ async function openLd(id){
   }
   if(!l)return;
   activeId=id;
+  // The PIC-vs-owner prompt is asked once per lead, not once per
+  // session: opening a second lead must be able to ask about it.
+  if(LA_ASKED && LA_ASKED.__for !== id){ LA_ASKED = {__for:id}; }
   g('ldTtl').textContent=l.company;
   /* A client the company has decided not to deal with, said once and
      at the top. The server refuses the work regardless; this is so
@@ -3099,6 +3110,7 @@ async function openLd(id){
     +_ownOpt(l.secondary_owner, l.secondary_owner_name)
     +EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.secondary_owner?' selected':''}>${e(em.name)}</option>`).join('');
   g('ldBdy').innerHTML=`
+    <div id="ldAcct"></div>
     ${renderEmailSummaryCard(l)}
     ${l.history||l.notes?`<div class="fmg"><label class="fml">Background</label><div class="hist">${e((l.history||l.notes||'').substring(0,400))}</div></div>`:''}
     ${l.products?`<div style="font-size:12.5px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);padding:10px 14px;margin-bottom:16px;color:var(--text)"><span style="font-weight:600;color:var(--ink-2)">Products &middot; </span>${e(l.products)}</div>`:''}
@@ -3158,6 +3170,7 @@ async function openLd(id){
   `;
   g('ldMob').style.display='flex';
   junkCheck(id);
+  laLoad(id);
   // The Copilot panel answers "this lead" questions about the lead on
   // screen; opening it from a list does not change the URL it reads.
   if(window.ProcamAI&&window.ProcamAI.setContext)
@@ -3666,6 +3679,15 @@ function setStg(s){
 }
 
 async function saveLd(){
+  // CRM-LEAD-ACCOUNT-01 §2.4. The server refuses this too; saying
+  // it here means the user is not made to wait for a round trip to
+  // be told the one thing the form already knows.
+  if(LA && LA.blocked){
+    laSay('Link or create the account before saving.', true);
+    laFocus();
+    toast('Link or create the account before saving','err');
+    return;
+  }
   const pipeStage=g('ldPipe')?.dataset.stage||(g('ldPipe')?.querySelector('.active')?.textContent);
   const data={
     pic:g('lPic')?.value, designation:g('lDes')?.value,
@@ -3741,6 +3763,420 @@ async function closeLostLd(){
    Nothing here destroys a row. The lead is marked, disappears from
    every board and report, and sits in Admin → Deleted leads where
    any administrator can restore it. CRM-NO-DELETE-01 still holds.   */
+
+/* ── CRM-LEAD-ACCOUNT-01 — the account, from the lead sheet ────────
+   A GeM tender for BEML was saved as "To review" because the parser
+   could not identify the customer, and there was no way to join it
+   to the BEML LIMITED account that already had 40 leads on it. The
+   account now has a field at the top of this form, a picker that
+   can create one, and the owner beside it.
+
+   Everything here is silent unless /api/leads/<id>/account answers,
+   which it does not while FEATURE_LEAD_ACCOUNT is off — so for
+   anybody outside the pilot the lead sheet is exactly what it was. */
+let LA = null;            // the open lead's account state
+let LA_ON = false;        // is the feature here for this person
+let LA_Q = null;          // the type-ahead's debounce timer
+
+async function laAvailable(){
+  let r = null;
+  try { r = await api('/api/leads/account-available'); } catch(_){}
+  LA_ON = !!(r && r.ok);
+  if (LA_ON) document.querySelectorAll('.junkCol')
+    .forEach(c => { c.style.display = ''; });
+}
+
+async function laBulk(){
+  const ids = [...junkPicked];
+  if (!ids.length) return;
+  const name = prompt('Link ' + ids.length + ' lead(s) to which '
+    + 'account?\n\nType part of the name.');
+  if (name === null || !name.trim()) return;
+  let found = null;
+  try { found = await api('/api/leads/' + ids[0]
+    + '/account/suggest?q=' + encodeURIComponent(name.trim())); }
+  catch(_){}
+  const rows = (found && found.rows) || [];
+  if (!rows.length){ toast('No account matches "'+name+'"','err'); return; }
+  const pick = rows[0];
+  if (!confirm('Link ' + ids.length + ' lead(s) to ' + pick.name
+      + '?\n\nEach one is written on its own; any that cannot be '
+      + 'linked are listed and left alone.')) return;
+  const r = await api('/api/leads/link-bulk', {method:'POST',
+    body: JSON.stringify({account_id: pick.account_id, lead_ids: ids})});
+  if (!r || !r.ok){ toast((r&&r.error)||'Could not link','err'); return; }
+  const skipped = (r.skipped||[]).length;
+  toast(r.linked.length + ' linked to ' + r.account
+        + (skipped ? ' · ' + skipped + ' skipped' : '') + ' ✓','ok');
+  junkClear();
+  try{ rLeads(); rAll(); }catch(_){}
+}
+
+async function laLoad(id){
+  const host = g('ldAcct');
+  if(!host) return;
+  let r = null;
+  try { r = await api('/api/leads/'+id+'/account'); } catch(_){}
+  LA = (r && r.ok) ? r : null;
+  LA_ON = !!LA;
+  if(!LA){ host.innerHTML=''; laBanner(null); return; }
+  laDraw();
+  laBanner(LA);
+}
+
+/* The yellow line and the pencil, beside the title. */
+function laBanner(st){
+  const ttl = g('ldTtl');
+  if(!ttl) return;
+  const host = ttl.parentNode;
+  host.querySelectorAll('.la-banner,.la-pencil').forEach(n=>n.remove());
+  if(!st || !st.placeholder) return;
+  const pencil = document.createElement('button');
+  pencil.className = 'la-pencil btn btn-ghost btn-xs';
+  pencil.type = 'button';
+  pencil.style.cssText = 'margin-left:8px;vertical-align:middle';
+  pencil.textContent = 'Edit';
+  pencil.title = 'Choose or create the account';
+  pencil.onclick = laFocus;
+  ttl.appendChild(pencil);
+  if(st.linked) return;
+  const box = document.createElement('div');
+  box.className = 'la-banner';
+  box.style.cssText = 'margin:8px 0 2px;padding:9px 13px;border-radius:8px;'
+    + 'font-size:12.5px;font-weight:600;background:#FFFBEB;'
+    + 'border:1px solid #FDE68A;color:#92400E';
+  box.textContent = st.banner + ' — ' + st.why + '.';
+  host.insertBefore(box, g('ldSub'));
+}
+
+function laFocus(){
+  const box = g('laQ');
+  if(box){ box.focus(); box.select();
+           box.scrollIntoView({behavior:'smooth', block:'center'}); }
+}
+
+function laDraw(){
+  const host = g('ldAcct');
+  if(!host || !LA) return;
+  if(LA.linked){ host.innerHTML = laLinked(); laOwner(); return; }
+  host.innerHTML = `
+    <div class="fm-s">Account</div>
+    <div style="background:${LA.placeholder?'#FFFBEB':'var(--surface-2)'};
+      border:1px solid ${LA.placeholder?'#FDE68A':'var(--border-2)'};
+      border-radius:var(--r);padding:12px 14px;margin-bottom:16px">
+      <div class="fmg" style="margin-bottom:8px">
+        <label class="fml">Customer account
+          <span style="font-weight:400;color:var(--text-3)">
+            — the lead's name comes from the account, never free text</span></label>
+        <input class="fmc" id="laQ" autocomplete="off"
+               placeholder="Type a company name, domain or GSTIN…"
+               oninput="laType()">
+      </div>
+      <div id="laHits"></div>
+      <div id="laNew"></div>
+      <div class="la-msg" id="laMsg" style="font-size:12.5px;margin-top:6px"></div>
+    </div>`;
+  laHits(LA.suggestions || [], '');
+}
+
+function laLinked(){
+  return `
+    <div class="fm-s">Account</div>
+    <div style="background:var(--surface-2);border:1px solid var(--border-2);
+      border-radius:var(--r);padding:12px 14px;margin-bottom:16px;
+      display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <div>
+        <div style="font-size:14.5px;font-weight:700;color:var(--ink-2)">
+          ${e(LA.account)}</div>
+        <div style="font-size:12px;color:var(--text-3)" id="laOwnerLine">
+          Account owner — loading…</div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:7px;flex-wrap:wrap"
+           id="laOwnerActs">
+        <button type="button" class="btn btn-ghost btn-sm"
+                onclick="laChangeAccount()">Change account</button>
+      </div>
+      <div style="flex-basis:100%" class="la-msg" id="laMsg"
+           style="font-size:12.5px"></div>
+    </div>`;
+}
+
+function laType(){
+  clearTimeout(LA_Q);
+  LA_Q = setTimeout(async ()=>{
+    const q = (g('laQ')||{}).value || '';
+    let r = null;
+    try { r = await api('/api/leads/'+activeId+'/account/suggest?q='
+                        + encodeURIComponent(q)); } catch(_){}
+    if(r && r.ok) laHits(r.rows, q);
+  }, 220);
+}
+
+function laHits(rows, q){
+  const host = g('laHits');
+  if(!host) return;
+  const list = (rows||[]).map(a=>`
+    <label class="la-opt" style="display:flex;gap:10px;align-items:flex-start;
+      border:1px solid var(--border-2);border-radius:var(--r);
+      padding:8px 11px;margin-bottom:6px;font-size:13px;
+      cursor:${a.blocked?'not-allowed':'pointer'};opacity:${a.blocked?'.55':'1'}"
+      ${a.blocked?'':`onclick="laPick(${a.account_id})"`}>
+      <span>
+        <b>${e(a.name)}</b>
+        <span style="color:var(--text-3)"> — ${e(a.rule)}</span>
+        ${a.owner_name?`<span style="color:var(--text-3)"> · owner ${
+          e(a.owner_name)}</span>`:'<span style="color:#92400E"> · no owner yet</span>'}
+        ${a.open_leads?`<span style="color:var(--text-3)"> · ${
+          a.open_leads} open lead${a.open_leads===1?'':'s'}</span>`:''}
+        ${a.wins?`<span style="color:var(--text-3)"> · ${a.wins} won</span>`:''}
+        ${a.blocked?'<span style="color:#991B1B;font-weight:600"> · BLOCKED</span>':''}
+      </span></label>`).join('');
+  const typed = (q||'').trim();
+  const create = (LA && LA.can_create !== false && typed.length >= 2)
+    ? `<button type="button" class="la-opt" onclick="laNewPanel()"
+        style="display:block;width:100%;text-align:left;border:1px dashed
+        var(--border-2);border-radius:var(--r);padding:8px 11px;
+        font-size:13px;background:none;cursor:pointer">
+        + Create "<b>${e(typed)}</b>" as new account</button>` : '';
+  host.innerHTML = (list || (typed
+    ? '<div style="font-size:12.5px;color:var(--text-3);padding:4px 0">'
+      + 'No account matches that.</div>'
+    : '')) + create;
+}
+
+async function laPick(accountId){
+  laSay('');
+  const r = await api('/api/leads/'+activeId+'/account/link',
+    {method:'POST', body: JSON.stringify({account_id: accountId})});
+  if(!r || !r.ok){ laSay((r&&r.error)||'Could not link', true); return; }
+  g('ldTtl').firstChild
+    ? g('ldTtl').firstChild.nodeValue = r.account
+    : g('ldTtl').textContent = r.account;
+  toast('Linked to '+r.account+' ✓','ok');
+  await laLoad(activeId);
+  if(r.owner_question) laAskOwner(r.owner_question);
+  try{ rLeads(); rAll(); }catch(_){}
+}
+
+/* ── create, inline, without leaving the sheet ─────────────────── */
+function laNewPanel(){
+  const typed = ((g('laQ')||{}).value || '').trim();
+  const host = g('laNew');
+  if(!host) return;
+  host.innerHTML = `
+    <div style="border:1px dashed var(--border-2);border-radius:var(--r);
+      padding:12px;margin-top:8px">
+      <div class="fmr">
+        <div class="fmg"><label class="fml">Account name</label>
+          <input class="fmc" id="laN" value="${e(typed)}"
+                 oninput="laDupe()"></div>
+        <div class="fmg"><label class="fml">Alias / short name</label>
+          <input class="fmc" id="laAlias"></div>
+      </div>
+      <div class="fmr">
+        <div class="fmg"><label class="fml">Vertical</label>
+          <select class="fmc" id="laVt">${verticalOptions(
+            (g('lVt')||{}).value || '')}</select></div>
+        <div class="fmg"><label class="fml">Account owner / PIC</label>
+          <select class="fmc" id="laOwn">${EMPS.map(em=>
+            `<option value="${e(em.emp_code)}">${e(em.name)}</option>`
+          ).join('')}</select>
+          <div style="font-size:11.5px;color:var(--text-3);margin-top:4px"
+               id="laOwnHint">Defaults to the vertical head.</div></div>
+      </div>
+      <div class="fmr">
+        <div class="fmg"><label class="fml">Secondary PIC</label>
+          <select class="fmc" id="laSec"><option value="">— none —</option>
+            ${EMPS.map(em=>`<option value="${e(em.emp_code)}">${
+              e(em.name)}</option>`).join('')}</select></div>
+        <div class="fmg"><label class="fml">City / State</label>
+          <input class="fmc" id="laCity" placeholder="Bangalore, Karnataka">
+        </div>
+      </div>
+      <div class="fmr">
+        <div class="fmg"><label class="fml">GSTIN</label>
+          <input class="fmc" id="laGst"></div>
+        <div class="fmg"><label class="fml">Website / email domain</label>
+          <input class="fmc" id="laDom" placeholder="beml.co.in"></div>
+      </div>
+      <div class="la-warn" id="laDupeWarn"
+           style="font-size:12.5px;color:#92400E;margin:4px 0"></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button type="button" class="btn btn-red btn-sm"
+                onclick="laCreate()">Create &amp; link</button>
+        <button type="button" class="btn btn-ghost btn-sm"
+                onclick="g('laNew').innerHTML=''">Cancel</button>
+      </div>
+    </div>`;
+  laDefaultOwner();
+  g('laN').focus();
+}
+
+function laDefaultOwner(){
+  /* The vertical head, as the auto-assign rules would choose. The
+     server decides again on save; this is so the field is not blank. */
+  const vt = (g('laVt')||{}).value || '';
+  const hint = g('laOwnHint');
+  if(hint) hint.textContent = vt
+    ? 'Defaults to the head of '+vt+'.' : 'Defaults to the vertical head.';
+}
+
+let LA_DUPE = null;
+function laDupe(){
+  clearTimeout(LA_DUPE);
+  LA_DUPE = setTimeout(async ()=>{
+    const name = ((g('laN')||{}).value || '').trim();
+    const warn = g('laDupeWarn');
+    if(!warn) return;
+    if(name.length < 3){ warn.textContent=''; return; }
+    let j = null;
+    try { j = await api('/api/account-check/duplicate?name='
+                        + encodeURIComponent(name)); } catch(_){}
+    if(!j){ warn.textContent=''; return; }
+    if(j.blocked){
+      warn.textContent = 'This looks like '+j.blocked
+        + ', which is on the block register.';
+    } else if((j.duplicates||[]).length){
+      warn.innerHTML = 'Already on file: ' + j.duplicates.map(d=>
+        `<button type="button" class="btn btn-ghost btn-xs"
+           onclick="laPick(${d.id||d.account_id})">${e(d.name)} (${
+           d.similarity}%) — use this instead</button>`).join(' ');
+    } else { warn.textContent=''; }
+  }, 280);
+}
+
+async function laCreate(force){
+  laSay('');
+  const city = ((g('laCity')||{}).value || '').split(',');
+  const body = {
+    name: (g('laN')||{}).value || '',
+    alias: (g('laAlias')||{}).value || '',
+    vertical: (g('laVt')||{}).value || '',
+    owner: (g('laOwn')||{}).value || '',
+    secondary: (g('laSec')||{}).value || '',
+    city: (city[0]||'').trim(), state: (city[1]||'').trim(),
+    gstin: (g('laGst')||{}).value || '',
+    domain: (g('laDom')||{}).value || '',
+    force: !!force};
+  const r = await api('/api/leads/'+activeId+'/account/create',
+                      {method:'POST', body: JSON.stringify(body)});
+  if(!r || !r.ok){
+    if(r && r.needs === 'confirm'
+       && confirm(r.error + '\n\nCreate it anyway?')) return laCreate(true);
+    laSay((r&&r.error)||'Could not create the account', true);
+    return;
+  }
+  toast(r.name+' created and linked ✓','ok');
+  await laLoad(activeId);
+  if(r.owner_question) laAskOwner(r.owner_question);
+  try{ rLeads(); rAll(); }catch(_){}
+}
+
+/* ── who owns the account (§2.5) ───────────────────────────────── */
+async function laOwner(){
+  let r = null;
+  try { r = await api('/api/leads/'+activeId+'/account/owner'); } catch(_){}
+  const line = g('laOwnerLine'), acts = g('laOwnerActs');
+  if(!line || !acts) return;
+  if(!r || !r.ok){ line.textContent = 'Account owner — unknown'; return; }
+  LA.ownerRow = r;
+  line.textContent = 'Account owner: ' + (r.name || 'nobody named');
+  // Keep the "Change account" button the linked block drew; the
+  // owner buttons go beside it.
+  const change = '<button type="button" class="btn btn-ghost btn-sm"'
+    + ' onclick="laChangeAccount()">Change account</button>';
+  acts.innerHTML = change + (r.may_change
+    ? `<button type="button" class="btn btn-ghost btn-sm"
+         onclick="laChangeOwner()">Change owner</button>`
+    : `<button type="button" class="btn btn-ghost btn-sm"
+         onclick="laRequestOwner()">Request owner change</button>`);
+  if(r.question) laAskOwner(r.question);
+}
+
+/* §2.1 — changing the account later is allowed. The old → new
+   account, who and when go into both histories, the same as the
+   first link did. */
+function laChangeAccount(){
+  if(!LA) return;
+  LA.linked = false;
+  LA.suggestions = [];
+  laDraw();
+  laSay('Choose the account this lead really belongs to. The '
+        + 'change is recorded on the lead and on both accounts.');
+  laFocus();
+}
+
+/* "Lead PIC is X, account owner is Y — keep X / switch to Y",
+   asked once per lead, as §2.4 says. */
+function laAskOwner(q){
+  if(!q || LA_ASKED[activeId]) return;
+  LA_ASKED[activeId] = true;
+  const keep = confirm(
+    'Lead PIC is ' + q.lead_pic_name + ', account owner is '
+    + q.account_owner_name + '.\n\nOK — keep ' + q.lead_pic_name
+    + ' on this lead.\nCancel — switch the lead to '
+    + q.account_owner_name + '.');
+  const want = keep ? q.lead_pic : q.account_owner;
+  const sel = g('lAsgn');
+  if(sel) sel.value = want;
+  api('/api/leads/'+activeId+'/account/owner-choice', {method:'POST',
+    body: JSON.stringify({chose: want, keep: keep})}).catch(()=>{});
+}
+let LA_ASKED = {};
+
+async function laChangeOwner(){
+  const r = LA && LA.ownerRow;
+  if(!r) return;
+  const others = r.other_leads || [];
+  const who = prompt(
+    'New owner for ' + r.account + ' — employee code.\n\n'
+    + 'Current owner: ' + (r.name || 'nobody') + '\n'
+    + EMPS.slice(0,0).join(''), r.emp_code || '');
+  if(who === null) return;
+  const reason = prompt('Why? This goes into the account\'s PIC history.');
+  if(reason === null || !reason.trim()){
+    toast('A reason is required','err'); return;
+  }
+  let move = [];
+  if(others.length){
+    const all = confirm(others.length + ' other open lead(s) of this '
+      + 'account are with ' + (r.name || 'the old owner')
+      + '.\n\nOK — move them all.\nCancel — leave them.');
+    if(all) move = others.map(x=>x.id);
+  }
+  const res = await api('/api/leads/'+activeId+'/account/owner',
+    {method:'POST', body: JSON.stringify({owner: who.trim(),
+      reason: reason.trim(), move_lead_ids: move})});
+  if(!res || !res.ok){
+    laSay((res&&res.error)||'Could not change the owner', true); return;
+  }
+  toast('Account owner updated · ' + (res.moved||[]).length
+        + ' lead(s) moved ✓','ok');
+  await laLoad(activeId);
+  try{ rLeads(); rAll(); }catch(_){}
+}
+
+async function laRequestOwner(){
+  const r = LA && LA.ownerRow;
+  if(!r) return;
+  const reason = prompt('Ask the vertical head to change the owner of '
+    + r.account + '.\n\nWhy?');
+  if(reason === null || !reason.trim()) return;
+  const res = await api('/api/leads/'+activeId+'/account/owner/request',
+    {method:'POST', body: JSON.stringify({reason: reason.trim()})});
+  if(!res || !res.ok){
+    laSay((res&&res.error)||'Could not send the request', true); return;
+  }
+  toast('Request sent to ' + (res.sent_to||'the vertical head') + ' ✓','ok');
+}
+
+function laSay(text, bad){
+  const m = g('laMsg');
+  if(!m) return;
+  m.textContent = text || '';
+  m.style.color = bad ? 'var(--red)' : 'var(--text-3)';
+}
+
 let JUNK = null;          // what /junk-check said about the open lead
 let JUNK_ON = false;      // is the feature here for this person at all
 
@@ -3865,6 +4301,10 @@ function junkBar(){
   bar.style.display = n ? 'flex' : 'none';
   const label = g('junkBarN');
   if (label) label.textContent = n + ' selected';
+  // Each action appears only for whoever has that feature.
+  const del = g('junkBulkBtn'), link = g('laBulkBtn');
+  if (del)  del.style.display  = JUNK_ON ? '' : 'none';
+  if (link) link.style.display = LA_ON   ? '' : 'none';
 }
 
 function junkClear(){

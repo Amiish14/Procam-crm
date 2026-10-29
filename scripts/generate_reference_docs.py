@@ -99,6 +99,15 @@ _GATES = (
     (re.compile(r"@_junk\b"), 'FEATURE_JUNK_DELETE, then signed in; '
                               'deleting is owner, head-of-vertical '
                               'or admin'),
+    # CRM-LEAD-ACCOUNT-01. Every route 404s while
+    # FEATURE_LEAD_ACCOUNT is off. Creating an account needs the
+    # Accounts screen's own permission, and changing who owns one
+    # is the account's owner, the vertical head or an admin -
+    # everybody else gets "Request owner change".
+    (re.compile(r"@_gate\b"), 'FEATURE_LEAD_ACCOUNT, then signed in; '
+                              'creating an account needs '
+                              'accounts.create; changing the owner is '
+                              'owner, head-of-vertical or admin'),
     # Admin -> CRM rules. Not behind a feature flag on purpose: a
     # readiness check that is itself switched off tells nobody
     # anything. Admins and directors, read-only.

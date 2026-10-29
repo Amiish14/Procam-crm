@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{% include "_csrf_fetch.html" %}
+<title>Leads with no account — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body class="rfq-page">
+{% include "_crm_topbar.html" %}
+<div class="rfq-ui">
+  <div class="rfq-hero">
+    <div>
+      <h1>Leads with no account</h1>
+      <p>Open leads filed under a placeholder — "To review",
+        "Unknown", a subject line, a colleague's name. Each one
+        looks placed, so it never reaches Account check, and
+        nobody searching for the customer will find it.</p>
+    </div>
+  </div>
+
+  <div class="rfq-tiles">
+    <div class="rfq-tile {{ 'warn' if rows else '' }}">
+      <span class="l">Open leads with no account</span>
+      <span class="v">{{ rows|length }}</span>
+      <span class="s">read-only — nothing here changes anything</span>
+    </div>
+    {% for why, n in counted %}
+      <div class="rfq-tile">
+        <span class="l">{{ why }}</span>
+        <span class="v">{{ n }}</span>
+        <span class="s"></span>
+      </div>
+    {% endfor %}
+  </div>
+
+  <section class="rfq-card">
+    <div class="rfq-card-h">
+      <h2>The list</h2>
+      <p>Link them one at a time from the lead sheet, or several at
+        once from the Leads list — select them and choose
+        "Link to account".</p>
+    </div>
+    {% if rows %}
+      <div class="rfq-tw">
+        <table>
+          <thead><tr>
+            <th>Lead</th><th>Filed as</th><th>Sender</th>
+            <th>Subject</th><th>Stage</th><th>Owner</th><th>Created</th>
+          </tr></thead>
+          <tbody>
+          {% for r in rows %}
+            <tr>
+              <td><a class="rfq-lnk"
+                     href="{{ url_prefix }}/app?lead={{ r.lead_id }}"
+                     >#{{ r.lead_id }}</a></td>
+              <td>{{ r.company or '(blank)' }}
+                <div class="rfq-sub">{{ r.why }}</div></td>
+              <td class="rfq-sub">{{ r.sender }}</td>
+              <td class="rfq-sub">{{ r.subject }}</td>
+              <td>{{ r.stage }}</td>
+              <td class="rfq-sub">{{ r.owner }}</td>
+              <td class="rfq-sub">{{ r.created }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="rfq-empty">Every open lead belongs to an
+        account.</p>
+    {% endif %}
+  </section>
+</div>
+</body>
+</html>

@@ -139,3 +139,104 @@ people.
 
 **Taken:** the cache lives on Flask's `g`, and outside a request
 there is no cache at all.
+
+---
+
+# CRM-LEAD-ACCOUNT-01
+
+Decisions taken while building the account picker, 29 Oct 2026.
+
+### 11. "Department steps" aside, this spec needed no new table
+
+§2.5 asks for an **Owner corrections** report: date, account, old →
+new, by whom, leads moved. `account_assignments` already holds the
+first four; it does not hold "leads moved".
+
+**Taken:** the correction is written as an audit event
+(`account.owner_corrected`) carrying the moved lead ids, and the
+report reads the audit trail. No migration, and `audit` is already
+the system of record for who changed what — a second table is the
+one that drifts.
+
+---
+
+### 12. "A person's name" means one of ours, not a guess
+
+§2.3 lists "a person's name" among the placeholders to catch.
+Deciding that a string looks like somebody's name catches
+"Tata Steel" — two words, two capitals.
+
+**Taken:** only an exact match against the active employee master.
+"James Francis Xavier" is refused; "Rajesh Kumar" is accepted,
+because it might be a customer. A false positive here blocks Save
+on a real customer, which is worse than letting one odd name
+through.
+
+---
+
+### 13. Save is blocked, but disposing of the lead never is
+
+§2.4 says Save is blocked while the company is a placeholder, and
+that Close as Lost, Mark duplicate and Delete – not relevant stay
+allowed. Those three are separate endpoints, so they were already
+exempt — the gate sits only in `PUT /api/leads/<id>`.
+
+**Taken:** left that way, and a test asserts Close as Lost still
+works on an unnamed lead. A lead can always be disposed of; it
+only cannot be left half-named.
+
+The gate also stands down when the same save carries a
+`company_id`, which is how the picker links and saves in one
+request.
+
+---
+
+### 14. The correction is written where auto-assign actually reads
+
+§2.5.3 wants every future lead to go to the corrected owner.
+`auto_assign.decide` reads `AccountVerticalOwner` **before**
+`pic_emp_code`, so a correction that stopped at the account's PIC
+would be undone by the next lead in a vertical that has its own
+row.
+
+**Taken:** `correct_owner` writes both, and there is a test that
+seeds the stale row and proves the next decision follows the
+correction.
+
+---
+
+### 15. Nothing moves that was not named
+
+§2.5.2 asks for a preview before other leads move. The preview
+lists only open leads — Won and Lost are never offered, because
+moving a closed lead rewrites a figure somebody has already
+reported on.
+
+**Taken:** `move_lead_ids` is explicit. An empty list moves
+nothing, and the test asserts that calling the endpoint without it
+leaves the other leads alone.
+
+---
+
+### 16. The bulk select column is shared, not duplicated
+
+§2.6 wants "select leads → Link to account" on the Leads list. The
+list already had a checkbox column, added by Delete – not relevant
+and shown only when that flag is on.
+
+**Taken:** the column now appears when **either** feature is on and
+each action's button appears for whoever has that feature. Two
+checkbox columns side by side would have been the alternative.
+
+---
+
+### 17. The §5 data fix is a script, not something I ran
+
+The BEML tender lead still needs linking to BEML LIMITED.
+`scripts/link_unplaced_leads.py` does it, and it is read-only
+unless given `--ids`, `--account`, `--actor` and `--apply`
+together. **I have not run it against production** — it changes
+lead data, which needs your approval first.
+
+Its apply path is tested, not just its refusal: a gate that was
+never built reports a clean dry run and writes nothing.

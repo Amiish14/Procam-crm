@@ -1938,7 +1938,7 @@ Composite indexes: `ix_term_set_current` (vertical, is_current)
 | waiting_from_task_id | INTEGER | yes | FK → task_instances.id |  |
 | blocked_at | DATETIME | yes |  |  |
 
-Composite indexes: `ix_task_inst_open` (task_key, entity_type, entity_id, owner_user_id, status); `ix_task_inst_role_status` (owner_role, status); `ix_task_inst_entity` (entity_type, entity_id); `ix_task_inst_owner_status` (owner_user_id, status)
+Composite indexes: `ix_task_inst_owner_status` (owner_user_id, status); `ix_task_inst_open` (task_key, entity_type, entity_id, owner_user_id, status); `ix_task_inst_role_status` (owner_role, status); `ix_task_inst_entity` (entity_type, entity_id)
 
 ## training_certificates
 

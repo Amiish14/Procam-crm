@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{% include "_csrf_fetch.html" %}
+<title>Owner corrections — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body class="rfq-page">
+{% include "_crm_topbar.html" %}
+<div class="rfq-ui">
+  <div class="rfq-hero">
+    <div>
+      <h1>Owner corrections</h1>
+      <p>Every time somebody fixed who owns an account from a lead
+        sheet. A name that keeps appearing here is an auto-assign
+        rule getting it wrong, not a person getting it wrong.</p>
+    </div>
+  </div>
+
+  <section class="rfq-card">
+    <div class="rfq-card-h">
+      <h2>Corrections</h2>
+      <p>{{ rows|length }} recorded.</p>
+    </div>
+    {% if rows %}
+      <div class="rfq-tw">
+        <table>
+          <thead><tr>
+            <th>When</th><th>Account</th><th>Owner</th>
+            <th class="n">Leads moved</th><th>By</th><th>Reason</th>
+          </tr></thead>
+          <tbody>
+          {% for r in rows %}
+            <tr>
+              <td class="rfq-sub">{{ r.at }}</td>
+              <td>{{ r.account }}
+                {% if r.from_lead %}
+                  <div class="rfq-sub">from lead #{{ r.from_lead }}</div>
+                {% endif %}</td>
+              <td>{{ r.was or 'nobody' }} &rarr; <b>{{ r.now }}</b></td>
+              <td class="n">{{ r.leads_moved }}</td>
+              <td class="rfq-sub">{{ r.by }}</td>
+              <td class="rfq-sub">{{ r.reason }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="rfq-empty">Nothing corrected yet. This fills as
+        people fix owners from the lead sheet.</p>
+    {% endif %}
+  </section>
+</div>
+</body>
+</html>

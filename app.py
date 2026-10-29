@@ -2614,6 +2614,32 @@ def api_update_lead(lid):
     # field is written. See `_drop_untouched`.
     _touch_warnings = _drop_untouched(d, lead)
 
+    # CRM-LEAD-ACCOUNT-01 §2.4. A lead whose company is still a
+    # placeholder — "To review", a subject line, a colleague's name
+    # — and which is linked to no account cannot be saved: nobody
+    # can find it afterwards, and it never reaches Account check
+    # because it looks placed. Closing as Lost, marking a duplicate
+    # and Delete – not relevant are separate endpoints and stay
+    # open, which is the point: the lead can always be disposed of,
+    # only not left half-named.
+    from app.services import lead_account as _la
+    _unnamed = _la.save_refusal(lead, d)
+    if _unnamed:
+        db.session.rollback()
+        return jsonify({'error': _unnamed, 'needs': 'account'}), 400
+    # The picker links in the same save as the rest of the form.
+    if d.get('company_id') and _la.enabled():
+        from app import Company as _Company
+        _acct = db.session.get(_Company, d.get('company_id'))
+        _ok, _detail = _la.link(lead, _acct, actor=session.get('emp_code'),
+                                reason='linked from the lead sheet')
+        if not _ok:
+            db.session.rollback()
+            return jsonify({'error': _detail}), 400
+        # `link` sets the name from the account; a stale `company`
+        # in the same payload must not overwrite it.
+        d.pop('company', None)
+
     fields_map = {
         'company':'company','project':'project','industry':'industry',
         'products':'products','state':'state','city':'city','country':'country',
@@ -6277,6 +6303,9 @@ for _mod_path, _bp_name in [
     # Delete – not relevant, and the Admin bin that makes every one
     # of them reversible. 404 while FEATURE_JUNK_DELETE is off.
     ('app.junk.routes',          'junk_bp'),
+    # The account, reachable from the lead sheet: link it, create it,
+    # or correct who owns it. 404 while FEATURE_LEAD_ACCOUNT is off.
+    ('app.lead_account.routes',  'lead_account_bp'),
     # The TMS integration API. Exempted from CSRF below, because it is
     # authenticated by a bearer token rather than by a session cookie —
     # a CSRF token is a defence against a browser being used as a
