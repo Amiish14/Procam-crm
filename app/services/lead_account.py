@@ -250,7 +250,12 @@ def suggest(lead, query='', *, limit=8):
             seen.add(account.id)
             rows.append(_row(account, _why_name(account, query)))
 
-    return rows[:limit]
+    # An account that can never be linked is not a suggestion, it is
+    # noise. #709 is called "Email" and #983 "Unknown"; both answer a
+    # name search for almost anything, and `link` refuses both. The
+    # live run for the BEML tender offered "Email" as a candidate
+    # alongside BEML LIMITED.
+    return [row for row in rows if not row['not_a_customer']][:limit]
 
 
 def _from_the_mail(lead):

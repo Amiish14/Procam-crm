@@ -272,6 +272,32 @@ def test_the_picker_prefills_from_what_the_parser_read(beml):
     assert 'LA BEML LIMITED' in names
 
 
+def test_a_placeholder_account_is_never_suggested(beml):
+    """Live, on 29 Oct: searching "BEML" offered BEML LIMITED,
+    Bhel, and account #709 — which is called "Email". `link`
+    refuses it, so offering it is noise in the one list a person
+    is reading to decide."""
+    with flask_app.app_context():
+        db.session.add(Company(name='Email', is_active=True))
+        db.session.add(Company(name='Unknown', is_active=True))
+        db.session.commit()
+    body = _get(f'/api/leads/{beml["lead_id"]}'
+                f'/account/suggest?q=ema')
+    assert 'Email' not in [r['name'] for r in body['rows']]
+    body = _get(f'/api/leads/{beml["lead_id"]}'
+                f'/account/suggest?q=unkn')
+    assert 'Unknown' not in [r['name'] for r in body['rows']]
+
+
+def test_a_real_account_is_still_suggested_beside_them(beml):
+    with flask_app.app_context():
+        db.session.add(Company(name='Email', is_active=True))
+        db.session.commit()
+    body = _get(f'/api/leads/{beml["lead_id"]}'
+                f'/account/suggest?q=BEML')
+    assert 'LA BEML LIMITED' in [r['name'] for r in body['rows']]
+
+
 def test_the_suggestion_says_why_it_matched(beml):
     body = _get(f'/api/leads/{beml["lead_id"]}/account')
     row = body['suggestions'][0]
