@@ -127,9 +127,11 @@ def answer(account_id, vertical, *, outcome, by, reassign_to=None,
             account_id=account_id, vertical=row.vertical,
             emp_code=owner, source='manual',
             note='confirmed by the vertical head'))
-    elif existing.emp_code != owner:
-        existing.emp_code = owner
-        existing.source = 'manual'
+    else:
+        existing.active = True
+        if existing.emp_code != owner:
+            existing.emp_code = owner
+            existing.source = 'manual'
 
     audit.record('account.owner_confirmed', 'company', account_id,
                  new={'vertical': row.vertical, 'emp_code': owner,

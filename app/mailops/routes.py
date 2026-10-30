@@ -609,8 +609,17 @@ def recipients_screen():
         focus=(request.args.get('event') or '').strip())
 
 
-# ── CRM rules (decisions of 21 Oct 2026) ─────────────────────────────
-@bp.route('/admin/crm-rules', methods=['GET', 'POST'])
+# ── CRM settings (decisions of 21 Oct 2026) ──────────────────────────
+#
+# Served at /admin/crm-settings, not /admin/crm-rules. That URL was
+# taken while this branch sat unmerged: `app/admin_rules` is the
+# pilot-readiness panel, which reads what the pilot still needs and
+# is linked from four places in its own spec. Two blueprints on one
+# rule means whichever registers first wins and the other silently
+# disappears, which is how a screen goes missing without an error.
+# This one is an editor and that one is a report; they are different
+# screens and now have different addresses.
+@bp.route('/admin/crm-settings', methods=['GET', 'POST'])
 @access.require('admin.email')
 def crm_rules_screen():
     """Tender desk, margin minimums, approvers, viewers, validity."""

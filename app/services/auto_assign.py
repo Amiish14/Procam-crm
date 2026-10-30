@@ -123,8 +123,10 @@ def owner_for_vertical(account_id, vertical):
         return None
     try:
         row = (AccountVerticalOwner.query
-               .filter_by(account_id=account_id,
-                          vertical=vertical.strip()).first())
+               .filter(AccountVerticalOwner.account_id == account_id,
+                       AccountVerticalOwner.vertical == vertical.strip(),
+                       AccountVerticalOwner.active.isnot(False))
+               .first())
     except Exception:
         from app import db
         db.session.rollback()

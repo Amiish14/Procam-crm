@@ -91,7 +91,38 @@ def ff_home():
     them a dozen times before a quote goes out.
     """
     from flask import render_template
-    return render_template('ff/home.html')
+    from app.services import crn as crn_svc
+    return render_template('ff/home.html',
+                           business_units=business_units(),
+                           default_bu=crn_svc.default_bu())
+
+
+def business_units():
+    """The units an enquiry can be assigned to, commonest first.
+
+    Read from the register rather than from a list in the code:
+    `crn.PATTERN` deliberately accepts any two-to-five letters
+    because the business writes PWL, PLPL and PWLPL, so a fixed
+    list here would refuse a unit nobody told the CRM about. The
+    default is always offered, even on the first ever enquiry when
+    the register is empty.
+    """
+    from app.models.ff import CrnSequence
+    from app.services import crn as crn_svc
+
+    default = crn_svc.default_bu()
+    found = [default]
+    try:
+        rows = (db.session.query(CrnSequence.bu)
+                .distinct().order_by(CrnSequence.bu.asc()).all())
+    except Exception:                                     # noqa: BLE001
+        db.session.rollback()
+        rows = []
+    for (unit,) in rows:
+        unit = (unit or '').strip().upper()
+        if unit and unit not in found:
+            found.append(unit)
+    return found
 
 
 # ── R2: references ───────────────────────────────────────────────────

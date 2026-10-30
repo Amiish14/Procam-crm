@@ -32,7 +32,7 @@ Accounts and the Transport Head are checking.
    `procam-crm-daily-report.timer`, `procam-crm-weekly-pack.timer`, then
    `systemctl daemon-reload && systemctl restart procam-crm-daily-report.timer procam-crm-weekly-pack.timer`.
 5. Restart the app.
-6. **Admin → Email → CRM rules** (`/admin/crm-rules`):
+6. **Admin → Email → CRM settings** (`/admin/crm-settings`):
    - `tender_owner_email`: the tender desk's email address.
    - `director_approvers`: add the stand-in approver's employee code.
    - `margin_viewers_ff`: add the three other named people's codes.
@@ -41,6 +41,32 @@ Accounts and the Transport Head are checking.
    management, then `--apply --ids <ids> --approver <code>`.
 8. Leave `FEATURE_MARGIN_GATE` off until the floors have been compared
    with a week of real quotes; then turn it on in **Switches**.
+9. Leave `FEATURE_LEAD_ALLOWANCES` off until a pilot has looked at what
+   decision A2 reveals. It widens who may open a lead across the whole
+   book, so it ships for named people first like everything else.
+
+## Changed on the rebase, 29 October 2026
+
+This release sat unmerged for eight days while other work landed.
+Three things were resolved in favour of that later work, and one
+behaviour gained a flag it did not have:
+
+- **E3, the five lost reasons, is superseded.** On 25 October
+  management settled on seven, and
+  `scripts/2026_10_25_lost_reason_mapping.py` moved every lead onto
+  one of them. "Not interested" survives as its own reason, which the
+  21 October list dropped. `LOST_REASONS_SEED` is unchanged from main.
+- **A2, lead visibility, is now behind `FEATURE_LEAD_ALLOWANCES`,
+  off.** It was unconditional here. Every other new behaviour in this
+  release is flag-gated and this one changes what people can see
+  across the whole book, so it ships the same way.
+- **The CRM rules editor moved to `/admin/crm-settings`.**
+  `/admin/crm-rules` was taken by the pilot-readiness panel
+  (`app/admin_rules`), added after this branch. Two blueprints on one
+  rule means one of them silently disappears.
+- **`scope.leads()` keeps `include_deleted`** and its exclusion of
+  leads marked "Delete – not relevant" (CRM-JUNK-DELETE-01). The
+  allowances were added alongside it, not in place of it.
 
 ## Tests
 

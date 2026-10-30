@@ -194,6 +194,34 @@
 
   <!-- ── CRN thread ───────────────────────────────────────────── -->
   <div class="ff-panel" id="p-thread">
+    <div class="ff-card" id="crnCard">
+      <h3 style="margin:0 0 4px">Assign to</h3>
+      <div class="ff-note" style="margin:0 0 10px">
+        An enquiry gets its customer reference once, from the unit
+        that will serve it. Everything downstream &mdash; the rate
+        request, the quote, the carrier's reply &mdash; is found by
+        that reference, so a second one would make the older thread
+        unfindable. A lead that already has one keeps it.
+      </div>
+      <div class="ff-grid" style="max-width:520px">
+        <div><label for="crnLead">Enquiry (lead) id</label>
+          <input id="crnLead" type="text" inputmode="numeric"></div>
+        <div><label for="crnBu">Assign to</label>
+          <select id="crnBu" onchange="crnPeek()">
+            {% for unit in business_units %}
+              <option value="{{ unit }}"
+                {% if unit == default_bu %}selected{% endif %}>
+                {{ unit }}</option>
+            {% endfor %}
+          </select></div>
+      </div>
+      <div class="ff-note" id="crnNext" style="margin-top:8px"></div>
+      <div style="margin-top:10px">
+        <button class="btn" onclick="crnGo()">Assign the reference</button>
+      </div>
+      <div id="crnOut" style="margin-top:10px"></div>
+    </div>
+
     <div class="ff-card">
       <div class="ff-grid" style="max-width:520px">
         <div><label for="thSubject">Reply subject</label>
@@ -216,6 +244,44 @@ const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
                    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const money = v => (v==null||v==='') ? '—'
   : '₹ ' + Number(v).toLocaleString('en-IN', {maximumFractionDigits:0});
+
+// ── Assign to: the customer reference, and the unit that serves it ──
+function crnPeek(){
+  const bu = $('crnBu') ? $('crnBu').value : '';
+  const out = $('crnNext');
+  if (!out || !bu) return;
+  fetch(PREFIX + '/api/ff/crn/next?bu=' + encodeURIComponent(bu))
+    .then(r => r.json()).then(d => {
+      out.textContent = d.ok
+        ? 'Next reference for ' + d.bu + ': ' + d.next
+        : (d.error || 'Could not read the next reference.');
+    }).catch(() => { out.textContent = ''; });
+}
+
+function crnGo(){
+  const lead = ($('crnLead').value || '').trim();
+  const bu = $('crnBu').value;
+  const out = $('crnOut');
+  if (!lead){ out.innerHTML = '<div class="ff-bad">Name the enquiry first.</div>'; return; }
+  out.textContent = 'Assigning\u2026';
+  fetch(PREFIX + '/api/ff/leads/' + encodeURIComponent(lead) + '/crn', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({bu: bu})
+  }).then(r => r.json()).then(d => {
+    if (!d.ok){
+      out.innerHTML = '<div class="ff-bad">' + esc(d.error || 'Refused.') + '</div>';
+      return;
+    }
+    out.innerHTML = d.already_had
+      ? '<div class="ff-warn">This enquiry already had ' + esc(d.crn)
+        + '. It keeps it &mdash; a second reference would orphan the first thread.</div>'
+      : '<div class="ff-out">' + esc(d.crn) + '</div>';
+    crnPeek();
+  }).catch(() => {
+    out.innerHTML = '<div class="ff-bad">Could not reach the server.</div>';
+  });
+}
 
 function ffTab(which){
   ['enq','rates','quote','thread'].forEach((k,i)=>{
@@ -423,6 +489,7 @@ async function thGo(){
        ${(s.notes||[]).map(n=>esc(n)).join(' ')}</div>`;
 }
 cwSwap();
+crnPeek();
 </script>
 </body>
 </html>

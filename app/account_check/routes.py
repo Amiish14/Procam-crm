@@ -339,6 +339,10 @@ def _ensure_vertical_owner(account, vertical, owner, *, actor):
     row = AccountVerticalOwner.query.filter_by(
         account_id=account.id, vertical=vertical).first()
     if row is not None:
+        # A retired row is still a row. Somebody naming an owner is
+        # a decision, so it comes back live rather than being
+        # shadowed by a seed that was rolled back.
+        row.active = True
         return
     db.session.add(AccountVerticalOwner(
         account_id=account.id, vertical=vertical, emp_code=owner,

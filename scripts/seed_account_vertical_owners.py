@@ -6,6 +6,21 @@ READ-ONLY unless `--apply`.
     .venv/bin/python scripts/seed_account_vertical_owners.py --check
     .venv/bin/python scripts/seed_account_vertical_owners.py --apply
 
+Rolling it back retires the seeded rows rather than deleting them:
+
+    .venv/bin/python scripts/seed_account_vertical_owners.py --retire
+    .venv/bin/python scripts/seed_account_vertical_owners.py \
+        --retire --apply
+    .venv/bin/python scripts/seed_account_vertical_owners.py \
+        --restore --apply
+
+A seeded row is the CRM's reading of who has actually served an
+account, derived from lead history. Deleting it threw away both the
+reading and the fact that it was ever made, and re-running the seed
+afterwards does not bring it back — the history it reads has moved
+on. `active=0` has the same effect on every reader and is one
+UPDATE away from being undone.
+
 For every account, and every vertical it has had work in, the owner
 of its most recent open or won lead in that vertical. That is the
 best evidence the CRM holds about who actually serves whom, and it
@@ -47,10 +62,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--check', action='store_true')
     ap.add_argument('--apply', action='store_true')
+    ap.add_argument('--retire', action='store_true',
+                    help='mark the seeded rows inactive (the rollback)')
+    ap.add_argument('--restore', action='store_true',
+                    help='put the retired seeded rows back')
     ap.add_argument('--list-unresolved', action='store_true',
                     help='name every account the history cannot '
                          'answer for, not just how many')
     args = ap.parse_args()
+    if args.retire or args.restore:
+        if args.retire and args.restore:
+            raise SystemExit('Choose one: --retire or --restore.')
+        return _retire(retire=args.retire, apply=args.apply)
     if args.apply == args.check:
         raise SystemExit('Choose one: --check or --apply.')
 
@@ -190,6 +213,43 @@ def main():
             raise SystemExit(1)
         print(f'\n  {written} row(s) written, in one transaction. Rows a '
               f'person had already set were left alone.')
+
+
+def _retire(*, retire=True, apply=False):
+    """The rollback, and its undo. Nothing is deleted either way.
+
+    Only rows marked `seeded` are touched. A row somebody set by
+    hand is a decision, and rolling back a derivation must not
+    quietly withdraw a decision taken since.
+    """
+    from app.services import audit
+
+    with app.app_context():
+        from app.models.assignment import AccountVerticalOwner
+
+        want_active = not retire
+        word = 'retire' if retire else 'restore'
+        rows = (AccountVerticalOwner.query
+                .filter(AccountVerticalOwner.source == 'seeded')
+                .all())
+        picked = [r for r in rows
+                  if bool(r.active is not False) != want_active]
+        print(f'database: {db.engine.url}')
+        print(f'  seeded owner rows:        {len(rows)}')
+        print(f'  rows this would {word}: {len(picked)}')
+        if not apply:
+            print(f'\nDRY RUN — nothing written. Re-run with '
+                  f'--{word} --apply.')
+            return 0
+        for row in picked:
+            row.active = want_active
+        audit.record('account.owner_seed_' + word, 'company', None,
+                     new={'rows': len(picked), 'active': want_active},
+                     actor='CRM-AUTO-ASSIGN-01',
+                     reason=f'owner seed {word}d; no row was deleted')
+        db.session.commit()
+        print(f'\n  {len(picked)} row(s) {word}d. None deleted.')
+        return 0
 
 
 if __name__ == '__main__':

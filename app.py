@@ -3964,15 +3964,15 @@ def api_stats():
 #: "Price too high" chosen and never reported on, and the 1,213
 #: leads carrying "Not interested" sat under a reason in neither.
 #:
-#: The five decided on 21 October 2026 (E3) come first. They are a
-#: Master Data change on a live database, not a code change — this
-#: list only decides what a *fresh* install starts with, and what
-#: the dropdown falls back to if Master Data cannot be read.
+#: Decision E3 of 21 October named five reasons plus Other. It is
+#: superseded: on 25 October management settled on these seven and
+#: `scripts/2026_10_25_lost_reason_mapping.py` moved every lead onto
+#: one of them. "Not interested" survives as its own reason because
+#: folding 1,213 of those into silence would lose the difference
+#: between a no and a non-reply. This list and that script's FINAL
+#: must stay identical; a test holds it.
 LOST_REASONS_SEED = [
-    'Price too high', 'Lost to competitor', 'Client dropped project',
-    'No Response', 'Scope not in our service', 'Other',
-    # The earlier values, kept so old records can still be filtered.
-    'No response', 'Not interested', 'Price',
+    'No response', 'Not interested', 'Price', 'Lost to competitor',
     'Customer cancelled or postponed', 'We could not serve it',
     'Others',
 ]

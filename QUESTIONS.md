@@ -391,3 +391,77 @@ two runs a week apart leave two files whose difference is the work
 somebody did. The workbooks stay. The count will not be exactly 296
 — the population is read from the database, so leads reclassified
 since October drop out of their own accord.
+
+---
+
+### 27. "Assign to" is the business unit, because that is what the
+### endpoint takes
+
+TKT-0079 asks for an "Assign to" dropdown wired to
+`api_assign_crn`. That endpoint stamps an enquiry with its customer
+reference and takes one argument, `bu` — the business unit the
+reference is issued under. It does not assign a person.
+
+**Taken:** the dropdown offers the business units, reads the next
+reference as you change it, and assigns on the button. The units
+come from the CRN register rather than a list in the code, because
+`crn.PATTERN` deliberately accepts any two-to-five letters — the
+business writes PWL, PLPL and PWLPL. **If you meant "assign the
+enquiry to a person", say so and I will add that instead**; it is a
+different endpoint and does not exist yet.
+
+---
+
+### 28. Decision A2 gained a flag it did not have
+
+Everything else in the 21 October release is behind a flag.
+A2 — a vertical head sees every lead of their vertical, and anyone
+sees a lead they hold a task on — was unconditional.
+
+**Taken:** `FEATURE_LEAD_ALLOWANCES`, off. It widens who can open a
+lead across the whole book, which is the kind of change that should
+be looked at by a pilot before everybody gets it. With the flag off
+`scope.leads()` is exactly the ownership test it has always been,
+and a test holds that.
+
+---
+
+### 29. E3, the five lost reasons, is superseded
+
+The 21 October decision named five reasons plus Other. On 25
+October — four days later — management settled on seven, and
+`scripts/2026_10_25_lost_reason_mapping.py` moved every lead onto
+one of them. "Not interested" survives as its own reason in the
+later list and was dropped by the earlier one; folding 1,213 of
+those into "No response" would lose the difference between a no and
+a non-reply.
+
+**Taken:** main's seven stand, unchanged. `LOST_REASONS_SEED` is
+exactly what it was, and the test that holds it equal to the
+migration's `FINAL` still passes.
+
+---
+
+### 30. The CRM rules editor moved to /admin/crm-settings
+
+Both `app/admin_rules` (the pilot-readiness panel, added after this
+branch) and the branch's settings editor claim `/admin/crm-rules`.
+Two blueprints on one rule means whichever registers first wins and
+the other silently disappears — no error, no log line.
+
+**Taken:** the readiness panel keeps the URL its own spec points at
+in four places; the editor is served at `/admin/crm-settings`. The
+release note and the Email shell's link both say so.
+
+---
+
+### 31. Dropping the `active` column puts every row back
+
+`scripts/2026_10_29_owner_rows_retire.py --down` cannot keep a
+distinction the schema no longer has room for, so dropping the
+column makes every retired owner row live again.
+
+**Taken:** that is said in the script rather than worked around.
+`--down` is for undoing the migration, not for undoing the
+rollback; `--restore --apply` on the seed script is what undoes the
+rollback.

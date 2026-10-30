@@ -8,6 +8,12 @@
 The negative assertions are the point: an own-scope user must not gain
 the vertical allowance, and a head must not see another vertical's
 leads unless a task puts them there.
+
+All of it is behind FEATURE_LEAD_ALLOWANCES, off by default. It
+widens who can open a lead across the whole book, so it ships the
+way every other new behaviour here does: on for a pilot first. The
+fixture turns it on; `test_with_the_flag_off_...` holds that with it
+off the scope is exactly the ownership test it has always been.
 """
 import os
 import sys
@@ -32,6 +38,21 @@ from app.services import vertical_heads                       # noqa: E402
 
 
 _CREATED = []
+
+
+def _allowances(state):
+    import json
+
+    from app.models.integration import AppSetting
+    from app.services import flags
+    key = 'flag.' + scope.ALLOWANCE_FLAG
+    row = AppSetting.query.filter_by(key=key).first()
+    if row is None:
+        row = AppSetting(key=key)
+        db.session.add(row)
+    row.value_json = json.dumps(bool(state))
+    db.session.commit()
+    flags.cache_clear()
 
 
 def _upsert(model, keys, **values):
@@ -101,6 +122,7 @@ def world():
                                     owner_user_id='VHT'))
         db.session.commit()
         vertical_heads.cache_clear()
+        _allowances(True)
     yield ids
     with flask_app.app_context():
         from app.models.access import AccessProfile
@@ -113,6 +135,7 @@ def world():
             synchronize_session=False)
         db.session.commit()
         _cleanup()
+        _allowances(False)
         vertical_heads.cache_clear()
 
 
@@ -225,3 +248,32 @@ def test_a_scope_narrowed_to_one_person_gets_no_allowance(world):
                                                  {'VHT'}, head.perms,
                                                  head.data_scope))
         assert world['wh_plain'] in seen
+
+
+def test_with_the_flag_off_the_scope_is_what_it_always_was(world):
+    """The whole of decision A2, switched off: a head sees the leads
+    they own and the ones they monitor, and nothing else. This is
+    what everybody outside the pilot gets."""
+    with flask_app.app_context():
+        _allowances(False)
+        try:
+            sc = _as('VHT', DataScope.VERTICAL)
+            seen = _ids(sc)
+            assert world['ht_by_wh'] not in seen
+            assert world['ff_by_wh'] not in seen
+            assert world['wh_task'] not in seen
+            lead = db.session.get(Lead, world['ht_by_wh'])
+            assert not scope.may_view(lead, sc=sc)
+        finally:
+            _allowances(True)
+
+
+def test_the_flag_turns_both_allowances_on_together(world):
+    """One switch, both allowances — a half-applied visibility rule
+    is harder to reason about than either state."""
+    with flask_app.app_context():
+        _allowances(True)
+        sc = _as('VHT', DataScope.VERTICAL)
+        seen = _ids(sc)
+        assert world['ht_by_wh'] in seen          # the vertical one
+        assert world['wh_task'] in seen           # the task one

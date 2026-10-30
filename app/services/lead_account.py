@@ -697,7 +697,9 @@ def _teach(account, owner, *, actor):
         db.session.add(AccountVerticalOwner(
             account_id=account.id, vertical=vertical, emp_code=owner,
             source='manual', note='corrected from the lead sheet'))
-    elif (row.emp_code or '') != owner:
+    else:
+        row.active = True
+    if row is not None and (row.emp_code or '') != owner:
         was = row.emp_code
         row.emp_code = owner
         audit.record('account.vertical_owner_corrected', 'company',

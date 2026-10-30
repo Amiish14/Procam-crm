@@ -341,8 +341,8 @@ def test_rules_screen_saves_typed_values_and_refuses_bad_ones(world):
         set_profile(ADMIN, DataScope.ALL, ['module.quotes', 'admin.email'],
                     actor='test')
     c = _client(ADMIN)
-    assert c.get('/admin/crm-rules').status_code == 200
-    r = c.post('/admin/crm-rules', data={
+    assert c.get('/admin/crm-settings').status_code == 200
+    r = c.post('/admin/crm-settings', data={
         'director_approvers': 'mdir, mview',
         'margin_floors': 'PTM_OWN = 40\nWAREHOUSING = 18.5',
         'head_approval_limit_inr': '30,00,000'})
@@ -352,7 +352,7 @@ def test_rules_screen_saves_typed_values_and_refuses_bad_ones(world):
         assert admin_settings.get('margin_floors') == {
             'PTM_OWN': 40, 'WAREHOUSING': 18.5}
         assert admin_settings.get('head_approval_limit_inr') == 3000000
-    r = c.post('/admin/crm-rules', data={'margin_floors': 'PTM_OWN forty'})
+    r = c.post('/admin/crm-settings', data={'margin_floors': 'PTM_OWN forty'})
     assert b'nothing was saved' in r.data
     with flask_app.app_context():
         assert admin_settings.get('margin_floors')['PTM_OWN'] == 40
@@ -365,4 +365,4 @@ def test_rules_screen_saves_typed_values_and_refuses_bad_ones(world):
 
 
 def test_rules_screen_needs_admin_email(world):
-    assert _client(OTHER).get('/admin/crm-rules').status_code in (302, 403)
+    assert _client(OTHER).get('/admin/crm-settings').status_code in (302, 403)

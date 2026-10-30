@@ -95,6 +95,15 @@ class AccountVerticalOwner(db.Model):
     #: when a person set it. A seeded row is a reasonable guess from
     #: what has been happening; a manual one is a decision.
     source = db.Column(db.String(12), default='manual')
+
+    #: Retired rather than deleted. Rolling back the owner seed used
+    #: to DELETE every seeded row — the one irreversible step in an
+    #: otherwise reversible release, because those rows are the
+    #: CRM's reading of who has served each account and re-running
+    #: the seed later reads different history. Inactive rows are
+    #: ignored by every reader, so the effect is the same and the
+    #: reading survives.
+    active = db.Column(db.Boolean, default=True, index=True)
     note = db.Column(db.String(200))
     updated_by = db.Column(db.String(20))
     updated_at = db.Column(db.DateTime, default=datetime.utcnow,

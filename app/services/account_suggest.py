@@ -290,6 +290,7 @@ def _ensure_owner(account, vertical, owner, *, actor):
     row = AccountVerticalOwner.query.filter_by(
         account_id=account.id, vertical=vertical).first()
     if row is not None:
+        row.active = True
         return
     db.session.add(AccountVerticalOwner(
         account_id=account.id, vertical=vertical, emp_code=owner,
