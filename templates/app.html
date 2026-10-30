@@ -1369,9 +1369,26 @@ catch (err) { console.error('Employee list could not start loading', err); }
       <input class="fi" id="aCi" placeholder="City"    oninput="rAll()" style="width:120px;">
       <select class="fi" id="aSrc" onchange="rAll()"><option value="">All Sources</option><option value="manual">Manual</option><option value="import">Imported</option><option value="news">News Lead</option><option value="jul2025">Jul-2025</option><option value="manju">Manju</option><option value="new_project">Archive</option><option value="subsidiary">Subsidiary</option></select>
       <button class="btn btn-ghost btn-sm" onclick="clrF('a')">Clear</button>
+      {% if feature_enabled('FEATURE_LEAD_POPUP_V2') %}
+      {# Default view: a user's own open leads, an admin's all open
+         ones. The list opened on everything, which is 300 rows of
+         other people's work. #}
+      <select class="fi" id="aMine" onchange="rAll()">
+        <option value="1">My open leads</option>
+        <option value="0">All open leads</option>
+      </select>
+      {% endif %}
       <span class="f-cnt" id="aCnt"></span>
     </div>
+    {% if feature_enabled('FEATURE_LEAD_POPUP_V2') %}
+    {# CRM-LEAD-FLOW-01 §3.4. The columns a person actually scans:
+       who it is, where it is, who holds it, what it is worth, when
+       it is due and when it last moved. Industry, State, Opp# and
+       Onboarded were empty on every row in the live review. #}
+    <div class="tw"><table><thead><tr><th>Lead</th><th>Account</th><th>Contact</th><th>Stage</th><th>Owner</th><th>Vertical</th><th title="Lakh; values of ₹1 crore and above show in crore">₹ L</th><th>Due</th><th>Last activity</th><th>Source</th><th></th></tr></thead><tbody id="aTb"></tbody></table></div>
+    {% else %}
     <div class="tw"><table><thead><tr><th>#</th><th>Company</th><th>Industry</th><th>State</th><th title="Lakh; values of ₹1 crore and above show in crore">₹ L</th><th>Contact</th><th>Stage</th><th>Assigned</th><th>Source</th><th>Opp#</th><th>Onboarded</th><th></th></tr></thead><tbody id="aTb"></tbody></table></div>
+    {% endif %}
   </div>
 </div>
 
@@ -7789,5 +7806,148 @@ async function loadMyWork(){
 })();
 </script>
 {% include "_copilot_panel.html" %}
+{% if feature_enabled('FEATURE_LEAD_POPUP_V2') %}
+{# ── CRM-LEAD-FLOW-01 §3.4 — the All Leads list ───────────────────
+   Everything here is inside the flag. With it off not one byte of
+   this reaches the page, and the list is the one people have been
+   using. The renderer is replaced rather than edited for the same
+   reason: two versions of one function are easier to tell apart
+   than one function full of conditions. #}
+<script>
+(function () {
+  'use strict';
+
+  /* The team filter listed people who had left, and showed one
+     name twice. Both come from reading the employee master
+     unfiltered; /api/help/people is the filtered reading. */
+  function fillTeam() {
+    var box = g('aAsgn');
+    if (!box) return;
+    fetch(crmUrl('/api/help/people'))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok) return;
+        box.innerHTML = '<option value="">All Team</option>'
+          + d.rows.map(function (p) {
+              return '<option value="' + e(p.emp_code) + '">'
+                + e(p.name) + '</option>';
+            }).join('');
+      })
+      .catch(function () { /* the old options stand */ });
+  }
+
+  function dueCell(row) {
+    if (!row.due) return '<span class="td-s">—</span>';
+    var cls = row.due_colour === 'red' ? 'lfl-red'
+            : (row.due_colour === 'orange' ? 'lfl-orange' : 'lfl-green');
+    return '<span class="' + cls + '">' + e(row.due) + '</span>';
+  }
+
+  function ownerCell(row) {
+    if (!row.owner) {
+      return '<span class="lfl-noone">No owner</span>';
+    }
+    return e(row.owner_name || row.owner);
+  }
+
+  function similarCell(row) {
+    if (!row.similar || !row.similar.length) return '';
+    return '<a href="#" class="lfl-dup" onclick="lflMerge(event,'
+      + row.lead_id + ',[' + row.similar.join(',') + '])">'
+      + (row.similar.length + 1) + ' similar</a>';
+  }
+
+  window.lflMerge = function (ev, leadId, others) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    var into = others[0];
+    if (!confirm('Lead #' + leadId + ' looks like the same enquiry '
+        + 'as #' + into + '.\n\nMerge #' + leadId + ' into #' + into
+        + '? Its mails, notes, tasks and quotes move across. The '
+        + 'row is kept, pointing at #' + into + '. Nothing is '
+        + 'deleted.')) return;
+    fetch(crmUrl('/api/leads/merge'), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({lead_id: leadId, into: into})
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) {
+        if (!(window.showGuideFrom && window.showGuideFrom(d))) {
+          alert(typeof d.error === 'string' ? d.error : 'Refused.');
+        }
+        return;
+      }
+      rAll();
+    });
+  };
+
+  /* The list, as §3.4 asks for it. */
+  window.rAll = async function () {
+    var mineBox = g('aMine');
+    var mine = mineBox ? mineBox.value : '1';
+    var d = await api('/api/leads/list-v2?mine=' + encodeURIComponent(mine));
+    var rows = (d && d.rows) ? d.rows : [];
+    var search = (g('aS') ? g('aS').value : '').toLowerCase();
+    var stage = g('aSt') ? g('aSt').value : '';
+    var who = g('aAsgn') ? g('aAsgn').value : '';
+    var vert = g('aV') ? g('aV').value : '';
+    var src = g('aSrc') ? g('aSrc').value : '';
+    rows = rows.filter(function (r) {
+      if (search && (r.account + ' ' + r.contact).toLowerCase()
+            .indexOf(search) < 0) return false;
+      if (stage && r.stage !== stage) return false;
+      if (who && r.owner !== who) return false;
+      if (vert && r.vertical !== vert) return false;
+      if (src && r.source !== src) return false;
+      return true;
+    });
+    if (g('aCnt')) g('aCnt').textContent = rows.length + ' leads';
+    g('aTb').innerHTML = rows.length ? rows.map(function (r) {
+      return '<tr onclick="openLd(' + r.lead_id + ')">'
+        + '<td class="tbl-num">#' + r.lead_id + '</td>'
+        + '<td><div class="td-m">' + e(r.account) + '</div>'
+        + similarCell(r) + '</td>'
+        + '<td><div style="font-weight:500">' + e(r.contact || '—')
+        + '</div><div class="td-s">' + e(r.contact_email || '')
+        + '</div></td>'
+        + '<td>' + sb(r.stage)
+        + (r.sub_status ? '<div class="td-s">' + e(r.sub_status)
+                          + '</div>' : '') + '</td>'
+        + '<td>' + ownerCell(r) + '</td>'
+        + '<td>' + e(r.vertical || '—') + '</td>'
+        + '<td class="tbl-num">'
+        + (r.value_lakh == null ? '—' : r.value_lakh) + '</td>'
+        + '<td>' + dueCell(r) + '</td>'
+        + '<td class="tddate">' + e(r.last_activity || '—') + '</td>'
+        + '<td>' + srb(r.source) + '</td>'
+        + '<td onclick="event.stopPropagation()">'
+        + '<a class="btn btn-ghost btn-xs" href="'
+        + crmUrl('/leads/' + r.lead_id + '/panel') + '">Open</a></td>'
+        + '</tr>';
+    }).join('')
+      : '<tr><td colspan="11" style="text-align:center;padding:40px;'
+        + 'color:var(--text-3)">No leads</td></tr>';
+  };
+
+  document.addEventListener('DOMContentLoaded', function () {
+    fillTeam();
+    /* An admin opens on everything, everybody else on their own. */
+    var mineBox = g('aMine');
+    if (mineBox && document.body.classList.contains('role-admin')) {
+      mineBox.value = '0';
+    }
+  });
+})();
+</script>
+<style>
+  .lfl-noone{background:var(--p-danger-soft);color:var(--p-danger);
+    border:1px solid var(--p-danger);border-radius:999px;
+    padding:1px 9px;font-size:11.5px;font-weight:700}
+  .lfl-red{color:var(--p-danger);font-weight:700}
+  .lfl-orange{color:var(--p-warning);font-weight:700}
+  .lfl-green{color:var(--p-success);font-weight:600}
+  .lfl-dup{display:inline-block;margin-top:2px;font-size:11.5px;
+    color:var(--p-info);text-decoration:underline}
+</style>
+{% endif %}
 </body>
 </html>

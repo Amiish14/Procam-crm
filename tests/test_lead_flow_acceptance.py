@@ -211,9 +211,12 @@ def test_a_blocked_client_cannot_be_keyed_in_by_hand():
     from app.models.integration import AppSetting
     from app.services import flags, lead_flow
     with flask_app.app_context():
-        row = AppSetting(key='flag.' + lead_flow.FLAG,
-                         value_json=json.dumps(True))
-        db.session.add(row)
+        row = AppSetting.query.filter_by(
+            key='flag.' + lead_flow.FLAG).first()
+        if row is None:
+            row = AppSetting(key='flag.' + lead_flow.FLAG)
+            db.session.add(row)
+        row.value_json = json.dumps(True)
         account = _account('Walchandnagar Industries Limited')
         db.session.commit()
         _block(account.name)

@@ -602,3 +602,27 @@ person gets `CRM-202610-00042` back instead of the Tech team's
 phone number, and the Tech team gets the context without asking. If
 you meant a register that lives in the TMS, point me at it and this
 becomes a client for it.
+
+---
+
+### 40. The All Leads list, inside the flag
+
+§3.4 is now built in `templates/app.html`, every line of it inside
+`{% if feature_enabled('FEATURE_LEAD_POPUP_V2') %}`: an alternative
+`<thead>`, the My/All open leads control, and one script block that
+replaces `rAll` rather than editing it. Two versions of one
+function are easier to tell apart than one function full of
+conditions.
+
+**Taken:** a snapshot test hashes the flag-off All Leads block and
+compares it against
+`tests/fixtures/all_leads_flag_off.sha256`, taken before the
+change. If the page everybody is still using moves by one byte,
+that test fails and says how to take a new snapshot deliberately.
+
+Two findings fell out of building it. `opportunity_value_num` is a
+`Decimal`, so dividing it by a float raised a 500 — caught by a
+test, not by a user. And the open-lead filter built on
+`STAGES_PIPELINE` silently drops the alias stages (Profile Sent,
+Appointment, Visit Done), which are open; the list adds them back.
+That is the same gap the on-hold sweep found from the other side.

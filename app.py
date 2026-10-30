@@ -1062,6 +1062,7 @@ def _drop_untouched(d, lead):
     return warnings
 
 
+@app.template_global('feature_enabled')
 @app.template_global('feature')
 def _feature(name, default=False):
     """Is this feature switch on? For templates.

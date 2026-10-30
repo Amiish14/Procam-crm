@@ -365,3 +365,134 @@ def api_create():
     return jsonify(ok=True, lead_id=lead.id,
                    owner=lead.assigned_to or '',
                    stage=lead.stage)
+
+
+# ── §3.4 — the All Leads list ────────────────────────────────────────
+@bp.route('/api/leads/list-v2')
+@_gate
+def api_list():
+    """The list's own reading of a lead, and nothing the old one
+    already has.
+
+    Four things the list could not show: who owns it (as a red chip
+    when nobody does), when it is due and in what colour, when it
+    last moved, and whether another lead looks like the same
+    enquiry. The duplicate count is worked out over the rows being
+    returned rather than by asking the matcher 300 times — same
+    answer for a split thread, and one pass instead of three
+    hundred.
+    """
+    from app import Lead, LeadEmail
+    from app.access import scope as sc_mod
+    from app.services import lead_flow, lead_merge, sales_rules
+
+    mine = (request.args.get('mine') or '').strip() == '1'
+    q = sc_mod.leads().filter(Lead.merged_into_id.is_(None))
+    if (request.args.get('open') or '1') == '1':
+        # The alias stages — Profile Sent, Appointment, Visit Done —
+        # are open and are not in STAGES_PIPELINE, so a list built
+        # on that alone silently drops them. They are Contacted on
+        # the strip, and they belong on an open list.
+        stages = set(sales_rules.open_stages())
+        stages |= {name for name, strip in lead_flow.ON_STRIP.items()
+                   if strip != 'Won'}
+        q = q.filter(Lead.stage.in_(sorted(stages)))
+    if mine:
+        me = _me()
+        q = q.filter(db.or_(Lead.assigned_to == me,
+                            Lead.secondary_owner == me))
+    rows = q.order_by(Lead.id.desc()).limit(300).all()
+
+    # One pass for "2 similar": leads sharing a thread, or a subject
+    # and a sender domain, are the same enquiry split in two.
+    buckets = {}
+    for lead in rows:
+        for key in _dup_keys(lead, lead_merge):
+            buckets.setdefault(key, []).append(lead.id)
+    similar = {}
+    for ids in buckets.values():
+        if len(ids) < 2:
+            continue
+        for lead_id in ids:
+            similar.setdefault(lead_id, set()).update(
+                i for i in ids if i != lead_id)
+
+    last = {}
+    try:
+        for lead_id, when in (db.session.query(
+                LeadEmail.lead_id,
+                db.func.max(LeadEmail.sent_or_received_at))
+                .filter(LeadEmail.lead_id.in_([r.id for r in rows]))
+                .group_by(LeadEmail.lead_id).all()):
+            last[lead_id] = str(when or '')[:10]
+    except Exception:                                     # noqa: BLE001
+        db.session.rollback()
+
+    out = []
+    for lead in rows:
+        when, days, colour = lead_flow.due_of(lead)
+        out.append({
+            'lead_id': lead.id,
+            'account': lead.company or '',
+            'account_id': lead.company_id,
+            'contact': lead.pic or '',
+            'contact_email': lead.email or '',
+            'stage': lead_flow.strip_stage(lead) or lead.stage or '',
+            'sub_status': getattr(lead, 'sub_status', '') or '',
+            'owner': lead.assigned_to or '',
+            'owner_name': lead.assigned_name or '',
+            'vertical': lead.procam_vertical or '',
+            # The column is Decimal on this database and float on
+            # another; both divide badly against the wrong type.
+            'value_lakh': (round(float(lead.opportunity_value_num)
+                                 / 100000.0, 1)
+                           if lead.opportunity_value_num else None),
+            'due': str(when)[:10] if when else '',
+            'due_days': days,
+            'due_colour': colour,
+            'last_activity': last.get(lead.id,
+                                      str(lead.updated_at or '')[:10]),
+            'source': lead.source or '',
+            'similar': sorted(similar.get(lead.id, ())),
+        })
+    return jsonify(ok=True, rows=out, total=len(out), mine=mine)
+
+
+def _dup_keys(lead, lead_merge):
+    keys = []
+    thread = (getattr(lead, 'thread_key', '') or '').strip()
+    if thread:
+        keys.append(('t', thread))
+    subject = lead_merge.strip_subject(
+        getattr(lead, 'original_email_subject', '') or '')
+    address = (lead.email or lead.original_email_from or '')
+    domain = (address.rsplit('@', 1)[-1].strip().lower().strip('>')
+              if '@' in address else '')
+    if subject and len(subject) >= 8 and domain:
+        keys.append(('s', domain, subject))
+    return keys
+
+
+@bp.route('/api/leads/merge', methods=['POST'])
+@_gate
+def api_merge():
+    """The list's "2 similar" link, and the panel's banner."""
+    from app import Lead
+    from app.services import lead_merge
+
+    data = request.get_json(silent=True) or {}
+    lead = db.session.get(Lead, data.get('lead_id') or 0)
+    into = db.session.get(Lead, data.get('into') or 0)
+    if lead is None or into is None:
+        body, status = guided_help.refusal('POSSIBLE_DUPLICATE',
+                                           http=404)
+        return jsonify(body), status
+    if not (_may_edit(lead) and _may_edit(into)):
+        body, status = guided_help.refusal('NOT_YOUR_LEAD', http=403)
+        return jsonify(body), status
+    ok, detail = lead_merge.merge(lead, into, actor=_me(),
+                                  reason=(data.get('reason') or '')
+                                  .strip())
+    if not ok:
+        return jsonify(ok=False, error=detail), 400
+    return jsonify(ok=True, **detail)
