@@ -59,6 +59,26 @@ ALIASES = {
 
 TERMINAL = ('Won', 'Lost', 'On Hold', 'Not Interested')
 
+#: The aliases that fold onto a stage still in play. A lead written
+#: "Visit Done" is a lead on Business Discussion that nobody has
+#: saved since the name changed, so it is open — and it was not
+#: counted as open anywhere until 30 October 2026, because the open
+#: set was derived from JOURNEY, which these names are not on.
+OPEN_ALIASES = tuple(a for a, target in ALIASES.items()
+                     if target not in TERMINAL)
+
+
+def canonical(stage):
+    """The journey stage this written stage belongs to.
+
+    The one place to fold a retired name onto the stage it means, so
+    a count keyed on the stage a lead carries and a count keyed on
+    the journey cannot disagree.
+    """
+    stage = (stage or '').strip()
+    return ALIASES.get(stage, stage)
+
+
 #: Stages that still exist in history but may no longer be chosen.
 #:
 #: R2 converted 1,212 "Not Interested" leads to Lost and left the

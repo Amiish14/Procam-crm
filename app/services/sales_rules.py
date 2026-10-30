@@ -99,9 +99,40 @@ def business_today():
 
 # ── stage vocabulary ─────────────────────────────────────────────────
 def open_stages():
-    """Lead stages that are still in play."""
+    """Lead stages that are still in play.
+
+    Every stage a lead can be *sitting on* and still be open, which
+    is a wider list than the journey: it includes the retired names
+    (Profile Sent, Appointment, Visit Done) that fold onto an open
+    journey stage. Until 30 October 2026 this returned the journey
+    alone, so a lead nobody had re-saved since the rename counted as
+    closed in every screen, report and count built on this helper —
+    the Workbench, the review, the cockpit, the digests and the
+    account gate among them.
+
+    Use `pipeline_stages()` instead where the list is a vocabulary:
+    a dropdown of stages a person may choose, or the order a funnel
+    is drawn in.
+    """
+    from app import STAGES_OPEN
+    return tuple(STAGES_OPEN)
+
+
+def pipeline_stages():
+    """The open stages on the journey, in order — the vocabulary."""
     from app import STAGES_PIPELINE
     return tuple(STAGES_PIPELINE)
+
+
+def canonical_stage(stage):
+    """The journey stage a written stage belongs to.
+
+    For grouping: a count keyed on `lead.stage` and a list drawn
+    from `pipeline_stages()` otherwise disagree about the three
+    retired names.
+    """
+    from app.services import stage_map
+    return stage_map.canonical(stage)
 
 
 def terminal_stages():

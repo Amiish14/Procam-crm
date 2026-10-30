@@ -626,3 +626,34 @@ test, not by a user. And the open-lead filter built on
 `STAGES_PIPELINE` silently drops the alias stages (Profile Sent,
 Appointment, Visit Done), which are open; the list adds them back.
 That is the same gap the on-hold sweep found from the other side.
+
+---
+
+### 41. One stage list was still two
+
+Finding 40's alias gap was not a defect in the All Leads list. It
+was in `sales_rules.open_stages()`, which returned the journey's
+open stages and nothing else, so **31 places** that ask "is this
+lead open" read a lead on Profile Sent, Appointment or Visit Done
+as closed: the Workbench, the review funnel and its discipline,
+desk and account sections, the meeting agenda, the management
+view, the pipeline value KPI, the digest mail, outbound and quote
+mail, the account gate, and nine backlog scripts. The three names
+are only rewritten when somebody saves the lead, which is why they
+are still on the rows.
+
+**Taken:** `STAGES_OPEN` in `app.py` — the journey's open stages
+plus the aliases that fold onto them — and `open_stages()` returns
+it. The vocabulary a dropdown or a funnel needs is now
+`sales_rules.pipeline_stages()`, the journey alone, so the two
+readings of "the stage list" can no longer be mistaken for one
+another. `scripts/open_stage_sweep.py` lists every site with what
+it feeds and prints each count under both sets.
+
+The question behind it: this is the second time the same shape of
+bug has surfaced — one list used as a vocabulary and as a filter.
+"New Opportunity" cost 156 leads in October. If the DB still holds
+leads on stage names that are neither on the journey nor in
+`LEGACY_STAGE_MAP`, they are invisible to both lists and the sweep
+will not see them either; a one-off `SELECT stage, count(*) FROM
+leads GROUP BY stage` on the server would settle it.

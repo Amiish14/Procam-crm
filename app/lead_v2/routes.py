@@ -390,13 +390,10 @@ def api_list():
     q = sc_mod.leads().filter(Lead.merged_into_id.is_(None))
     if (request.args.get('open') or '1') == '1':
         # The alias stages — Profile Sent, Appointment, Visit Done —
-        # are open and are not in STAGES_PIPELINE, so a list built
-        # on that alone silently drops them. They are Contacted on
-        # the strip, and they belong on an open list.
-        stages = set(sales_rules.open_stages())
-        stages |= {name for name, strip in lead_flow.ON_STRIP.items()
-                   if strip != 'Won'}
-        q = q.filter(Lead.stage.in_(sorted(stages)))
+        # used to be dropped here, because `open_stages()` was the
+        # journey alone. It now carries them, so this list is the
+        # helper's answer and nothing local.
+        q = q.filter(Lead.stage.in_(sales_rules.open_stages()))
     if mine:
         me = _me()
         q = q.filter(db.or_(Lead.assigned_to == me,

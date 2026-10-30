@@ -344,8 +344,13 @@ def _funnel(leads, start, end):
         row = _lead_row(l)
         if (l.stage or '') in open_stages:
             open_rows.append(row)
-            cell = by_stage.setdefault(l.stage or '—',
-                                       {'stage': l.stage or '—', 'count': 0,
+            # Keyed on the journey stage, not the word on the lead:
+            # a "Visit Done" lead belongs on the Business Discussion
+            # row of the funnel, not on a row of its own that the
+            # drawing loop below never asks for.
+            name = rules.canonical_stage(l.stage) or '—'
+            cell = by_stage.setdefault(name,
+                                       {'stage': name, 'count': 0,
                                         'value_inr': 0.0})
             cell['count'] += 1
             cell['value_inr'] = round(cell['value_inr'] + row['value_inr'], 2)
@@ -356,7 +361,7 @@ def _funnel(leads, start, end):
         if l.stage == 'Lost' and _within(_closed_on(l), start, end):
             lost.append(row)
     stages = [by_stage.get(s) or {'stage': s, 'count': 0, 'value_inr': 0.0}
-              for s in open_stages]
+              for s in rules.pipeline_stages()]
     decided = len(won) + len(lost)
     return {
         'stages': stages,

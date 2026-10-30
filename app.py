@@ -157,6 +157,16 @@ STAGES_TERMINAL = list(_stage_map.TERMINAL)
 STAGES_PIPELINE = [s for s in _stage_map.JOURNEY
                    if s not in STAGES_TERMINAL]
 STAGES_ALL      = STAGES_PIPELINE + STAGES_TERMINAL
+# The stages a person may *choose* and the stages a lead can be
+# *sitting on* are not the same list. STAGES_PIPELINE is the first:
+# the journey, for dropdowns and for the order a funnel is drawn in.
+# STAGES_OPEN is the second, and it is what "open" means in a count:
+# the journey's open stages plus the three retired names that fold
+# onto them, which 300-odd leads still carry because nothing has
+# saved them since the names changed. Counting those as closed was
+# the same shape of bug as the 156 "New Opportunity" leads above,
+# one layer down.
+STAGES_OPEN     = STAGES_PIPELINE + list(_stage_map.OPEN_ALIASES)
 # Each stage's successor, read off the journey in order. Direct
 # Quoted/Under Negotiation → Won and any-stage → Lost / On Hold /
 # Not Interested remain allowed via api_lead_decision().
@@ -3959,7 +3969,7 @@ def api_stats():
     pending_news = NewsItem.query.filter_by(status='pending').count() if session.get('role')=='admin' else 0
     # Inbox counts for the workflow sidebar (per approved workflow diagram)
     inbox_counts = {s: stages.get(s, 0) for s in STAGES_ALL}
-    active_stages = set(STAGES_PIPELINE)   # 5 pipeline stages
+    active_stages = set(STAGES_OPEN)
     return jsonify({
         'total': len(all_leads),
         'active': len([l for l in all_leads if l.stage in active_stages]),
@@ -4050,7 +4060,7 @@ def _dashboard_summary_payload(leads, allowed_codes, today):
     def _value_sum(pred):
         return float(sum(_value_inr(l) for l in leads if pred(l)))
 
-    active_stages   = set(STAGES_PIPELINE)
+    active_stages   = set(STAGES_OPEN)
     terminal_won    = 'Won'
     terminal_lost   = 'Lost'
 
@@ -4290,7 +4300,12 @@ def api_my_work():
     # ── Stage-wise open pipeline ──────────────────────────────────────
     stages = []
     for st in STAGES_PIPELINE:
-        n = _count(scoped.filter(Lead.stage == st))
+        # The retired names draw on the row of the stage they mean,
+        # rather than vanishing from the list because the heading is
+        # the new name.
+        names = [st] + [a for a in _stage_map.OPEN_ALIASES
+                        if _stage_map.ALIASES[a] == st]
+        n = _count(scoped.filter(Lead.stage.in_(names)))
         if n:
             stages.append({'stage': st, 'count': n})
 
@@ -4425,6 +4440,7 @@ def api_workflow_stages():
         'pipeline': STAGES_PIPELINE,
         'terminal': STAGES_TERMINAL,
         'all':      STAGES_ALL,
+        'open':     STAGES_OPEN,
         'next':     STAGE_NEXT,
         'decisions': DECISION_OUTCOMES,
     })
@@ -5841,7 +5857,7 @@ def _kpi_actual_for(kpi_key, scope_type, scope_key, period_start, period_end):
     if kpi_key == 'new_leads':
         return q.count()
     if kpi_key == 'active_pipeline':
-        return q.filter(Lead.stage.in_(STAGES_PIPELINE)).count()
+        return q.filter(Lead.stage.in_(STAGES_OPEN)).count()
     if kpi_key == 'opportunities':
         return q.filter(Lead.opp_number.isnot(None)).count()
     if kpi_key == 'won_count':
@@ -5870,7 +5886,7 @@ def _kpi_actual_for(kpi_key, scope_type, scope_key, period_start, period_end):
         # KPI targets for value are set in INR millions.
         return float(db.session.query(
             db.func.coalesce(db.func.sum(value_inr_sql()), 0) / 1000000.0
-        ).filter(Lead.stage.in_(STAGES_PIPELINE)).filter(
+        ).filter(Lead.stage.in_(STAGES_OPEN)).filter(
             Lead.onboarded_date >= period_start,
             Lead.onboarded_date <= period_end,
         ).scalar() or 0)
