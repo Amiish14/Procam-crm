@@ -493,3 +493,66 @@ everybody would hand a freight enquiry to a warehouse clerk. Where
 no vertical master is loaded, `master_vertical` answers Management
 for everything, so the written name is the only evidence and the
 match is on that alone.
+
+---
+
+### 33. Most of CRM-LEAD-FLOW-01's intake is already built
+
+Before building §2 I read what is there. The blocked-client gate
+exists in `email_ingest/single_message.py` and already refuses to
+make a lead, filing the mail as "Intake — Blocked". Thread matching
+exists in `lead_intake_db.find_by_thread`, by conversation id,
+In-Reply-To and References, with a subject fallback. The intake
+classifier already has ten classes and only one creates a lead.
+
+**Taken:** I did not rebuild any of it. §2.1's real defect is
+narrower than the brief reads: the block check was passed the name
+the parser read and the sender's domain, but never the **resolved
+account**, so a blocked client writing from a second domain or
+under a spelling held as an account alias was not matched. That is
+why Walchandnagar and Godrej kept creating leads while both were on
+the register. The account is now resolved first and passed in, and
+both readings of the name are checked.
+
+What was genuinely missing from §2.3 is the **merge**: nothing
+could join two leads that were already split.
+`app/services/lead_merge.py` does that.
+
+---
+
+### 34. A subject-only match is never merged by a sweep
+
+§2.3 gives three dedupe rules. Two are evidence — the same mail
+thread, the same client reference. The third, the same subject from
+the same sender, is a resemblance.
+
+**Taken:** rules 1 and 2 mark a candidate `certain`; rule 3 marks it
+a suggestion. `--apply` on the clean-up merges only the certain
+ones, and the suggestion draws the "possible duplicate of #nnnn"
+banner the brief asks for, where a person decides. This is the same
+line the account matcher draws, for the same reason — see 21.
+
+---
+
+### 35. A won lead is never merged away
+
+**Taken:** `lead_merge.blockers` refuses it in words: "A won lead is
+a reported figure. Merging it away would rewrite a number somebody
+has acted on." The same rule already stops the clean-up closing Won
+or Lost leads.
+
+---
+
+### 36. §3 and §4 are not in this release
+
+The lead pop-up (§3) and the two-step "+ New Lead" (§4) are a
+rebuild of the busiest screen in the CRM — a 25-field form inside a
+6,000-line template that every user is on all day.
+
+**Taken:** everything they depend on is built and tested first —
+the guided-help catalogue they show their refusals through, the
+merge behind the duplicate banner, the stage simplification behind
+the six-stage strip, the `sub_status` and `popup_seen_by` columns —
+and the screen itself is the next release, behind
+`FEATURE_LEAD_POPUP_V2`. Shipping half a lead screen behind a flag
+nobody can switch on would have been worse than shipping none.

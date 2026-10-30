@@ -72,3 +72,88 @@ class HelpTooltip(db.Model):
             'is_active': bool(self.is_active),
             'updated_at': str(self.updated_at) if self.updated_at else '',
         }
+
+
+class HelpGuide(db.Model):
+    """"What happened, why, and what to do" — one row per refusal.
+
+    CRM-LEAD-FLOW-01 §5. The rule it exists to enforce: no screen
+    may show only an error. Users were told "no" with no reason and
+    no next step, so they rang the Tech team — which is a support
+    cost and, worse, a reason to stop trusting the screen.
+
+    The wording lives in the database rather than in the code so a
+    sentence can be fixed by an administrator in a minute instead of
+    waiting for a deploy. `code` is what the code refers to; every
+    other column is words a person wrote and may rewrite.
+    """
+    __tablename__ = 'crm_help_guides'
+
+    id             = db.Column(db.Integer, primary_key=True)
+    code           = db.Column(db.String(40), unique=True,
+                               nullable=False, index=True)
+    title          = db.Column(db.String(200), nullable=False)
+
+    #: The rule, in plain words. No codes, no stack traces.
+    why            = db.Column(db.Text)
+
+    #: Numbered steps, as a JSON list of strings.
+    steps          = db.Column(db.JSON, default=list)
+
+    #: [{label, action, target}] — the buttons that take the user
+    #: there. `action` is what the page does with it: 'tab',
+    #: 'focus', 'open', 'mail', 'help'.
+    actions        = db.Column(db.JSON, default=list)
+
+    #: '' for everybody, or a role name. A guide written for an
+    #: administrator is noise to a salesperson.
+    audience       = db.Column(db.String(40), default='')
+
+    active         = db.Column(db.Boolean, default=True, index=True)
+    updated_at     = db.Column(db.DateTime, default=datetime.utcnow,
+                               onupdate=datetime.utcnow)
+    last_edited_by = db.Column(db.String(20))
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'code': self.code, 'title': self.title,
+            'why': self.why or '',
+            'steps': list(self.steps or []),
+            'actions': list(self.actions or []),
+            'audience': self.audience or '',
+            'active': bool(self.active),
+            'last_edited_by': self.last_edited_by or '',
+            'updated_at': str(self.updated_at)[:16]
+            if self.updated_at else '',
+        }
+
+
+class HelpGuideShown(db.Model):
+    """Every guide a person was shown, and whether it helped.
+
+    §5.3. Without this the catalogue is a guess: the Thursday pack
+    shows the ten guides shown most often and how many were
+    resolved without a ticket, which is the only evidence of
+    whether the wording works.
+    """
+    __tablename__ = 'crm_help_guide_shown'
+
+    id          = db.Column(db.Integer, primary_key=True)
+    code        = db.Column(db.String(40), nullable=False, index=True)
+    emp_code    = db.Column(db.String(20), index=True)
+    lead_id     = db.Column(db.Integer, index=True)
+    page        = db.Column(db.String(80))
+
+    #: Set when the person pressed one of the guide's own buttons.
+    #: Null means they read it and did something else, or nothing.
+    clicked     = db.Column(db.String(60))
+    shown_at    = db.Column(db.DateTime, default=datetime.utcnow,
+                            index=True)
+
+    def to_dict(self):
+        return {'id': self.id, 'code': self.code,
+                'emp_code': self.emp_code or '',
+                'lead_id': self.lead_id, 'page': self.page or '',
+                'clicked': self.clicked or '',
+                'shown_at': str(self.shown_at)[:16]
+                if self.shown_at else ''}

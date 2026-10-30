@@ -775,3 +775,37 @@ tbody tr[onclick]:hover td{ background:var(--p-surface-2); }
   .rfq-box{min-width:84px}
   .rfq-ui{padding-left:16px;padding-right:16px}
 }
+
+/* ── Guided help (CRM-LEAD-FLOW-01 §5) ──────────────────────────────
+   One dialog, used by every refusal on every screen. Scoped under
+   #crmGuide so it cannot reach anything else, and every colour is a
+   token — the same rule the .rfq-* section above keeps, for the same
+   reason: a literal here is how two screens drift apart. */
+#crmGuide[hidden]{display:none}
+#crmGuide{position:fixed;inset:0;z-index:9000;display:flex;
+  align-items:center;justify-content:center;padding:16px}
+#crmGuide .cg-back{position:absolute;inset:0;
+  background:var(--p-ink);opacity:.45}
+#crmGuide .cg-card{position:relative;background:var(--p-surface);
+  color:var(--p-text);border:1px solid var(--p-border);
+  border-radius:12px;padding:20px 22px;max-width:520px;width:100%;
+  box-shadow:0 18px 50px var(--p-red-ring);max-height:85vh;
+  overflow:auto}
+#crmGuide h2{margin:0 0 8px;font-size:17px;line-height:1.35}
+#crmGuide p{margin:0 0 12px;font-size:13.5px;line-height:1.65;
+  color:var(--p-text-2)}
+#crmGuide ol{margin:0 0 14px;padding-left:20px;font-size:13.5px;
+  line-height:1.7}
+#crmGuide ol[hidden]{display:none}
+#crmGuide .cg-actions{display:flex;gap:8px;flex-wrap:wrap}
+#crmGuide .cg-ghost{background:transparent;color:var(--p-text-2)}
+#crmGuide .cg-close{position:absolute;top:10px;right:12px;border:0;
+  background:transparent;font:inherit;font-size:12.5px;cursor:pointer;
+  color:var(--p-text-3)}
+/* What [Take me there] points at. */
+.cg-point{outline:2px solid var(--p-red);outline-offset:3px;
+  border-radius:6px}
+@media (max-width:420px){
+  #crmGuide .cg-card{padding:16px}
+  #crmGuide .cg-actions .btn{width:100%}
+}

@@ -124,6 +124,24 @@ FLAGS = (
     ('FEATURE_ACCOUNT_MERGE',
      'Merge duplicate accounts: one customer, one row, the old '
      'spelling kept as an alias (FINISH-TRACKER-CRM)', False),
+    ('FEATURE_THREAD_DEDUPE',
+     'A reply on an open lead\'s thread joins that lead instead of '
+     'becoming a new one (CRM-LEAD-FLOW-01)', False),
+    ('FEATURE_BLOCKED_CLIENT_GATE',
+     'A blocked client cannot create a lead, by mail or by hand',
+     False),
+    ('FEATURE_NOT_RELEVANT_QUEUE',
+     'Newsletters, portal mail and agents\' rate offers go to a '
+     'review queue instead of the lead list', False),
+    ('FEATURE_LEAD_POPUP_V2',
+     'The lead screen: stage strip, "what to do now", and tabs '
+     'instead of 25 fields', False),
+    ('FEATURE_GUIDED_HELP',
+     'Every refusal says what happened, why, and what to do next',
+     False),
+    ('FEATURE_STAGE_SIMPLIFY',
+     'Six stages on the strip; the detailed ones become the '
+     'sub-status of Contacted', False),
     ('FEATURE_LEAD_ALLOWANCES',
      'A vertical head sees every lead of their vertical, and anyone '
      'sees a lead they hold a task on (decision A2, 21 Oct 2026)',

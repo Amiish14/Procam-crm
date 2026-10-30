@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{% include "_csrf_fetch.html" %}
+<title>Help texts — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body class="rfq-page">
+{% include "_crm_topbar.html" %}
+<div class="rfq-ui">
+  <div class="rfq-hero">
+    <div>
+      <h1>Help texts</h1>
+      <p>What the CRM says when it refuses something. No screen may
+        show only an error: every refusal gives what happened, why,
+        and what to do next.</p>
+      <p>These words are read from here, not from the code, so a
+        sentence that reads badly can be fixed in a minute. Edit the
+        wording freely; the code on the left is what the software
+        refers to and cannot change.</p>
+    </div>
+  </div>
+
+  {% if weekly %}
+  <section class="rfq-card">
+    <div class="rfq-card-h">
+      <h2>Shown this week</h2>
+      <p>A guide nobody acts on is either unnecessary or badly
+        worded. Both are worth knowing.</p>
+    </div>
+    <div class="rfq-tw">
+      <table>
+        <thead><tr><th>Guide</th><th class="n">Shown</th>
+          <th class="n">Acted on</th><th class="n">%</th></tr></thead>
+        <tbody>
+        {% for row in weekly %}
+          <tr><td>{{ row.code }}</td>
+            <td class="n">{{ row.shown }}</td>
+            <td class="n">{{ row.acted }}</td>
+            <td class="n">{{ row.acted_pct }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="rfq-card">
+    <div class="rfq-card-h">
+      <h2>The catalogue</h2>
+      <p>{{ guides|length }} guides.</p>
+      <button class="btn" type="button" onclick="seedGuides()">
+        Load any missing into the database</button>
+      <span class="rfq-sub" id="seedSay"></span>
+    </div>
+
+    {% for g in guides %}
+      <div class="rfq-card" id="g{{ loop.index }}">
+        <div class="rfq-card-h">
+          <h3>{{ g.code }}</h3>
+          <p>{% if g.last_edited_by %}last edited by
+            {{ g.last_edited_by }}{% else %}not edited yet —
+            showing the built-in wording{% endif %}</p>
+        </div>
+        <div style="display:grid;gap:10px;max-width:760px">
+          <label>What happened
+            <input id="t{{ loop.index }}" value="{{ g.title }}"
+                   style="width:100%"></label>
+          <label>Why
+            <textarea id="w{{ loop.index }}" rows="3"
+                      style="width:100%">{{ g.why }}</textarea></label>
+          <label>What to do — one step per line
+            <textarea id="s{{ loop.index }}" rows="4"
+                      style="width:100%">{{ g.steps|join('\n') }}</textarea></label>
+          <label><input type="checkbox" id="a{{ loop.index }}"
+                        {% if g.active %}checked{% endif %}>
+            Shown to users</label>
+        </div>
+        <div class="rfq-card-h">
+          <button class="btn" type="button"
+                  onclick="saveGuide({{ loop.index }}, '{{ g.code }}')">
+            Save</button>
+          <span class="rfq-sub" id="say{{ loop.index }}"></span>
+        </div>
+      </div>
+    {% endfor %}
+  </section>
+</div>
+<script>
+function crmUrl(p){ return "{{ url_prefix }}" + p; }
+function saveGuide(n, code){
+  const say = document.getElementById('say' + n);
+  say.textContent = 'Saving…';
+  fetch(crmUrl('/api/admin/help-guides'), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      code: code,
+      title: document.getElementById('t' + n).value,
+      why: document.getElementById('w' + n).value,
+      steps: document.getElementById('s' + n).value,
+      active: document.getElementById('a' + n).checked
+    })
+  }).then(r => r.json()).then(d => {
+    say.textContent = d.ok ? 'Saved.' : (d.error || 'Refused.');
+  }).catch(() => { say.textContent = 'Could not reach the server.'; });
+}
+function seedGuides(){
+  const say = document.getElementById('seedSay');
+  say.textContent = 'Loading…';
+  fetch(crmUrl('/api/admin/help-guides/seed'), {method: 'POST'})
+    .then(r => r.json()).then(d => {
+      say.textContent = d.ok
+        ? (d.added + ' added, ' + d.total + ' in the catalogue.')
+        : (d.error || 'Refused.');
+    }).catch(() => { say.textContent = 'Could not reach the server.'; });
+}
+</script>
+</body>
+</html>

@@ -25,7 +25,8 @@ from flask import (Blueprint, jsonify, render_template, request, session,
                    abort)
 
 from app import db
-from app.models.help_content import HelpArticle, HelpTooltip
+from app.models.help_content import (HelpArticle, HelpGuide,
+                                     HelpGuideShown, HelpTooltip)
 from app.services.urls import prefixed as _prefixed, login_url as _login_url
 
 
@@ -40,6 +41,10 @@ def _require_auth(f):
             return jsonify(error='Not authenticated'), 401
         return f(*a, **kw)
     return wrap
+
+
+def _current_emp():
+    return session.get('emp_code') or ''
 
 
 def _current_role():
@@ -252,3 +257,115 @@ def api_tooltips_delete(tid):
     db.session.delete(row)
     db.session.commit()
     return jsonify(ok=True)
+
+
+# ─── Guided help (CRM-LEAD-FLOW-01 §5) ──────────────────────────────────
+#
+# "No screen may show only an error." The catalogue is served to
+# every page, the admin screen edits the wording without a deploy,
+# and each showing is logged so the Thursday pack can say which
+# guides people actually use.
+@bp.route('/api/help/guides')
+@_require_auth
+def api_guides():
+    from app.services import guided_help
+    return jsonify(ok=True, guides=guided_help.catalogue(),
+                   enabled=guided_help.enabled())
+
+
+@bp.route('/api/help/guides/<code>')
+@_require_auth
+def api_guide(code):
+    from app.services import guided_help
+    found = guided_help.guide(code, request.args.to_dict())
+    guided_help.record(found['code'], emp_code=_current_emp(),
+                       lead_id=request.args.get('lead_id', type=int),
+                       page=request.args.get('page', ''), commit=True)
+    return jsonify(ok=True, guide=found)
+
+
+@bp.route('/api/help/guides/<code>/clicked', methods=['POST'])
+@_require_auth
+def api_guide_clicked(code):
+    """The person pressed one of the guide's own buttons.
+
+    Recorded against the most recent showing rather than as a new
+    row, so "shown" and "acted on" count the same event.
+    """
+    from app import db
+    from app.services import guided_help
+
+    body = request.get_json(silent=True) or {}
+    label = (body.get('label') or '')[:60]
+    row = (HelpGuideShown.query
+           .filter_by(code=(code or '').strip().upper(),
+                      emp_code=_current_emp())
+           .order_by(HelpGuideShown.id.desc()).first())
+    if row is None:
+        guided_help.record(code, emp_code=_current_emp(),
+                           lead_id=body.get('lead_id'),
+                           page=body.get('page', ''), clicked=label)
+    else:
+        row.clicked = label or 'button'
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@bp.route('/admin/help-texts')
+@_require_admin
+def admin_help_texts():
+    from app.services import guided_help
+    return render_template('admin/help_texts.html',
+                           guides=guided_help.catalogue(
+                               include_inactive=True),
+                           weekly=guided_help.weekly())
+
+
+@bp.route('/api/admin/help-guides', methods=['POST'])
+@_require_admin
+def api_save_guide():
+    """Create or rewrite one guide. The code is never editable —
+    it is what the code refers to."""
+    from app import db
+    from app.services import guided_help
+
+    body = request.get_json(silent=True) or {}
+    code = (body.get('code') or '').strip().upper()
+    if not code:
+        return jsonify(ok=False, error='A guide needs its code.'), 400
+    title = (body.get('title') or '').strip()
+    if not title:
+        return jsonify(ok=False,
+                       error='A guide with no title tells nobody '
+                             'anything.'), 400
+
+    row = HelpGuide.query.filter_by(code=code).first()
+    if row is None:
+        row = HelpGuide(code=code)
+        db.session.add(row)
+    row.title = title[:200]
+    row.why = (body.get('why') or '').strip()
+    steps = body.get('steps')
+    if isinstance(steps, str):
+        steps = [s.strip() for s in steps.splitlines() if s.strip()]
+    row.steps = list(steps or [])
+    if isinstance(body.get('actions'), list):
+        row.actions = body['actions']
+    elif not row.actions:
+        row.actions = list(
+            guided_help.SEED_BY_CODE.get(code, {}).get('actions', []))
+    row.audience = (body.get('audience') or '').strip()[:40]
+    row.active = bool(body.get('active', True))
+    row.last_edited_by = _current_emp()
+    db.session.commit()
+    return jsonify(ok=True, guide=row.to_dict())
+
+
+@bp.route('/api/admin/help-guides/seed', methods=['POST'])
+@_require_admin
+def api_seed_guides():
+    from app.services import guided_help
+    added = guided_help.seed(actor=_current_emp())
+    return jsonify(ok=True, added=added,
+                   total=len(guided_help.catalogue(
+                       include_inactive=True)))

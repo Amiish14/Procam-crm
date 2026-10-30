@@ -557,12 +557,33 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
         # A caution does create the lead: business is allowed, and the
         # badge plus the acknowledgement on first touch is how the
         # person learns about the dispute.
+        #
+        # CRM-LEAD-FLOW-01 §2.1: the account is resolved first and
+        # passed in. Without it the check saw only the name the
+        # parser read and the sender's domain, so a blocked client
+        # writing from a second domain, or under a spelling the
+        # account carries as an alias, was not matched — which is
+        # why Walchandnagar and Godrej kept making leads on 22, 26,
+        # 28 and 29 October while both were on the register.
         try:
             from app.services import client_restrictions as _restrictions
+            _typed = (extracted.get('company')
+                      or msg.get('_company') or '')
+            _account_id, _account_name = _resolve_account_for_block(
+                sender_email, _typed, log)
             _verdict = _restrictions.check(
-                company_name=(extracted.get('company')
-                              or msg.get('_company') or ''),
-                email=sender_email, domain=sender_domain)
+                company_name=_account_name or _typed,
+                email=sender_email, domain=sender_domain,
+                account_id=_account_id)
+            if (not _verdict.blocked and _account_name
+                    and _typed and _account_name != _typed):
+                # Both readings of who this is, because either can
+                # be the one on the register.
+                _second = _restrictions.check(
+                    company_name=_typed, email=sender_email,
+                    domain=sender_domain)
+                if _second.blocked:
+                    _verdict = _second
         except Exception:
             log.exception('restriction check failed for %s', imid)
             _verdict = None
@@ -1060,3 +1081,28 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
             log.exception('lead insert failed for %s', imid)
             return {'status': 'failed', 'reason': f'lead insert: {e}',
                     'lead_id': None, 'internet_message_id': imid}
+
+
+def _resolve_account_for_block(sender_email, typed_name, log):
+    """(account_id, account name) for the block check, or (None, '').
+
+    Uses the matcher the rest of the CRM uses, so an account found
+    by a learned sender, a domain or an alias is the one the block
+    register is asked about. Best-effort: a matcher that cannot run
+    must not stop the mail being read.
+    """
+    try:
+        from app.services import account_match
+        found = account_match.candidates(
+            sender_email, company_name=typed_name or None) or []
+        for item in found:
+            account = item.get('account')
+            if account is None:
+                continue
+            if item.get('kind') == 'resemblance':
+                continue
+            return account.id, (account.name or '')
+    except Exception:                                     # noqa: BLE001
+        log.debug('could not resolve the account for the block check',
+                  exc_info=True)
+    return None, ''

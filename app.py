@@ -498,6 +498,29 @@ class Lead(db.Model):
     #: The free text "Others" asks for, or the lead number a duplicate
     #: points at. Kept apart from the code so the bin can group.
     junk_reason_note = db.Column(db.String(400))
+
+    # ── CRM-LEAD-FLOW-01 ──────────────────────────────────────────
+    #: The mail thread this lead belongs to, normalised. One client
+    #: thread used to become one lead per reply: Indo Tech
+    #: Transformers made four on 19 October and three on the 22nd.
+    #: Filled at intake; a reply whose thread is already here joins
+    #: the lead instead of starting another.
+    thread_key       = db.Column(db.String(200), index=True)
+
+    #: Where this lead's work went when it turned out to be the same
+    #: enquiry as another. The row stays — nothing is deleted — and
+    #: says what happened to it.
+    merged_into_id   = db.Column(db.Integer, index=True)
+
+    #: Contacted's detail: Call done, Profile sent, Discussion,
+    #: Appointment, Visit done. Six stages on the strip and the rest
+    #: here, so the reports that count the old values keep working.
+    sub_status       = db.Column(db.String(40))
+
+    #: Whether this lead's owner has seen the new lead screen, so
+    #: the "what has changed" banner is shown once. In the database
+    #: rather than in the browser: a person uses two machines.
+    popup_seen_by    = db.Column(db.Boolean, default=False)
     project          = db.Column(db.String(300))
     industry         = db.Column(db.String(100))
     cost_million     = db.Column(db.Float, default=0)
