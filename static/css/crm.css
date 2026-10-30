@@ -809,3 +809,162 @@ tbody tr[onclick]:hover td{ background:var(--p-surface-2); }
   #crmGuide .cg-card{padding:16px}
   #crmGuide .cg-actions .btn{width:100%}
 }
+
+/* ── The lead screen (CRM-LEAD-FLOW-01 §3, §4) ──────────────────────
+   Scoped under .lf-page so it reaches nothing the old pop-up draws:
+   with FEATURE_LEAD_POPUP_V2 off nobody sees any of this, and the
+   screen they have today is byte-for-byte what it was. Every colour
+   is a token, like the sections above. */
+.lf-page{background:var(--p-bg);color:var(--p-text)}
+.lf-wrap{max-width:1040px;margin:0 auto;padding:18px 16px 40px}
+
+.lf-note{display:flex;gap:14px;align-items:flex-start;
+  justify-content:space-between;background:var(--p-info-soft);
+  border:1px solid var(--p-info);border-radius:10px;
+  padding:12px 14px;margin-bottom:16px;font-size:13px}
+.lf-note ul{margin:6px 0 0;padding-left:18px;line-height:1.7}
+.lf-note[hidden]{display:none}
+
+.lf-head{margin-bottom:12px}
+.lf-head h1{margin:0 0 6px;font-size:21px;line-height:1.25;
+  text-wrap:balance}
+.lf-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.lf-chip{border:1px solid var(--p-border);border-radius:999px;
+  padding:2px 10px;font-size:11.5px;font-weight:600;
+  background:var(--p-surface-2)}
+.lf-chip.lf-stage{background:var(--p-info-soft);
+  border-color:var(--p-info)}
+.lf-chip.lf-pri{background:var(--p-warning-soft);
+  border-color:var(--p-warning)}
+.lf-chip.lf-none{background:var(--p-danger-soft);
+  border-color:var(--p-danger)}
+.lf-sub{font-size:12.5px;color:var(--p-text-2)}
+.lf-due.lf-red{color:var(--p-danger);font-weight:700}
+.lf-due.lf-orange{color:var(--p-warning);font-weight:700}
+.lf-due.lf-green{color:var(--p-success);font-weight:600}
+
+.lf-strip{display:flex;gap:6px;flex-wrap:wrap;align-items:center;
+  margin:0 0 14px}
+.lf-step{display:inline-flex;align-items:center;gap:6px;border:1px
+  solid var(--p-border);background:var(--p-surface);border-radius:999px;
+  padding:6px 13px;font:inherit;font-size:12.5px;cursor:pointer}
+.lf-step[disabled]{cursor:default;opacity:.75}
+.lf-dot{width:8px;height:8px;border-radius:50%;
+  background:var(--p-border-strong)}
+.lf-step.lf-done .lf-dot{background:var(--p-success)}
+.lf-step.lf-here{border-color:var(--p-red);font-weight:700}
+.lf-step.lf-here .lf-dot{background:var(--p-red)}
+.lf-sub-pick{height:32px;border:1px solid var(--p-border);
+  border-radius:8px;padding:0 8px;font:inherit;font-size:12.5px}
+
+.lf-todo{background:var(--p-surface);border:1px solid var(--p-border);
+  border-left:3px solid var(--p-red);border-radius:10px;
+  padding:14px 16px;margin-bottom:16px}
+.lf-todo h2{margin:0 0 6px;font-size:12px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--p-text-3)}
+.lf-todo p{margin:0 0 10px;font-size:15px;line-height:1.55}
+.lf-todo ol{margin:0 0 10px;padding-left:20px;line-height:1.7;
+  font-size:13.5px}
+.lf-acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+.lf-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px;
+  border-bottom:1px solid var(--p-divider);padding-bottom:8px}
+.lf-tabs button{border:1px solid var(--p-border);
+  background:var(--p-surface);border-radius:999px;padding:6px 14px;
+  font:inherit;font-size:12.5px;cursor:pointer}
+.lf-tabs button[aria-selected="true"]{background:var(--p-text);
+  color:var(--p-surface);border-color:var(--p-text)}
+.lf-tabs .lf-help{margin-left:auto;width:30px;padding:0;
+  font-weight:700}
+
+.lf-panel{display:none}
+.lf-panel.on{display:block}
+.lf-grid{display:grid;gap:12px;
+  grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.lf-card{background:var(--p-surface);border:1px solid var(--p-border);
+  border-radius:10px;padding:14px 16px}
+.lf-card h3{margin:0 0 10px;font-size:12px;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--p-text-3)}
+.lf-card label{display:block;font-size:11.5px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.04em;
+  color:var(--p-text-3);margin:10px 0 4px}
+.lf-card input,.lf-card select,.lf-card textarea{
+  border:1px solid var(--p-border);border-radius:8px;padding:7px 10px;
+  font:inherit;font-size:13px;background:var(--p-surface)}
+.lf-kv{display:flex;gap:10px;justify-content:space-between;
+  padding:5px 0;font-size:13px;border-bottom:1px solid var(--p-divider)}
+.lf-kv:last-child{border-bottom:0}
+.lf-kv span{color:var(--p-text-3)}
+.lf-kv b{text-align:right;font-weight:600}
+
+.lf-t{width:100%;border-collapse:collapse;font-size:13px;
+  background:var(--p-surface)}
+.lf-t th,.lf-t td{padding:8px 10px;text-align:left;
+  border-bottom:1px solid var(--p-divider)}
+.lf-t th{font-size:11.5px;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--p-text-3)}
+.lf-empty{font-size:13px;color:var(--p-text-2);
+  background:var(--p-surface-2);border:1px dashed var(--p-border);
+  border-radius:10px;padding:16px}
+.lf-note-sm{font-size:12px;color:var(--p-text-3);margin-top:8px}
+.lf-notes{white-space:pre-wrap;font:inherit;font-size:13px;
+  background:var(--p-surface);border:1px solid var(--p-border);
+  border-radius:10px;padding:14px;line-height:1.7}
+.lf-time{margin:0;padding-left:18px;font-size:13px;line-height:1.7}
+.lf-time .lf-when{color:var(--p-text-3);
+  font-variant-numeric:tabular-nums;margin-right:6px}
+.lf-intake{margin-top:14px;font-size:13px}
+.lf-intake summary{cursor:pointer;color:var(--p-text-2)}
+
+.lf-foot{display:flex;gap:8px;align-items:center;margin-top:18px;
+  padding-top:14px;border-top:1px solid var(--p-divider);
+  flex-wrap:wrap}
+.lf-ghost{background:transparent;color:var(--p-text-2)}
+.lf-more{position:relative}
+.lf-more summary{list-style:none;cursor:pointer;display:inline-block}
+.lf-more summary::-webkit-details-marker{display:none}
+.lf-menu{position:absolute;bottom:calc(100% + 6px);left:0;z-index:40;
+  background:var(--p-surface);border:1px solid var(--p-border);
+  border-radius:10px;padding:6px;min-width:230px;
+  box-shadow:0 14px 34px var(--p-red-ring)}
+.lf-menu button{display:block;width:100%;text-align:left;border:0;
+  background:transparent;font:inherit;font-size:13px;padding:7px 10px;
+  border-radius:7px;cursor:pointer}
+.lf-menu button:hover{background:var(--p-surface-2)}
+.lf-say{font-size:12.5px;color:var(--p-text-2)}
+
+.lf-hits{display:flex;flex-direction:column;gap:4px;margin:10px 0}
+.lf-hit{text-align:left;border:1px solid var(--p-border);
+  background:var(--p-surface);border-radius:8px;padding:8px 10px;
+  font:inherit;font-size:13px;cursor:pointer}
+.lf-warn{background:var(--p-warning-soft);
+  border:1px solid var(--p-warning);border-radius:8px;
+  padding:10px 12px;font-size:12.5px;margin:8px 0}
+.lf-warn[hidden]{display:none}
+
+@media (max-width:620px){
+  .lf-wrap{padding:14px 16px 32px}
+  .lf-head h1{font-size:18px}
+  .lf-todo p{font-size:14px}
+  .lf-strip{gap:4px}
+  .lf-step{padding:5px 10px;font-size:12px}
+  .lf-kv{flex-direction:column;gap:2px}
+  .lf-kv b{text-align:left}
+  .lf-t{display:block;overflow-x:auto}
+  .lf-foot .btn{width:100%}
+  .lf-menu{left:auto;right:0}
+}
+
+/* The shared top bar is a 56px row that does not wrap, so on a
+   phone its toolbar runs off the side and takes the page with it —
+   536px of scroll on a 390px screen. Fixed here, scoped to this
+   page, exactly as .rfq-page does it: the bar is shared by every
+   screen in the CRM and changing it centrally would move them all. */
+.lf-page .crm-top{height:auto;min-height:56px;flex-wrap:wrap;
+  padding-block:var(--s-2)}
+.lf-page .crm-top .toolbar{flex-wrap:wrap}
+@media (max-width:820px){
+  .lf-page .crm-top .spacer{margin-left:0;width:100%}
+  .lf-page .crm-top .toolbar{justify-content:flex-start}
+  .lf-page .crm-top .btn{height:34px;padding:0 10px;font-size:12.5px}
+}

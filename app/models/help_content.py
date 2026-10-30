@@ -157,3 +157,40 @@ class HelpGuideShown(db.Model):
                 'clicked': self.clicked or '',
                 'shown_at': str(self.shown_at)[:16]
                 if self.shown_at else ''}
+
+
+class HelpTicket(db.Model):
+    """"Ask for help", as a row somebody can answer.
+
+    CRM-LEAD-FLOW-01 §5.2. The point of the button is that a person
+    stuck on a screen gets a number back instead of a phone call to
+    the Tech team, and that the Tech team gets the screen, the lead
+    and the last refusal without having to ask for them.
+    """
+    __tablename__ = 'crm_help_tickets'
+
+    id          = db.Column(db.Integer, primary_key=True)
+    number      = db.Column(db.String(20), unique=True, index=True)
+    emp_code    = db.Column(db.String(20), index=True)
+    page        = db.Column(db.String(80))
+    lead_id     = db.Column(db.Integer, index=True)
+
+    #: The guide the person was looking at when they pressed it.
+    #: Usually the fastest route to what actually went wrong.
+    code        = db.Column(db.String(40))
+    description = db.Column(db.Text)
+
+    status      = db.Column(db.String(20), default='Open', index=True)
+    created_at  = db.Column(db.DateTime, default=datetime.utcnow,
+                            index=True)
+    closed_at   = db.Column(db.DateTime)
+    closed_by   = db.Column(db.String(20))
+
+    def to_dict(self):
+        return {'id': self.id, 'number': self.number or '',
+                'emp_code': self.emp_code or '', 'page': self.page or '',
+                'lead_id': self.lead_id, 'code': self.code or '',
+                'description': self.description or '',
+                'status': self.status or 'Open',
+                'created_at': str(self.created_at)[:16]
+                if self.created_at else ''}

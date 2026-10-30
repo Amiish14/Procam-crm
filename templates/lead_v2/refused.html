@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ guide.title }} — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body class="lf-page">
+{% include "_crm_topbar.html" %}
+<div class="lf-wrap">
+  <section class="lf-todo">
+    <h2>{{ guide.title }}</h2>
+    <p>{{ guide.why }}</p>
+    {% if guide.steps %}
+      <ol>{% for step in guide.steps %}<li>{{ step }}</li>{% endfor %}</ol>
+    {% endif %}
+    <div class="lf-acts">
+      <a class="btn" href="{{ url_prefix }}/">Back to my leads</a>
+    </div>
+  </section>
+</div>
+</body>
+</html>

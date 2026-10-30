@@ -7,6 +7,7 @@ CRM-LEAD-FLOW-01 — the tables the new lead flow needs.
 
   crm_help_guides           the "why not, and what to do" catalogue
   crm_help_guide_shown      which guide was shown, and acted on
+  crm_help_tickets          "Ask for help", as answerable rows
   leads.thread_key          the mail thread a lead belongs to
   leads.merged_into_id      the lead this one was merged into
   leads.sub_status          Contacted's detail (Call done, Visit…)
@@ -37,7 +38,8 @@ COLUMNS = (
     ('leads', 'sub_status', 'VARCHAR(40)'),
     ('leads', 'popup_seen_by', 'BOOLEAN DEFAULT 0'),
 )
-TABLES = ('crm_help_guides', 'crm_help_guide_shown')
+TABLES = ('crm_help_guides', 'crm_help_guide_shown',
+          'crm_help_tickets')
 
 
 def _cols(table):

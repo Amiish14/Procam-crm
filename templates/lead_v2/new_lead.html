@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{% include "_csrf_fetch.html" %}
+<title>New lead — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body class="lf-page">
+{% include "_crm_topbar.html" %}
+<div class="lf-wrap">
+  <div class="lf-head">
+    <div class="lf-who">
+      <h1>New lead</h1>
+      <div class="lf-sub">Two steps: who it is, and what they want.
+        Most leads arrive by mail and make themselves — this is for
+        the ones that did not.</div>
+    </div>
+  </div>
+
+  <!-- ── step 1 ─────────────────────────────────────────────── -->
+  <section class="lf-todo" id="step1">
+    <h2>Step 1 — Who</h2>
+    <p>Type three letters of the company name.</p>
+    <input id="q" placeholder="Company name" autocomplete="off"
+           oninput="nlSearch()" style="width:100%;max-width:420px">
+    <div id="hits" class="lf-hits"></div>
+    <div id="openWarn" class="lf-warn" hidden></div>
+    <div class="lf-acts" id="picked" hidden>
+      <span class="lf-sub">Chosen: <b id="pickedName"></b></span>
+      <button class="btn" type="button" onclick="nlStep2()">
+        Next</button>
+    </div>
+  </section>
+
+  <!-- ── step 2 ─────────────────────────────────────────────── -->
+  <section class="lf-todo" id="step2" hidden>
+    <h2>Step 2 — What</h2>
+    <div class="lf-grid">
+      <div class="lf-card">
+        <label for="requirement">What the client wants *</label>
+        <textarea id="requirement" rows="3" style="width:100%"
+          placeholder="2 x 40 MVA transformers, Vadodara to Lapanga"></textarea>
+        <label for="vertical">Vertical</label>
+        <select id="vertical" style="width:100%">
+          <option value="">— pick one —</option>
+          {% for v in verticals %}<option>{{ v }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="lf-card">
+        <label for="contact_name">Contact</label>
+        <input id="contact_name" style="width:100%">
+        <label for="contact_email">Contact email</label>
+        <input id="contact_email" style="width:100%">
+        <label for="contact_phone">Contact phone</label>
+        <input id="contact_phone" style="width:100%">
+      </div>
+      <div class="lf-card">
+        <label for="target_date">Target date</label>
+        <input id="target_date" type="date" style="width:100%">
+        <label for="value">Rough value (₹)</label>
+        <input id="value" inputmode="decimal" style="width:100%">
+        <label for="owner_reason">If you change the owner, why?</label>
+        <input id="owner_reason" style="width:100%">
+      </div>
+    </div>
+    <div class="lf-acts">
+      <button class="btn" type="button" onclick="nlSave()">
+        Create the lead</button>
+      <button class="btn lf-ghost" type="button"
+              onclick="nlBack()">Back</button>
+      <span class="lf-say" id="nlSay"></span>
+    </div>
+  </section>
+</div>
+
+<script>window.URL_PREFIX = "{{ url_prefix }}";</script>
+<script src="{{ url_prefix }}/static/js/guided_help.js"></script>
+<script>
+function crmUrl(p){ return "{{ url_prefix }}" + p; }
+let CHOSEN = null;
+
+function esc(s){ return String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function nlSearch(){
+  const q = document.getElementById('q').value.trim();
+  const hits = document.getElementById('hits');
+  if (q.length < 3){ hits.innerHTML = ''; return; }
+  fetch(crmUrl('/api/leads/new/accounts?q=') + encodeURIComponent(q))
+    .then(function(r){ return r.json(); }).then(function(d){
+      if (!d.ok || !d.rows.length){
+        hits.innerHTML = '<div class="lf-sub">Nothing found. '
+          + 'Create the account from Accounts first.</div>';
+        return;
+      }
+      hits.innerHTML = d.rows.map(function(row){
+        const blocked = row.blocked
+          ? ' <span class="lf-chip lf-none">blocked</span>' : '';
+        return '<button type="button" class="lf-hit" '
+          + 'data-id="' + row.id + '" '
+          + 'data-name="' + esc(row.name) + '" '
+          + 'data-blocked="' + (row.blocked ? '1' : '') + '">'
+          + esc(row.name) + blocked
+          + '<span class="lf-sub"> ' + esc(row.owner || 'no owner')
+          + '</span></button>';
+      }).join('');
+      hits.querySelectorAll('.lf-hit').forEach(function(b){
+        b.onclick = function(){ nlPick(b); };
+      });
+    });
+}
+
+function nlPick(button){
+  if (button.dataset.blocked){
+    showGuide('CLIENT_BLOCKED', {account: button.dataset.name,
+                                 page: 'new lead'});
+    return;
+  }
+  CHOSEN = {id: parseInt(button.dataset.id, 10),
+            name: button.dataset.name};
+  document.getElementById('pickedName').textContent = CHOSEN.name;
+  document.getElementById('picked').hidden = false;
+  fetch(crmUrl('/api/leads/new/open?account_id=') + CHOSEN.id)
+    .then(function(r){ return r.json(); }).then(function(d){
+      const warn = document.getElementById('openWarn');
+      if (!d.ok || !d.rows.length){ warn.hidden = true; return; }
+      warn.hidden = false;
+      warn.innerHTML = 'An open lead already exists for this '
+        + 'customer: '
+        + d.rows.map(function(r){
+            return '<a href="' + crmUrl('/leads/' + r.lead_id
+              + '/panel') + '">#' + r.lead_id + '</a> ('
+              + esc(r.stage) + ')';
+          }).join(', ')
+        + '. Add to it rather than starting another, unless this is '
+        + 'a different job.';
+    });
+}
+
+function nlStep2(){
+  document.getElementById('step1').hidden = true;
+  document.getElementById('step2').hidden = false;
+}
+function nlBack(){
+  document.getElementById('step2').hidden = true;
+  document.getElementById('step1').hidden = false;
+}
+
+function nlSave(){
+  const say = document.getElementById('nlSay');
+  if (!CHOSEN){ say.textContent = 'Pick the customer first.'; return; }
+  say.textContent = 'Creating…';
+  fetch(crmUrl('/api/leads/new'), {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      account_id: CHOSEN.id,
+      requirement: document.getElementById('requirement').value,
+      vertical: document.getElementById('vertical').value,
+      contact_name: document.getElementById('contact_name').value,
+      contact_email: document.getElementById('contact_email').value,
+      contact_phone: document.getElementById('contact_phone').value,
+      target_date: document.getElementById('target_date').value,
+      value: document.getElementById('value').value,
+      owner_reason: document.getElementById('owner_reason').value
+    })
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok){
+      say.textContent = '';
+      if (!window.showGuideFrom(d, {page: 'new lead'})){
+        say.textContent = d.error || 'Refused.';
+      }
+      return;
+    }
+    location.href = crmUrl('/leads/' + d.lead_id + '/panel');
+  }).catch(function(){ say.textContent = 'Could not reach the server.'; });
+}
+</script>
+</body>
+</html>

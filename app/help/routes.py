@@ -26,7 +26,8 @@ from flask import (Blueprint, jsonify, render_template, request, session,
 
 from app import db
 from app.models.help_content import (HelpArticle, HelpGuide,
-                                     HelpGuideShown, HelpTooltip)
+                                     HelpGuideShown, HelpTicket,
+                                     HelpTooltip)
 from app.services.urls import prefixed as _prefixed, login_url as _login_url
 
 
@@ -369,3 +370,52 @@ def api_seed_guides():
     return jsonify(ok=True, added=added,
                    total=len(guided_help.catalogue(
                        include_inactive=True)))
+
+
+@bp.route('/api/help/ticket', methods=['POST'])
+@_require_auth
+def api_raise_ticket():
+    """§5.2 — Ask for help. Answers with the ticket number."""
+    from app.services import guided_help
+
+    body = request.get_json(silent=True) or {}
+    row, error = guided_help.raise_ticket(
+        emp_code=_current_emp(), page=(body.get('page') or ''),
+        lead_id=body.get('lead_id'), code=(body.get('code') or ''),
+        description=(body.get('description') or ''))
+    if row is None:
+        return jsonify(ok=False, error=error), 400
+    return jsonify(ok=True, number=row.number, ticket=row.to_dict())
+
+
+@bp.route('/api/help/tickets')
+@_require_admin
+def api_tickets():
+    rows = (HelpTicket.query.order_by(HelpTicket.id.desc())
+            .limit(200).all())
+    return jsonify(ok=True, rows=[r.to_dict() for r in rows])
+
+
+@bp.route('/api/help/people')
+@_require_auth
+def api_people():
+    """Active employees, once each (§3.4).
+
+    The team filter listed people who had left and showed one name
+    twice. Both come from reading the employee master without
+    filtering it, so this is the filtered reading every new screen
+    uses.
+    """
+    from app import Employee
+
+    rows = (Employee.query.filter(Employee.is_active.is_(True))
+            .order_by(Employee.name.asc()).all())
+    seen, out = set(), []
+    for emp in rows:
+        code = (emp.emp_code or '').strip()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        out.append({'emp_code': code, 'name': emp.name or code,
+                    'vertical': emp.vertical or ''})
+    return jsonify(ok=True, rows=out, total=len(out))

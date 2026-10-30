@@ -176,6 +176,40 @@
     return false;
   }
 
+  /* §5.2 — the way out that does not need a phone number. */
+  function askForHelp(code, ctx) {
+    ctx = ctx || {};
+    var what = w.prompt(
+      'What were you trying to do? One line is enough.');
+    if (!what) return;
+    fetch(PREFIX + '/api/help/ticket', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({code: code || '',
+                            page: ctx.page || '',
+                            lead_id: ctx.lead_id || null,
+                            description: what})
+    }).then(function (r) { return r.json(); })
+      .then(function (d) {
+        draw({code: 'TICKET_RAISED',
+              title: d.ok ? ('Ticket ' + d.number + ' is with the '
+                             + 'Tech team.')
+                          : 'That ticket was not raised.',
+              why: d.ok ? 'They have the screen you were on, the '
+                          + 'lead, and what the CRM last refused, so '
+                          + 'they do not need to ask.'
+                        : (d.error || 'The CRM could not be reached.'),
+              steps: [], actions: []}, ctx);
+      })
+      .catch(function () {
+        draw({code: 'TICKET_RAISED',
+              title: 'That ticket was not raised.',
+              why: 'The CRM could not be reached just now.',
+              steps: ['Try again in a moment.'], actions: []}, ctx);
+      });
+  }
+
+  w.askForHelp = askForHelp;
   w.showGuide = showGuide;
   w.showGuideFrom = showGuideFrom;
   w.closeGuide = closeGuide;

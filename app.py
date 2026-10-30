@@ -6373,6 +6373,10 @@ for _mod_path, _bp_name in [
     # or correct who owns it. 404 while FEATURE_LEAD_ACCOUNT is off.
     ('app.lead_account.routes',  'lead_account_bp'),
     ('app.account_merge.routes', 'account_merge_bp'),
+    # The lead screen and the two-step new lead. 404 while
+    # FEATURE_LEAD_POPUP_V2 is off, and templates/app.html is
+    # untouched, so everybody else has yesterday's screen.
+    ('app.lead_v2.routes',      'lead_v2_bp'),
     # The TMS integration API. Exempted from CSRF below, because it is
     # authenticated by a bearer token rather than by a session cookie —
     # a CSRF token is a defence against a browser being used as a

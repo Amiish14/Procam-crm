@@ -556,3 +556,49 @@ the six-stage strip, the `sub_status` and `popup_seen_by` columns —
 and the screen itself is the next release, behind
 `FEATURE_LEAD_POPUP_V2`. Shipping half a lead screen behind a flag
 nobody can switch on would have been worse than shipping none.
+
+---
+
+### 37. The All Leads list is not changed in this release
+
+§3.4 asks for the list's columns, its default filter, a "2 similar"
+link and a team dropdown of active employees only. The list is in
+`templates/app.html`, the 6,000-line template this release was
+asked not to touch so that flag-off users get exactly today's
+screen.
+
+**Taken:** the data behind §3.4 is built and tested —
+`/api/help/people` is the active, de-duplicated employee list the
+dropdown needs, and `lead_merge.candidates` is the "2 similar"
+link's answer — but the list itself still renders from app.html.
+Changing it is a separate, unflagged edit to a screen everybody
+uses, and it belongs in its own release with its own before-and-
+after. Say the word.
+
+---
+
+### 38. The screenshots are measured, not just taken
+
+The RFQ screens shipped at 536px wide on a 390px phone because
+nobody measured; the picture looked fine because the harness
+photographed a wider viewport.
+
+**Taken:** `scripts/lead_flow_shots.py` prints
+`document.scrollWidth` at both widths beside the pictures. It found
+the same defect here — the shared top bar is a 56px row that does
+not wrap — and the fix is scoped to `.lf-page`, exactly as
+`.rfq-page` does it, because the bar is on every screen in the CRM.
+
+---
+
+### 39. "Ask for help" needed a ticket register, so there is one
+
+§5.2 says the button "creates a ticket in the existing ticket
+register". There is no ticket register in this repository.
+
+**Taken:** `crm_help_tickets` — number, who, which screen, which
+lead, which guide was showing, and what they were trying to do. The
+person gets `CRM-202610-00042` back instead of the Tech team's
+phone number, and the Tech team gets the context without asking. If
+you meant a register that lives in the TMS, point me at it and this
+becomes a client for it.

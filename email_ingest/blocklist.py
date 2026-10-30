@@ -101,12 +101,33 @@ def domain_blocked(domain: str) -> Optional[str]:
     return None
 
 
+def address_blocked(address: str) -> Optional[str]:
+    """An entry naming this exact address, or None.
+
+    CRM-LEAD-FLOW-01 Appendix B lists two senders on gmail.com —
+    the tender-alert mailers and one personal address. The domain
+    cannot be blocked, so the address is. Any entry in the file
+    carrying an "@" is read this way.
+    """
+    addr = (address or '').strip().lower()
+    if not addr:
+        return None
+    for entry in blocked_domains():
+        if '@' in entry and addr == entry:
+            return entry
+    return None
+
+
 def check(email: str) -> Optional[str]:
     """Reason this sender is blocked, or None if it may become a lead."""
     addr = (email or '').strip().lower()
     if not addr or '@' not in addr:
         return None
     local, _, domain = addr.partition('@')
+
+    exact = address_blocked(addr)
+    if exact:
+        return f'blocked sender: {exact}'
 
     hit = domain_blocked(domain)
     if hit:

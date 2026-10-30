@@ -126,3 +126,20 @@ upgrad.com
 workindia.in
 yatra.com
 yourstory.com
+
+# ── CRM-LEAD-FLOW-01 Appendix B, 30 Oct 2026 ──────────────────────
+# Seen creating junk leads on the live board: Procol RFX
+# notifications (15+), Glafamily (~10), tender-alert mailers,
+# property and IT-service mail. Freight agents offering rates are
+# deliberately NOT here — some are genuine partners, so they go to
+# the not-relevant queue for a person to look at.
+procol.in
+glafamily.com
+tnis.s117@gmail.com
+tendernews.shippers@gmail.com
+magicbricks.com
+global.ntt
+ansmtp.ariba.com
+sarjak.com
+procurengine.com
+nikusi@gmail.com

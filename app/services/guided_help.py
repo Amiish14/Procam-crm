@@ -184,6 +184,22 @@ SEED = [
          [{'label': 'Revise the quote', 'action': 'tab',
            'target': 'quote'}]),
 
+    _row('HOW_THIS_WORKS',
+         'How this screen works.',
+         'Leads mostly make themselves: mail to leads@ is matched to '
+         'the account, given an owner, and replies join the lead '
+         'they belong to rather than starting a new one.',
+         ['Read the "What to do now" card and press its button.',
+          'Move along the stage strip: New, Contacted, RFQ, Quoted, '
+          'Negotiation, Won. If something is missing the screen says '
+          'what and takes you to it.',
+          'Customer mail is under Emails, supplier rates under Rate '
+          'sourcing, the quote under Quote from RFQ onwards.',
+          'Wrong account, wrong owner, duplicate, not relevant or '
+          'lost? They are all under More.'],
+         [{'label': 'Show me the card', 'action': 'focus',
+           'target': 'lfTodo'}]),
+
     _row('SESSION_EXPIRED',
          'You have been signed out.',
          'A session ends after a long gap. Nothing you saved is '
@@ -345,6 +361,35 @@ def weekly(limit=10, days=7):
                     'acted_pct': round(100.0 * acted / shown, 1)
                     if shown else 0.0})
     return out
+
+
+def raise_ticket(*, emp_code, page='', lead_id=None, code='',
+                 description=''):
+    """"Ask for help", answered with a number. (ticket, error).
+
+    §5.2. A person who is stuck gets a reference instead of the
+    Tech team's phone number, and the Tech team gets the screen,
+    the lead and the guide that was on display without having to
+    ask for any of them.
+    """
+    from datetime import datetime
+
+    from app import db
+    from app.models.help_content import HelpTicket
+
+    description = (description or '').strip()
+    if not description:
+        return None, ('Say in a line what you were trying to do. '
+                      'Without it the ticket cannot be answered.')
+    row = HelpTicket(emp_code=(emp_code or '')[:20] or None,
+                     page=(page or '')[:80] or None,
+                     lead_id=lead_id, code=(code or '')[:40] or None,
+                     description=description[:4000], status='Open')
+    db.session.add(row)
+    db.session.flush()
+    row.number = f'CRM-{datetime.utcnow():%Y%m}-{row.id:05d}'
+    db.session.commit()
+    return row, ''
 
 
 def seed(actor='system'):

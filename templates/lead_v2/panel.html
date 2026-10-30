@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{% include "_csrf_fetch.html" %}
+<title>{{ p.account.name or 'Lead' }} — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body class="lf-page">
+{% include "_crm_topbar.html" %}
+
+<div class="lf-wrap">
+
+  {% if not seen %}
+  <div class="lf-note" id="lfNote">
+    <div>
+      <b>The lead screen has changed.</b>
+      <ul>
+        <li>The card at the top says what to do next — start there.</li>
+        <li>Customer mail, supplier rates and the quote are separate
+          tabs. The quote appears from RFQ onwards.</li>
+        <li>Wrong account, wrong owner, duplicate, not relevant or
+          lost? They are all under <b>More</b>.</li>
+      </ul>
+    </div>
+    <button class="btn lf-ghost" type="button" onclick="lfSeen()">
+      Got it</button>
+  </div>
+  {% endif %}
+
+  <!-- ── header ─────────────────────────────────────────────── -->
+  <div class="lf-head">
+    <div class="lf-who">
+      <h1>{{ p.account.name or '(no account yet)' }}</h1>
+      <div class="lf-chips">
+        <span class="lf-chip">#{{ p.lead_id }}</span>
+        {% if p.priority %}
+          <span class="lf-chip lf-pri">{{ p.priority }}</span>
+        {% endif %}
+        <span class="lf-chip lf-stage">
+          {{ p.closed_as or p.strip_stage or p.stage }}</span>
+        {% if p.sub_status %}
+          <span class="lf-chip">{{ p.sub_status }}</span>
+        {% endif %}
+        {% if not p.owner %}
+          <span class="lf-chip lf-none">No owner</span>
+        {% endif %}
+      </div>
+      <div class="lf-sub">
+        Owner: {{ p.owner_name or p.owner or 'nobody' }}
+        {% if p.vertical %} · {{ p.vertical }}{% endif %}
+        {% if p.due.date %}
+          · <span class="lf-due lf-{{ p.due.colour }}">Due
+            {{ p.due.date }}</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- ── stage strip ────────────────────────────────────────── -->
+  <div class="lf-strip" role="group" aria-label="Stage">
+    {% for s in p.steps %}
+      <button class="lf-step lf-{{ s.state }}" type="button"
+              data-stage="{{ s.name }}"
+              {% if not may_edit %}disabled{% endif %}
+              onclick="lfMove('{{ s.name }}')">
+        <span class="lf-dot"></span>{{ s.name }}</button>
+    {% endfor %}
+    {% if p.strip_stage == 'Contacted' %}
+      <select id="lfSub" class="lf-sub-pick" onchange="lfSubStatus()"
+              {% if not may_edit %}disabled{% endif %}>
+        <option value="">— detail —</option>
+        {% for s in p.sub_statuses %}
+          <option value="{{ s }}"
+            {% if s == p.sub_status %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    {% endif %}
+  </div>
+
+  <!-- ── what to do now ─────────────────────────────────────── -->
+  <section class="lf-todo" id="lfTodo">
+    <h2>What to do now</h2>
+    <p>{{ p.what_to_do.text }}</p>
+    <div class="lf-acts">
+      {% for a in p.what_to_do.actions %}
+        <button class="btn" type="button"
+                onclick="lfAct('{{ a.action }}', '{{ a.target }}')">
+          {{ a.label }}</button>
+      {% endfor %}
+    </div>
+  </section>
+
+  <!-- ── tabs ───────────────────────────────────────────────── -->
+  <div class="lf-tabs" role="tablist">
+    {% for t in p.tabs %}
+      <button type="button" role="tab" data-tab="{{ t }}"
+              aria-selected="{{ 'true' if loop.first else 'false' }}"
+              onclick="leadTab('{{ t }}')">
+        {% if t == 'summary' %}Summary
+        {% elif t == 'emails' %}Emails ({{ p.counts.emails }})
+        {% elif t == 'rates' %}Rate sourcing
+        {% elif t == 'quote' %}Quote
+        {% elif t == 'notes' %}Notes
+        {% else %}History{% endif %}</button>
+    {% endfor %}
+    <button type="button" class="lf-help" title="How this works"
+            onclick="lfHowto()">?</button>
+  </div>
+
+  <section class="lf-panel on" id="t-summary">
+    <div class="lf-grid">
+      <div class="lf-card">
+        <h3>Contact</h3>
+        <div class="lf-kv"><span>Name</span>
+          <b id="contact">{{ p.summary.contact.name or '—' }}</b></div>
+        <div class="lf-kv"><span>Designation</span>
+          <b>{{ p.summary.contact.designation or '—' }}</b></div>
+        <div class="lf-kv"><span>Email</span>
+          <b>{{ p.summary.contact.email or '—' }}</b></div>
+        <div class="lf-kv"><span>Phone</span>
+          <b>{{ p.summary.contact.phone or '—' }}</b></div>
+      </div>
+      <div class="lf-card">
+        <h3>Account</h3>
+        <div class="lf-kv"><span>Customer</span>
+          <b data-field="company_id" id="company_id">
+            {{ p.account.name or 'Not set yet — the owner links it' }}</b></div>
+        <div class="lf-kv"><span>Owner</span>
+          <b data-field="assigned_to" id="assigned_to">
+            {{ p.owner_name or p.owner or 'Not set yet' }}</b></div>
+        <div class="lf-kv"><span>Vertical</span>
+          <b data-field="procam_vertical" id="procam_vertical">
+            {{ p.vertical or 'Not set yet' }}</b></div>
+      </div>
+      <div class="lf-card">
+        <h3>The job</h3>
+        <div class="lf-kv"><span>Cargo / scope</span>
+          <b data-field="_scope" id="_scope">
+            {{ p.summary.cargo or 'Not set yet' }}</b></div>
+        <div class="lf-kv"><span>Route</span>
+          <b>{% if p.summary.origin or p.summary.destination %}
+            {{ p.summary.origin or '?' }} → {{ p.summary.destination or '?' }}
+            {% elif p.summary.site %}{{ p.summary.site }}
+            {% else %}—{% endif %}</b></div>
+        <div class="lf-kv"><span>Value</span>
+          <b data-field="opportunity_value_num"
+             id="opportunity_value_num">
+            {% if p.summary.value %}₹ {{ '{:,.0f}'.format(p.summary.value) }}
+            {% else %}Not set yet{% endif %}</b></div>
+        <div class="lf-kv"><span>Value basis</span>
+          <b data-field="value_basis" id="value_basis">
+            {{ p.summary.value_basis or 'Not set yet' }}</b></div>
+        <div class="lf-kv"><span>Next follow-up</span>
+          <b data-field="_target" id="_target">
+            {{ p.summary.next_follow_up or 'Not set yet' }}</b></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="lf-panel" id="t-emails">
+    {% if p.emails %}
+      <table class="lf-t"><thead><tr><th>When</th><th>From</th>
+        <th>Subject</th><th>Direction</th></tr></thead><tbody>
+      {% for e in p.emails %}
+        <tr><td>{{ e.at }}</td><td>{{ e['from'] }}</td>
+          <td>{{ e.subject }}</td><td>{{ e.direction }}</td></tr>
+      {% endfor %}
+      </tbody></table>
+    {% else %}
+      <p class="lf-empty">No customer mail on this lead yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="lf-panel" id="t-rates">
+    {% if p.rates %}
+      <table class="lf-t"><thead><tr><th>Supplier</th><th>Asked</th>
+        <th>Status</th></tr></thead><tbody>
+      {% for r in p.rates %}
+        <tr><td>{{ r.vendor }}</td><td>{{ r.asked }}</td>
+          <td>{{ r.status }}</td></tr>
+      {% endfor %}
+      </tbody></table>
+    {% else %}
+      <p class="lf-empty">No rates asked yet.
+        <button class="btn" type="button"
+                onclick="showGuide('RATE_SOURCING_EMPTY', {lead_id: {{ p.lead_id }}})">
+          Start rate sourcing</button></p>
+    {% endif %}
+    <p class="lf-note-sm">Supplier requests and their replies only.
+      The customer's own mail is under Emails.</p>
+  </section>
+
+  {% if p.quote.visible %}
+  <section class="lf-panel" id="t-quote">
+    <div class="lf-card">
+      <div class="lf-kv"><span>Quote no.</span>
+        <b data-field="quote_no" id="quote_no">
+          {{ p.quote.no or 'Not set yet' }}</b></div>
+      <div class="lf-kv"><span>Value</span>
+        <b data-field="quote_value_num" id="quote_value_num">
+          {% if p.quote.value %}₹ {{ '{:,.0f}'.format(p.quote.value) }}
+          {% else %}Not set yet{% endif %}</b></div>
+      <div class="lf-kv"><span>Quote date</span>
+        <b data-field="quote_date" id="quote_date">
+          {{ p.quote.date or 'Not set yet' }}</b></div>
+      <div class="lf-kv"><span>Valid until</span>
+        <b data-field="quote_validity_date" id="quote_validity_date">
+          {{ p.quote.valid_until or 'Not set yet' }}</b></div>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="lf-panel" id="t-notes">
+    {% if p.notes %}<pre class="lf-notes">{{ p.notes }}</pre>
+    {% else %}<p class="lf-empty">No notes yet.</p>{% endif %}
+  </section>
+
+  <section class="lf-panel" id="t-history">
+    {% if p.history %}
+      <ol class="lf-time">
+      {% for h in p.history %}
+        <li><span class="lf-when">{{ h.at }}</span>
+          <b>{{ h.kind }}</b> {{ h.what }}
+          {% if h.who %}<span class="lf-sub">— {{ h.who }}</span>{% endif %}
+          {% if h.why %}<div class="lf-sub">{{ h.why }}</div>{% endif %}
+        </li>
+      {% endfor %}
+      </ol>
+    {% else %}
+      <p class="lf-empty">Nothing has happened on this lead yet.</p>
+    {% endif %}
+    {% if p.intake %}
+      <details class="lf-intake"><summary>Intake decision
+        (administrators)</summary>
+        <div class="lf-kv"><span>Classification</span>
+          <b>{{ p.intake.classification or '—' }}</b></div>
+        <div class="lf-kv"><span>Confidence</span>
+          <b>{{ p.intake.confidence if p.intake.confidence is not none
+                else '—' }}</b></div>
+        <div class="lf-kv"><span>Vertical reason</span>
+          <b>{{ p.intake.vertical_reason or '—' }}</b></div>
+      </details>
+    {% endif %}
+  </section>
+
+  <!-- ── footer ─────────────────────────────────────────────── -->
+  <div class="lf-foot">
+    <button class="btn" type="button"
+            onclick="lfAct('draft','client')">Draft email</button>
+    <details class="lf-more">
+      <summary class="btn lf-ghost">More</summary>
+      <div class="lf-menu">
+        <button type="button" onclick="lfHold()">Put on hold</button>
+        <button type="button" onclick="lfLost()">Close as lost</button>
+        <button type="button" onclick="lfDuplicate()">
+          Mark duplicate</button>
+        <button type="button" onclick="lfNotRelevant()">
+          Delete – not relevant</button>
+        <button type="button" onclick="lfAct('tab','summary')">
+          Change account</button>
+        <button type="button" onclick="lfAct('tab','summary')">
+          Change owner</button>
+        <button type="button" onclick="lfBlock()">
+          Recommend a block or caution</button>
+      </div>
+    </details>
+    <span class="lf-say" id="lfSay"></span>
+  </div>
+</div>
+
+<script>
+window.URL_PREFIX = "{{ url_prefix }}";
+const LEAD_ID = {{ p.lead_id }};
+</script>
+<script src="{{ url_prefix }}/static/js/guided_help.js"></script>
+<script>
+function crmUrl(p){ return "{{ url_prefix }}" + p; }
+function lfSay(text){ document.getElementById('lfSay').textContent = text; }
+
+function leadTab(which){
+  document.querySelectorAll('.lf-panel').forEach(function(el){
+    el.classList.toggle('on', el.id === 't' + '-' + which);
+  });
+  document.querySelectorAll('.lf-tabs [data-tab]').forEach(function(b){
+    b.setAttribute('aria-selected', b.dataset.tab === which
+      ? 'true' : 'false');
+  });
+}
+window.leadTab = leadTab;
+
+function lfMove(to){
+  lfSay('Moving…');
+  fetch(crmUrl('/api/leads/' + LEAD_ID + '/stage'), {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({to: to})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok){
+      lfSay('');
+      if (!window.showGuideFrom(d, {lead_id: LEAD_ID, page: 'lead'})){
+        lfSay(d.error || 'Refused.');
+      }
+      return;
+    }
+    location.reload();
+  }).catch(function(){ lfSay('Could not reach the server.'); });
+}
+
+function lfSubStatus(){
+  const value = document.getElementById('lfSub').value;
+  fetch(crmUrl('/api/leads/' + LEAD_ID + '/substatus'), {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({sub_status: value})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    lfSay(d.ok ? 'Saved.' : (d.error || 'Refused.'));
+  });
+}
+
+function lfAct(action, target){
+  if (action === 'tab'){ leadTab(target); return; }
+  if (action === 'stage'){ lfMove(target); return; }
+  if (action === 'draft'){ lfSay('Opening the mail draft…');
+    location.href = crmUrl('/leads/' + LEAD_ID + '?draft=1'); return; }
+  lfSay('');
+}
+
+function lfSeen(){
+  const note = document.getElementById('lfNote');
+  if (note) note.hidden = true;
+  fetch(crmUrl('/api/leads/' + LEAD_ID + '/seen'), {method: 'POST'});
+}
+
+function lfHold(){ lfMove('On Hold'); }
+function lfLost(){ showGuide('DELETE_NOT_ALLOWED', {lead_id: LEAD_ID}); }
+function lfDuplicate(){ showGuide('POSSIBLE_DUPLICATE', {lead_id: LEAD_ID}); }
+function lfNotRelevant(){ showGuide('DELETE_NOT_ALLOWED', {lead_id: LEAD_ID}); }
+function lfBlock(){ showGuide('CLIENT_BLOCKED', {lead_id: LEAD_ID}); }
+function lfHowto(){
+  showGuide('HOW_THIS_WORKS', {lead_id: LEAD_ID, page: 'lead'});
+}
+</script>
+</body>
+</html>
