@@ -194,8 +194,42 @@
 
   <!-- ── CRN thread ───────────────────────────────────────────── -->
   <div class="ff-panel" id="p-thread">
-    <div class="ff-card" id="crnCard">
+    <div class="ff-card" id="ownCard">
       <h3 style="margin:0 0 4px">Assign to</h3>
+      <div class="ff-note" style="margin:0 0 10px">
+        Who works this enquiry. The list is the freight-forwarding
+        people in the employee master, so it is right the day
+        somebody joins. Changing an owner who is already there needs
+        a reason &mdash; it goes on the assignment history, where the
+        next person to pick this up can read it.
+      </div>
+      <div class="ff-grid" style="max-width:640px">
+        <div><label for="ownLead">Enquiry (lead) id</label>
+          <input id="ownLead" type="text" inputmode="numeric"></div>
+        <div><label for="ownWho">Assign to</label>
+          <select id="ownWho">
+            <option value="">&mdash; choose &mdash;</option>
+            {% for p in ff_people %}
+              <option value="{{ p.emp_code }}">{{ p.name }}</option>
+            {% endfor %}
+          </select></div>
+        <div><label for="ownWhy">Reason (if replacing)</label>
+          <input id="ownWhy" placeholder="Different service vertical"></div>
+      </div>
+      {% if not ff_people %}
+        <div class="ff-warn">Nobody in the employee master is active
+          in freight forwarding, so there is nobody to offer. Set
+          people's vertical on the employee master first &mdash; this
+          list is read from it, never from a list in the code.</div>
+      {% endif %}
+      <div style="margin-top:10px">
+        <button class="btn" onclick="ownGo()">Assign the enquiry</button>
+      </div>
+      <div id="ownOut" style="margin-top:10px"></div>
+    </div>
+
+    <div class="ff-card" id="crnCard">
+      <h3 style="margin:0 0 4px">Business unit</h3>
       <div class="ff-note" style="margin:0 0 10px">
         An enquiry gets its customer reference once, from the unit
         that will serve it. Everything downstream &mdash; the rate
@@ -206,7 +240,7 @@
       <div class="ff-grid" style="max-width:520px">
         <div><label for="crnLead">Enquiry (lead) id</label>
           <input id="crnLead" type="text" inputmode="numeric"></div>
-        <div><label for="crnBu">Assign to</label>
+        <div><label for="crnBu">Business unit</label>
           <select id="crnBu" onchange="crnPeek()">
             {% for unit in business_units %}
               <option value="{{ unit }}"
@@ -245,7 +279,33 @@ const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
 const money = v => (v==null||v==='') ? '—'
   : '₹ ' + Number(v).toLocaleString('en-IN', {maximumFractionDigits:0});
 
-// ── Assign to: the customer reference, and the unit that serves it ──
+// ── Assign to: who works this enquiry ───────────────────────────────
+function ownGo(){
+  const lead = ($('ownLead').value || '').trim();
+  const who = $('ownWho').value;
+  const why = ($('ownWhy').value || '').trim();
+  const out = $('ownOut');
+  if (!lead){ out.innerHTML = '<div class="ff-bad">Name the enquiry first.</div>'; return; }
+  if (!who){ out.innerHTML = '<div class="ff-bad">Choose who it goes to.</div>'; return; }
+  out.textContent = 'Assigning\u2026';
+  fetch(PREFIX + '/api/ff/leads/' + encodeURIComponent(lead) + '/owner', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({emp_code: who, reason: why})
+  }).then(r => r.json()).then(d => {
+    if (!d.ok){
+      out.innerHTML = '<div class="ff-bad">' + esc(d.error || 'Refused.') + '</div>';
+      return;
+    }
+    out.innerHTML = d.unchanged
+      ? '<div class="ff-warn">' + esc(d.name) + ' already had it. Nothing changed.</div>'
+      : '<div class="ff-out">' + esc(d.name || d.emp_code) + '</div>';
+  }).catch(() => {
+    out.innerHTML = '<div class="ff-bad">Could not reach the server.</div>';
+  });
+}
+
+// ── Business unit: the customer reference, and the unit behind it ───
 function crnPeek(){
   const bu = $('crnBu') ? $('crnBu').value : '';
   const out = $('crnNext');

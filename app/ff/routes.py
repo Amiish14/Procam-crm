@@ -94,7 +94,56 @@ def ff_home():
     from app.services import crn as crn_svc
     return render_template('ff/home.html',
                            business_units=business_units(),
-                           default_bu=crn_svc.default_bu())
+                           default_bu=crn_svc.default_bu(),
+                           ff_people=people())
+
+
+#: The vertical this hub serves. Its aliases ("General Transport",
+#: whatever the alias table carries) resolve to it, so the list is
+#: not a second spelling of the master.
+FF_VERTICAL = 'Freight Forwarding'
+
+
+def people():
+    """Active employees in the freight-forwarding vertical.
+
+    Read from the employee master, never a list in the code: a list
+    in code is wrong the first time somebody joins or leaves, and
+    nobody edits it because nobody knows it is there. An inactive
+    employee is left out — `lead_assignment.validate` refuses them
+    anyway, and offering a name that will be refused is worse than
+    not offering it.
+
+    Empty is a real answer. The page says so rather than falling
+    back to everybody, which would quietly hand a freight enquiry
+    to a warehouse clerk.
+    """
+    from app import Employee
+    from app.services import vertical_heads as vh
+
+    want = vh.master_vertical(FF_VERTICAL)
+    # With no vertical master loaded, `master_vertical` answers
+    # Management for everything, and matching on it would offer the
+    # whole company. Then the written name is the only evidence
+    # there is, so that is all this trusts.
+    mapped = want != vh.FALLBACK_VERTICAL
+    out = []
+    try:
+        rows = (Employee.query
+                .filter(Employee.is_active.is_(True))
+                .order_by(Employee.name.asc()).all())
+    except Exception:                                     # noqa: BLE001
+        db.session.rollback()
+        return out
+    for emp in rows:
+        raw = (emp.vertical or '').strip()
+        if not raw:
+            continue
+        if raw == FF_VERTICAL or (mapped
+                                  and vh.master_vertical(raw) == want):
+            out.append({'emp_code': emp.emp_code,
+                        'name': emp.name or emp.emp_code})
+    return out
 
 
 def business_units():
@@ -163,6 +212,44 @@ def api_assign_crn(lead_id):
         return _refuse(exc)
     db.session.commit()
     return jsonify(ok=True, crn=crn, already_had=bool(existing))
+
+
+@bp.route('/api/ff/leads/<int:lead_id>/owner', methods=['POST'])
+@_gated
+def api_assign_owner(lead_id):
+    """Give an enquiry to a person.
+
+    Through `lead_assignment.assign`, the one path every screen
+    uses, so the history row, the audit row and the notification
+    happen here exactly as they do on the lead sheet. Replacing an
+    owner needs a reason — that is the rule, not this screen's
+    invention, and the dropdown asks for one.
+    """
+    from app.access import scope as sc_mod
+    from app import Lead
+    from app.services import lead_assignment
+
+    lead = sc_mod.leads().filter(Lead.id == lead_id).first()
+    if lead is None:
+        return jsonify(ok=False, error='Not found'), 404
+
+    body = request.get_json(silent=True) or {}
+    code = (body.get('emp_code') or '').strip()
+    if not code:
+        return jsonify(ok=False, error='Choose who it goes to.'), 400
+    reason = (body.get('reason') or '').strip()
+
+    was = (lead.assigned_to or '').strip()
+    ok, err = lead_assignment.assign(
+        lead, primary_code=code, actor=_me(),
+        note=reason or None)
+    if not ok:
+        db.session.rollback()
+        return jsonify(ok=False, error=err), 400
+    db.session.commit()
+    return jsonify(ok=True, emp_code=lead.assigned_to or '',
+                   name=lead.assigned_name or '',
+                   was=was, unchanged=(was == code))
 
 
 # ── R3: what a vendor is allowed to see ──────────────────────────────

@@ -465,3 +465,31 @@ column makes every retired owner row live again.
 `--down` is for undoing the migration, not for undoing the
 rollback; `--restore --apply` on the seed script is what undoes the
 rollback.
+
+---
+
+### 32. "Assign to" is a person; the business unit is its own control
+
+Answered 30 October: it means a person. QUESTIONS 27 read it as
+the business unit because `api_assign_crn`, the endpoint the brief
+named, takes only `bu`.
+
+**Taken:** two dropdowns under two headings. **Assign to** sets who
+works the enquiry, through `lead_assignment.assign()` — the one path
+every screen uses, so the history row, the audit row and the
+notification happen exactly as they do on the lead sheet, including
+the rule that replacing an existing owner needs a reason.
+**Business unit** stamps the customer reference, unchanged.
+
+The brief says `AccountAssignmentHistory`. That table records who
+owns an **account**; an enquiry is a lead, and the trail for who
+holds a lead is `lead_assignment_history`. That is the row this
+writes, as it did for the backfill and for #12397.
+
+The list of people is read from the employee master, filtered to
+active and to the freight-forwarding vertical. An empty list is
+shown as an empty list with an explanation: falling back to
+everybody would hand a freight enquiry to a warehouse clerk. Where
+no vertical master is loaded, `master_vertical` answers Management
+for everything, so the written name is the only evidence and the
+match is on that alone.

@@ -50,6 +50,7 @@ LeadNote = _main.LeadNote
 
 from app.models.audit import AuditEvent                   # noqa: E402
 from app.models.email_admin import VerticalHead           # noqa: E402
+from app.services import vertical_heads                  # noqa: E402
 from app.models.integration import AppSetting             # noqa: E402
 from app.models.master_data import MasterItem             # noqa: E402
 from app.models.quote import Quote                        # noqa: E402
@@ -105,8 +106,15 @@ def _clean():
         db.session.add(VerticalHead(vertical=VERTICAL,
                                     head_emp_code=HEAD, active=True))
         db.session.commit()
+        # The vertical master caches on a timer. Inserting the head
+        # without clearing it only worked while nothing earlier in
+        # the suite had read the master; the moment something did,
+        # `is_mapped` answered from a snapshot taken before this row
+        # existed and the head lost a permission they have.
+        vertical_heads.cache_clear()
         yield
         _purge()
+        vertical_heads.cache_clear()
 
 
 def _on(name='FEATURE_JUNK_DELETE', state=True):
