@@ -121,6 +121,9 @@ FLAGS = (
     ('FEATURE_LEAD_ACCOUNT',
      'Name the account from the lead sheet: link it, create it, or '
      'correct who owns it (CRM-LEAD-ACCOUNT-01)', False),
+    ('FEATURE_ACCOUNT_MERGE',
+     'Merge duplicate accounts: one customer, one row, the old '
+     'spelling kept as an alias (FINISH-TRACKER-CRM)', False),
     (KILL_SWITCH, 'Stop all outbound CRM email immediately', False),
 )
 

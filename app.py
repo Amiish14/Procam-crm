@@ -6306,6 +6306,7 @@ for _mod_path, _bp_name in [
     # The account, reachable from the lead sheet: link it, create it,
     # or correct who owns it. 404 while FEATURE_LEAD_ACCOUNT is off.
     ('app.lead_account.routes',  'lead_account_bp'),
+    ('app.account_merge.routes', 'account_merge_bp'),
     # The TMS integration API. Exempted from CSRF below, because it is
     # authenticated by a bearer token rather than by a session cookie —
     # a CSRF token is a defence against a browser being used as a

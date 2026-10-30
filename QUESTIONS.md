@@ -313,3 +313,81 @@ actual name match. A lone resemblance is CHOOSE, printed as
 these", and the group carries no pre-filled account id, because a
 question with the answer already in it gets agreed to rather than
 read.
+
+---
+
+### 22. A merge re-points every table, not three
+
+FINISH-TRACKER-CRM §0 says a merge re-points "leads, contacts and
+owners". There are 30 foreign keys to an account: activities, stage
+history, PIC history, tags, quotes, RFQs, handovers, competitors,
+projects, business cards, sender links, the account's own parent and
+source columns.
+
+**Taken:** the merge walks the metadata and re-points all of them,
+reporting a count per table. Moving three and leaving 27 pointing
+at a row marked inactive would have produced a worse state than the
+duplicate — a customer whose quotes and history had quietly
+detached from it.
+
+Where a unique constraint makes a move impossible — both accounts
+name somebody for Heavy Transport, or carry the same tag — the row
+stays on the loser and is counted as "left behind". The alternative
+is deleting one of two records of who served a customer, and
+nothing here deletes.
+
+---
+
+### 23. The loser is renamed, not hidden
+
+An inactive account with its original name is invisible in a name
+search and indistinguishable from one that was simply switched off.
+
+**Taken:** the loser becomes `"<name> (merged into #<id>)"` and
+stays readable, and its old spelling is added to the survivor's
+aliases. `account_match._by_name` now searches aliases as well as
+names, so mail that still says the old name reaches the right
+customer — without that, merging an account would make its name
+unmatchable, which is the opposite of the point.
+
+---
+
+### 24. Which account survives is never pre-decided
+
+**Taken:** the script suggests a survivor — most leads, then most
+wins, then identifiers, then the lower id — and says in the report
+that this is "evidence, not a decision". On the Admin screen the
+survivor is a radio button with the suggestion pre-ticked but every
+account listed with its lead count, wins and owners, so the choice
+is read rather than agreed to. A merge needs `--survivor`,
+`--merge`, `--actor` and `--apply` together; there is no "merge
+everything it suggested".
+
+---
+
+### 25. TKT-0063 needed nothing built
+
+The ongoing rule exists — `app/services/task_autoclose.py`, called
+from four save paths — and so does the backlog sweep,
+`scripts/task_backlog_report.py`, with `--check`, counts per rule,
+and `--apply` refused without `--i-have-approval`. Both were built
+on 19 October.
+
+**Taken:** I built neither again. Tasks 1342, 1541, 1283 and 1536
+are still open because the sweep has never been run, not because
+it is missing. The dry-run command is in the release message.
+
+---
+
+### 26. The 296-lead master is a CSV beside the workbooks, not instead
+
+`scripts/vertical_review_split.py` already turns that population
+into five workbooks with dropdowns, which is the right shape for
+filling one in and no use for reading the whole list or diffing it.
+
+**Taken:** `scripts/vertical_master_csv.py` writes the same
+population as one CSV under `docs/reports/`, named for the day, so
+two runs a week apart leave two files whose difference is the work
+somebody did. The workbooks stay. The count will not be exactly 296
+— the population is read from the database, so leads reclassified
+since October drop out of their own accord.

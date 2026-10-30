@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{% include "_csrf_fetch.html" %}
+<title>Duplicate accounts — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body class="rfq-page">
+{% include "_crm_topbar.html" %}
+<div class="rfq-ui">
+  <div class="rfq-hero">
+    <div>
+      <h1>Duplicate accounts</h1>
+      <p>One customer written more than once. While two active
+        accounts answer to the same name the matcher refuses to
+        choose between them, so every lead from that customer stays
+        unplaced — which is what 218 of the 293 unlinked leads are
+        waiting on.</p>
+      <p>Nothing is deleted. The account you fold away keeps its row,
+        marked inactive, and its spelling becomes an alias of the one
+        you keep, so old mail still reaches the right customer.</p>
+    </div>
+  </div>
+
+  <section class="rfq-card">
+    <div class="rfq-card-h">
+      <h2>Clusters</h2>
+      <p>{{ total }} found.</p>
+    </div>
+    {% if rows %}
+      {% for row in rows %}
+        {% set ci = loop.index %}
+        <div class="rfq-card" id="cl{{ ci }}">
+          <div class="rfq-card-h">
+            <h3>{{ row.name }}</h3>
+            <p>{{ row.accounts|length }} accounts &middot;
+              {{ row.leads }} lead(s), {{ row.open_leads }} open
+              &middot; joined by {{ row.reasons|join(', ') }}</p>
+          </div>
+          <div class="rfq-tw">
+            <table>
+              <thead><tr>
+                <th>Keep</th><th>Account</th><th class="n">Leads</th>
+                <th class="n">Open</th><th class="n">Won</th>
+                <th>Identifiers</th><th>Owners</th>
+              </tr></thead>
+              <tbody>
+              {% for a in row.accounts %}
+                <tr>
+                  <td><input type="radio" name="keep{{ ci }}"
+                             value="{{ a.id }}"
+                             {% if a.suggested %}checked{% endif %}></td>
+                  <td>#{{ a.id }} {{ a.name }}
+                    {% if a.suggested %}
+                      <div class="rfq-sub">suggested &mdash;
+                        {{ row.survivor_why }}</div>
+                    {% endif %}</td>
+                  <td class="n">{{ a.leads }}</td>
+                  <td class="n">{{ a.open_leads }}</td>
+                  <td class="n">{{ a.won_leads }}</td>
+                  <td class="rfq-sub">
+                    {% if a.gstin %}{{ a.gstin }}<br>{% endif %}
+                    {% for d in a.domains %}@{{ d }} {% endfor %}</td>
+                  <td class="rfq-sub">
+                    {% if a.owners %}
+                      {% for o in a.owners %}
+                        {{ o.vertical }}: {{ o.name or o.emp_code }}<br>
+                      {% endfor %}
+                    {% elif a.owner %}
+                      {{ a.owner_name or a.owner }} (account PIC)
+                    {% else %}nobody{% endif %}</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div class="rfq-card-h">
+            <button class="btn" type="button"
+                    onclick="doMerge({{ ci }}, {{ row.accounts|map(attribute='id')|list|tojson }})">
+              Merge into the account ticked</button>
+            <span class="rfq-sub" id="say{{ ci }}"></span>
+          </div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="rfq-empty">No duplicate accounts. Every customer is
+        one row.</p>
+    {% endif %}
+  </section>
+</div>
+<script>
+function crmUrl(p){ return "{{ url_prefix }}" + p; }
+function doMerge(n, ids){
+  var picked = document.querySelector('input[name="keep' + n + '"]:checked');
+  var say = document.getElementById('say' + n);
+  if (!picked){ say.textContent = 'Tick the account to keep first.'; return; }
+  var keep = parseInt(picked.value, 10);
+  var losers = ids.filter(function(i){ return i !== keep; });
+  if (!losers.length){ say.textContent = 'Nothing to fold away.'; return; }
+  if (!confirm('Fold account(s) ' + losers.join(', ') + ' into #' + keep
+      + '?\n\nTheir leads, contacts, owners and history move across. '
+      + 'The old rows are kept, marked inactive, and their names '
+      + 'become aliases of #' + keep + '. Nothing is deleted.')) return;
+  say.textContent = 'Merging…';
+  fetch(crmUrl('/api/admin/account-duplicates/merge'), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({survivor: keep, merge: losers})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok){ say.textContent = d.error || 'Refused.'; return; }
+    var moved = d.merged.reduce(function(t, m){ return t + m.moved; }, 0);
+    say.textContent = 'Merged. ' + moved + ' row(s) moved. Reloading…';
+    setTimeout(function(){ location.reload(); }, 1200);
+  }).catch(function(){ say.textContent = 'Could not reach the server.'; });
+}
+</script>
+</body>
+</html>

@@ -366,11 +366,27 @@ def _by_name(company_name):
         db.session.rollback()
         return None
 
+    def names_of(account):
+        """The account's own name and every name it has absorbed.
+
+        A merge keeps the loser's spelling as an alias of the
+        survivor, so mail that still says the old name reaches the
+        right customer. Without this, merging an account makes its
+        name unmatchable — the opposite of the point.
+        """
+        out = [account.name or '']
+        for alias in (getattr(account, 'aliases', None) or []):
+            text_alias = str(alias or '').strip()
+            if text_alias:
+                out.append(text_alias)
+        return out
+
     for normalise in (company_match.norm, strict_norm):
         want = normalise(raw)
         if not want or len(want) < 3:
             continue
-        found = [c for c in accounts if normalise(c.name) == want]
+        found = [c for c in accounts
+                 if any(normalise(n) == want for n in names_of(c))]
         if len(found) == 1:
             return found[0]
         if len(found) > 1:
