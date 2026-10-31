@@ -595,8 +595,11 @@ def test_the_replacement_screen_refuses_an_inactive_successor(world):
         db.session.commit()
 
     c = _client(BACKSTOP)
+    # CRM-VERTICAL-SAVE-500-01: the screen is Post/Redirect/Get now,
+    # so the refusal is read off the page the redirect lands on.
     res = c.post('/admin/assignment/replacements',
-                 data={'from': LEAVER, 'to': 'AAGONE3'})
+                 data={'from': LEAVER, 'to': 'AAGONE3'},
+                 follow_redirects=True)
     assert res.status_code in (200, 403)
     if res.status_code == 200:
         assert b'not an employee on file' in res.data
@@ -605,5 +608,6 @@ def test_the_replacement_screen_refuses_an_inactive_successor(world):
         _emp('AAGONE3', 'Also Departed', active=False)
         db.session.commit()
     res = c.post('/admin/assignment/replacements',
-                 data={'from': LEAVER, 'to': 'AAGONE3'})
+                 data={'from': LEAVER, 'to': 'AAGONE3'},
+                 follow_redirects=True)
     assert b'not active either' in res.data

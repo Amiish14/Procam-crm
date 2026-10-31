@@ -19,8 +19,8 @@ from __future__ import annotations
 
 from functools import wraps
 
-from flask import (Blueprint, jsonify, redirect, render_template, request,
-                   session, url_for)
+from flask import (Blueprint, current_app, jsonify, redirect,
+                   render_template, request, session, url_for)
 
 from app.access import service as access
 
@@ -458,6 +458,71 @@ def _head_view(f):
     return wrap
 
 
+def _after_commit(steps):
+    """Run the side effects of a save, after the row is safe.
+
+    CRM-VERTICAL-SAVE-500-01. Saving a deputy on Admin → Email →
+    Verticals answered 500 while saving the change perfectly well,
+    and a person who sees a 500 reasonably believes nothing happened:
+    the next thing they do is set it again, or give up and ask
+    somebody.
+
+    The shape that prevents it: commit the row, then run each side
+    effect — the audit row, the employee-flag sync, the cache — on
+    its own, catching whatever it throws. A side effect that fails is
+    worth a warning on the screen; it is never worth telling somebody
+    their change was lost when it was not.
+
+    `steps` is [(label, callable)]. Returns the labels that failed.
+    """
+    failed = []
+    for label, fn in steps:
+        try:
+            fn()
+        except Exception:                                 # noqa: BLE001
+            current_app.logger.exception(
+                'save succeeded but the %s step failed', label)
+            try:
+                from app import db
+                db.session.rollback()
+            except Exception:                             # noqa: BLE001
+                pass
+            failed.append(label)
+    return failed
+
+
+def _message_url(endpoint, *, saved='', error='', **kw):
+    """Post/Redirect/Get, carrying one sentence to the screen.
+
+    The message rides the query string rather than the response to
+    the POST, so a refresh re-reads the page instead of saving
+    again. It is truncated and rendered through Jinja's escaping;
+    these screens are behind `admin.email`, and the worst a crafted
+    link can do is show somebody an admin a sentence they did not
+    earn.
+    """
+    if saved:
+        kw['saved'] = saved[:160]
+    if error:
+        kw['error'] = error[:160]
+    return redirect(url_for(endpoint, **kw))
+
+
+def _messages():
+    """(saved, error) as the screen should show them."""
+    return ((request.args.get('saved') or '')[:160],
+            (request.args.get('error') or '')[:160])
+
+
+def _saved_url(endpoint, failed, **kw):
+    """Back to the screen, saying what happened."""
+    if failed:
+        kw['warn'] = ', '.join(failed)
+    else:
+        kw['saved'] = '1'
+    return redirect(url_for(endpoint, **kw))
+
+
 @bp.route('/admin/email/verticals')
 @_head_view
 def verticals_screen():
@@ -480,6 +545,8 @@ def verticals_screen():
         unmapped=vertical_heads.unmapped_verticals(),
         gaps=vertical_heads.gaps(),
         can_edit=_may_edit_heads(),
+        saved=request.args.get('saved'),
+        warn=request.args.get('warn', '')[:120],
         fallback=vertical_heads.FALLBACK_VERTICAL)
 
 
@@ -507,16 +574,28 @@ def verticals_save():
     row.note = (request.form.get('note') or '').strip()[:300] or None
     row.updated_by = _me()
     db.session.commit()
-    vertical_heads.cache_clear()
-    audit.record('vertical_head.changed', 'VerticalHead', vertical,
-                 old=was,
-                 new={'head': row.head_emp_code,
-                      'deputy': row.deputy_emp_code, 'active': row.active},
-                 actor=_me(), reason='changed in Admin → Email → Verticals')
-    # The old flag and the new master must not disagree: code written
-    # before this table reads `employees.is_vertical_head`.
-    vertical_heads.sync_employee_flags(actor=_me())
-    return redirect(url_for('mailops.verticals_screen'))
+    # Read off the row before the side effects run: an exception in
+    # one of them rolls the session back, and reading an expired
+    # attribute afterwards is how this route failed in the first
+    # place.
+    now = {'head': row.head_emp_code, 'deputy': row.deputy_emp_code,
+           'active': row.active}
+    me = _me()
+
+    failed = _after_commit((
+        ('audit', lambda: audit.record(
+            'vertical_head.changed', 'VerticalHead', vertical,
+            old=was, new=now, actor=me, commit=True, strict=True,
+            reason='changed in Admin → Email → Verticals')),
+        # The old flag and the new master must not disagree: code
+        # written before this table reads `employees.is_vertical_head`.
+        ('employee flags', lambda: vertical_heads.sync_employee_flags(
+            actor=me)),
+        # Last, always: anything above may read the master and refill
+        # the cache behind us.
+        ('cache', vertical_heads.cache_clear),
+    ))
+    return _saved_url('mailops.verticals_screen', failed)
 
 
 @bp.route('/admin/email/verticals/alias', methods=['POST'])
@@ -530,25 +609,42 @@ def verticals_alias():
     vertical = (request.form.get('maps_to') or '').strip()
     remove = request.form.get('remove')
 
+    me = _me()
+    failed = []
+    # `commit=True` on both: the audit row used to ride a transaction
+    # that nothing afterwards ever committed, so every alias change
+    # since this screen was built has gone unrecorded.
     if alias and remove:
         row = VerticalAlias.query.filter_by(alias=alias).first()
         if row is not None:
             db.session.delete(row)
             db.session.commit()
-            audit.record('vertical_alias.removed', 'VerticalAlias', alias,
-                         old={'vertical': vertical}, actor=_me(),
-                         reason='removed in Admin → Email → Verticals')
+            failed = _after_commit((
+                ('audit', lambda: audit.record(
+                    'vertical_alias.removed', 'VerticalAlias', alias,
+                    old={'vertical': vertical}, actor=me, commit=True,
+                    strict=True,
+                    reason='removed in Admin → Email → Verticals')),
+                ('cache', vertical_heads.cache_clear),
+            ))
+            return _saved_url('mailops.verticals_screen', failed)
     elif alias and vertical:
         row = VerticalAlias.query.filter_by(alias=alias).first()
         if row is None:
             row = VerticalAlias(alias=alias)
             db.session.add(row)
         row.vertical = vertical
-        row.updated_by = _me()
+        row.updated_by = me
         db.session.commit()
-        audit.record('vertical_alias.changed', 'VerticalAlias', alias,
-                     new={'vertical': vertical}, actor=_me(),
-                     reason='mapped in Admin → Email → Verticals')
+        failed = _after_commit((
+            ('audit', lambda: audit.record(
+                'vertical_alias.changed', 'VerticalAlias', alias,
+                new={'vertical': vertical}, actor=me, commit=True,
+                strict=True,
+                reason='mapped in Admin → Email → Verticals')),
+            ('cache', vertical_heads.cache_clear),
+        ))
+        return _saved_url('mailops.verticals_screen', failed)
     vertical_heads.cache_clear()
     return redirect(url_for('mailops.verticals_screen'))
 
@@ -561,8 +657,9 @@ def recipients_screen():
     from app.services import (admin_settings, notification_policy,
                               notification_rules as rules)
 
-    saved = error = ''
+    saved, error = _messages()
     if request.method == 'POST':
+        saved = error = ''
         what = request.form.get('what') or 'event'
         try:
             if what == 'always_copy':
@@ -592,6 +689,23 @@ def recipients_screen():
                     saved = f'{event} saved — policy version {version}.'
         except ValueError as exc:
             error = str(exc)
+        except Exception:                                 # noqa: BLE001
+            # Whatever failed, it was not worth a 500: the save
+            # either happened or it did not, and the screen below
+            # shows which.
+            current_app.logger.exception('recipient save failed')
+            try:
+                from app import db
+                db.session.rollback()
+            except Exception:                             # noqa: BLE001
+                pass
+            error = ('Something went wrong saving that. The screen '
+                     'below shows what is stored now.')
+        # Post/Redirect/Get: a refresh must re-read the page, not
+        # save again.
+        return _message_url('mailops.recipients_screen', saved=saved,
+                            error=error,
+                            event=(request.form.get('event') or '').strip())
 
     from app import Employee
     people = (Employee.query
@@ -625,8 +739,9 @@ def crm_rules_screen():
     """Tender desk, margin minimums, approvers, viewers, validity."""
     from app.services import admin_settings
 
-    saved = error = ''
+    saved, error = _messages()
     if request.method == 'POST':
+        saved = error = ''
         parsed = {}
         try:
             for key in admin_settings.RULE_KEYS:
@@ -636,9 +751,21 @@ def crm_rules_screen():
         except ValueError as exc:
             error = str(exc)
         if not error:
-            for key, value in parsed.items():
-                admin_settings.save(key, value, actor=_me())
-            saved = 'The rules are saved.'
+            try:
+                for key, value in parsed.items():
+                    admin_settings.save(key, value, actor=_me())
+                saved = 'The rules are saved.'
+            except Exception:                             # noqa: BLE001
+                current_app.logger.exception('crm settings save failed')
+                try:
+                    from app import db
+                    db.session.rollback()
+                except Exception:                         # noqa: BLE001
+                    pass
+                error = ('Something went wrong saving that. The values '
+                         'below are what is stored now.')
+        return _message_url('mailops.crm_rules_screen', saved=saved,
+                            error=error)
     rows = [(key, admin_settings.show_rule(key),
              admin_settings.DEFAULTS[key][1],
              isinstance(admin_settings.DEFAULTS[key][0], dict))
@@ -911,8 +1038,9 @@ def replacements_screen():
     from app.models.assignment import OwnerReplacement
     from app.services import audit
 
-    saved = error = ''
+    saved, error = _messages()
     if request.method == 'POST':
+        saved = error = ''
         from_code = (request.form.get('from') or '').strip().upper()
         to_code = (request.form.get('to') or '').strip().upper()
         remove = request.form.get('remove')
@@ -922,9 +1050,15 @@ def replacements_screen():
         if remove and row is not None:
             db.session.delete(row)
             db.session.commit()
-            audit.record('assignment.replacement_removed', 'OwnerReplacement',
-                         from_code, actor=_me(),
-                         reason='removed in Admin → Assignment')
+            # `commit=True`: the audit row used to ride a transaction
+            # nothing afterwards committed, so every replacement
+            # change since this screen was built went unrecorded —
+            # on the one screen whose whole subject is where a
+            # departed person's leads went.
+            _after_commit((('audit', lambda: audit.record(
+                'assignment.replacement_removed', 'OwnerReplacement',
+                from_code, actor=_me(), commit=True, strict=True,
+                reason='removed in Admin → Assignment')),))
             saved = f'{from_code} removed.'
         elif not from_code or not to_code:
             error = 'Both people are needed.'
@@ -947,12 +1081,14 @@ def replacements_screen():
                 row.note = (request.form.get('note') or '').strip()[:200]
                 row.updated_by = _me()
                 db.session.commit()
-                audit.record('assignment.replacement_changed',
-                             'OwnerReplacement', from_code,
-                             old={'to': was}, new={'to': to_code},
-                             actor=_me(),
-                             reason='changed in Admin → Assignment')
+                _after_commit((('audit', lambda: audit.record(
+                    'assignment.replacement_changed', 'OwnerReplacement',
+                    from_code, old={'to': was}, new={'to': to_code},
+                    actor=_me(), commit=True, strict=True,
+                    reason='changed in Admin → Assignment')),))
                 saved = f'{from_code} → {to_code} saved.'
+        return _message_url('mailops.replacements_screen', saved=saved,
+                            error=error)
 
     rows = OwnerReplacement.query.order_by(
         OwnerReplacement.from_emp_code).all()

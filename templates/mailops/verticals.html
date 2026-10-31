@@ -5,6 +5,19 @@
 lead means which vertical{% endblock %}
 
 {% block body %}
+{# CRM-VERTICAL-SAVE-500-01. A save that worked says so, and a side
+   effect that did not says which one — rather than a 500 that makes
+   somebody think the change was lost when it was not. #}
+{% if warn %}
+<div class="mo-card" style="border-color:#FDE68A;background:#FFFBEB">
+  <h3>Saved, with one part incomplete</h3>
+  <p class="mo-note">The change is saved. What did not finish:
+    <strong>{{ warn }}</strong>. Nothing is lost — tell the Tech team,
+    and the master above is correct meanwhile.</p>
+</div>
+{% elif saved %}
+<p class="mo-note"><strong>Saved.</strong></p>
+{% endif %}
 {% if not can_edit %}
 <p class="mo-note"><strong>You are reading this.</strong> Vertical heads can
 see the master so they can tell an administrator when it names the wrong

@@ -747,3 +747,51 @@ the Build Prompt Tracker to move the item to "live". The screenshots
 are in `docs/reference/cockpit_links/`, the deploy block is in the
 reply, and the back-fill dry run has to be run on the server —
 nothing here has touched live data.
+
+---
+
+### 45. CRM-VERTICAL-SAVE-500-01 — the cache, not the save
+
+Reproduced locally, so the traceback is in hand without the server
+log: `DetachedInstanceError` in `vertical_heads.gaps()`, raised on
+the **redirect target**, which is why the change was saved. It had
+been committed a request earlier.
+
+`vertical_heads._load()` cached the `VerticalHead` **ORM instances**
+for 30 seconds. The save commits — expiring every attribute on them
+— then clears the cache, and then `sync_employee_flags()` calls
+`_load()` again and refills it with instances from that same
+request's session. The request ends, Flask-SQLAlchemy removes the
+session, and those instances are now detached as well as expired.
+The redirect lands on the screen, `gaps()` reads
+`row.head_emp_code`, and SQLAlchemy raises.
+
+**Taken:** the caches hold plain values — `Head`, `Stored`, `Live`
+named tuples with the ORM's own field names, so no reader changed.
+Every save on these screens is now Post/Redirect/Get with its side
+effects after the commit, each one caught: a side effect that fails
+shows "Saved, with one part incomplete" and names the step, never a
+500.
+
+Two other things the same shape, found by looking:
+
+**`client_restrictions` cached ORM rows too, and that one failed
+open.** `check()` catches everything and answers "not restricted",
+so for up to 30 seconds after any commit a blocked client could have
+been let through, with nothing on screen and only a logged
+"restriction check failed" behind it. There is no way to tell from
+here whether it ever happened; the audit trail records leads
+created, not checks that silently passed. If you want, I can look
+for leads created against a blocked name since the gate went on.
+
+**Three screens were writing audit rows that were never saved.**
+`audit.record()` defaults to `commit=False`, and on the alias save
+and both replacement saves nothing afterwards committed — so every
+alias change and every replacement change since those screens were
+built went unrecorded, on the one screen whose whole subject is
+where a departed person's leads went. They commit now.
+
+`switches_screen` is the one save I did not convert: nine switches
+went live this morning, and restructuring the screen that writes
+them, on the same day, to fix a refresh-resubmits problem is not a
+trade I would make without you saying so.

@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import re
 from difflib import SequenceMatcher
+from typing import NamedTuple
 
 #: At or above this, a fuzzy name match is the same company.
 SURE = 0.90
@@ -250,13 +251,99 @@ def _summary(row):
 
 
 # ── loading ──────────────────────────────────────────────────────────
+class Live(NamedTuple):
+    """One live entry in the register, as plain values.
+
+    Not the ORM row, and that is the whole point. A module-level
+    cache that holds ORM instances hands them back after the request
+    that loaded them has ended: the session is gone, so they are
+    detached, and any commit in that session expired their
+    attributes on the way out. Reading one then raises
+    DetachedInstanceError — which on Admin → Email → Verticals was a
+    500 on Save (CRM-VERTICAL-SAVE-500-01) and here would be worse
+    than that. `check()` catches everything and answers "not
+    restricted", so for up to the cache's lifetime after any commit
+    a blocked client could have been let through, with nothing on
+    screen to say so and only a logged "restriction check failed"
+    behind it. Failing open is the one way this gate must not fail.
+
+    The names are the model's, so every reader is unchanged.
+    """
+    id: int
+    status: str
+    company_name: str
+    name_key: str
+    aliases: tuple
+    domains: tuple
+    emails: tuple
+    gstin: str
+    pan: str
+    scope: str
+    linked_account_id: object
+    business_units: tuple
+    reason_category: str
+    reason_detail: str
+    legal_status: str
+    #: The rest of the entry's own columns, carried whole rather than
+    #: one at a time: a caller that reads a field this record does
+    #: not have gets an AttributeError, and the field it wanted next
+    #: was always going to be the one left out.
+    dispute_amount: object
+    currency: str
+    dispute_refs: str
+    recommended_by: str
+    recommended_at: object
+    approved_by: str
+    approved_at: object
+    review_date: object
+    review_reminded_at: object
+    lifted_by: str
+    lifted_at: object
+    lift_reason: str
+    created_at: object
+    updated_at: object
+
+    def covers_unit(self, business_unit):
+        """The model's own rule, repeated here because this record
+        stands in for the row everywhere `live_rows()` is read."""
+        if not business_unit:
+            return True
+        return business_unit in self.business_units
+
+
 def _load_rows():
     """The register, straight from the database. Separate so a test can
     make it fail the way a missing table does."""
     from app.models.restriction import ClientRestriction, LIVE_STATUSES
-    return (ClientRestriction.query
-            .filter(ClientRestriction.status.in_(LIVE_STATUSES))
-            .all())
+    return [Live(id=r.id, status=r.status,
+                 company_name=r.company_name or '',
+                 name_key=r.name_key or '',
+                 aliases=tuple(r.aliases or ()),
+                 domains=tuple(r.domains or ()),
+                 emails=tuple(r.emails or ()),
+                 gstin=r.gstin or '', pan=r.pan or '',
+                 scope=r.scope or '',
+                 linked_account_id=r.linked_account_id,
+                 business_units=tuple(r.business_units or ()),
+                 reason_category=r.reason_category or '',
+                 reason_detail=r.reason_detail or '',
+                 legal_status=r.legal_status or '',
+                 dispute_amount=r.dispute_amount,
+                 currency=r.currency or '',
+                 dispute_refs=r.dispute_refs or '',
+                 recommended_by=r.recommended_by or '',
+                 recommended_at=r.recommended_at,
+                 approved_by=r.approved_by or '',
+                 approved_at=r.approved_at,
+                 review_date=r.review_date,
+                 review_reminded_at=r.review_reminded_at,
+                 lifted_by=r.lifted_by or '',
+                 lifted_at=r.lifted_at,
+                 lift_reason=r.lift_reason or '',
+                 created_at=r.created_at,
+                 updated_at=r.updated_at)
+            for r in ClientRestriction.query
+            .filter(ClientRestriction.status.in_(LIVE_STATUSES)).all()]
 
 
 def live_rows(now=None):

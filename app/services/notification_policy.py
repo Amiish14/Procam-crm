@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import NamedTuple
 
 from app.services import notification_rules as rules
 
@@ -56,14 +57,49 @@ def cache_clear():
     _CACHE.update({'rows': None, 'at': 0.0})
 
 
+class Stored(NamedTuple):
+    """One saved override, as plain values.
+
+    Not the ORM row. A module-level cache that holds ORM instances
+    hands them out after the request that loaded them is over: the
+    session is gone, so they are detached, and a commit in that
+    session expired their attributes on the way out. Reading one
+    then raises DetachedInstanceError, which is how Save on
+    Admin → Email → Verticals came to answer 500 while saving
+    perfectly well (CRM-VERTICAL-SAVE-500-01). This cache had the
+    same shape and the same latent failure.
+
+    The names are the ORM's, so every reader is unchanged.
+    """
+    event: str
+    version: int
+    email_enabled: bool
+    bell_enabled: bool
+    #: None means "not overridden" — the matrix answers. Kept apart
+    #: from an empty list, which means "overridden to nobody".
+    to_roles_json: object
+    cc_roles_json: object
+    to_roles: tuple
+    cc_roles: tuple
+
+
 def _stored():
-    """{event: NotificationPolicy}. {} if the table is not there yet."""
+    """{event: Stored}. {} if the table is not there yet."""
     now = time.monotonic()
     if _CACHE['rows'] is not None and (now - _CACHE['at']) < _CACHE_TTL_SECONDS:
         return _CACHE['rows']
     try:
         from app.models.email_admin import NotificationPolicy
-        rows = {r.event: r for r in NotificationPolicy.query.all()}
+        rows = {r.event: Stored(
+            event=r.event,
+            version=int(r.version or 1),
+            email_enabled=bool(r.email_enabled),
+            bell_enabled=bool(r.bell_enabled),
+            to_roles_json=r.to_roles_json,
+            cc_roles_json=r.cc_roles_json,
+            to_roles=tuple(r.to_roles or ()),
+            cc_roles=tuple(r.cc_roles or ()),
+        ) for r in NotificationPolicy.query.all()}
     except Exception:
         return {}
     _CACHE.update({'rows': rows, 'at': now})

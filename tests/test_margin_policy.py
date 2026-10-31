@@ -342,17 +342,23 @@ def test_rules_screen_saves_typed_values_and_refuses_bad_ones(world):
                     actor='test')
     c = _client(ADMIN)
     assert c.get('/admin/crm-settings').status_code == 200
-    r = c.post('/admin/crm-settings', data={
-        'director_approvers': 'mdir, mview',
-        'margin_floors': 'PTM_OWN = 40\nWAREHOUSING = 18.5',
-        'head_approval_limit_inr': '30,00,000'})
+    form = {'director_approvers': 'mdir, mview',
+            'margin_floors': 'PTM_OWN = 40\nWAREHOUSING = 18.5',
+            'head_approval_limit_inr': '30,00,000'}
+    # CRM-VERTICAL-SAVE-500-01: every save on these screens is now
+    # Post/Redirect/Get, so a refresh re-reads the page instead of
+    # saving again.
+    posted = c.post('/admin/crm-settings', data=form)
+    assert posted.status_code == 302
+    r = c.post('/admin/crm-settings', data=form, follow_redirects=True)
     assert r.status_code == 200 and b'saved' in r.data
     with flask_app.app_context():
         assert admin_settings.get('director_approvers') == [DIRECTOR, VIEWER]
         assert admin_settings.get('margin_floors') == {
             'PTM_OWN': 40, 'WAREHOUSING': 18.5}
         assert admin_settings.get('head_approval_limit_inr') == 3000000
-    r = c.post('/admin/crm-settings', data={'margin_floors': 'PTM_OWN forty'})
+    r = c.post('/admin/crm-settings', data={'margin_floors': 'PTM_OWN forty'},
+               follow_redirects=True)
     assert b'nothing was saved' in r.data
     with flask_app.app_context():
         assert admin_settings.get('margin_floors')['PTM_OWN'] == 40

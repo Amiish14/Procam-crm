@@ -21,6 +21,7 @@ rather than quiet.
 from __future__ import annotations
 
 import logging
+from typing import NamedTuple
 
 from app.models.email_admin import FALLBACK_VERTICAL
 
@@ -34,6 +35,35 @@ log = logging.getLogger(__name__)
 #: register, for the same reason.
 _CACHE_TTL_SECONDS = 30
 _CACHE = {'heads': None, 'aliases': None, 'at': 0.0}
+
+
+class Head(NamedTuple):
+    """One vertical's master row, as plain values.
+
+    The cache used to hold the `VerticalHead` ORM instances
+    themselves, and that is what made Save on Admin → Email →
+    Verticals answer 500 while saving the change perfectly well
+    (CRM-VERTICAL-SAVE-500-01):
+
+        the save commits, which expires every attribute on the
+        instances it touched;
+        it then clears this cache — but `sync_employee_flags()`,
+        which runs next, calls `_load()` again and refills the cache
+        with instances from that same request's session;
+        the request ends and Flask-SQLAlchemy removes the session,
+        so those instances are now detached as well as expired;
+        the redirect lands on the screen, `gaps()` reads
+        `row.head_emp_code` off one of them within the 30-second
+        TTL, and SQLAlchemy raises DetachedInstanceError.
+
+    A tuple of strings cannot be expired and cannot be detached, so
+    the whole class of failure goes with it. The attribute names are
+    the ORM's, deliberately: every caller reads them unchanged.
+    """
+    vertical: str
+    head_emp_code: str
+    deputy_emp_code: str
+    active: bool
 
 
 def cache_clear():
@@ -54,8 +84,11 @@ def _load(now=None):
     if _CACHE['heads'] is not None and (now - _CACHE['at']) < _CACHE_TTL_SECONDS:
         return _CACHE['heads'], _CACHE['aliases']
     try:
-        heads = {h.vertical: h for h in
-                 VerticalHead.query.filter(
+        heads = {h.vertical: Head(vertical=h.vertical,
+                                  head_emp_code=h.head_emp_code or '',
+                                  deputy_emp_code=h.deputy_emp_code or '',
+                                  active=bool(h.active is not False))
+                 for h in VerticalHead.query.filter(
                      VerticalHead.active.isnot(False)).all()}
         aliases = {normalise(a.alias): a.vertical
                    for a in VerticalAlias.query.all()}
