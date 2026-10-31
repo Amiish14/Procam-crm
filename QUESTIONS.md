@@ -795,3 +795,22 @@ where a departed person's leads went. They commit now.
 went live this morning, and restructuring the screen that writes
 them, on the same day, to fix a refresh-resubmits problem is not a
 trade I would make without you saying so.
+
+## 46 — did the fail-open gate let a blocked client through?
+
+Unknown, and the audit trail cannot answer it: `record_attempt` logs
+refusals, not checks that silently passed. While the register was
+cached as ORM instances, `check()` answered "not restricted" for up to
+thirty seconds after any commit, with only a logged "restriction check
+failed" behind it.
+
+`scripts/blocked_client_leaks.py` is the read-only audit that can
+answer it: every lead created since the gate went live, matched
+against the register as it now works, split into the ones a blocked
+entry would have refused outright, the ones already closed as
+"Client blocked by management", and the near misses that only ever
+warned. Nothing is written and nothing is committed; a test holds that
+by making `db.session.commit` raise.
+
+Open for Nilesh: run it on the server and decide, per lead, whether to
+close it on the register screen or lift the block.
