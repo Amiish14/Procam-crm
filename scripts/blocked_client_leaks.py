@@ -187,6 +187,42 @@ def _verdict(row, matched_on, lead):
     return REFUSED
 
 
+def _in_force_when(row, when):
+    """Was this entry already in force when the lead was created?
+
+    The question that separates a gate failure from an ordinary
+    sequence: a lead created at ten o'clock against a client blocked at
+    noon is not a leak, and the register cannot tell the difference on
+    its own because it only stores the decision's current state.
+    `approved_at` is the moment it started refusing business;
+    `recommended_at` is the fallback for an entry that was never
+    separately approved.
+    """
+    marker = row.approved_at or row.recommended_at
+    if when is None or marker is None:
+        return 'unknown'
+    return 'yes' if marker <= when else 'no — blocked later'
+
+
+def _stops_for(row, start, end):
+    """Intake refusals logged for this client in the window.
+
+    When the gate stopped the same client's mail at 09:58 and let one
+    through at 10:13, the gate itself works and something was true for
+    a moment — which is exactly the shape of a cache that failed open
+    for thirty seconds after a commit. Without this, every leak looks
+    the same.
+    """
+    from app import EmailEvent
+
+    rows = (EmailEvent.query
+            .filter(EmailEvent.status == 'blocked_client',
+                    EmailEvent.received_at >= start,
+                    EmailEvent.received_at < end).all()) if end else []
+    name = (row.company_name or '').strip().lower()
+    return [e for e in rows if name and name in (e.reason or '').lower()]
+
+
 def _attempts(start, end):
     """{restriction_id: [events]} — refusals logged in the window.
 
@@ -279,10 +315,26 @@ def main():
                 'score': round(score, 3),
                 'refusals_logged_for_this_entry':
                     len(attempts.get(row.id, ())),
+                'entry_in_force_when_lead_created':
+                    _in_force_when(row, lead.created_at),
+                'entry_in_force_from':
+                    str(row.approved_at or row.recommended_at or '')[:16],
+                'same_client_stopped_at_intake_in_window': 0,
                 'lead_closed_as_blocked':
                     'yes' if (lead.lost_reason or '') == CLOSED_REASON
                     else 'no',
             })
+
+        # The two readings a REFUSED row can have, answered here rather
+        # than left to somebody reading the server log by hand.
+        stops = {}
+        for f in found:
+            if f['verdict'] != REFUSED:
+                continue
+            row = next(r for r in rows if r.id == f['restriction_id'])
+            if row.id not in stops:
+                stops[row.id] = _stops_for(row, start, end)
+            f['same_client_stopped_at_intake_in_window'] = len(stops[row.id])
 
         print('\n  matches')
         for label in (REFUSED, CLOSED, WARNED):
@@ -299,6 +351,14 @@ def main():
                       f'{f["restricted_client"][:28]:<28} '
                       f'{f["matched_on"]}/{f["score"]}  '
                       f'src={f["source"]} owner={f["owner"] or "-"}')
+                if label != REFUSED:
+                    continue
+                print(f'             in force when the lead was created: '
+                      f'{f["entry_in_force_when_lead_created"]} '
+                      f'(from {f["entry_in_force_from"] or "?"})')
+                print(f'             the same client was stopped at intake '
+                      f'{f["same_client_stopped_at_intake_in_window"]} '
+                      f'time(s) in this window')
 
         if args.csv:
             with open(args.csv, 'w', newline='') as fh:
@@ -308,8 +368,18 @@ def main():
                 writer.writerows(found)
             print(f'\n  written: {args.csv}')
 
-        print(f'\n  {why[REFUSED]} lead(s) the gate should have refused.')
-        if why[REFUSED]:
+        late = [f for f in found
+                if f['verdict'] == REFUSED
+                and f['entry_in_force_when_lead_created'].startswith('no')]
+        real = why[REFUSED] - len(late)
+        print(f'\n  {why[REFUSED]} lead(s) match a blocked entry.')
+        if late:
+            print(f'  {len(late)} of them predate their block — the client '
+                  f'was blocked after\n  the lead was created, so the gate '
+                  f'did not fail. They still need\n  a decision, as records '
+                  f'on a client the company now refuses.')
+        print(f'  {real} lead(s) the gate should have refused.')
+        if real:
             print('  Each one is a lead created against a blocked client '
                   'while the\n  register could not be read. Decide per lead: '
                   'close it as\n  "Client blocked by management" on the '

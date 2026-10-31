@@ -814,3 +814,35 @@ by making `db.session.commit` raise.
 
 Open for Nilesh: run it on the server and decide, per lead, whether to
 close it on the register screen or lift the block.
+
+## 47 — `FEATURE_BLOCKED_CLIENT_GATE` is read nowhere
+
+The switch exists in `flags.py` and is named in the CRM-LEAD-FLOW-01
+prompt as the gate's flag. Nothing reads it: `grep -rn
+BLOCKED_CLIENT_GATE` over the whole tree finds the declaration and the
+spec, and no call site. The register is enforced unconditionally
+instead — `email_ingest/single_message.py` checks it on every inbound
+message, and the lead, import, RFQ, quote, card and API paths all call
+`restrictions.check()` with no flag around it.
+
+Which way round that should be fixed is Nilesh's decision: wiring the
+flag in gives a way to stand the gate down in an emergency and also a
+way to switch enforcement off by accident; deleting the flag makes the
+code honest about a control that is always on. Enforcement works
+either way today, so nothing is urgent.
+
+## 48 — lead #12490 matched a blocked client on 31 Oct
+
+Found by `scripts/blocked_client_leaks.py` on the server: one lead,
+Walchandnagar Industries Limited, 31 Oct 10:13 IST, `source=email`,
+owner EMP3592024, matched on the exact name. The script now prints the
+two things that tell a gate failure apart from an ordinary sequence —
+whether the entry was already in force when the lead was created, and
+how many of the same client's mails the gate stopped at intake in the
+same window.
+
+Still only answerable from the server log: whether
+`restriction check failed` appears near 2026-10-31 04:43 UTC. That line
+is what the fail-open cache left behind, and it is the difference
+between "the gate blinked for thirty seconds" and "the intake saw a
+different name than the lead ended up with".

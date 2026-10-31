@@ -343,3 +343,61 @@ def test_the_csv_carries_every_column_a_decision_needs(world, monkeypatch,
                   'refusals_logged_for_this_entry'):
         assert field in rows[0], field
     assert rows[0]['verdict'] == leaks.REFUSED
+
+
+# ── telling a leak apart from an ordinary sequence ───────────────────
+def test_a_lead_created_before_its_block_is_not_a_gate_failure(world,
+                                                               capsys,
+                                                               monkeypatch):
+    row = _block()
+    row.approved_at = INSIDE + timedelta(hours=4)
+    row.recommended_at = INSIDE + timedelta(hours=4)
+    db.session.commit()
+    restrictions.cache_clear()
+    _lead('Walchandnagar Industries Ltd', when=INSIDE)
+    monkeypatch.setattr(sys, 'argv',
+                        ['blocked_client_leaks.py', '--since', SINCE])
+    leaks.main()
+    out = capsys.readouterr().out
+    assert 'in force when the lead was created: no — blocked later' in out
+    assert 'predate their block' in out
+    assert '0 lead(s) the gate should have refused' in out
+
+
+def test_a_lead_created_after_its_block_is_a_gate_failure(world, capsys,
+                                                          monkeypatch):
+    row = _block()
+    row.approved_at = INSIDE - timedelta(hours=4)
+    db.session.commit()
+    restrictions.cache_clear()
+    _lead('Walchandnagar Industries Ltd', when=INSIDE)
+    monkeypatch.setattr(sys, 'argv',
+                        ['blocked_client_leaks.py', '--since', SINCE])
+    leaks.main()
+    out = capsys.readouterr().out
+    assert 'in force when the lead was created: yes' in out
+    assert '1 lead(s) the gate should have refused' in out
+
+
+def test_intake_refusals_for_the_same_client_are_counted(world, capsys,
+                                                         monkeypatch):
+    # The gate stopping the same client's mail an hour earlier is what
+    # says the gate works and failed for a moment, rather than never
+    # having run at all.
+    from app import EmailEvent
+
+    row = _block()
+    row.approved_at = INSIDE - timedelta(days=2)
+    db.session.commit()
+    restrictions.cache_clear()
+    db.session.add(EmailEvent(
+        received_at=INSIDE - timedelta(minutes=15),
+        status='blocked_client', classification='blocked_client',
+        decided_by='restriction-register',
+        reason=f'{WIL} is blocked — Payment default'))
+    db.session.commit()
+    _lead('Walchandnagar Industries Ltd', when=INSIDE)
+    monkeypatch.setattr(sys, 'argv',
+                        ['blocked_client_leaks.py', '--since', SINCE])
+    leaks.main()
+    assert 'stopped at intake 1 time(s)' in capsys.readouterr().out
