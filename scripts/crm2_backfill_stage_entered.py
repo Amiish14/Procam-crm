@@ -163,6 +163,20 @@ def main():
         print(f'    already have a stage date  {have}')
         print(f'    missing one                {total - have}')
 
+        # The cockpit's note counts *open* leads, so the two figures
+        # read differently and somebody has to reconcile them by
+        # hand. Both are printed here instead.
+        from app.services import sales_rules as rules
+        open_q = Lead.query.filter(
+            Lead.is_archived.isnot(True),
+            Lead.stage.in_(rules.open_stages()))
+        open_total = open_q.count()
+        open_missing = open_q.filter(
+            Lead.stage_entered_at.is_(None)).count()
+        print(f'  open leads                   {open_total}')
+        print(f'    missing a stage date       {open_missing}'
+              f'   <- the number the cockpit shows')
+
         rows, why = plan()
         print()
         for label, n in why.most_common():

@@ -57,6 +57,13 @@
         {% endif %}
       </div>
     </div>
+    {# CRM-COCKPIT-LINKS-01. The stage strip below says where the lead
+       is; the journey says how long each step took and what is still
+       missing. Absent for anybody the journey flag does not cover. #}
+    {% if feature_for('FEATURE_LEAD_JOURNEY') %}
+    <a class="lf-jny" href="{{ url_prefix }}/leads/{{ p.lead_id }}/journey"
+       title="Stage flowchart, and the time spent in each step">Journey</a>
+    {% endif %}
   </div>
 
   <!-- ── stage strip ────────────────────────────────────────── -->

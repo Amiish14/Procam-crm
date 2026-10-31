@@ -2,11 +2,20 @@
    modules look and navigate like one product.  Links are filtered by the
    same permissions the server enforces, so nothing is offered that would
    be refused. #}
+{# The logo returns to the Cockpit (CRM-COCKPIT-LINKS-01), and to
+   /app for anybody the cockpit flag does not cover — a brand that
+   leads to a 404 is worse than one that leads to the old home. #}
 <header class="crm-top">
-  <a class="crm-brand" href="{{ url_prefix }}/app">
+  <a class="crm-brand" href="{{ url_prefix }}{{ '/crm2'
+     if feature_for('FEATURE_CRM2') else '/app' }}">
     <img src="https://www.procamlogistics.com/public/frontend/assets/img/logo.png" alt="Procam"> CRM
   </a>
   <nav aria-label="Sections">
+    {# First, because it is the landing page. #}
+    {% if feature_for('FEATURE_CRM2') %}
+    <a href="{{ url_prefix }}/crm2"
+       class="{{ 'on' if request.path.startswith('/crm2') }}">Cockpit</a>
+    {% endif %}
     <a href="{{ url_prefix }}/my-work"
        class="{{ 'on' if request.path.startswith('/my-work') }}">My Work</a>
     {# Every user, no permission: the whole complaint was that the
@@ -22,8 +31,25 @@
        margin-left:5px;vertical-align:1px"></span></a>
     {% endif %}
     {% if can('module.rfq') %}
+    {# `startswith('/rfqs')` would light RFQs up on the chain board and
+       the reports too, so three tabs would read as current at once. #}
     <a href="{{ url_prefix }}/rfqs"
-       class="{{ 'on' if request.path.startswith('/rfqs') }}">RFQs</a>
+       class="{{ 'on' if request.path.startswith('/rfqs')
+                 and not request.path.startswith('/rfqs/chain')
+                 and not request.path.startswith('/rfqs/reports') }}"
+       >RFQs</a>
+    {% endif %}
+    {# The chain board and the RFQ reports were built, switched on and
+       reachable only by typing the URL. #}
+    {% if feature_for('FEATURE_RFQ_CHAIN') %}
+    <a href="{{ url_prefix }}/rfqs/chain"
+       class="{{ 'on' if request.path.startswith('/rfqs/chain') }}"
+       >RFQ Chain</a>
+    {% endif %}
+    {% if feature_for('FEATURE_RFQ_REPORTS') %}
+    <a href="{{ url_prefix }}/rfqs/reports"
+       class="{{ 'on' if request.path.startswith('/rfqs/reports') }}"
+       >RFQ Reports</a>
     {% endif %}
     {% if can('module.quotes') %}
     <a href="{{ url_prefix }}/quotes"

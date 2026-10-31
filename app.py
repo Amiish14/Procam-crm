@@ -1087,6 +1087,25 @@ def _feature(name, default=False):
         return bool(default)
 
 
+@app.template_global('feature_for')
+def _feature_for(name, default=False):
+    """Is this feature switch on *for the person signed in*?
+
+    `feature()` answers the global switch. Several of these features
+    ship to a pilot first, and their own routes 404 for anybody
+    outside it — so a menu built on the global answer offers a link
+    that will not open. That is the bug CRM-COCKPIT-LINKS-01 is
+    about, in reverse: a link to nowhere is as bad as no link.
+
+    Never raises, for the same reason as `feature()`.
+    """
+    try:
+        from app.services import flags
+        return flags.on_for(name, session.get('emp_code'), default)
+    except Exception:                                     # noqa: BLE001
+        return bool(default)
+
+
 @app.template_global('restriction_level')
 def _restriction_level(company_name, email=None, account_id=None):
     """'' | 'caution' | 'blocked' for anything that names a client.
@@ -1709,16 +1728,36 @@ def _inject_url_prefix():
 
 @app.route('/')
 def index():
+    """Where a person lands after signing in.
+
+    CRM-COCKPIT-LINKS-01, 31 October 2026: the Cockpit, for everybody
+    it is switched on for. Until then administrators landed on
+    /dashboard and everyone else on /my-work, so two groups of people
+    had never seen the same screen.
+
+    `default_landing_page` is deliberately *not* consulted for this.
+    Its column default is 'my_work' (scripts/2026_09_04_crm_foundation
+    .py), so every row carries a value nobody chose — honouring it
+    would mean the Cockpit became the landing page for no one at all.
+    A person who writes 'my_work' or 'dashboard' there today is
+    expressing the old default rather than a preference.
+
+    So while the cockpit is on for somebody, it is where they land.
+    The column still decides for everybody the flag does not cover,
+    exactly as it did.
+
+    The flag is read per person, because /crm2 404s for anybody the
+    pilot does not cover: landing them on it would replace "nobody
+    can find the cockpit" with "signing in shows a 404".
+    """
     if 'emp_code' not in session:
         return redirect(url_for('login'))
-    # v2026-09-04 — role-aware default landing.  Admins go to the
-    # classic dashboard; everyone else lands on /my-work.  An
-    # individual's preference (Employee.default_landing_page)
-    # overrides the role default.
     try:
         emp = Employee.query.filter_by(emp_code=session['emp_code']).first()
         pref = getattr(emp, 'default_landing_page', None) if emp else None
         role = (emp.role if emp else session.get('role')) or ''
+        if _cockpit_on():
+            return redirect('/crm2')
         if pref in ('my_work', 'dashboard'):
             target = pref
         elif role in ('admin', 'procam_admin'):
@@ -1730,6 +1769,19 @@ def index():
     except Exception:
         pass
     return redirect(url_for('dashboard'))
+
+
+def _cockpit_on():
+    """Is the cockpit switched on for the person signed in?
+
+    One answer, used by the landing redirect and by the links in both
+    menus, so a person is never sent to a page their own flag closes.
+    """
+    try:
+        from app.services import flags
+        return bool(flags.on_for('FEATURE_CRM2', session.get('emp_code')))
+    except Exception:                                     # noqa: BLE001
+        return False
 
 @app.route('/healthz')
 @limiter.limit("60/minute")

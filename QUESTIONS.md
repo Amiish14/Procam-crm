@@ -709,3 +709,41 @@ script sets it to DIR52011 (Sethupathy Sundaram); the decision of 21
 October says Gowdhaman R. I have not changed it — the question was
 about the master list, not the heads, and I do not have Gowdhaman R's
 employee code. Say the word and it is one line.
+
+---
+
+### 44. CRM-COCKPIT-LINKS-01 — built, switched on, unreachable
+
+Four screens existed and nothing in the CRM led to any of them: the
+Cockpit, the lead journey, the RFQ chain board and the RFQ reports.
+Typing the URL worked; that was the only way in.
+
+**Taken:** the Cockpit is the landing page and first in both menus,
+the logo returns to it, the lead pop-up carries a Journey button and
+a read-only stage line, every lead list row carries a journey icon,
+a Cockpit row opens that lead's journey, and the chain board and RFQ
+reports are in both menus.
+
+Three things worth knowing.
+
+**Every link is gated per person, not on the global switch.** Each
+of those routes answers 404 for anybody its pilot does not cover, so
+a menu built on `feature()` would offer links that do not open — the
+same bug this ticket is about, pointing the other way. The new
+template global is `feature_for()`, and `/` falls back to the old
+landing pages for anybody the cockpit flag does not reach.
+
+**`default_landing_page` has never been read.** `index()` reaches it
+with `getattr(emp, 'default_landing_page', None)`, and the column is
+not mapped on the `Employee` model — only added to the table by
+`scripts/2026_09_04_crm_foundation.py`. So the getattr has always
+returned None and the preference has never once decided anything.
+The cockpit landing does not depend on it either way; if you want
+the per-person preference to work, that is a separate half-hour.
+
+**I could not do three things in the prompt.** I cannot read the
+server log, deploy, or mail you anything, and I have no access to
+the Build Prompt Tracker to move the item to "live". The screenshots
+are in `docs/reference/cockpit_links/`, the deploy block is in the
+reply, and the back-fill dry run has to be run on the server —
+nothing here has touched live data.

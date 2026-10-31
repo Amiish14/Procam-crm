@@ -720,8 +720,17 @@ def test_my_work_is_the_page_it_always_was_with_the_flag_off(world):
     assert _without_chain(on) == _without_chain(off)
 
 
+#: Nav links that appear with their own flag on, from
+#: CRM-COCKPIT-LINKS-01: the chain board and the RFQ reports were
+#: built, switched on, and reachable only by typing the URL. They are
+#: cut out here for the same reason the chain bucket is — the point of
+#: the parity test is that nothing *else* moves, not that a deliberate
+#: new link must never appear.
+_NAV_LINKS = ('/rfqs/chain', '/rfqs/reports', '/crm2')
+
+
 def _without_chain(html):
-    """The page with the chain block, and only it, cut out."""
+    """The page with the chain block and the new nav links cut out."""
     marker = '<div class="buckets">'
     head = html[:html.index(marker)]
     # Everything above the buckets differs only by the chain block
@@ -730,7 +739,16 @@ def _without_chain(html):
     start = head.find('<div class="bucket" id="bucket-chain"')
     if start >= 0:
         head = head[:start]
-    return head.rstrip() + html[html.index(marker):]
+    out = head.rstrip() + html[html.index(marker):]
+    for href in _NAV_LINKS:
+        out = re.sub(r'<a href="[^"]*' + re.escape(href)
+                     + r'"[^>]*>.*?</a>', '', out, flags=re.S)
+    # Cutting a link out leaves the blank lines its {% if %} block
+    # sat in, and a false branch leaves a different number of them,
+    # so the two pages differ by whitespace alone. Collapsing it
+    # keeps everything the guard is for — a changed class, a moved
+    # element, an extra field — and drops only the indentation.
+    return re.sub(r'\s+', ' ', out).strip()
 
 
 def test_the_department_steps_page_is_not_behind_a_chain_flag(world):

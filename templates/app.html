@@ -258,6 +258,29 @@ select.fmc{cursor:pointer;appearance:none;-webkit-appearance:none;background-ima
 .ps.active{background:var(--red);color:#fff;font-weight:600}
 .ps:hover:not(.active){background:var(--surface-2)}
 
+/* ────────── JOURNEY LINKS (CRM-COCKPIT-LINKS-01) ────────── */
+/* The read-only stage line under the stage setter: where the lead is
+   and what it has cost in days. Colours match the cockpit's map, so
+   one lead and the whole book are read the same way. */
+.ld-strip{margin:-8px 0 16px}
+.ld-strip-row{display:flex;gap:3px;flex-wrap:wrap;align-items:center}
+.ld-step{font-size:10.5px;padding:2px 8px;border-radius:999px;
+  border:1px solid var(--border);color:var(--text-3);background:#fff}
+.ld-step.done{background:var(--surface-2);color:var(--text-2)}
+.ld-step.current{color:#fff;border-color:transparent;font-weight:700}
+.ld-step.current.green{background:#059669}
+.ld-step.current.orange{background:#D97706}
+.ld-step.current.red{background:#DC2626}
+.ld-step.current.grey{background:#9CA3AF}
+.ld-strip-why{font-size:11.5px;color:var(--text-3);margin-top:6px}
+/* The icon on a list row. Sized to sit beside a btn-xs without
+   changing the row's height, and never a column of its own: a new
+   column would shift every lead list for everybody. */
+.jny-ic{display:inline-flex;align-items:center;justify-content:center;
+  width:20px;height:20px;vertical-align:middle;margin-right:2px;
+  color:var(--text-3);border-radius:5px;text-decoration:none}
+.jny-ic:hover{color:var(--red);background:var(--red-tint)}
+
 /* ────────── DATE CELLS ────────── */
 .dtrow{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:16px}
 .dtc{background:var(--surface-2);border-radius:var(--r);padding:10px 12px;border:1px solid var(--border)}
@@ -1834,6 +1857,12 @@ catch (err) { console.error('Employee list could not start loading', err); }
     <div class="mhd">
       <div class="m-ic">📋</div>
       <div><div class="m-ttl" id="ldTtl">Lead</div><div class="m-sub" id="ldSub"></div></div>
+      {# CRM-COCKPIT-LINKS-01 — the journey was reachable only by
+         typing its URL. Filled by openLd(); empty when the feature
+         is off for this person. #}
+      <a id="ldJny" class="btn btn-ghost btn-xs" href="#"
+         style="display:none;margin-left:auto;margin-right:8px"
+         title="Stage flowchart, and the time spent in each step">Journey</a>
       <button class="mx" onclick="closeLd()">✕</button>
     </div>
     <div class="mbdy" id="ldBdy"></div>
@@ -1960,6 +1989,23 @@ const toast=(m,t='')=>{const el=g('toast');el.textContent=m;el.className='toast 
 // window.location.pathname is /app locally or /CRM/app behind nginx.
 const CRM_BASE = window.location.pathname.replace(/\/[^/]*$/, '');
 const crmUrl = (path) => CRM_BASE + '/' + String(path).replace(/^\//, '');
+
+/* CRM-COCKPIT-LINKS-01 — the way from a lead row to its journey.
+   Returns '' when the journey is off for this person, so a list row
+   never carries an icon whose page answers 404. The icon opens in
+   this tab; the lead pop-up's button is the one that keeps the list
+   behind it. */
+function journeyIcon(id, title){
+  if (!(window.CRM_LINKS || {}).journey) return '';
+  return '<a class="jny-ic" href="' + crmUrl('/leads/' + id + '/journey')
+    + '" title="' + (title || 'Stage flowchart, and time in each step')
+    + '" aria-label="Lead journey" onclick="event.stopPropagation()">'
+    + '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"'
+    + ' stroke="currentColor" stroke-width="2" stroke-linecap="round"'
+    + ' stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/>'
+    + '<circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>'
+    + '<path d="M18 9a9 9 0 0 1-9 9"/></svg></a>';
+}
 /* v2026-08 — Data scope toggle. Hidden by default from admin sight;
    defaults to 'mailbox' so only leads from leads@procamgroup.in appear.
    User can flip to 'all' via the "Show all sources" toggle on any list
@@ -2768,7 +2814,7 @@ async function rLeads(){
     <td class="tddate"${l.followup?' style="color:var(--red)"':''}>${l.followup||'—'}</td>
     <td>${l.opp_number?`<span class="b oppB">${e(l.opp_number)}</span>`:'—'}</td>
     <td class="tddate">${l.onboarded_date||'—'}</td>
-    <td onclick="event.stopPropagation()"><button class="btn btn-ghost btn-xs" onclick="openLd(${l.id})">Edit</button></td>
+    <td onclick="event.stopPropagation()" style="white-space:nowrap">${journeyIcon(l.id)}<button class="btn btn-ghost btn-xs" onclick="openLd(${l.id})">Edit</button></td>
   </tr>`).join(''):'<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-3)">No leads</td></tr>';
 }
 
@@ -2787,7 +2833,7 @@ async function rAll(){
     <td>${sb(l.stage)}${quoteLapsedChip(l)}</td><td>${e(l.assigned_name||'—')}</td>
     <td>${srb(l.source)}</td><td>${l.opp_number?`<span class="b oppB">${e(l.opp_number)}</span>`:'—'}</td>
     <td class="tddate">${l.onboarded_date||'—'}</td>
-    <td onclick="event.stopPropagation()"><button class="btn btn-ghost btn-xs" onclick="openLd(${l.id})">Edit</button></td>
+    <td onclick="event.stopPropagation()" style="white-space:nowrap">${journeyIcon(l.id)}<button class="btn btn-ghost btn-xs" onclick="openLd(${l.id})">Edit</button></td>
   </tr>`).join(''):'<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-3)">No leads</td></tr>';
 }
 
@@ -3133,6 +3179,11 @@ async function openLd(id){
     ${l.products?`<div style="font-size:12.5px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);padding:10px 14px;margin-bottom:16px;color:var(--text)"><span style="font-weight:600;color:var(--ink-2)">Products &middot; </span>${e(l.products)}</div>`:''}
     <div class="fm-s">Pipeline stage</div>
     <div class="pipe" id="ldPipe">${STAGES.map(s=>`<div class="ps ${l.stage===s?'active':STAGES.indexOf(s)<STAGES.indexOf(l.stage)?'done':''}" onclick="setStg('${s}')">${s}</div>`).join('')}</div>
+    <!-- Where the lead is on the journey and how long it has been
+         there. Read-only on purpose: the strip above sets the stage,
+         this one says what that has cost in days. Filled after the
+         body renders, from /api/crm2/leads/<id>/stage-map. -->
+    <div id="ldStrip" class="ld-strip" style="display:none"></div>
     ${ldValueSection(l)}
     <div class="fm-s">Activity dates</div>
     <div class="dtrow">
@@ -3199,6 +3250,48 @@ async function openLd(id){
   syncModeField();
   loadMailTrail(l.id);
   loadRateSourcing(l.id);
+  ldJourneyLink(l.id);
+  ldStageStrip(l.id);
+}
+
+
+/* ── CRM-COCKPIT-LINKS-01: the journey, from the lead pop-up ──────
+   The page has existed since R4 and nothing in the CRM linked to it,
+   so the only way in was to type the URL. */
+function ldJourneyLink(id){
+  const a = g('ldJny');
+  if (!a) return;
+  if (!(window.CRM_LINKS || {}).journey){ a.style.display='none'; return; }
+  a.href = crmUrl('/leads/' + id + '/journey');
+  a.style.display = '';
+}
+
+/* The stage line: where the lead is, and how long it has sat there.
+   Grey means no stage date on record — "we do not know when this
+   started", which is a different thing from "this started today",
+   and the reason the back-fill exists. */
+async function ldStageStrip(id){
+  const host = g('ldStrip');
+  if (!host) return;
+  host.style.display = 'none';
+  host.innerHTML = '';
+  if (!(window.CRM_LINKS || {}).cockpit) return;
+  let d;
+  try { d = await api('/api/crm2/leads/' + id + '/stage-map'); }
+  catch (err) { return; }
+  const m = d && (d.map || d.stage_map);
+  if (!m || !Array.isArray(m.steps)) return;
+  host.innerHTML =
+    '<div class="ld-strip-row">' + m.steps.map(st =>
+      '<span class="ld-step ' + (st.state||'') + ' ' + (st.colour||'')
+      + '">' + e(st.stage) + '</span>').join('') + '</div>'
+    + '<div class="ld-strip-why">' + e(m.why || '')
+    + ((window.CRM_LINKS||{}).journey
+        ? ' · <a href="' + crmUrl('/leads/' + id + '/journey')
+          + '">the whole journey</a>'
+        : '')
+    + '</div>';
+  host.style.display = '';
 }
 
 /* ── Notes: their own store, their own render ──────────────────────
@@ -4936,7 +5029,8 @@ function pipRenderTable(){
           <td>${sb(l.stage)}${quoteLapsedChip(l)}</td>
           <td class="tddate">${l.followup||'—'}</td>
           <td class="tddate">${l.onboarded_date||'—'}</td>
-          <td onclick="event.stopPropagation()">
+          <td onclick="event.stopPropagation()" style="white-space:nowrap">
+            ${journeyIcon(l.id)}
             ${!['Won','Lost','On Hold','Not Interested'].includes(l.stage)
               ? `<button class="btn btn-red btn-xs" onclick="openAdv(${l.id})">Advance</button>` : ''}
             <button class="btn btn-ghost btn-xs" onclick="openDec(${l.id})">Decide</button>
@@ -6194,6 +6288,17 @@ async function doChangePw(){
 // dropdowns mounted into #topnav, then hides the sidebar on desktop
 // (keeps it as a drawer for mobile via the existing hamburger).
 // ═════════════════════════════════════════════════════════════════════
+/* CRM-COCKPIT-LINKS-01. Read per person, not globally: /crm2,
+   /leads/<id>/journey, /rfqs/chain and /rfqs/reports each 404 for
+   anybody their pilot does not cover, so a menu built on the global
+   switch would offer links that do not open. */
+window.CRM_LINKS = {
+  cockpit: {{ 'true' if feature_for('FEATURE_CRM2') else 'false' }},
+  journey: {{ 'true' if feature_for('FEATURE_LEAD_JOURNEY') else 'false' }},
+  chain:   {{ 'true' if feature_for('FEATURE_RFQ_CHAIN') else 'false' }},
+  reports: {{ 'true' if feature_for('FEATURE_RFQ_REPORTS') else 'false' }}
+};
+
 (function buildCrmTopnav(){
   var mount = document.getElementById('topnav');
   var sb    = document.getElementById('sbEl');
@@ -6237,6 +6342,11 @@ async function doChangePw(){
   var TOPNAV_GROUPS = [
     { title: 'Overview',            icon: 'dashboard',
       items: [
+        /* First item of the first group, because it is the landing
+           page. Absent for anybody the cockpit flag does not cover:
+           /crm2 404s for them. */
+        { href: '/crm2',     label: 'Cockpit',              ic: 'target',
+          link: 'cockpit' },
         { href: '/my-work',  label: 'My Work',              ic: 'clipboard_list' },
         { page: 'dash',      label: 'Dashboard',            ic: 'dashboard'    },
         { href: '/notifications', label: 'Notifications',   ic: 'newspaper'    },
@@ -6267,6 +6377,10 @@ async function doChangePw(){
     { title: 'Deals',               icon: 'briefcase',
       items: [
         { href: '/rfqs',                          label: 'RFQs',                    ic: 'clipboard_list', perm: 'module.rfq' },
+        /* Built, switched on, and reachable only by typing the URL
+           until 31 October. */
+        { href: '/rfqs/chain',                    label: 'RFQ Chain Board',         ic: 'git_branch',     link: 'chain' },
+        { href: '/rfqs/reports',                  label: 'RFQ Reports',             ic: 'trending_up',    link: 'reports' },
         { href: '/quotes',                        label: 'Quotes',                  ic: 'send',           perm: 'module.quotes' },
         { href: '/handovers',                     label: 'Handovers',               ic: 'trophy',         perm: 'module.handovers' },
         { href: '/funnels/sales',                 label: 'Sales Funnel',            ic: 'trending_up',    perm: 'module.funnels' },
@@ -6312,9 +6426,18 @@ async function doChangePw(){
       ]},
   ];
 
-  /* Small Procam brand at the leftmost edge of the topnav. */
-  var brand = document.createElement('span');
+  /* Small Procam brand at the leftmost edge of the topnav, and the way
+     back to the Cockpit: a logo that does nothing is a link people
+     look for and do not find. A <span> while the cockpit is off for
+     this person, because the page it would open 404s for them. */
+  var brand = document.createElement(
+    window.CRM_LINKS.cockpit ? 'a' : 'span');
   brand.className = 'topnav-brand';
+  if (window.CRM_LINKS.cockpit) {
+    brand.href = crmUrl('/crm2');
+    brand.title = 'Cockpit';
+    brand.style.textDecoration = 'none';
+  }
   brand.innerHTML = '<img src="https://www.procamlogistics.com/public/frontend/assets/img/logo.png" alt="Procam"> CRM';
   mount.parentNode.insertBefore(brand, mount);
 
@@ -6326,6 +6449,11 @@ async function doChangePw(){
      a link they will be refused. */
   var MY_PERMS = null;
   function mayUse(it){
+    /* A feature switch, before permissions: the answer came from the
+       server with the page and is known even while /api/access/me is
+       still in flight. An item whose feature is off for this person
+       is not "probably allowed" — its route answers 404. */
+    if (it.link && !(window.CRM_LINKS || {})[it.link]) return false;
     if (MY_PERMS === null) return true;
     if (it.perm)    return MY_PERMS.has(it.perm);
     if (it.anyPerm) return it.anyPerm.some(function(p){ return MY_PERMS.has(p); });
@@ -7919,7 +8047,9 @@ async function loadMyWork(){
         + '<td>' + dueCell(r) + '</td>'
         + '<td class="tddate">' + e(r.last_activity || '—') + '</td>'
         + '<td>' + srb(r.source) + '</td>'
-        + '<td onclick="event.stopPropagation()">'
+        + '<td onclick="event.stopPropagation()" '
+        + 'style="white-space:nowrap">'
+        + journeyIcon(r.lead_id)
         + '<a class="btn btn-ghost btn-xs" href="'
         + crmUrl('/leads/' + r.lead_id + '/panel') + '">Open</a></td>'
         + '</tr>';

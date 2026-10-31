@@ -64,6 +64,12 @@
   .ck-item b { font-weight:600; flex:1; }
   .ck-item em { font-style:normal; font-size:11.5px; color:#6b7280; }
   .ck-late { color:#DC2626; font-weight:600; }
+  /* A row that opens something looks like it does. */
+  .ck-item.ck-open { text-decoration:none; color:inherit; }
+  .ck-item.ck-open:hover { background:#f9fafb; }
+  .ck-item.ck-open:hover b { text-decoration:underline; }
+  a.ck-open { color:inherit; text-decoration:none; }
+  a.ck-open:hover { text-decoration:underline; }
   .ck-empty { font-size:12.5px; color:#9ca3af; padding:5px 0; }
   .ck-confirm { border:1px solid #059669; background:#fff;
       color:#047857; border-radius:7px; padding:3px 10px;
@@ -186,28 +192,66 @@ function panel(title, total, rows, render){
     + body + '</div>';
 }
 
+/* CRM-COCKPIT-LINKS-01 — every row in these panels names a record,
+   and clicking one did nothing at all. A row now opens that lead's
+   journey, which is the screen that answers the question a cockpit
+   row provokes: what has happened to this, and for how long.
+
+   `JOURNEY_ON` is false for anybody the journey flag does not cover;
+   the row then falls back to the lead pop-up, which everybody has.
+   A row with no lead behind it — a task on a quote, say — keeps the
+   task's own route. */
+const JOURNEY_ON = {{ 'true' if feature_for('FEATURE_LEAD_JOURNEY')
+                      else 'false' }};
+
+function leadHref(id){
+  return crmUrl + (JOURNEY_ON ? '/leads/' + id + '/journey'
+                              : '/app?lead=' + id);
+}
+
+function rowHref(i){
+  if (i.kind === 'task'){
+    if (i.entity_type === 'Lead' && i.entity_id) return leadHref(i.entity_id);
+    return i.route ? crmUrl + i.route : '';
+  }
+  return i.id ? leadHref(i.id) : (i.route ? crmUrl + i.route : '');
+}
+
+/* One wrapper, so a row that cannot be opened stays a <div> rather
+   than becoming a link that goes nowhere. */
+function openable(i, inner){
+  const href = rowHref(i);
+  if (!href) return '<div class="ck-item">' + inner + '</div>';
+  return '<a class="ck-item ck-open" href="' + esc(href) + '">'
+    + inner + '</a>';
+}
+
 function leadRow(i){
-  return '<div class="ck-item"><b>' + esc(i.title) + '</b>'
-    + '<em>' + esc(i.stage || '') + '</em></div>';
+  return openable(i, '<b>' + esc(i.title) + '</b>'
+    + '<em>' + esc(i.stage || '') + '</em>');
 }
 
 function lateRow(i){
-  return '<div class="ck-item"><b>' + esc(i.title) + '</b>'
+  return openable(i, '<b>' + esc(i.title) + '</b>'
     + '<em class="ck-late">' + esc(i.due || i.next_action_date || '')
-    + '</em></div>';
+    + '</em>');
 }
 
 function taskRow(t){
-  return '<div class="ck-item"><b>' + esc(t.title) + '</b>'
+  return openable(t, '<b>' + esc(t.title) + '</b>'
     + '<em' + (t.overdue ? ' class="ck-late"' : '') + '>'
-    + esc(t.why || t.task_key) + '</em></div>';
+    + esc(t.why || t.task_key) + '</em>');
 }
 
 function confirmRow(i){
   const n = i.value_inr == null ? ''
     : Number(i.value_inr).toLocaleString('en-IN');
+  /* Not wrapped in a link: the row carries a button, and a button
+     inside an anchor is a click nobody can predict. The name is the
+     link instead. */
   return '<div class="ck-item" data-lead="' + i.id + '">'
-    + '<b>' + esc(i.title) + '</b><em>' + n + '</em>'
+    + '<b><a class="ck-open" href="' + esc(rowHref(i)) + '">'
+    + esc(i.title) + '</a></b><em>' + n + '</em>'
     + '<button class="ck-confirm" data-confirm="' + i.id
     + '">Confirm</button></div>';
 }
