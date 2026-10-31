@@ -704,11 +704,18 @@ reached nobody. They are repointed at Project Freight, the script
 flattens any other chain it finds, and a test holds the invariant
 that no mapping target may be anything but one of the four.
 
-**Installation's head disagrees with the 21 October decision.** This
-script sets it to DIR52011 (Sethupathy Sundaram); the decision of 21
-October says Gowdhaman R. I have not changed it — the question was
-about the master list, not the heads, and I do not have Gowdhaman R's
-employee code. Say the word and it is one line.
+**Installation's head disagrees with the 21 October decision.**
+Answered, and it was worse than a disagreement. Gowdhaman
+Rajakrishnan is EMP472012, and
+`scripts/2026_10_25_installation_head.py` set the live row to him on
+25 October (D12). This script's `HEADS` still said DIR52011
+(Sethupathy Sundaram) — and its apply path *writes* `head_emp_code`
+for every vertical in that map, so running it would have reverted the
+25 October correction and handed the Installation Account check queue
+back to the wrong person, silently, because the report says nothing
+about a head it did not mean to change. Corrected to EMP472012, with
+three tests: the code itself, that every head in the map is an
+employee on file, and that an --apply leaves Gowdhaman as the head.
 
 ---
 

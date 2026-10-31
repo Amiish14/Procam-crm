@@ -97,10 +97,19 @@ MAPPING = {
 #: vertical -> employee code. Sanjna Vardhan now heads one vertical
 #: and not two: Freight Forwarding folds into Project Freight, which
 #: she already held.
+#:
+#: Installation is Gowdhaman Rajakrishnan, not Sethupathy Sundaram.
+#: This map said DIR52011 — the name the vertical master carried from
+#: the start — and `scripts/2026_10_25_installation_head.py` corrected
+#: the live row to EMP472012 on 25 October (D12). The apply path below
+#: writes `head_emp_code` for every vertical in this map, so running it
+#: with DIR52011 here would have silently reverted that correction and
+#: handed the Installation Account check queue back to the wrong
+#: person. A map that is also a write is a map that has to be right.
 HEADS = {
     'Heavy Transport': 'DIR22010',      # James Francis Xavier
     'Project Freight': 'EMP372011',     # Sanjna Vardhan
-    'Installation': 'DIR52011',         # Sethupathy Sundaram
+    'Installation': 'EMP472012',        # Gowdhaman Rajakrishnan
     'Warehousing': 'DIR72012',          # Srinivas Marella
     'Management': 'DIR12010',           # Nilesh Kumar Sinha — the
                                         # fallback for anything unmapped

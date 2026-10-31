@@ -870,6 +870,7 @@ def master_b(world):
     with flask_app.app_context():
         for code, name in (('DIR22010', 'James Francis Xavier'),
                            ('EMP372011', 'Sanjna Vardhan'),
+                           ('EMP472012', 'Gowdhaman Rajakrishnan'),
                            ('DIR52011', 'Sethupathy Sundaram'),
                            ('DIR72012', 'Srinivas Marella'),
                            ('DIR12010', 'Nilesh Kumar Sinha')):
@@ -1122,3 +1123,52 @@ def test_blank_verticals_and_accounts_are_left_alone(master_b):
         assert db.session.get(Lead, blank_id).procam_vertical is None
         assert [(c.id, c.vertical)
                 for c in Company.query.all()] == accounts_before
+
+
+def test_the_installation_head_is_gowdhaman_not_the_old_master(master_b):
+    """D12, decided 25 October and applied by its own script.
+
+    `vertical_master_apply.HEADS` is not a reference list: the apply
+    path writes `head_emp_code` from it. While it said DIR52011, every
+    run of this script reverted the Installation head to Sethupathy
+    Sundaram and handed his Account check queue to the wrong person —
+    silently, because nothing in the report mentions a head it did not
+    change.
+    """
+    import scripts.vertical_master_apply as vm
+
+    assert vm.HEADS['Installation'] == 'EMP472012'
+
+
+def test_every_head_in_the_map_is_an_employee_on_file(master_b):
+    # A code that is not an employee writes a head nobody can be, and
+    # `heads_for_vertical()` would answer with it for ever.
+    import scripts.vertical_master_apply as vm
+
+    with flask_app.app_context():
+        for vertical, code in vm.HEADS.items():
+            emp = Employee.query.filter_by(emp_code=code).first()
+            assert emp is not None, f'{vertical} -> {code}'
+
+
+def test_the_apply_writes_gowdhaman_as_the_installation_head(master_b,
+                                                             monkeypatch):
+    import scripts.vertical_master_apply as vm
+    from app.models.email_admin import VerticalHead
+
+    with flask_app.app_context():
+        row = VerticalHead.query.filter_by(vertical='Installation').first()
+        if row is None:
+            row = VerticalHead(vertical='Installation')
+            db.session.add(row)
+        row.head_emp_code, row.active = 'DIR52011', True
+        db.session.commit()
+
+        monkeypatch.setattr(sys, 'argv',
+                            ['vertical_master_apply.py', '--apply'])
+        try:
+            vm.main()
+        except SystemExit as exc:
+            assert not exc.code, exc
+        row = VerticalHead.query.filter_by(vertical='Installation').first()
+        assert row.head_emp_code == 'EMP472012'
