@@ -674,3 +674,38 @@ lifted" while doing the opposite of what somebody reaching for
 **Taken:** the call is `flags.set(name, False, ...)`, there is a
 test, and `scripts/feature_flag.py --code X --off --apply` is the
 line to use from here on.
+
+---
+
+### 43. Four master verticals, not seven
+
+Decision of 31 October 2026 (Nilesh Kumar Sinha), superseding the
+seven of 18 October: the CRM has four master verticals — Heavy
+Transport, Project Freight, Installation, Warehousing. Freight
+Forwarding becomes an alias of Project Freight, General Transport an
+alias of Heavy Transport.
+
+**Taken:** `scripts/vertical_master_apply.py` now holds the four,
+and a master vertical is never deleted — its head row is marked
+inactive and an alias row is written in the same transaction, so the
+resolver stops offering it and starts folding it onto the vertical it
+belongs to, while the row that recorded the decision to have it is
+still there to read. `All` was being *deleted* by this script; it is
+retired now like the rest.
+
+Two things fell out of it.
+
+**An alias of an alias resolved to nothing.** Sea Freight, Air
+Freight and Customs pointed at Freight Forwarding, which is now an
+alias itself. `vertical_heads.master_vertical()` takes one hop and
+stops, so those three would have answered "Freight Forwarding" — a
+name in no head table — and every record carrying them would have
+reached nobody. They are repointed at Project Freight, the script
+flattens any other chain it finds, and a test holds the invariant
+that no mapping target may be anything but one of the four.
+
+**Installation's head disagrees with the 21 October decision.** This
+script sets it to DIR52011 (Sethupathy Sundaram); the decision of 21
+October says Gowdhaman R. I have not changed it — the question was
+about the master list, not the heads, and I do not have Gowdhaman R's
+employee code. Say the word and it is one line.

@@ -864,7 +864,7 @@ def test_the_survey_changes_nothing(master_world, tmp_path):
 @pytest.fixture()
 def master_b(world):
     """A lead on each mapped value, plus one awaiting review."""
-    from app.models.email_admin import VerticalHead
+    from app.models.email_admin import VerticalAlias, VerticalHead
     import scripts.vertical_master_apply as vm
 
     with flask_app.app_context():
@@ -874,8 +874,26 @@ def master_b(world):
                            ('DIR72012', 'Srinivas Marella'),
                            ('DIR12010', 'Nilesh Kumar Sinha')):
             _emp(code, name, role='user')
-        if not VerticalHead.query.filter_by(vertical='All').first():
-            db.session.add(VerticalHead(vertical='All', active=True))
+        # Put the master table back to its pre-31-October shape every
+        # time, not only when the rows are missing: a previous
+        # --apply in this module leaves them retired, and the tests
+        # run in a random order.
+        for name, code in (('All', None),
+                           ('Freight Forwarding', 'EMP372011'),
+                           ('General Transport', 'DIR22010'),
+                           ('Other', 'DIR12010')):
+            row = VerticalHead.query.filter_by(vertical=name).first()
+            if row is None:
+                row = VerticalHead(vertical=name)
+                db.session.add(row)
+            row.head_emp_code, row.active = code, True
+        # An alias pointing at a master that is about to stop being
+        # one: the chain `master_vertical()` cannot follow.
+        chained = VerticalAlias.query.filter_by(alias='Ocean Freight').first()
+        if chained is None:
+            chained = VerticalAlias(alias='Ocean Freight')
+            db.session.add(chained)
+        chained.vertical = 'Freight Forwarding'
         db.session.flush()
 
         made = {}
@@ -947,23 +965,85 @@ def test_every_moved_lead_carries_the_master_reason(master_b):
             assert r.reason == 'vertical master, CRM-VERTICAL-MASTER-01'
 
 
-def test_the_heads_are_set_and_all_is_removed(master_b):
+def test_the_heads_are_set_and_nothing_is_deleted(master_b):
+    """A master vertical is never deleted (31 Oct 2026). "All" is an
+    employee grouping and not a service, so its row goes inactive and
+    stays readable."""
     from app.models.email_admin import VerticalHead
     import scripts.vertical_master_apply as vm
 
+    with flask_app.app_context():
+        before = VerticalHead.query.count()
     _run('vertical_master_apply.py', '--apply')
     with flask_app.app_context():
-        rows = {v.vertical: v.head_emp_code
-                for v in VerticalHead.query.all()}
+        rows = {v.vertical: v for v in VerticalHead.query.all()}
         for vertical, code in vm.HEADS.items():
-            assert rows.get(vertical) == code, vertical
-        assert 'All' not in rows, 'an employee grouping, not a service'
+            assert rows[vertical].head_emp_code == code, vertical
+            assert rows[vertical].active is not False, vertical
+        assert 'All' in rows, 'never deleted'
+        assert rows['All'].active is False
+        assert VerticalHead.query.count() >= before
         # Management is the fallback for anything unmapped and had
         # nobody; without it those notifications reach no one.
-        assert rows['Management'] == 'DIR12010'
+        assert rows['Management'].head_emp_code == 'DIR12010'
 
 
-def test_the_dropdown_becomes_the_official_seven(master_b):
+def test_a_demoted_master_becomes_an_alias_and_keeps_its_row(master_b):
+    """Freight Forwarding and General Transport stop being master
+    verticals: the head row goes inactive, an alias row names the
+    vertical each belongs to, and the resolver folds them in."""
+    from app.models.email_admin import VerticalAlias, VerticalHead
+
+    _run('vertical_master_apply.py', '--apply')
+    with flask_app.app_context():
+        from app.services import vertical_heads as vh
+        vh.cache_clear()
+        for name, target in (('Freight Forwarding', 'Project Freight'),
+                             ('General Transport', 'Heavy Transport')):
+            head = VerticalHead.query.filter_by(vertical=name).first()
+            assert head is not None, 'never deleted'
+            assert head.active is False
+            alias = VerticalAlias.query.filter_by(alias=name).first()
+            assert alias is not None and alias.vertical == target
+            assert vh.master_vertical(name) == target
+            assert vh.master_vertical(name.lower()) == target
+
+
+def test_the_four_are_the_only_master_verticals_that_serve(master_b):
+    _run('vertical_master_apply.py', '--apply')
+    with flask_app.app_context():
+        import scripts.vertical_master_apply as vm
+        from app.services import vertical_heads as vh
+        vh.cache_clear()
+        heads, _aliases = vh._load()
+        serving = {v for v in heads if v not in vm.NOT_A_SERVICE_KEEP}
+    assert serving == set(vm.OFFICIAL), serving
+
+
+def test_an_alias_of_an_alias_is_flattened(master_b):
+    """`master_vertical()` takes one hop. Ocean Freight -> Freight
+    Forwarding -> Project Freight resolved to a name in no head
+    table, so the record reached nobody."""
+    _run('vertical_master_apply.py', '--apply')
+    with flask_app.app_context():
+        from app.models.email_admin import VerticalAlias
+        from app.services import vertical_heads as vh
+        vh.cache_clear()
+        row = VerticalAlias.query.filter_by(alias='Ocean Freight').first()
+        assert row.vertical == 'Project Freight'
+        assert vh.master_vertical('Ocean Freight') == 'Project Freight'
+
+
+def test_every_mapping_target_is_one_of_the_four():
+    """The invariant behind the flattening: no alias may point at a
+    value that is not a master, or it resolves to nothing."""
+    import scripts.vertical_master_apply as vm
+    for value, target in vm.MAPPING.items():
+        assert target in vm.OFFICIAL, f'{value} -> {target}'
+        assert value not in vm.OFFICIAL
+
+
+def test_the_dropdown_becomes_the_official_four(master_b):
     import scripts.vertical_master_apply as vm
 
     _run('vertical_master_apply.py', '--apply')
@@ -972,9 +1052,45 @@ def test_the_dropdown_becomes_the_official_seven(master_b):
         va_list = va.acceptable_verticals(for_choice=True)
     for value in vm.MAPPING:
         assert value not in va_list, f'{value} is an alias now'
-    for value in ('Heavy Transport', 'Freight Forwarding',
-                  'General Transport', 'Project Freight'):
+    for value in vm.OFFICIAL:
         assert value in va_list
+
+
+def test_the_dry_run_retires_nothing(master_b):
+    from app.models.email_admin import VerticalHead
+
+    res = _run('vertical_master_apply.py', '--check')
+    assert res.returncode == 0, res.stderr[-900:]
+    assert 'MASTER VERTICALS' in res.stdout
+    with flask_app.app_context():
+        for name in ('Freight Forwarding', 'General Transport', 'All'):
+            row = VerticalHead.query.filter_by(vertical=name).first()
+            assert row.active is not False, name
+
+
+def test_a_master_with_no_mapping_is_reported_and_left_alone(master_b):
+    """Which of the four an unmapped master belongs to is a decision,
+    not something to infer from its name."""
+    from app.models.email_admin import VerticalAlias, VerticalHead
+
+    with flask_app.app_context():
+        db.session.add(VerticalHead(vertical='Cold Chain', active=True,
+                                    head_emp_code='DIR12010'))
+        db.session.commit()
+    try:
+        res = _run('vertical_master_apply.py', '--check')
+        assert 'YOUR DECISION' in res.stdout
+        assert 'Cold Chain' in res.stdout
+        _run('vertical_master_apply.py', '--apply')
+        with flask_app.app_context():
+            row = VerticalHead.query.filter_by(vertical='Cold Chain').first()
+            assert row.active is not False, 'left alone'
+            assert VerticalAlias.query.filter_by(
+                alias='Cold Chain').first() is None
+    finally:
+        with flask_app.app_context():
+            VerticalHead.query.filter_by(vertical='Cold Chain').delete()
+            db.session.commit()
 
 
 def test_stage_b_is_idempotent(master_b):
