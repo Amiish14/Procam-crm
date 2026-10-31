@@ -657,3 +657,20 @@ leads on stage names that are neither on the journey nor in
 `LEGACY_STAGE_MAP`, they are invisible to both lists and the sweep
 will not see them either; a one-off `SELECT stage, count(*) FROM
 leads GROUP BY stage` on the server would settle it.
+
+---
+
+### 42. set_pilot --off never turned anything off
+
+Building `scripts/feature_flag.py` turned this up next door.
+`scripts/set_pilot.py --off` called `flags.set_flag(...)` behind a
+`hasattr` guard. There is no `set_flag` — the function is
+`flags.set` — so the guard swallowed it: `--off` lifted both pilot
+limits and left the flag **on for everybody**, printing "limits
+lifted" while doing the opposite of what somebody reaching for
+`--off` wants. Every rollback line of the form `set_pilot.py
+--flag X --off` that I have put in a deploy block was wrong.
+
+**Taken:** the call is `flags.set(name, False, ...)`, there is a
+test, and `scripts/feature_flag.py --code X --off --apply` is the
+line to use from here on.

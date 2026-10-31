@@ -47,11 +47,14 @@ def main():
         print(f'database: {db.engine.url}')
 
         if args.off:
-            flags.set_flag(name, False, actor=args.actor) \
-                if hasattr(flags, 'set_flag') else None
+            # `flags.set_flag` has never existed — the function is
+            # `flags.set` — and the hasattr guard meant --off lifted
+            # both limits and left the flag ON for everybody, which is
+            # the opposite of what somebody reaching for --off wants.
+            flags.set(name, False, actor=args.actor)
             flags.limit_to(name, (), actor=args.actor)
             flags.limit_verticals(name, (), actor=args.actor)
-            print(f'  {name}: limits lifted')
+            print(f'  {name}: off, limits lifted')
         elif args.apply:
             people = [p for p in args.people.split(',') if p.strip()]
             verts = [v for v in args.verticals.split(',') if v.strip()]
