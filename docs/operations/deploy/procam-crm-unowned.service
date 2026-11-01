@@ -1,0 +1,10 @@
+[Unit]
+Description=Procam CRM unowned open leads — assign by rule (CRM-COCKPIT-02 §4.5)
+After=network.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/unowned_sweep.py --apply
+SuccessExitStatus=1

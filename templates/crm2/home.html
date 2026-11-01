@@ -37,8 +37,17 @@
      surface: red under a day, orange under two, green beyond. */
   a.ck-tile { text-decoration:none; color:inherit; display:block; }
   a.ck-tile:hover { border-color:#9ca3af; }
-  .ck-tile.ck-red b { color:#b91c1c; }
-  .ck-tile.ck-orange b { color:#b45309; }
+  /* §2.6's colours on a tile. Deliberately NOT called ck-red and
+     ck-orange: those are the ageing bar's segment fills further down
+     this file, and a tile carrying one of them was painted solid red
+     with dark red text on it — unreadable, which a screenshot caught
+     and nothing else would have. A tile is white with a coloured
+     left edge, like the deadline card on the lead screen, so the two
+     surfaces read the same way. */
+  .ck-tile.ck-t-red { border-left:4px solid #DC2626; }
+  .ck-tile.ck-t-red b { color:#B91C1C; }
+  .ck-tile.ck-t-orange { border-left:4px solid #D97706; }
+  .ck-tile.ck-t-orange b { color:#B45309; }
   .ck-tile.ck-zero b { color:#9ca3af; }
   .ck-map { background:#fff; border:1px solid #e5e7eb; border-radius:10px;
       padding:4px 0; margin-top:16px; }
@@ -197,8 +206,8 @@ function tile(n, label){
 /* §2.6 — the deadline tiles carry the deadline's own colours. */
 function tileTone(key){
   if (key === 'quote_due_today' || key === 'missed_submission')
-    return 'ck-red';
-  if (key === 'quote_due_48h') return 'ck-orange';
+    return 'ck-t-red';
+  if (key === 'quote_due_48h') return 'ck-t-orange';
   return '';
 }
 

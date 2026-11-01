@@ -38,6 +38,8 @@ The operations check counts the first two as the jobs they cover.
 | `procam-crm-exceptions-report.{service,timer}` | End-of-day report of what is still open | Mon–Sat 19:00 IST (13:30 UTC) |
 | `procam-crm-weekly-report.{service,timer}` | Everyone's own week, then the vertical heads' team review | Mon 08:30 IST (03:00 UTC) |
 | `procam-crm-monthly-report.{service,timer}` | Company-wide management report | 1st, 09:00 IST (03:30 UTC) |
+| `procam-crm-quote-due.{service,timer}` | Quote submission deadlines: flags a miss once and tells the owner, the vertical head and the standing CC; sends the 48 h and 24 h reminders (CRM-COCKPIT-02 §2.7) | hourly, 08:30–20:30 IST |
+| `procam-crm-unowned.{service,timer}` | Open leads with no owner, assigned by rule (account owner → vertical head → DIR12010), and the list into the daily brief (CRM-COCKPIT-02 §4.5) | daily 08:30 IST (03:00 UTC) |
 
 Install a pair:
 

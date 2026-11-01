@@ -825,3 +825,91 @@ def test_a_date_comes_back_as_a_date_not_a_string(world):
             date(2026, 11, 20)
         assert isinstance(db.session.get(Lead, lead.id).followup_date,
                           date)
+
+
+# ── the box a person types into is in the time they read ────────────
+def test_the_form_value_is_ist_not_the_stored_utc(world):
+    """A screenshot caught this one, and it was the worst bug in the
+    release: the card's heading read "Quote due 02 Nov 23:04" with
+    17:34 in the box under it, because the heading was IST and the
+    input was handed the stored UTC string. Pressing Save without
+    touching it moved the deadline five and a half hours earlier — a
+    deadline that walks backwards every time somebody opens the lead.
+    """
+    lead = _lead(due=DUE)
+    body = _client().get(f'/api/leads/{lead.id}/quote-due').get_json()
+    assert body['shown'] == '04 Nov 2026 18:00'
+    assert body['quote_due_local'] == '2026-11-04T18:00'
+    assert body['quote_due_at'] == '2026-11-04T12:30'
+
+
+def test_saving_the_form_value_back_unchanged_moves_nothing(world):
+    """The round trip the bug broke: read the card, press Save
+    without editing, and the deadline must be where it was."""
+    lead = _lead(due=DUE)
+    c = _client()
+    body = c.get(f'/api/leads/{lead.id}/quote-due').get_json()
+    again = c.post(f'/api/leads/{lead.id}/quote-due',
+                   json={'quote_due_at': body['quote_due_local']})
+    assert again.status_code == 200
+    with flask_app.app_context():
+        assert db.session.get(Lead, lead.id).quote_due_at == DUE
+
+
+def test_a_suggested_date_is_offered_in_ist_too(world):
+    lead = _lead(stage='New Opportunity',
+                 subject='RA- 57103: Indo Tech 29 Nov 2026 15:15:00')
+    body = _client().get(f'/api/leads/{lead.id}/quote-due').get_json()
+    assert body['suggested'] == '29 Nov 2026 15:15'
+    assert body['suggested_iso'] == '2026-11-29T15:15'
+
+
+def test_a_proposed_date_is_offered_in_ist_too(world):
+    lead = _lead(due=DUE)
+    with flask_app.app_context():
+        flow.propose(db.session.get(Lead, lead.id),
+                     datetime(2026, 11, 12, 9, 45),
+                     source=qd.MAIL_BODY)
+        db.session.commit()
+    body = _client().get(f'/api/leads/{lead.id}/quote-due').get_json()
+    assert body['proposal']['shown'] == '12 Nov 2026 15:15'
+    assert body['proposal']['iso'] == '2026-11-12T15:15'
+
+
+# ── §4.4 the scoreboard ─────────────────────────────────────────────
+def test_the_no_owner_row_is_named_for_what_it_is(world):
+    """It read 883 leads, 822 of them already Lost, under a heading
+    of "—" that looked like a person's name."""
+    _lead(company=TAG + 'Ownerless', owner=None,
+          followup_date=date(2026, 12, 1))
+    body = _client(ADMIN, 'admin').get(
+        '/api/dashboard/summary').get_json() or {}
+    rows = [r for r in (body.get('pic_board') or [])
+            if r['emp_code'] == '—']
+    assert rows, 'the ownerless row has to exist at all'
+    assert rows[0]['name'] == 'No owner'
+
+
+def test_the_scoreboard_separates_open_from_closed(world):
+    _lead(company=TAG + 'Board Open', owner=OWNER,
+          followup_date=date(2026, 12, 1))
+    _lead(company=TAG + 'Board Lost', owner=OWNER, stage='Lost')
+    body = _client(ADMIN, 'admin').get(
+        '/api/dashboard/summary').get_json() or {}
+    rows = [r for r in (body.get('pic_board') or [])
+            if r['emp_code'] == OWNER]
+    assert rows, 'the owner has to be on the board'
+    row = rows[0]
+    assert row['total'] > row['active'], \
+        'total includes the closed lead, active does not'
+    assert row['active'] >= 1
+
+
+def test_the_board_leads_with_the_people_carrying_live_work(world):
+    """Sorting on wins put somebody with two won deals and no
+    pipeline above somebody carrying forty live ones."""
+    body = _client(ADMIN, 'admin').get(
+        '/api/dashboard/summary').get_json() or {}
+    rows = body.get('pic_board') or []
+    actives = [r['active'] for r in rows]
+    assert actives == sorted(actives, reverse=True)

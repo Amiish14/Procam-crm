@@ -4300,7 +4300,13 @@ def _dashboard_summary_payload(leads, allowed_codes, today):
     for l in leads:
         code = l.assigned_to or '—'
         p = pic_map.setdefault(code, {
-            'emp_code': code, 'name': l.assigned_name or code,
+            # CRM-COCKPIT-02 §4.4. The "—" row read 883 leads, of
+            # which 822 were already Lost, and it is not a person —
+            # it is every lead nobody owns. Named for what it is, so
+            # a reader stops looking for the employee called "—".
+            'emp_code': code,
+            'name': ('No owner' if code == '—'
+                     else (l.assigned_name or code)),
             'total': 0, 'active': 0, 'calls': 0, 'profile': 0,
             'appts': 0, 'visits': 0, 'rfqs': 0, 'won': 0, 'lost': 0,
             'pipeline_value': 0.0, 'won_value': 0.0,
@@ -4321,8 +4327,11 @@ def _dashboard_summary_payload(leads, allowed_codes, today):
         p['won_value'] = p['won_value_inr'] / 1_000_000        # millions, older readers
         p['pipeline_value'] = p['pipeline_value_inr'] / 1_000_000
         p['conversion_pct'] = round(100 * p['won'] / p['total'], 1) if p['total'] else 0.0
+    # §4.4 — a scoreboard is about work in play, so it sorts on open
+    # leads. Sorting on `won` put a person with two won deals and no
+    # pipeline above somebody carrying forty live ones.
     pic_board = sorted(pic_map.values(),
-                       key=lambda x: (-x['won'], -x['active']))
+                       key=lambda x: (-x['active'], -x['won']))
 
     # ── Funnel counts (cumulative — each stage counts anyone who ≥ reached it) ──
     funnel_order = [

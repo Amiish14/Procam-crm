@@ -853,3 +853,55 @@ Still only answerable from the server log: whether
 is what the fail-open cache left behind, and it is the difference
 between "the gate blinked for thirty seconds" and "the intake saw a
 different name than the lead ended up with".
+
+## 49 — CRM-COCKPIT-02, and the four things in it I could not finish
+
+Built and tested; the deploy, the back-fills and the §9 run are
+Nilesh's, because I have no access to the server.
+
+**The way of working changed.** §0 of this prompt replaces it: deploy
+straight to production, no feature switch, no pilot, data changes
+applied without a dry-run approval step. The code follows it — nothing
+in this release is behind a flag. The dry runs stayed anyway, as
+`--check` on every script, because "no approval step" is about not
+waiting for Nilesh, not about writing to 2,391 leads unseen. Every
+bulk change also writes to `crm_bulk_change_log`, which §8 asks for.
+
+**IST is stored as UTC.** §2.1 asks for the due date in IST. Every
+other datetime in this database is naive UTC, and a column holding IST
+would be compared against `utcnow()` by the first reader who did not
+know — five and a half hours wrong, in the direction that says a
+closed auction is still open. So it parses IST, stores UTC, and
+renders IST. A screenshot caught the one place I got it wrong (the
+form box showed the UTC string under an IST heading, and saving it
+unchanged moved the deadline back five and a half hours); four tests
+now hold the round trip.
+
+**"Reconcile with the ageing chart" (§4.2) is not an equality.** The
+No-activity tiles measure silence since anything last happened; the
+ageing chart measures how long a lead has sat in its stage. A lead can
+be three days into Quoted after a month of silence, so the two
+numbers are not the same number and making them equal would mean
+breaking one of them. What they now share is a population and a
+source: both read open leads from the same board build, and the tiles
+nest (30D ⊆ 15D ⊆ 7D), which is what acceptance check 6 holds.
+
+**Four things need a person, and are reported rather than guessed:**
+
+1. §6.1's two leads that the register does not match. Closing them
+   does not fix it — the next enquiry from that client comes straight
+   through. The script says which ones and what to add.
+2. Godrej. §6.2 says "apply the block (already decided)", but Godrej
+   is a group of separate companies and the existing script asks which
+   of them the decision covers. I have not chosen for management.
+3. §6.6's four owners are given by name. Resolved against the employee
+   master at run time, and refused where a name matches nobody or two
+   people: a wrong employee code in an owner column is silent, and the
+   lead simply stops appearing on anybody's list.
+4. §6.5's four lead numbers are from production. A number that is not
+   in the database is reported, not skipped.
+
+**What I could not do at all:** deploy, run anything on production,
+mail Nilesh, or move the item in the Build Prompt Tracker.
+`docs/operations/COCKPIT02_GO_LIVE.md` is the runbook, in order, with
+the undo for every step.

@@ -97,8 +97,19 @@ def _state(lead):
             reading = None
     return {
         'lead_id': lead.id,
+        # The stored moment, UTC, for anything that computes with it.
         'quote_due_at': (lead.quote_due_at.isoformat(timespec='minutes')
                          if lead.quote_due_at else ''),
+        # The same moment in IST, for the <input type="datetime-local">
+        # the person types into. These must be different fields: the
+        # input showed the UTC string under a heading in IST, so the
+        # card read "Quote due 02 Nov 23:04" with 17:34 in the box —
+        # and pressing Save unchanged would have moved the deadline
+        # five and a half hours earlier. A deadline that walks
+        # backwards every time somebody opens the lead is worse than
+        # no deadline at all.
+        'quote_due_local': (qd.to_ist(lead.quote_due_at).isoformat(
+            timespec='minutes') if lead.quote_due_at else ''),
         'shown': qd.shown(lead.quote_due_at),
         'source': lead.quote_due_source or '',
         'confirmed': bool(lead.quote_due_confirmed),
@@ -113,12 +124,12 @@ def _state(lead):
         'reasons': [{'code': c, 'label': lbl}
                     for c, lbl in EXTENSION_REASONS],
         'suggested': (qd.shown(reading.at) if reading else ''),
-        'suggested_iso': (reading.at.isoformat(timespec='minutes')
-                          if reading else ''),
+        'suggested_iso': (qd.to_ist(reading.at).isoformat(
+            timespec='minutes') if reading else ''),
         'suggested_source': (reading.source if reading else ''),
         'proposal': ({'id': proposal.id,
                       'shown': qd.shown(proposal.new_due_at),
-                      'iso': proposal.new_due_at.isoformat(
+                      'iso': qd.to_ist(proposal.new_due_at).isoformat(
                           timespec='minutes'),
                       'source': proposal.source or '',
                       'evidence': proposal.reason_text or ''}

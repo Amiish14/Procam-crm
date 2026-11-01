@@ -1332,7 +1332,12 @@ catch (err) { console.error('Employee list could not start loading', err); }
     <div class="card-hd"><div class="card-ttl">Person In-Charge · Scoreboard (click a row to filter)</div>
       <span class="f-cnt" id="picCnt"></span></div>
     <div class="tw"><table>
-      <thead><tr><th>PIC</th><th>Total</th><th>Active</th><th>Calls</th><th>Profile</th>
+      <!-- CRM-COCKPIT-02 §4.4. "Open leads" first, because that is
+           what a scoreboard is about, and the old "Total" column
+           renamed to what it actually counts: the "—" row read 883
+           with 822 of them already Lost, and nothing on the screen
+           said the number included closed work. -->
+      <thead><tr><th>PIC</th><th>Open leads</th><th title="Open and closed together">incl. closed</th><th>Calls</th><th>Profile</th>
       <th>Appts</th><th>Visits</th><th>RFQ</th><th>Won</th><th>Lost</th>
       <th>Conv %</th><th>Pipeline ₹ L</th><th>Won ₹ L</th></tr></thead>
       <tbody id="picTb"></tbody></table></div>
@@ -2634,7 +2639,7 @@ function dashRenderPicBoard(st){
   g('picTb').innerHTML = rows.length ? rows.map(p => `
     <tr onclick="dashToggleFilter('pic','${e(p.emp_code)}')" style="cursor:pointer;">
       <td><div class="td-m">${e(p.name)}</div><div class="td-s">${e(p.emp_code)}</div></td>
-      <td>${p.total}</td><td>${p.active}</td><td>${p.calls}</td>
+      <td style="font-weight:600;">${p.active}</td><td style="color:var(--text-3);">${p.total}</td><td>${p.calls}</td>
       <td>${p.profile}</td><td>${p.appts}</td><td>${p.visits}</td>
       <td>${p.rfqs}</td>
       <td style="color:#059669;font-weight:600;">${p.won}</td>
@@ -3381,8 +3386,13 @@ async function ldDueCard(id){
     + '<div class="ld-due-acts">' + buttons.join(' ') + '</div></div>'
     + offer
     + '<div class="ld-due-set">'
+    /* `quote_due_local`, not `quote_due_at`: the box is in IST,
+       which is what the person reads above it and what the server
+       parses a typed value as. Feeding it the stored UTC string
+       showed a time five and a half hours earlier than the heading,
+       and saving it unchanged moved the deadline. */
     + '<input type="datetime-local" id="ldDueAt" class="fmc"'
-    + ' value="' + e(d.quote_due_at || d.suggested_iso || '') + '">'
+    + ' value="' + e(d.quote_due_local || d.suggested_iso || '') + '">'
     + '<button type="button" class="btn btn-xs"'
     + ' onclick="ldDueSave()">Save date</button></div>'
     + '<div id="ldDueMore"></div>'

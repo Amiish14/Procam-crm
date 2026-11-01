@@ -1,0 +1,19 @@
+[Unit]
+Description=Procam CRM quote-due sweep — hourly
+
+[Timer]
+# Hourly, and not daily, on purpose. A submission deadline is a time
+# of day: a portal closes at 15:15. A daily pass would tell somebody
+# at 09:00 that an auction closed at 15:15 yesterday, which is the
+# state CRM-COCKPIT-02 exists to end — five Indo Tech auctions closed
+# in October with nothing recorded either way.
+#
+# Between 03:00 and 15:00 UTC, which is 08:30 to 20:30 IST: nobody is
+# going to act on a reminder at three in the morning, and a mail that
+# arrives then is a mail that is read as part of yesterday.
+OnCalendar=*-*-* 03,04,05,06,07,08,09,10,11,12,13,14,15:05:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

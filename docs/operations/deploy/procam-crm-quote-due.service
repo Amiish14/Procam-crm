@@ -1,0 +1,10 @@
+[Unit]
+Description=Procam CRM quote submission deadlines — misses and reminders (CRM-COCKPIT-02 §2.7)
+After=network.target
+
+[Service]
+Type=oneshot
+User=procamapp
+WorkingDirectory=/var/www/procam-crm
+ExecStart=/var/www/procam-crm/.venv/bin/python scripts/quote_due_sweep.py --apply
+SuccessExitStatus=1

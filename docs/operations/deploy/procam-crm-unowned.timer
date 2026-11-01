@@ -1,0 +1,13 @@
+[Unit]
+Description=Procam CRM unowned-lead check — daily, 08:30 IST
+
+[Timer]
+# 03:00 UTC = 08:30 IST, the time §4.5 names. Before the daily brief,
+# so a lead assigned this morning appears on its new owner's list in
+# the same brief rather than the next one.
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
