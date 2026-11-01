@@ -85,7 +85,10 @@ def main():
     ap.add_argument('--yes', action='store_true')
     args = ap.parse_args()
 
-    import app.models.cockpit02                           # noqa: F401
+    # `from ... import` and not `import app.models.cockpit02`: the
+    # latter binds the name `app` in this module and shadows the Flask
+    # app imported above, so the next `app.app_context()` fails.
+    from app.models import cockpit02 as _models            # noqa: F401
 
     with app.app_context():
         print(f'database: {db.engine.url}')

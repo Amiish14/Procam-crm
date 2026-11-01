@@ -282,7 +282,10 @@ def apply_due(lead, raw, *, actor=None, source=None, reason_code='set',
     # deadline, so a deadline that moves takes the follow-up with it.
     try:
         from app.services import followup
-        followup.after_due_change(lead, actor=actor)
+        # `was` is what makes the decision possible: a follow-up a day
+        # before the OLD deadline is this rule's own date and moves
+        # with it; anything else is somebody's choice and stands.
+        followup.after_due_change(lead, was=was, actor=actor)
     except Exception:                                     # noqa: BLE001
         pass
     return row

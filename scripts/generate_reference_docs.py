@@ -112,6 +112,15 @@ _GATES = (
     # readiness check that is itself switched off tells nobody
     # anything. Admins and directors, read-only.
     (re.compile(r"@_admin_only\b"), 'admin or director; read-only'),
+    # CRM-COCKPIT-02 §2. Deliberately NOT a feature-switch decorator,
+    # unlike every one above it: §0.1 of that prompt replaces the way
+    # this CRM has shipped so far — no switches, no pilot, live for
+    # everybody on deploy. So the gate is the session, and then the
+    # record: reading a lead is wide (Access Matrix scope), changing
+    # its due date is the owner, the secondary PIC or an
+    # administrator, which is the lead pop-up's own rule.
+    (re.compile(r"@_auth\b"), 'signed in; reading by scope, changing '
+                              'is owner, secondary PIC or admin'),
     (re.compile(r"session\.get\('emp_code'\)|_current_emp_code\(\)|"
                 r"'emp_code' not in session"), 'signed in (checked inline)'),
     (re.compile(r"require_auth|_login_required|_require_login|_authed\(\)"),

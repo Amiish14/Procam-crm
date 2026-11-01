@@ -224,6 +224,11 @@ BODY_PHRASES = (
     # sentence, and without these three the reminder proposed nothing.
     'auction closes', 'auction will close', 'closes on', 'closes at',
     'auction end', 'event ends', 'bid submission ends',
+    # An adverb between the words is normal English and was enough to
+    # miss a corrigendum: "the auction now closes 12 Nov". These two
+    # are last in the list and still need a date immediately after
+    # them, so "the window closes eventually" reads nothing.
+    'now closes', 'closes', 'closing',
     'quotation required by', 'quote required by',
     'offers are to reach us by', 'deadline',
 )

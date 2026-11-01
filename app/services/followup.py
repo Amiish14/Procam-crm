@@ -147,13 +147,23 @@ def missing(lead):
     return getattr(lead, 'followup_date', None) is None
 
 
-def after_due_change(lead, *, today=None, actor=None):
+def after_due_change(lead, *, was=None, today=None, actor=None):
     """Keep an RFQ-stage follow-up a day ahead of a moved deadline.
 
-    Called by the extension flow. Only moves a follow-up that the
-    rule itself had set — if the owner has chosen a date of their
-    own that still sits before the new deadline, it stands, because
-    a person's date is a decision and this one is a default.
+    `was` is the deadline the lead carried before the change, and the
+    whole decision turns on it. A follow-up sitting exactly a day
+    before the old deadline is the rule's own date — this module put
+    it there — so it moves with the deadline. Any other date was
+    chosen by a person, and a person's date is a decision, not a
+    default to be recalculated under them.
+
+    Without `was` there is nothing to compare against, so only a
+    missing or already-stale follow-up is touched. (The first version
+    of this compared the follow-up with the *new* deadline, which is
+    almost always earlier — so the guard was true every time and the
+    function did nothing at all. A test caught it; it would otherwise
+    have looked like it worked, because the field it writes is usually
+    already right.)
     """
     if days_for(getattr(lead, 'stage', '')) != BEFORE_DUE:
         return None
@@ -162,10 +172,15 @@ def after_due_change(lead, *, today=None, actor=None):
         return None
     from app.services import quote_due as qd
 
-    deadline = qd.to_ist(due).date()
     current = getattr(lead, 'followup_date', None)
-    if current is not None and current < deadline:
-        return None         # still ahead of the clock; leave it alone
+    deadline = qd.to_ist(due).date()
+    if current is not None:
+        if was is not None:
+            rules_own = qd.to_ist(was).date() - timedelta(days=1)
+            if current != rules_own:
+                return None     # somebody chose this date
+        elif current < deadline:
+            return None         # still ahead of the clock
     wanted = propose(lead, today=today)
     if wanted and wanted != current:
         lead.followup_date = wanted

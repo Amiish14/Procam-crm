@@ -6598,6 +6598,12 @@ for _mod_path, _bp_name in [
     # a CSRF token is a defence against a browser being used as a
     # confused deputy, and there is no browser here.
     ('app.integration.routes',   'integration_bp'),
+    # CRM-COCKPIT-02 §2 — the quote submission due date: setting it,
+    # confirming the one the CRM read, extending it with a reason,
+    # taking the date a later mail proposed, and recording Bid / Not
+    # bid when a deadline passed. Not behind a feature switch (§0.1):
+    # live for everybody the moment it is deployed.
+    ('app.quote_due.routes',     'quote_due_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])
