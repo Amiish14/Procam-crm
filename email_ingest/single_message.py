@@ -754,6 +754,69 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                     'classification': decision.klass,
                     'internet_message_id': imid}
 
+        # ── CRM-COCKPIT-02 §5.6 · one lead per portal number ─────────
+        # A reverse auction sends the alert, a reminder and often a
+        # corrigendum — two or three mails, each on its own thread
+        # with its own message id, so `thread_key` and the
+        # conversation id cannot hold them together. Eight duplicates
+        # were merged by hand on 01 November for this reason alone.
+        #
+        # The number can hold them: RA-57103, eRFQ-41688, a GeM bid
+        # number and a tender number all appear in every mail of the
+        # set. So before a new lead is made, look for an open lead
+        # already carrying this one — and if there is one, file the
+        # message against it and let it update the deadline.
+        _pkey = None
+        try:
+            from app.services import quote_due as _qd
+            _pkey = _qd.portal_key(msg.get('subject') or '',
+                                   _li.body_text(msg) or '')
+        except Exception:
+            log.exception('could not read a portal number on %s', imid)
+        if _pkey:
+            try:
+                from app.services import sales_rules as _rules
+                _held = (Lead.query
+                         .filter(Lead.portal_key == _pkey,
+                                 Lead.is_archived.isnot(True),
+                                 Lead.stage.in_(_rules.open_stages()))
+                         .order_by(Lead.id.asc()).first())
+            except Exception:
+                log.exception('could not look up portal number %s', _pkey)
+                _held = None
+            if _held is not None:
+                try:
+                    from app.services import quote_due_flow as _qdf
+                    _joined = _li.Decision(
+                        _li.Klass.REPLY, step=5.6, lead_id=_held.id,
+                        reason=f'the same portal number ({_pkey}) as '
+                               f'lead #{_held.id}')
+                    _file_against_lead(db, _joined, msg, extracted, log,
+                                       graph=graph, mailbox=mailbox)
+                    # The reminder or corrigendum often carries a new
+                    # deadline. Proposed, never applied (§2.5).
+                    _qdf.read_from_message(
+                        _held, subject=msg.get('subject') or '',
+                        body=_li.body_text(msg) or '',
+                        email_message_id=imid,
+                        received_at=email_parser.received_datetime(msg))
+                    db.session.commit()
+                    _record_ingest('attached', msg, _joined,
+                                   lead_id=_held.id,
+                                   reason=f'portal number {_pkey}')
+                    log.info('%s joined lead %s on portal number %s',
+                             imid, _held.id, _pkey)
+                    return {'status': 'skipped',
+                            'reason': f'portal number {_pkey}: joined '
+                                      f'lead {_held.id}',
+                            'lead_id': _held.id,
+                            'classification': 'portal_same_number',
+                            'internet_message_id': imid}
+                except Exception:
+                    db.session.rollback()
+                    log.exception('could not join %s to lead %s by '
+                                  'portal number', imid, _held.id)
+
         # ── Build Lead payload — shared enricher, same summary card poll uses.
         try:
             lead_kwargs = enrich_mod.build_enriched_lead_kwargs(
@@ -995,6 +1058,32 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
             # and the quote reports can see it at all.
             if _stage == 'Quoted' and not lead.quote_date:
                 lead.quote_date = (_client_sent or received).date()
+
+            # ── CRM-COCKPIT-02 §5.1, §5.6, §2 ────────────────────────
+            # Everything the message already told us, written onto the
+            # lead's own fields instead of left inside the extracted
+            # JSON: origin, destination, cargo, weight, dimensions,
+            # urgency — plus the portal number this enquiry belongs to
+            # and the deadline its subject line states. All marked
+            # "auto — confirm"; none of it overwrites anything.
+            try:
+                from app.services import autofill as _af
+                from app.services import quote_due as _qd
+                from app.services import quote_due_flow as _qdf
+
+                _af.apply(lead)
+                if not lead.portal_key:
+                    lead.portal_key = _qd.portal_key(
+                        lead.original_email_subject or '',
+                        lead.original_email_body or '') or None
+                _qdf.read_from_message(
+                    lead,
+                    subject=lead.original_email_subject or '',
+                    body=lead.original_email_body or '',
+                    email_message_id=imid,
+                    received_at=received)
+            except Exception:
+                log.exception('could not autofill from the mail %s', imid)
 
             if _rescue and _rescue['action'] == 'review':
                 try:

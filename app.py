@@ -698,6 +698,28 @@ class Lead(db.Model):
     last_activity_kind    = db.Column(db.String(20), nullable=True)
 
     # ── CRM-COCKPIT-02 §5.6 · one lead per portal number ───────────
+    # ── CRM-COCKPIT-02 §5.1 · what the mail already said ───────────
+    #: `email_extracted` has held origin/destination for ~400 leads,
+    #: cargo type for 420, weight for 197 and dimensions for 122 since
+    #: the AI extractor shipped — and the lead's own fields were empty
+    #: on all 915 open leads, so people were being asked to type what
+    #: the CRM had already read. These are those fields. The JSON stays
+    #: as the evidence; these are what reports, filters and the RFQ
+    #: read, because none of them can query a JSON blob.
+    cargo_type       = db.Column(db.String(120))
+    cargo_qty        = db.Column(db.String(60))
+    cargo_weight_mt  = db.Column(db.Float)
+    cargo_dimensions = db.Column(db.String(200))
+    special_requirements = db.Column(db.Text)
+    urgency          = db.Column(db.String(20))
+    #: Which of the fields above (and origin/destination/industry/
+    #: state/city) were filled by the CRM and not yet agreed with by a
+    #: person — a JSON list of field names. "auto — confirm" on the
+    #: screen reads this. Not one boolean per field: a boolean per
+    #: field is eight columns that drift, and the question is always
+    #: "which of these has nobody checked".
+    auto_filled_json = db.Column(db.Text)
+
     #: RA-57103, eRFQ-41688, a GeM bid number, a tender number —
     #: normalised. A reverse auction sends the alert, a reminder and a
     #: corrigendum as separate mails on separate threads, so
@@ -6604,6 +6626,10 @@ for _mod_path, _bp_name in [
     # bid when a deadline passed. Not behind a feature switch (§0.1):
     # live for everybody the moment it is deployed.
     ('app.quote_due.routes',     'quote_due_bp'),
+    # §5 — what the CRM fills in and the person confirms: the fields
+    # read off the mail, the one-tap call log, and the accounts whose
+    # industry, state or city is blank.
+    ('app.minimum_entry.routes', 'minimum_entry_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])

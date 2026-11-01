@@ -13,6 +13,11 @@ CRM-COCKPIT-02 — the columns and tables this release needs.
   leads.last_activity_at      when anything last happened (§4.1)
   leads.last_activity_kind    what that last thing was
   leads.portal_key            RA / eRFQ / GeM / tender number (§5.6)
+  leads.cargo_type …          what the mail already said (§5.1):
+                              cargo type, qty, weight, dimensions,
+                              special requirements, urgency, and
+                              `auto_filled_json` — which of them the
+                              CRM filled and nobody has confirmed
   lead_quote_due_history      every move of a due date (§2.4)
   crm_bulk_change_log         the reversible log (§8)
 
@@ -45,6 +50,15 @@ COLUMNS = (
     ('leads', 'last_activity_at', 'DATETIME'),
     ('leads', 'last_activity_kind', 'VARCHAR(20)'),
     ('leads', 'portal_key', 'VARCHAR(60)'),
+    # §5.1 — the fields the mail already said, which until now only
+    # existed inside `email_extracted_json`.
+    ('leads', 'cargo_type', 'VARCHAR(120)'),
+    ('leads', 'cargo_qty', 'VARCHAR(60)'),
+    ('leads', 'cargo_weight_mt', 'FLOAT'),
+    ('leads', 'cargo_dimensions', 'VARCHAR(200)'),
+    ('leads', 'special_requirements', 'TEXT'),
+    ('leads', 'urgency', 'VARCHAR(20)'),
+    ('leads', 'auto_filled_json', 'TEXT'),
 )
 TABLES = ('lead_quote_due_history', 'crm_bulk_change_log')
 

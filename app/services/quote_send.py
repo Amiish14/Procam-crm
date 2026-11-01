@@ -30,7 +30,11 @@ Masking is not optional on a vendor mail
 """
 from __future__ import annotations
 
+import logging
+
 from app.services import flags, outbox
+
+log = logging.getLogger(__name__)
 
 #: Event keys, so notification preferences and the business-
 #: development cap can tell these apart from everything else.
@@ -69,6 +73,25 @@ def send_quote(quote, *, to, actor=None, subject=None, note=None,
 
     quote_build.recalculate(quote, actor=actor)
     printed = quote_terms.for_print(quote)
+
+    # CRM-COCKPIT-02 §5.3 / §9.9. The quotation goes out of this CRM,
+    # against a record holding the number, the value, the date and the
+    # validity — and until now the lead it belonged to stayed at RFQ
+    # Generated with every quote field empty until somebody typed the
+    # same four figures in again. That is why 137 leads at quoting
+    # stages had 28 quote dates between them.
+    #
+    # Here rather than in the route: there are four ways to send a
+    # quotation in this CRM and all four come through this function.
+    try:
+        from app.services import lead_actions
+
+        _lead = lead_actions.lead_of_quote(quote)
+        if _lead is not None:
+            lead_actions.quote_sent(_lead, quote, actor=actor)
+    except Exception:                                     # noqa: BLE001
+        log.exception('could not update the lead from quote %s',
+                      getattr(quote, 'id', '?'))
 
     subject = subject or (
         f'Quotation {quote.quote_number}' if quote.quote_number
