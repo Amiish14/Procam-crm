@@ -194,6 +194,9 @@ def test_the_form_cannot_set_a_late_stage_without_a_value(world):
 def test_the_form_may_send_the_value_in_the_same_save(world):
     r = _client(ADMIN).put(f'/api/leads/{world["bare"]}',
                            json={'stage': 'Quoted',
+                                 'followup': '2026-12-01',
+                                 # CRM-COCKPIT-02 §2.2
+                                 'quote_due_at': '2026-12-05T18:00',
                                  'estimated_value': '123456'})
     assert r.status_code == 200, r.get_json()
     with flask_app.app_context():

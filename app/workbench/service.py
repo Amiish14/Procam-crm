@@ -23,6 +23,8 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import load_only
 
+from app.services import last_activity as _la
+from app.services import quote_due as _qd
 from app.services import sales_rules as rules
 
 #: Hygiene checks that describe a lead. Reused from Data Quality rather
@@ -46,6 +48,14 @@ _LEAD_COLUMNS = (
     # column on Freight Forwarding leads. Both are read by filter
     # predicates, so they have to travel with the item.
     'phone_call_date', 'intro_mail_date', 'meeting_date', 'mode',
+    # CRM-COCKPIT-02. The deadline, the silence stamp and the portal
+    # number are read by the new filters, so they travel with the
+    # item like everything else here; `source` and `email_message_id`
+    # are what the mailbox scope is decided on (§4.3).
+    'quote_due_at', 'quote_due_confirmed', 'quote_due_extensions',
+    'quote_due_missed_at', 'last_activity_at', 'last_activity_kind',
+    'portal_key', 'source', 'email_message_id', 'received_at',
+    'bid_outcome', 'quote_value_num',
 )
 
 
@@ -53,10 +63,17 @@ def _today():
     return rules.business_today()
 
 
-def _lead_rows(sc):
+def _lead_rows(sc, screen=None):
     from app import Lead
     q = rules.open_leads(sc=sc).options(
         load_only(*[getattr(Lead, c) for c in _LEAD_COLUMNS]))
+    if screen:
+        # CRM-COCKPIT-02 §4.3. Narrowed in the query rather than after
+        # the fact: the board loads every open lead in the viewer's
+        # boundary, and on a mailbox-scoped screen most of them are
+        # rows nobody is going to count.
+        from app.services import screen_scope
+        q = screen_scope.apply(q, screen)
     return q.all()
 
 
@@ -264,7 +281,7 @@ def _primary_group(conditions):
 G_NOTHING_OUTSTANDING = 'nothing_outstanding'
 
 
-def lead_items(sc, *, today=None, include_quiet=False):
+def lead_items(sc, *, today=None, include_quiet=False, screen=None):
     """Every lead that needs attention, as action items.
 
     `include_quiet` keeps the leads that trip no condition at all. The
@@ -282,7 +299,7 @@ def lead_items(sc, *, today=None, include_quiet=False):
     """
     from app.services import lead_value
     today = today or _today()
-    leads = _lead_rows(sc)
+    leads = _lead_rows(sc, screen)
     lead_ids = [l.id for l in leads]
     idle = rules.idle_days_map(lead_ids)
     hygiene = _hygiene_ids(sc)
@@ -359,6 +376,29 @@ def lead_items(sc, *, today=None, include_quiet=False):
             'value_confirmed': l.value_confirmed,
             'last_activity_days': contacted_days,
             'quiet_days': idle_days,
+            # ── CRM-COCKPIT-02 ──────────────────────────────────────
+            #: §4.1 — days since anything at all happened, from the
+            #: lead's own stamp. `quiet_days` above measures silence
+            #: towards the customer (no outbound contact) and is a
+            #: different question; both are kept because the cockpit
+            #: asks the second and the Workbench asks the first.
+            'idle_days': _la.quiet_days(l, now=now),
+            'last_activity_kind': l.last_activity_kind or '',
+            #: §2 — the submission deadline. Deliberately not the
+            #: existing `quote_due` key above, which is the RFQ
+            #: record's internal target: one is when the client stops
+            #: accepting offers, the other is when we wanted ours
+            #: ready, and conflating them is how a tile would report
+            #: an auction as open after it closed.
+            'submission_due': (l.quote_due_at.isoformat(
+                timespec='minutes') if l.quote_due_at else ''),
+            'submission_due_colour': _qd.colour(l.quote_due_at, now=now),
+            'submission_hours_left': _qd.hours_left(l.quote_due_at,
+                                                    now=now),
+            'submission_confirmed': bool(l.quote_due_confirmed),
+            'submission_missed': bool(l.quote_due_missed_at),
+            'submission_extensions': l.quote_due_extensions or 0,
+            'portal_key': l.portal_key or '',
             'next_action': l.next_action or '',
             'next_action_date': str(l.followup_date) if l.followup_date else '',
             'quote_due': (rfq or {}).get('quote_due', ''),
@@ -774,7 +814,7 @@ def _sort_key(item):
 
 def board(sc, *, today=None, group=None, filter_key=None, age='',
           search='', vertical='', stage='', owner='', mode='', page=1,
-          per_page=50, sort='priority'):
+          per_page=50, sort='priority', screen=None):
     """The whole Workbench: one counts object, a filtered page of
     items, and the quote-ageing buckets.
 
@@ -789,7 +829,12 @@ def board(sc, *, today=None, group=None, filter_key=None, age='',
     from app.workbench import filters as wf
 
     today = today or _today()
-    items, _rfq_ageing = lead_items(sc, today=today, include_quiet=True)
+    # CRM-COCKPIT-02 §4.3 — the screen scope rides with the build, so
+    # the counts, the chips and the rows are all over one population.
+    # Passing it here rather than filtering the result keeps the
+    # account, task and mail items consistent with the leads.
+    items, _rfq_ageing = lead_items(sc, today=today, include_quiet=True,
+                                    screen=screen)
     items += account_items(sc, today=today)
     tasks = task_items(sc, today=today)
     truncated = len(tasks) >= TASK_CEILING

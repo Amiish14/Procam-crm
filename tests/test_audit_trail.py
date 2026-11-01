@@ -71,7 +71,11 @@ def _events(action, entity_id=None):
 
 def test_a_stage_change_through_the_api_is_audited(people):
     r = _c('ATADM', 'admin').put(f'/api/leads/{people["lead"]}',
-                                 json={'stage': 'Call Done'},
+                                 json={'stage': 'Call Done',
+                                       # CRM-COCKPIT-02 §3.1 — a
+                                       # stage change carries the
+                                       # next follow-up date.
+                                       'followup': '2026-12-01'},
                                  environ_base={'REMOTE_ADDR': '10.1.2.3'})
     assert r.status_code == 200
     with flask_app.app_context():
@@ -231,7 +235,9 @@ def test_only_access_administrators_can_read_the_trail(people):
 
 def test_the_trail_filters_by_action_record_and_person(people):
     c = _c('ATADM', 'admin')
-    c.put(f'/api/leads/{people["lead"]}', json={'stage': 'Meeting'})
+    c.put(f'/api/leads/{people["lead"]}',
+          json={'stage': 'Meeting', 'followup': '2026-12-01',
+                'quote_due_at': '2026-12-05T18:00'})
     got = c.get(f'/api/audit/events?action=lead.stage&entity_type=lead'
                 f'&entity_id={people["lead"]}&actor=atadm').get_json()
     assert got['events']

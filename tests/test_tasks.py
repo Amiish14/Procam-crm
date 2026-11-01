@@ -209,7 +209,10 @@ def test_closing_a_lead_from_the_edit_form_closes_its_tasks(world):
 
 def test_a_lead_that_is_not_closed_keeps_its_tasks(world):
     lid = world['leads']['live']
-    _client(ADMIN).put(f'/api/leads/{lid}', json={'stage': 'Quoted'})
+    _client(ADMIN).put(f'/api/leads/{lid}',
+                       json={'stage': 'Quoted',
+                             'followup': '2026-12-01',
+                             'quote_due_at': '2026-12-05T18:00'})
     with flask_app.app_context():
         assert len(task_autoclose.open_tasks_for(lid)) == 1
 
@@ -554,7 +557,10 @@ def test_a_stage_change_on_the_edit_form_reaches_the_engine(world):
     try:
         _client(ADMIN).put(f'/api/leads/{world["leads"]["live"]}',
                            json={'stage': 'Quoted',
-                                 'estimated_value': '100000'})
+                                 'estimated_value': '100000',
+                                 # CRM-COCKPIT-02 §2.2 / §3.1
+                                 'quote_due_at': '2026-12-05T18:00',
+                                 'followup': '2026-12-01'})
     finally:
         _app_mod._fire_task_hook = real
     assert calls, 'the edit form did not call the task engine'
@@ -591,7 +597,9 @@ def test_a_save_that_resubmits_the_same_stage_raises_nothing(world):
         with flask_app.app_context():
             stage = db.session.get(Lead, world['leads']['live']).stage
         _client(ADMIN).put(f'/api/leads/{world["leads"]["live"]}',
-                           json={'stage': stage})
+                           json={'stage': stage,
+                                 'followup': '2026-12-01',
+                                 'quote_due_at': '2026-12-05T18:00'})
     finally:
         _app_mod._fire_task_hook = real
     assert calls == []

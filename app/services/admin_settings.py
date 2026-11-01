@@ -89,6 +89,23 @@ DEFAULTS = {
         'The only people who see buy rates and margin on Freight '
         'Forwarding / Project Freight quotes. Add employee codes on this '
         'screen.'),
+    # ── CRM-COCKPIT-02 §3.2 ──────────────────────────────────────────
+    'followup_days_by_stage': (
+        {'New Opportunity': 1, 'New': 1, 'Contacted': 3,
+         'Call Done': 3, 'Profile Sent': 3, 'Appointment': 3,
+         'Business Discussion': 3, 'Visit Done': 3,
+         'RFQ Generated': -1, 'Quoted': 2, 'Under Negotiation': 2},
+        'How many days ahead the CRM proposes the next follow-up, by '
+        'stage. The user accepts with one tap or picks another date. '
+        '-1 on RFQ Generated means one day before the quote due date, '
+        'which is the only date that matters at that stage.'),
+    'followup_default_days': (
+        3, 'The proposal for a stage not named above. Never zero: a '
+           'follow-up due today is a follow-up that is already late.'),
+    'quote_due_reminder_hours': (
+        [48, 24], 'When to remind the owner before a quote is due '
+                  '(hours). The 48-hour one is also what fills the '
+                  '"Due in 48 h" tile.'),
     'quote_validity_days': (
         {'Heavy Transport': 15, 'Project Freight': 7,
          'Freight Forwarding': 7, 'Installation': 30, 'Warehousing': 30},

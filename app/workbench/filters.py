@@ -261,6 +261,113 @@ def _everything(_item, _ctx):
     return True
 
 
+# ── CRM-COCKPIT-02 ───────────────────────────────────────────────────
+#: §4.2 — the three silence windows the cockpit shows. Open leads
+#: only, measured on `last_activity_at`, which is why these read zero
+#: before this release: there was nothing to measure.
+NO_ACTIVITY_WINDOWS = (7, 15, 30)
+
+
+def _is_open_lead(item, ctx):
+    return item.get('kind') == 'lead' and \
+        item.get('stage') in rules.open_stages()
+
+
+def _idle_at_least(item, days):
+    idle = item.get('idle_days')
+    return idle is not None and idle >= days
+
+
+def _no_activity_7d(item, ctx):
+    return _is_open_lead(item, ctx) and _idle_at_least(item, 7)
+
+
+def _no_activity_15d(item, ctx):
+    return _is_open_lead(item, ctx) and _idle_at_least(item, 15)
+
+
+def _no_activity_30d(item, ctx):
+    return _is_open_lead(item, ctx) and _idle_at_least(item, 30)
+
+
+def _submission_due_today(item, ctx):
+    """§2.9 — our offer is due before the end of today (IST)."""
+    if not _is_open_lead(item, ctx) or not item.get('submission_due'):
+        return False
+    if item.get('submission_missed'):
+        return False
+    left = item.get('submission_hours_left')
+    # Up to the end of the IST day, not a 24-hour window: "due today"
+    # has to mean the same thing as the date a person reads on screen.
+    return left is not None and 0 <= left <= _hours_left_in_ist_day(ctx)
+
+
+def _hours_left_in_ist_day(ctx):
+    from datetime import datetime, timedelta
+
+    from app.services import quote_due as qd
+
+    now = (ctx or {}).get('now') or datetime.utcnow()
+    local = now + qd.IST
+    end = datetime.combine(local.date(), datetime.max.time())
+    return max(0.0, (end - local).total_seconds() / 3600.0)
+
+
+def _submission_due_48h(item, ctx):
+    """§2.9 — due inside two days and not yet answered."""
+    if not _is_open_lead(item, ctx) or not item.get('submission_due'):
+        return False
+    if item.get('submission_missed'):
+        return False
+    left = item.get('submission_hours_left')
+    return left is not None and 0 <= left <= 48
+
+
+def _submission_missed(item, ctx):
+    """§2.7 — the clock passed with no quote and no Bid/Not bid."""
+    return _is_open_lead(item, ctx) and bool(item.get('submission_missed'))
+
+
+def _submission_due_missing(item, ctx):
+    """§2.8 — at RFQ Generated or later with no deadline at all.
+
+    The tile owners fill. A lead here is not a mistake by the person
+    holding it: 109 of the 137 leads at these stages had no date
+    because there was no field to put one in until today.
+    """
+    if not _is_open_lead(item, ctx):
+        return False
+    if item.get('submission_due'):
+        return False
+    if item.get('stage') not in QUOTE_STAGES:
+        return False
+    # §2.2 — the deadline is mandatory *until a quote is recorded*.
+    # Once our offer is in, when the client stopped accepting offers
+    # is history, and a tile asking the owner to go and find it is
+    # asking for a number that changes nothing.
+    return not (item.get('quote_number')
+                or item.get('quote_sent_at')
+                or (item.get('value_inr') and item.get('stage')
+                    == 'Won'))
+
+
+def _submission_unconfirmed(item, ctx):
+    """§2.3 — a date the CRM read that nobody has agreed with yet."""
+    return (_is_open_lead(item, ctx) and bool(item.get('submission_due'))
+            and not item.get('submission_confirmed'))
+
+
+def _followup_missing(item, ctx):
+    """§3.5 — must read zero after the back-fill, and stay zero."""
+    if not _is_open_lead(item, ctx):
+        return False
+    from app.services import cockpit02_gate as c2
+
+    if item.get('stage') in c2.FOLLOWUP_EXEMPT:
+        return False
+    return not item.get('next_action_date')
+
+
 # ── the registry ─────────────────────────────────────────────────────
 class Filter:
     """One view of the board.
@@ -354,6 +461,47 @@ WORKBENCH_FILTERS = (
            note='No call, no introduction mail and no meeting, ever.'),
     Filter('in_negotiation', _in_negotiation, overview='In negotiation',
            note='Quoted or under negotiation.'),
+    # ── CRM-COCKPIT-02 §2.9, §3.5, §4.2 ─────────────────────────────
+    # Each one is a Filter and nothing else, so the tile, the chip and
+    # the rows behind ?filter=<key> are the same call. That is the
+    # whole of §4.6, and the reason these are not four more ad-hoc
+    # counts in the cockpit endpoint.
+    Filter('quote_due_today', _submission_due_today,
+           tile='Quotes due today', chip='Quotes due today',
+           overview='Quotes due today',
+           note='Our offer has to be with the client before the end '
+                'of today, and no quote is recorded yet.'),
+    Filter('quote_due_48h', _submission_due_48h,
+           tile='Due in 48 h', chip='Due in 48 h',
+           note='The submission deadline is inside two days.'),
+    Filter('missed_submission', _submission_missed,
+           tile='Missed submission', chip='Missed submission',
+           overview='Missed submission',
+           note='The deadline passed with no quote recorded and no '
+                'Bid / Not bid decision. Somebody has to say which '
+                'it was.'),
+    Filter('due_date_missing', _submission_due_missing,
+           tile='Due date missing', chip='Due date missing',
+           note='At RFQ Generated or later with no submission '
+                'deadline. The owner fills it from the enquiry mail.'),
+    Filter('due_date_unconfirmed', _submission_unconfirmed,
+           tile='Due date to confirm', chip='Due date to confirm',
+           note='The CRM read this date off the mail and nobody has '
+                'checked it yet.'),
+    Filter('followup_missing', _followup_missing,
+           tile='Follow-up missing', chip='Follow-up missing',
+           note='An open lead with no next date. Nobody is working a '
+                'lead that is on no list.'),
+    Filter('no_activity_7d', _no_activity_7d,
+           tile='No activity 7D', chip='No activity 7D',
+           note='Nothing at all has happened on this lead for a '
+                'week — no mail, note, call, quote or stage change.'),
+    Filter('no_activity_15d', _no_activity_15d,
+           tile='No activity 15D', chip='No activity 15D',
+           note='Nothing for a fortnight.'),
+    Filter('no_activity_30d', _no_activity_30d,
+           tile='No activity 30D', chip='No activity 30D',
+           note='Nothing for a month.'),
     Filter('value_missing', _value_missing,
            tile='Value missing', chip='Value missing',
            note='Open and at RFQ Generated or later with no quoted '

@@ -2038,6 +2038,15 @@ const _SCOPED_ENDPOINTS = [
   '/api/dashboard/records',
   '/api/dashboard/summary',
   '/api/stats',
+  /* CRM-COCKPIT-02 §4.3. This was the missing line. The KPI row
+     reads /api/stats and had the scope appended; the My Work strip
+     reads /api/my-work and did not, so the strip counted every team
+     lead (154 overdue) while the KPI row counted mailbox leads (128)
+     and nothing on screen said why. Both ask the same question now,
+     and both print the scope they were answered for. */
+  '/api/my-work',
+  '/api/crm2/cockpit',
+  '/api/crm2/my-work',
 ];
 function _applyScope(url){
   if (CRM.dataScope !== 'mailbox') return url;

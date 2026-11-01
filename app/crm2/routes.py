@@ -90,11 +90,17 @@ def cockpit_page():
 def api_cockpit():
     from app.workbench import service as wb
 
+    from app.services import screen_scope as ss
+
     sc = sc_mod.current()
+    # §4.3 — one scope for this whole screen. The KPI row and the My
+    # Work strip were two populations with no label; every number
+    # below now comes from this one and says so.
+    screen = ss.wanted()
     # (items, ageing) — the second half is the RFQ ageing buckets,
     # which the cockpit does not show.
-    items, _ageing = wb.lead_items(sc, include_quiet=True)
-    leads = rules.open_leads(sc=sc).all()
+    items, _ageing = wb.lead_items(sc, include_quiet=True, screen=screen)
+    leads = ss.apply(rules.open_leads(sc=sc), screen).all()
     rows = stage_map.pipeline(leads)
 
     value_known = sum(1 for l in leads
@@ -124,7 +130,105 @@ def api_cockpit():
         # §6.5. Empty dict while the chain is off, so the cockpit
         # is exactly the page it was.
         'panels': _chain_panels(),
+        # ── CRM-COCKPIT-02 ───────────────────────────────────────────
+        # §4.3 — the label that goes beside every number on this page.
+        'data_scope': ss.described(screen),
+        # §2.9 / §3.5 / §4.2 — the tiles. Every count here is a
+        # Workbench filter run over the items above, so the tile, the
+        # chip and the list behind it cannot disagree (§4.6).
+        'tiles': _c02_tiles(items),
+        # §4.4 — the scoreboard counts open leads; the Total column
+        # is labelled for what it is.
+        'scoreboard': _scoreboard(leads),
     })
+
+
+#: §2.9, §3.5 and §4.2, in the order they appear on the cockpit.
+#: `key` is the Workbench filter behind the tile, which is also what
+#: `/my-work?filter=<key>` lists — tile = chip = list = footer.
+C02_TILES = (
+    ('quote_due_today', 'Quotes due today'),
+    ('quote_due_48h', 'Due in 48 h'),
+    ('missed_submission', 'Missed submission'),
+    ('due_date_missing', 'Due date missing'),
+    ('due_date_unconfirmed', 'Due date to confirm'),
+    ('followup_missing', 'Follow-up missing'),
+    ('no_activity_7d', 'No activity 7D'),
+    ('no_activity_15d', 'No activity 15D'),
+    ('no_activity_30d', 'No activity 30D'),
+)
+
+
+def _c02_tiles(items):
+    from app.workbench import filters as wf
+
+    # The same context the board builds, so a tile here and the same
+    # tile on the Workbench are one predicate over one population.
+    ctx = {'today': rules.business_today()}
+    out = []
+    for key, label in C02_TILES:
+        found = wf.BY_KEY.get(key)
+        if found is None:
+            continue
+        rows = [i for i in items if found.matches(i, ctx)]
+        out.append({
+            'key': key,
+            'label': label,
+            'count': len(rows),
+            'note': found.note or '',
+            'opens': f'/my-work?filter={key}',
+        })
+    return out
+
+
+def _scoreboard(open_leads_):
+    """§4.4 — by owner, open leads only, with the total named.
+
+    The "—" row read 883 leads, of which 822 were already Lost: the
+    scoreboard was counting every lead ever created against an owner
+    nobody had set, so the biggest number on the cockpit was a pile of
+    closed records. Open leads are what a scoreboard is for; the
+    closed ones are still available, in a column that says what it is.
+    """
+    from app import Lead
+    from app.services import screen_scope as ss
+
+    by_owner = {}
+    for lead in open_leads_:
+        code = (lead.assigned_to or '').strip()
+        name = (lead.assigned_name or '').strip() or code
+        row = by_owner.setdefault(code, {
+            'emp_code': code,
+            # The row every reader stumbled on. It is not a person, so
+            # it is not drawn as one.
+            'name': name or 'No owner',
+            'open_leads': 0, 'incl_closed': 0})
+        row['open_leads'] += 1
+
+    # The "incl. closed" column, one grouped query rather than a
+    # second pass over the whole table.
+    try:
+        from app import db
+        sc = sc_mod.current()
+        q = ss.apply(sc_mod.leads(Lead.query, sc=sc), ss.wanted())
+        rows = (q.with_entities(Lead.assigned_to,
+                                db.func.count(Lead.id))
+                .group_by(Lead.assigned_to).all())
+        for code, total in rows:
+            code = (code or '').strip()
+            if code in by_owner:
+                by_owner[code]['incl_closed'] = total
+    except Exception:                                     # noqa: BLE001
+        pass
+
+    out = sorted(by_owner.values(), key=lambda r: -r['open_leads'])
+    return {
+        'rows': out,
+        # The words the column headers use, so the screen cannot
+        # label them something else.
+        'columns': [{'key': 'open_leads', 'label': 'Open leads'},
+                    {'key': 'incl_closed', 'label': 'incl. closed'}],
+    }
 
 
 def _chain_panels():

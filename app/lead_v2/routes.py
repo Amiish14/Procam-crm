@@ -20,6 +20,7 @@ screen never shows only "no".
 """
 from __future__ import annotations
 
+from datetime import datetime
 from functools import wraps
 
 from flask import (Blueprint, jsonify, render_template, request,
@@ -137,6 +138,31 @@ def api_stage(lead_id):
             {'lead_id': lead.id, 'vertical': lead.procam_vertical or '',
              'head': _head_of(lead)}, http=403)
         return jsonify(body), status
+
+    # CRM-COCKPIT-02 §2.3 / §3.2 — the strip sends the two dates in
+    # the same POST as the move, because that is what "the system
+    # proposes, the user accepts with one tap" means: one request,
+    # not a refusal followed by a second screen. They are written
+    # before `move` so its own check sees them.
+    from app.services import cockpit02_gate as c2
+    if data.get('quote_due_at') or data.get('quote_due'):
+        try:
+            c2.apply_due(lead,
+                         data.get('quote_due_at') or data.get('quote_due'),
+                         actor=_me(),
+                         source=(data.get('quote_due_source') or 'user'),
+                         confirmed=True)
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc),
+                           needs='quote_due_at'), 400
+    if data.get('followup'):
+        try:
+            lead.followup_date = datetime.strptime(
+                str(data['followup'])[:10], '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify(ok=False,
+                           error='I could not read that follow-up date.',
+                           needs='followup'), 400
 
     ok, detail = lead_flow.move(lead, to, actor=_me(),
                                 sub_status=data.get('sub_status'),

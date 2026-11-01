@@ -76,17 +76,26 @@ SUB_STATUSES = ('Call done', 'Profile sent', 'Discussion',
 REQUIRED = {
     'New': (('company_id', 'Account', 'summary'),
             ('assigned_to', 'Owner', 'summary'),
-            ('procam_vertical', 'Vertical', 'summary')),
-    'Contacted': (('_activity', 'One activity logged', 'history'),),
+            ('procam_vertical', 'Vertical', 'summary'),
+            ('_followup', 'Next follow-up date', 'summary')),
+    'Contacted': (('_activity', 'One activity logged', 'history'),
+                  ('_followup', 'Next follow-up date', 'summary')),
     'RFQ': (('_scope', 'Cargo, and the route or the site', 'summary'),
             ('_target', 'Target date', 'summary'),
             ('opportunity_value_num', 'Opportunity value', 'summary'),
-            ('value_basis', 'How the value was arrived at', 'summary')),
+            ('value_basis', 'How the value was arrived at', 'summary'),
+            # CRM-COCKPIT-02 §2.2 / §3.1
+            ('_quote_due', 'Quote submission due date', 'summary'),
+            ('_followup', 'Next follow-up date', 'summary')),
     'Quoted': (('quote_no', 'Quote no.', 'quote'),
                ('quote_value_num', 'Quote value', 'quote'),
                ('quote_date', 'Quote date', 'quote'),
-               ('quote_validity_date', 'Valid until', 'quote')),
-    'Negotiation': (('_revised', 'Latest revised value', 'quote'),),
+               ('quote_validity_date', 'Valid until', 'quote'),
+               ('_followup', 'Next follow-up date', 'summary')),
+    'Negotiation': (('_revised', 'Latest revised value', 'quote'),
+                    ('_followup', 'Next follow-up date', 'summary')),
+    # Won asks for no follow-up: §3.1 exempts it, and a won deal with
+    # a next date keeps appearing on somebody's morning list.
     'Won': (('_final', 'Final value', 'quote'),),
 }
 
@@ -140,7 +149,7 @@ def tabs_for(lead):
 
 
 # ── what is missing ──────────────────────────────────────────────────
-def _has(lead, field):
+def _has(lead, field, stage=None):
     """Whether this requirement is met. The ones beginning with an
     underscore are questions about the lead, not single columns."""
     if field == '_activity':
@@ -161,6 +170,17 @@ def _has(lead, field):
                  and (getattr(lead, 'destination', '') or '').strip())
         site = (getattr(lead, 'site_location', '') or '').strip()
         return bool(cargo and (route or site))
+    if field in ('_quote_due', '_followup'):
+        # CRM-COCKPIT-02 §2.2 / §3.1, asked about the stage the lead
+        # is moving TO. Asking about the stage it is on would let a
+        # New lead walk into RFQ Generated without a deadline, which
+        # is the one move the rule exists to stop.
+        from app.services import cockpit02_gate as c2
+        target = TO_STAGE.get(stage, stage) if stage \
+            else getattr(lead, 'stage', '')
+        if field == '_quote_due':
+            return not c2.quote_due_needed(lead, target)
+        return not c2.followup_needed(lead, target)
     if field == '_target':
         return bool(getattr(lead, 'rfq_expected_date', None)
                     or getattr(lead, 'opp_close_date', None)
@@ -178,7 +198,7 @@ def missing_for(lead, stage):
     """What `stage` still wants, as [{field, label, tab}]."""
     out = []
     for field, label, tab in REQUIRED.get(stage, ()):
-        if not _has(lead, field):
+        if not _has(lead, field, stage):
             out.append({'field': field, 'label': label, 'tab': tab})
     return out
 

@@ -330,7 +330,10 @@ def test_a_stage_move_writes_history_and_an_audit_row():
         db.session.commit()
         lead_id = lead.id
     _client().post(f'/api/leads/{lead_id}/stage',
-                   json={'to': 'Contacted'})
+                   json={'to': 'Contacted',
+                         # CRM-COCKPIT-02 §3.1 — the strip sends the
+                         # next follow-up with the move.
+                         'followup': '2026-12-01'})
     with flask_app.app_context():
         from app.models.audit import AuditEvent
         rows = _main.LeadStageHistory.query.filter_by(

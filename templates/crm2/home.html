@@ -30,6 +30,16 @@
   .ck-tile b { display:block; font-size:25px; font-weight:800;
       font-variant-numeric:tabular-nums; line-height:1.25; }
   .ck-tile span { font-size:12px; color:#6b7280; }
+  /* §4.3 — the label that says which leads these numbers are over. */
+  .ck-scope { font-size:12px; color:#6b7280; margin:2px 0 8px; }
+  .ck-scope b { font-weight:700; color:#374151; }
+  /* §2.6 — one colour rule for a deadline, the same on every
+     surface: red under a day, orange under two, green beyond. */
+  a.ck-tile { text-decoration:none; color:inherit; display:block; }
+  a.ck-tile:hover { border-color:#9ca3af; }
+  .ck-tile.ck-red b { color:#b91c1c; }
+  .ck-tile.ck-orange b { color:#b45309; }
+  .ck-tile.ck-zero b { color:#9ca3af; }
   .ck-map { background:#fff; border:1px solid #e5e7eb; border-radius:10px;
       padding:4px 0; margin-top:16px; }
   .ck-row { display:grid; grid-template-columns:150px 1fr 74px;
@@ -102,7 +112,12 @@
     <div class="ck-hits" id="hits"></div>
   </div>
 
+  <div class="ck-scope" id="scope"></div>
   <div class="ck-tiles" id="tiles"></div>
+  {# §2.9, §3.5 and §4.2 — the submission, follow-up and silence
+     tiles. Each opens the Workbench on its own filter, which lists
+     exactly the number shown (§4.6). #}
+  <div class="ck-tiles" id="c02tiles" style="margin-top:10px"></div>
   {# §6.5 — the chain's own panels, each opening its list. Absent
      entirely while FEATURE_RFQ_CHAIN is off. #}
   <div class="ck-tiles" id="panels" style="margin-top:10px"></div>
@@ -128,8 +143,16 @@ const crmUrl = "{{ url_prefix }}";
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
+/* CRM-COCKPIT-02 §4.3. The cockpit asks for the same population the
+   rest of the CRM asks for — `CRM.dataScope` in the main shell, which
+   has been pinned to the mailbox since September. Sent on every call
+   from this page so no two numbers on it are over different leads,
+   and the label the server returns is printed beside them. */
+const DATA_SCOPE = 'mailbox';
+
 async function jget(u){
-  const r = await fetch(crmUrl + u, {headers:{'Accept':'application/json'}});
+  const url = u + (u.includes('?') ? '&' : '?') + 'scope=' + DATA_SCOPE;
+  const r = await fetch(crmUrl + url, {headers:{'Accept':'application/json'}});
   if (!r.ok) throw new Error(r.status);
   return r.json();
 }
@@ -169,6 +192,14 @@ async function run(){
 function tile(n, label){
   return '<div class="ck-tile"><b>' + n + '</b><span>'
     + esc(label) + '</span></div>';
+}
+
+/* §2.6 — the deadline tiles carry the deadline's own colours. */
+function tileTone(key){
+  if (key === 'quote_due_today' || key === 'missed_submission')
+    return 'ck-red';
+  if (key === 'quote_due_48h') return 'ck-orange';
+  return '';
 }
 
 function bar(r){
@@ -306,6 +337,25 @@ document.getElementById('work').addEventListener('click', async ev => {
     + tile(c.value_missing, 'no estimated value')
     + tile(c.unowned, 'no owner')
     + tile(c.unlinked, 'no account');
+
+  /* §4.3 */
+  const sc = c.data_scope || {};
+  document.getElementById('scope').innerHTML =
+    'These numbers are over: <b>' + esc(sc.label || 'Team') + '</b> — '
+    + esc(sc.note || '');
+
+  /* §2.9 / §3.5 / §4.2. A tile is a link to its own filter, and the
+     count it shows is that filter's own count — the tile, the chip
+     and the list are one predicate (§4.6). Zero tiles stay on the
+     page, greyed: "Follow-up missing 0" is the number §3.5 asks us
+     to keep at zero, and a tile that disappears when it is right
+     cannot be checked. */
+  document.getElementById('c02tiles').innerHTML =
+    (c.tiles || []).map(t =>
+      '<a class="ck-tile ' + (t.count ? tileTone(t.key) : 'ck-zero')
+      + '" href="' + crmUrl + esc(t.opens) + '" title="'
+      + esc(t.note) + '"><b>' + t.count + '</b><span>'
+      + esc(t.label) + '</span></a>').join('');
 
   const PANELS = [
     ['waiting_on_me',        'waiting on me'],

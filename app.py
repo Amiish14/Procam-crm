@@ -654,6 +654,57 @@ class Lead(db.Model):
     quote_revisions       = db.Column(db.JSON, nullable=True)
     quote_recorded_by     = db.Column(db.String(20), nullable=True)
     quote_recorded_at     = db.Column(db.DateTime, nullable=True)
+
+    # ── CRM-COCKPIT-02 §2 · the quote submission due date ──────────
+    #: When our offer has to be with the client. Not the same thing
+    #: as any date the CRM already had, and the reason this is a new
+    #: column rather than a reuse of one: `quote_validity_date` is how
+    #: long OUR price stands, `rfq_expected_date` is when we think an
+    #: enquiry will arrive, and `email_extracted.target_date` is the
+    #: client's delivery date — Indo Tech RA-57103 closed on 29 Oct
+    #: with a target_date of 13 Nov, so reusing it would have set
+    #: every auction deadline two weeks late.
+    #:
+    #: Date AND time, in IST, because a portal closes at 15:15 and a
+    #: date alone cannot say whether 15:15 has passed.
+    quote_due_at          = db.Column(db.DateTime, nullable=True,
+                                      index=True)
+    #: portal_subject | mail_body | gem | tender | user | extension —
+    #: where the date came from, so a figure the system read is not
+    #: confused with one a person typed.
+    quote_due_source      = db.Column(db.String(20), nullable=True)
+    #: An automatic date is shown as "auto — please confirm" until the
+    #: owner taps Confirm. False is not "wrong", it is "nobody has
+    #: looked yet", which is a different tile.
+    quote_due_confirmed   = db.Column(db.Boolean, nullable=True)
+    #: How many times the client moved it. Denormalised from
+    #: lead_quote_due_history so a list can show "Extended 2x"
+    #: without a query per row.
+    quote_due_extensions  = db.Column(db.Integer, default=0)
+    #: Stamped when the due date passed with no quote recorded, so the
+    #: mail goes once and the tile can count what is still unanswered.
+    quote_due_missed_at   = db.Column(db.DateTime, nullable=True)
+
+    # ── CRM-COCKPIT-02 §4.1 · when anything last happened ──────────
+    #: Any mail in or out, note, call, meeting, task done, quote or
+    #: stage change. The cockpit's "No activity 7D / 15D / 30D" read
+    #: zero for every lead in the CRM because there was nothing to
+    #: read: `updated_at` moves when a bulk edit runs, and the audit
+    #: trail is per-change rather than per-lead.
+    last_activity_at      = db.Column(db.DateTime, nullable=True,
+                                      index=True)
+    #: What that last thing was, for the list footer: 'mail_in',
+    #: 'note', 'call', 'quote', 'stage', 'task', 'created'.
+    last_activity_kind    = db.Column(db.String(20), nullable=True)
+
+    # ── CRM-COCKPIT-02 §5.6 · one lead per portal number ───────────
+    #: RA-57103, eRFQ-41688, a GeM bid number, a tender number —
+    #: normalised. A reverse auction sends the alert, a reminder and a
+    #: corrigendum as separate mails on separate threads, so
+    #: `thread_key` cannot hold them together; the number can, and it
+    #: is the only thing all three carry.
+    portal_key            = db.Column(db.String(60), nullable=True,
+                                      index=True)
     # What the owner has decided to do next, in their words. The date it
     # is due is followup_date, which the CRM already had.
     next_action           = db.Column(db.String(200), nullable=True)
@@ -798,6 +849,17 @@ class Lead(db.Model):
             'lead_platform': self.lead_platform or '',
             'bid_outcome': self.bid_outcome or '',
             'bid_reason': self.bid_reason or '',
+            # CRM-COCKPIT-02 §2 / §4.1 / §5.6
+            'quote_due_at': (self.quote_due_at.isoformat(
+                timespec='minutes') if self.quote_due_at else ''),
+            'quote_due_source': self.quote_due_source or '',
+            'quote_due_confirmed': bool(self.quote_due_confirmed),
+            'quote_due_extensions': self.quote_due_extensions or 0,
+            'quote_due_missed': bool(self.quote_due_missed_at),
+            'last_activity_at': (self.last_activity_at.isoformat(
+                timespec='minutes') if self.last_activity_at else ''),
+            'last_activity_kind': self.last_activity_kind or '',
+            'portal_key': self.portal_key or '',
             'secondary_owner': self.secondary_owner or '',
             'secondary_owner_name': self.secondary_owner_name or '',
             'phone_call_date': sd(self.phone_call_date),
@@ -2797,6 +2859,18 @@ def api_update_lead(lid):
             db.session.rollback()
             return jsonify({'error': _noacct, 'needs': 'account',
                             'stage': d.get('stage')}), 400
+        # CRM-COCKPIT-02 §2.2 / §3.1 — the quote submission due date
+        # from RFQ Generated, and a next follow-up on every move.
+        # The payload may be filling either in this same save, which
+        # satisfies the gate; the refusal carries the guide and the
+        # date the mail suggests, so [Take me there] lands on a
+        # filled box.
+        from app.services import cockpit02_gate as _c2
+        _dates = _c2.refusal(lead, stage=d.get('stage'), payload=d)
+        if _dates:
+            db.session.rollback()
+            _body, _status = _dates
+            return jsonify(_body), _status
 
     for k, v in fields_map.items():
         if k in d:
@@ -2840,6 +2914,28 @@ def api_update_lead(lid):
             except: pass
         elif k in d and not d[k]:
             setattr(lead, v, None)
+    # CRM-COCKPIT-02 §2 — the due date is not in `date_fields`
+    # because it carries a time, a provenance and a history row.
+    # `apply_due` writes all three together; a plain setattr here
+    # would move the date and leave the history empty, which is the
+    # one thing §2.4 is for.
+    if 'quote_due_at' in d or 'quote_due' in d:
+        from app.services import cockpit02_gate as _c2
+        _raw = d.get('quote_due_at', d.get('quote_due'))
+        try:
+            _c2.apply_due(
+                lead, _raw, actor=session.get('emp_code'),
+                source=(d.get('quote_due_source') or 'user'),
+                reason_code=(d.get('quote_due_reason') or 'set'),
+                reason_text=(d.get('quote_due_reason_text') or ''),
+                confirmed=True)
+        except ValueError as exc:
+            db.session.rollback()
+            return jsonify({'error': str(exc),
+                            'needs': 'quote_due_at'}), 400
+    # §2.3 — confirming a date the CRM read, without changing it.
+    if d.get('quote_due_confirm'):
+        lead.quote_due_confirmed = True
     # Reassignment — admin only. Both PICs go through the one service so
     # the validation, the history row and the notifications cannot be
     # skipped by taking a different endpoint.
@@ -4316,12 +4412,21 @@ def api_my_work():
 
     scoped, _codes = _scope_for_current_session()
     today = date.today()
+    # CRM-COCKPIT-02 §4.3. This endpoint feeds the My Work strip and
+    # was the one lead endpoint the front end did NOT append
+    # `?scope=mailbox` to, which is the whole of the 154-versus-128
+    # discrepancy: the strip counted every team lead and the KPI row
+    # counted mailbox leads, with nothing on screen to say so. Both
+    # now read the same scope and both report which one it was.
+    from app.services import screen_scope as _ss
+    _scope = _ss.wanted()
+    scoped = _ss.apply(scoped, _scope)
     mine = scoped.filter(Lead.stage.notin_(STAGES_TERMINAL))
 
     #: One board build, shared by every tile below. per_page=1 because
     #: this endpoint wants the counts, not the page — the list it
     #: returns is its own, ordered by follow-up date.
-    _board = _wb.board(_sc_mod.current(), per_page=1)
+    _board = _wb.board(_sc_mod.current(), per_page=1, screen=_scope)
     _counts = _board['counts']
 
     def _count(q):
@@ -4384,6 +4489,11 @@ def api_my_work():
     return jsonify({
         'ok': True,
         'scope': ('mine' if _scope_is_own() else 'team'),
+        # CRM-COCKPIT-02 §4.3 — which population these numbers are
+        # over, in the words the screen prints beside them. `scope`
+        # above is a different question (whose records the viewer may
+        # see) and keeps its meaning so nothing reading it breaks.
+        'data_scope': _ss.described(_scope),
         'as_of': str(today),
         'pending': {
             'open_leads':      _count(mine),
@@ -4846,6 +4956,24 @@ def api_add_activity(lid):
         except (ValueError, TypeError):
             try: occ = datetime.strptime(d['occurred_at'], '%Y-%m-%d')
             except (ValueError, TypeError): pass
+    lead = db.session.get(Lead, lid)
+    # CRM-COCKPIT-02 §3.1 — an activity save must leave a next
+    # follow-up date. The payload may carry it, and the screen
+    # pre-fills it with the proposal, so the usual case is one tap
+    # rather than a refusal.
+    from app.services import cockpit02_gate as _c2
+    if d.get('followup'):
+        try:
+            lead.followup_date = datetime.strptime(
+                str(d['followup'])[:10], '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            return jsonify({'error': 'I could not read that follow-up '
+                                     'date.', 'needs': 'followup'}), 400
+    _dates = _c2.refusal(lead, payload=d)
+    if _dates:
+        db.session.rollback()
+        _body, _status = _dates
+        return jsonify(_body), _status
     a = LeadActivity(lead_id=lid, kind=d['kind'], subject=d.get('subject'),
                      body=d.get('body'), occurred_at=occ,
                      performed_by=session.get('emp_code'))
@@ -6079,6 +6207,25 @@ def api_kpi_performance():
 
 # Every change to a watched record writes an audit event, on every path.
 from app.services import audit_listener as _audit_listener  # noqa: E402,F401
+
+# CRM-COCKPIT-02. The two new models are imported here, at boot,
+# rather than only inside the services that use them: an unimported
+# model is not in `db.metadata`, so `db.create_all()` silently does
+# not create its table — and the first save that writes a due-date
+# history row answers 500 with "no such table". The migration script
+# imports it too; this is for every other way a database gets made.
+# `from ... import` and not `import app.models.cockpit02`: the latter
+# binds the name `app` in this module and shadows the Flask app
+# object, and the next `app.app_context()` fails with "partially
+# initialized module".
+from app.models import cockpit02 as _cockpit02_models      # noqa: E402,F401
+
+# §4.1 — `leads.last_activity_at`, kept by the session rather than by
+# each route. Installed beside the audit listener and for the same
+# reason: a rule that depends on every caller remembering is a rule
+# that is already wrong somewhere.
+from app.services import last_activity as _last_activity  # noqa: E402
+_last_activity.install()
 
 with app.app_context():
     init_db()

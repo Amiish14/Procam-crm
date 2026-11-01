@@ -200,6 +200,41 @@ SEED = [
          [{'label': 'Show me the card', 'action': 'focus',
            'target': 'lfTodo'}]),
 
+    # ── CRM-COCKPIT-02 §2.2 and §3.1 ────────────────────────────────
+    _row('QUOTE_DUE_MISSING',
+         'Add the quote due date before this lead goes further.',
+         'From RFQ Generated onwards, the one date that decides '
+         'whether this deal is still winnable is when our offer has '
+         'to be in. Without it nothing can tell you the lead is '
+         'about to expire, which is how five auctions closed in '
+         'October with no bid from us.',
+         ['Look at the enquiry mail — a portal states the deadline '
+          'in its subject line, and most RFQ mails state it in the '
+          'first paragraph.',
+          'If the CRM has read a date already, it is shown as '
+          '"auto — please confirm": check it against the mail and '
+          'tap Confirm.',
+          'If the client has not given one, ask. "When do you need '
+          'our offer by?" is one line in a reply.'],
+         [{'label': 'Take me there', 'action': 'focus',
+           'target': 'quote_due_at'},
+          {'label': 'Open the enquiry mail', 'action': 'open',
+           'target': 'original_email'}]),
+
+    _row('FOLLOWUP_MISSING',
+         'Say when you will come back to this lead.',
+         'A lead with no next date is a lead nobody is working: it '
+         'appears on no morning list and in no overdue count. The '
+         'CRM proposes a date from the stage — accepting it is one '
+         'tap, and any date you choose yourself is better than '
+         'none.',
+         ['Tap the proposed date, or pick another from the quick '
+          'picks.',
+          'Won, Lost and On Hold do not ask for one — if the deal '
+          'is finished, close it instead.'],
+         [{'label': 'Take me there', 'action': 'focus',
+           'target': 'followup'}]),
+
     _row('SESSION_EXPIRED',
          'You have been signed out.',
          'A session ends after a long gap. Nothing you saved is '

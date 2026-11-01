@@ -334,7 +334,7 @@ def test_contact_cards_are_keyboard_reachable():
 # exactly this leak acceptance criterion #1, so it is pinned here.
 def test_writing_to_someone_elses_lead_is_refused(world):
     r = _c('DLREP').put(f'/api/leads/{world["theirs"]}',
-                        json={'stage': 'Won'})
+                        json={'stage': 'Won'})   # Won is exempt (§3.1)
     assert r.status_code == 403, \
         'a rep could edit a lead outside their scope'
 
@@ -354,7 +354,8 @@ def test_the_owner_is_still_allowed_through(world):
     """The other half. A guard that refuses everyone passes every
     leakage test and makes the CRM unusable."""
     r = _c('DLREP').put(f'/api/leads/{world["mine"]}',
-                        json={'stage': 'Call Done'})
+                        json={'stage': 'Call Done',
+                              'followup': '2026-12-01'})
     assert r.status_code == 200, r.get_data(as_text=True)[:200]
 
 
