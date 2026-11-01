@@ -273,6 +273,34 @@ select.fmc{cursor:pointer;appearance:none;-webkit-appearance:none;background-ima
 .ld-step.current.red{background:#DC2626}
 .ld-step.current.grey{background:#9CA3AF}
 .ld-strip-why{font-size:11.5px;color:var(--text-3);margin-top:6px}
+/* CRM-COCKPIT-02 §2 — the submission deadline on the lead pop-up.
+   The left border carries §2.6's one colour rule, so the card is
+   readable at a glance from across a desk: red under a day, orange
+   under two, green beyond, grey for a lead with no date at all. */
+.ld-due{border:1px solid var(--border);border-left-width:4px;
+  border-radius:var(--r);padding:10px 14px;margin:0 0 16px;
+  background:var(--surface-2);font-size:12.5px}
+.ld-due-red{border-left-color:#DC2626}
+.ld-due-orange{border-left-color:#D97706}
+.ld-due-green{border-left-color:#059669}
+.ld-due-grey{border-left-color:#9CA3AF}
+.ld-due-head{display:flex;flex-wrap:wrap;gap:8px;
+  align-items:baseline;justify-content:space-between}
+.ld-due-head b{font-size:13.5px;color:var(--text)}
+.ld-due-head span{display:block;color:var(--text-3);font-size:11.5px}
+.ld-due-acts{display:flex;gap:6px;flex-wrap:wrap;white-space:nowrap}
+.ld-due-offer{margin-top:8px;padding:8px 10px;border-radius:var(--r);
+  background:#FFFBEB;border:1px solid #FDE68A;color:#78350F;
+  font-size:11.5px;line-height:1.6}
+.ld-due-offer em{color:#92400E}
+.ld-due-set{display:flex;gap:6px;align-items:center;margin-top:8px;
+  flex-wrap:wrap}
+.ld-due-set .fmc{max-width:220px}
+.ld-due-form{margin-top:8px;display:grid;gap:6px;max-width:360px}
+.ld-due-why{margin-top:8px;color:var(--text-2);font-size:11.5px}
+/* §3.3 — the one-tap follow-up dates. */
+.ld-fu-picks{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px}
+.ld-fu-note{font-size:11px;color:var(--text-3)}
 /* The icon on a list row. Sized to sit beside a btn-xs without
    changing the row's height, and never a column of its own: a new
    column would shift every lead list for everybody. */
@@ -3193,6 +3221,17 @@ async function openLd(id){
          this one says what that has cost in days. Filled after the
          body renders, from /api/crm2/leads/<id>/stage-map. -->
     <div id="ldStrip" class="ld-strip" style="display:none"></div>
+    <!-- CRM-COCKPIT-02 §2. The one date that decides whether this
+         deal is still winnable, with its colour (§2.6), the Confirm
+         button for a date the CRM read (§2.3), Extend with its
+         reason (§2.4), the offer a later mail made (§2.5), and
+         Bid / Not bid once it has passed (§2.7).
+
+         §5.7 asks the pop-up to ask for three things only: confirm
+         the due date, confirm the follow-up, send the quote. The
+         first two are here; everything else on this screen is
+         filled in and editable. -->
+    <div id="ldDue" class="ld-due" style="display:none"></div>
     ${ldValueSection(l)}
     <div class="fm-s">Activity dates</div>
     <div class="dtrow">
@@ -3216,7 +3255,12 @@ async function openLd(id){
     </div></div>
     <div class="fmg" id="lClassExpl" style="display:none"></div>
     <div class="fmg" id="lTasks" style="display:none"></div>
-    <div class="fmr"><div class="fmg"><label class="fml">Next follow-up</label><input type="date" class="fmc" id="lFu" value="${l.followup||''}"></div><div class="fmg"><label class="fml">Onboarded date</label><input class="fmc" value="${l.onboarded_date||'—'}" disabled style="background:var(--surface-2);color:var(--text-3)"></div></div>
+    <div class="fmr"><div class="fmg"><label class="fml">Next follow-up</label><input type="date" class="fmc" id="lFu" value="${l.followup||''}">
+      <!-- CRM-COCKPIT-02 §3.3. Four of the hundred most recent leads
+           had a follow-up date, so asking harder was not going to
+           work. The CRM proposes one from the stage and these are the
+           one-tap alternatives. -->
+      <div class="ld-fu-picks" id="lFuPicks"></div></div><div class="fmg"><label class="fml">Onboarded date</label><input class="fmc" value="${l.onboarded_date||'—'}" disabled style="background:var(--surface-2);color:var(--text-3)"></div></div>
     <div class="fmg">
       <label class="fml">Notes / call summary</label>
       <textarea class="fmc" id="lNotes" rows="3" placeholder="Add a call note, meeting summary or internal remark…"></textarea>
@@ -3261,6 +3305,183 @@ async function openLd(id){
   loadRateSourcing(l.id);
   ldJourneyLink(l.id);
   ldStageStrip(l.id);
+  ldDueCard(l.id);
+  ldFollowupPropose(l.stage || '');
+}
+
+
+/* ── CRM-COCKPIT-02 §2 · the submission deadline, on the lead ─────
+   137 leads sat at quoting stages with 28 quote dates between them
+   and nothing at all saying when the client stops accepting offers.
+   This is that date: what it is, whether anybody has agreed with it,
+   how many times it has moved, and what to do when it has passed. */
+const DUE_TONE = {red:'ld-due-red', orange:'ld-due-orange',
+                  green:'ld-due-green', grey:'ld-due-grey'};
+
+async function ldDueCard(id){
+  const host = g('ldDue');
+  if (!host) return;
+  host.style.display = 'none';
+  let d;
+  try { d = await api('/api/leads/' + id + '/quote-due'); }
+  catch (err) { return; }
+  if (!d || !d.ok) return;
+  host.dataset.leadId = id;
+  host.className = 'ld-due ' + (DUE_TONE[d.colour] || '');
+  host.style.display = '';
+
+  const left = d.hours_left === null || d.hours_left === undefined
+    ? '' : (d.hours_left < 0
+        ? Math.round(-d.hours_left) + ' h ago'
+        : d.hours_left < 48
+          ? 'in ' + Math.round(d.hours_left) + ' h'
+          : 'in ' + Math.round(d.hours_left / 24) + ' days');
+
+  let head;
+  if (!d.quote_due_at){
+    head = '<b>No submission deadline</b>'
+      + (d.suggested
+          ? '<span>The enquiry mail says <b>' + e(d.suggested)
+            + '</b> — ' + e(d.suggested_source.replace(/_/g,' ')) + '</span>'
+          : '<span>Nothing in the mail states one. Ask the client, '
+            + 'or type it below.</span>');
+  } else {
+    head = '<b>Quote due ' + e(d.shown) + '</b><span>' + e(left)
+      + (d.confirmed ? '' : ' · auto — please confirm')
+      + (d.extensions ? ' · extended ' + d.extensions + '\u00d7' : '')
+      + (d.missed ? ' · <b>missed submission</b>' : '')
+      + '</span>';
+  }
+
+  /* §2.5 — a later mail proposed a new date. One tap to take it. */
+  const offer = d.proposal
+    ? '<div class="ld-due-offer">A later mail says <b>'
+      + e(d.proposal.shown) + '</b>'
+      + (d.proposal.evidence
+          ? ' <em>&ldquo;' + e(d.proposal.evidence.substring(0,90))
+            + '&rdquo;</em>' : '')
+      + ' <button type="button" class="btn btn-xs"'
+      + ' onclick="ldDueAccept()">Accept</button>'
+      + ' <button type="button" class="btn btn-ghost btn-xs"'
+      + ' onclick="ldDueDismiss()">Not this one</button></div>'
+    : '';
+
+  const buttons = []
+  if (d.quote_due_at && !d.confirmed)
+    buttons.push('<button type="button" class="btn btn-xs"'
+      + ' onclick="ldDueConfirm()">Confirm</button>');
+  if (d.quote_due_at)
+    buttons.push('<button type="button" class="btn btn-ghost btn-xs"'
+      + ' onclick="ldDueExtendOpen()">Extend</button>');
+  if (d.missed && !d.bid_outcome)
+    buttons.push('<button type="button" class="btn btn-ghost btn-xs"'
+      + ' onclick="ldDueBidOpen()">Did we bid?</button>');
+
+  host.innerHTML = '<div class="ld-due-head">' + head
+    + '<div class="ld-due-acts">' + buttons.join(' ') + '</div></div>'
+    + offer
+    + '<div class="ld-due-set">'
+    + '<input type="datetime-local" id="ldDueAt" class="fmc"'
+    + ' value="' + e(d.quote_due_at || d.suggested_iso || '') + '">'
+    + '<button type="button" class="btn btn-xs"'
+    + ' onclick="ldDueSave()">Save date</button></div>'
+    + '<div id="ldDueMore"></div>'
+    + (d.bid_outcome
+        ? '<div class="ld-due-why">' + e(d.bid_reason || d.bid_outcome)
+          + '</div>' : '');
+}
+
+function ldDueLead(){ return (g('ldDue')||{}).dataset.leadId; }
+
+async function ldDuePost(path, body){
+  try {
+    const r = await api('/api/leads/' + ldDueLead() + '/quote-due'
+                        + path, {method:'POST',
+                                 body: JSON.stringify(body||{})});
+    if (r && r.ok === false){ toast(r.error || 'Refused.'); return; }
+    ldDueCard(ldDueLead());
+  } catch (err){ toast('That did not save.'); }
+}
+
+function ldDueConfirm(){ ldDuePost('/confirm'); }
+function ldDueAccept(){ ldDuePost('/accept'); }
+function ldDueDismiss(){ ldDuePost('/dismiss'); }
+
+function ldDueSave(){
+  const v = (g('ldDueAt')||{}).value;
+  if (!v){ toast('Pick a date and time.'); return; }
+  ldDuePost('', {quote_due_at: v});
+}
+
+/* §2.4 — an extension names its reason. A dropdown, not a text box:
+   "how often do clients extend, and how often do we ask" is a
+   question somebody will want counted. */
+const DUE_REASONS = [
+  ['client_extension','Client extension'],
+  ['corrigendum','Corrigendum'],
+  ['our_request','Extension on our request'],
+  ['other','Other'],
+];
+
+function ldDueExtendOpen(){
+  const host = g('ldDueMore');
+  if (!host) return;
+  host.innerHTML =
+    '<div class="ld-due-form"><label class="fml">New date</label>'
+    + '<input type="datetime-local" id="ldExtAt" class="fmc">'
+    + '<label class="fml">Why</label>'
+    + '<select id="ldExtWhy" class="fmc">'
+    + DUE_REASONS.map(r => '<option value="' + r[0] + '">'
+        + r[1] + '</option>').join('')
+    + '</select>'
+    + '<input type="text" id="ldExtNote" class="fmc"'
+    + ' placeholder="If Other, say what">'
+    + '<button type="button" class="btn btn-xs"'
+    + ' onclick="ldDueExtend()">Record the extension</button></div>';
+}
+
+function ldDueExtend(){
+  const at = (g('ldExtAt')||{}).value;
+  if (!at){ toast('Pick the new date.'); return; }
+  ldDuePost('/extend', {quote_due_at: at,
+                        reason: (g('ldExtWhy')||{}).value,
+                        reason_text: (g('ldExtNote')||{}).value});
+}
+
+/* §2.7 — Bid or Not bid, with a reason, once a deadline has gone. */
+const BID_CHOICES = [
+  ['bid','Bid submitted'],
+  ['not_bid_rate','Not bid — rate not workable'],
+  ['not_bid_capacity','Not bid — no equipment or capacity'],
+  ['not_bid_terms','Not bid — terms or payment unacceptable'],
+  ['not_bid_late','Not bid — we saw it too late'],
+  ['not_bid_other','Not bid — other'],
+];
+
+function ldDueBidOpen(){
+  const host = g('ldDueMore');
+  if (!host) return;
+  host.innerHTML =
+    '<div class="ld-due-form"><label class="fml">Did we bid?</label>'
+    + '<select id="ldBidWhat" class="fmc">'
+    + BID_CHOICES.map(r => '<option value="' + r[0] + '">' + r[1]
+        + '</option>').join('')
+    + '</select>'
+    + '<input type="text" id="ldBidNote" class="fmc"'
+    + ' placeholder="Anything worth recording">'
+    + '<button type="button" class="btn btn-xs"'
+    + ' onclick="ldDueBid()">Record it</button></div>';
+}
+
+async function ldDueBid(){
+  try {
+    const r = await api('/api/leads/' + ldDueLead() + '/bid-outcome',
+                        {method:'POST', body: JSON.stringify({
+                          outcome: (g('ldBidWhat')||{}).value,
+                          note: (g('ldBidNote')||{}).value})});
+    if (r && r.ok === false){ toast(r.error || 'Refused.'); return; }
+    ldDueCard(ldDueLead());
+  } catch (err){ toast('That did not save.'); }
 }
 
 
@@ -3795,6 +4016,68 @@ function setStg(s){
   g('ldPipe').dataset.stage=s;
   const qb=g('lQuoteBlk'); if(qb&&LV_QUOTE_STAGES.includes(s)) qb.hidden=false;
   if(typeof ldValueHints==='function') ldValueHints();
+  // §3.1 / §3.2 — the stage decides the follow-up, so changing the
+  // stage re-proposes it. The server refuses a save without one
+  // (with a guide); filling it here means the usual case is one tap
+  // rather than a refusal and a second attempt.
+  ldFollowupPropose(s);
+}
+
+/* §3.2's table, as the screen's own copy. The server is the one that
+   decides — Admin → CRM rules holds these and the save is refused
+   against the server's answer, not this one — but a proposal that
+   needs a round trip per click is a proposal nobody waits for. */
+const FU_DAYS = {'New':1, 'New Opportunity':1, 'Contacted':3,
+  'Call Done':3, 'Profile Sent':3, 'Appointment':3,
+  'Business Discussion':3, 'Visit Done':3, 'Quoted':2,
+  'Under Negotiation':2};
+const FU_EXEMPT = ['Won','Lost','On Hold','Not Interested'];
+
+function ldFuDate(days){
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  // Saturday and Sunday move to Monday: a rule that proposes Sunday
+  // for a quarter of the book produces a Monday with three days of
+  // follow-ups in it, and people stop believing the list.
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate()+1);
+  return d.toISOString().slice(0,10);
+}
+
+function ldFollowupPropose(stage){
+  const box = g('lFu'), picks = g('lFuPicks');
+  if (!box) return;
+  if (FU_EXEMPT.includes(stage)){
+    if (picks) picks.innerHTML = '<span class="ld-fu-note">'
+      + 'Won, Lost and On Hold do not ask for a follow-up.</span>';
+    return;
+  }
+  // At RFQ Generated the only date that matters is the deadline, so
+  // the proposal is the day before it (§3.2).
+  let proposed = null;
+  const due = g('ldDueAt') && g('ldDueAt').value;
+  if (stage === 'RFQ Generated' && due){
+    const d = new Date(due);
+    d.setDate(d.getDate() - 1);
+    const today = new Date();
+    proposed = d > today ? d.toISOString().slice(0,10) : ldFuDate(1);
+  } else {
+    proposed = ldFuDate(FU_DAYS[stage] === undefined ? 3
+                                                     : FU_DAYS[stage]);
+  }
+  if (!box.value) box.value = proposed;
+  if (!picks) return;
+  const opts = [['Proposed: ' + proposed, proposed],
+                ['Tomorrow', ldFuDate(1)],
+                ['+3 days', ldFuDate(3)],
+                ['+7 days', ldFuDate(7)]];
+  if (due){
+    const a = new Date(due); a.setDate(a.getDate() + 1);
+    opts.push(['After the due date', a.toISOString().slice(0,10)]);
+  }
+  picks.innerHTML = opts.map(o =>
+    '<button type="button" class="btn btn-ghost btn-xs"'
+    + ' onclick="g(\'lFu\').value=\'' + o[1] + '\'">'
+    + e(o[0]) + '</button>').join(' ');
 }
 
 async function saveLd(){
