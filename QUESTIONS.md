@@ -1541,3 +1541,75 @@ choose: merging the four on `/admin/account-duplicates` is the real
 fix, and it gives the survivor the losers' names as aliases for
 nothing, which is where "Lntecc" would have come from in the first
 place.
+
+## 64 — "somebody wrote a note on it": nobody had
+
+The notes printed by the dry run settle it. Every single one, across
+all fifteen senders:
+
+```
+CAUTION: This email originated from outside of the organization. Do no…
+[10-Oct-26] Owner auto-assigned → Vijay T V (same vertical)
+[10-Oct-26] phone "+91-99582-48203" → +91-9958248203 [10-Oct-26] Owner…
+From: Sina Deipenau <s.deipenau@futurebattery.de> Sent: Tuesday, 1 Sep
+```
+
+Not one was written by a person. They are, in order: the Exchange
+external-sender banner, the CRM's own assignment log stamped by a bulk
+run, the CRM normalising a phone number and saying so, and a quoted
+mail header. The first and last were captured out of the mail body when
+the old combined notes field was split into `lead_notes` — which the
+model already records: `migrated_from_legacy`, whose comment reads
+*"set when the row was rescued out of the old combined field, so a
+reader knows it may be email text rather than somebody's note."*
+
+So `_check_note` asked the wrong question. It asked whether a row
+existed in `lead_notes`. `note_is_human` now asks whether a **person**
+wrote it, on three tests, all of which must pass:
+
+* `migrated_from_legacy` is false — the column exists for exactly this;
+* it does not open with a dated bulk stamp `[10-Oct-26]` or a mail
+  header or banner. **Matched at the start only**: somebody writing
+  "From the look of it they want a low bed" is somebody writing, and a
+  note that *opens* with `From:` is a header;
+* somebody is named as the author. The screen sets `author` from the
+  session on every note typed on a lead, so a note with nobody's name
+  on it was not written by anybody.
+
+All three rather than any one, because a bulk run can stamp a note
+**and** name the employee it assigned the lead to, which would pass the
+author test on its own.
+
+With that, the fifteen clear on their own merits and `--allow note` is
+not needed for them. It stays, for a case where a real note says
+nothing.
+
+### The same fault, one row along
+
+`_check_human_activity` claimed in its own docstring that
+`LeadActivity` "is only written when somebody logs a call, a meeting or
+a visit". It is not: **every stage move writes a row with
+`kind='stage_change'`** (`app.py:3424`). So the check reported "a call,
+meeting or activity is logged on it" on leads where nobody had ever
+rung anybody — and did so on two live Promedia leads, read side by side
+with the notes above, before anybody noticed.
+
+Narrowed to the kinds that mean contact — call, meeting, visit, email,
+rfq, note — and `stage_change` is its own key with its own sentence.
+**The outcome does not change**: a stage change is still work, still in
+`WORK_KEYS`, still un-ignorable. What changes is that the reason given
+is true, and a refusal that misdescribes its evidence is one nobody can
+act on.
+
+### What the live run will now do
+
+Simulated against the exact notes above: the five senders whose leads
+are at New are filed, their domains go on the Not-relevant list, and
+the Lost ones — Promedia, Marineinsight — stay refused, as does
+Promedia's genuinely logged call. `*@gmail.com` is still refused and
+still printed with `!!`.
+
+Three bugs in one gate, all found by printing what the data actually
+said instead of trusting what the code claimed about it. The stage
+equality (QUESTIONS.md 63) had hidden the other two: while every lead
+was refused for being at New, nobody had reason to read the notes.

@@ -1343,7 +1343,8 @@ def test_a_note_can_be_overlooked_only_when_it_is_named(world):
         from app.services import junk_delete as jd
         lead = _lead(company='Noted Ltd', email='x@notedltd.example',
                      stage='New')
-        db.session.add(LeadNote(lead_id=lead.id, note_text='junk'))
+        db.session.add(LeadNote(lead_id=lead.id, note_text='junk',
+                                author='EMP572012'))
         db.session.commit()
         assert 'note' in dict(jd.blockers(lead))
         with pytest.raises(ValueError):
@@ -1362,7 +1363,8 @@ def test_the_run_prints_what_the_note_says(world):
         from app import LeadNote
         lead = _lead(company='Marineinsight', stage='New',
                      email='news@info.marineinsight.example')
-        db.session.add(LeadNote(lead_id=lead.id, note_text='junk'))
+        db.session.add(LeadNote(lead_id=lead.id, note_text='junk',
+                                author='EMP572012'))
         db.session.commit()
         rows = script.survey(script.find(('Marineinsight',)))
         refused = rows[0]['refused']
@@ -1377,7 +1379,8 @@ def test_a_soft_blocker_still_yields_a_domain_rule(world):
         from app import LeadNote
         lead = _lead(company='Itemsecure', stage='New',
                      email='news@softblock.example')
-        db.session.add(LeadNote(lead_id=lead.id, note_text='junk'))
+        db.session.add(LeadNote(lead_id=lead.id, note_text='junk',
+                                author='EMP572012'))
         db.session.commit()
         rows = script.survey(script.find(('Itemsecure',)))
         mine = [r for r in rows if r['name'] == 'Itemsecure'][0]

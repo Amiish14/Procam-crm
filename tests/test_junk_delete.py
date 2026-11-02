@@ -251,11 +251,18 @@ def test_a_logged_call_stops_it():
 
 def test_a_note_somebody_wrote_stops_it():
     """Still blocks. Its own key since 2 Nov, so a caller authorised
-    to tolerate a note can name it and nothing else."""
+    to tolerate a note can name it and nothing else.
+
+    `author` is set, because the screen sets it: a note typed on a lead
+    carries the emp_code of whoever typed it. A note with nobody's name
+    on it was not written by anybody — see `note_is_human`.
+    """
     with flask_app.app_context():
         lead = _lead()
         db.session.add(LeadNote(lead_id=lead.id,
-                                note_text='Spoke to the buyer'))
+                                note_text='Spoke to the buyer',
+                                author='EMP572012',
+                                author_name='Vijay T V'))
         db.session.commit()
         assert 'note' in dict(jd.blockers(lead))
         assert jd.eligible(lead) is False
@@ -936,3 +943,60 @@ def test_the_three_flags_are_off_by_default():
     for name in ('FEATURE_JUNK_DELETE', 'FEATURE_JUNK_SUGGEST',
                  'FEATURE_JUNK_PURGE'):
         assert flags.DEFAULTS[name] is False
+
+
+# ── what the live data of 2 Nov showed a "note" actually is ─────────
+# Every note under "somebody wrote a note on it" on all fifteen named
+# marketing senders was machine-written. None was a remark.
+@pytest.mark.parametrize('text,author,legacy', [
+    ('CAUTION: This email originated from outside of the organization. '
+     'Do not click links.', None, False),
+    ('[10-Oct-26] Owner auto-assigned → Vijay T V (same vertical)',
+     'EMP572012', False),
+    ('[10-Oct-26] phone "+91-99582-48203" → +91-9958248203',
+     'EMP572012', False),
+    ('From: Sina Deipenau <s.deipenau@futurebattery.de> Sent: Tuesday',
+     None, False),
+    ('Anything at all, but rescued out of the old field',
+     'EMP572012', True),
+    ('A note nobody signed', None, False),
+])
+def test_a_machine_written_note_is_not_somebody_writing_one(text, author,
+                                                            legacy):
+    with flask_app.app_context():
+        lead = _lead()
+        db.session.add(LeadNote(lead_id=lead.id, note_text=text,
+                                author=author,
+                                migrated_from_legacy=legacy))
+        db.session.commit()
+        assert jd.human_notes(lead) == []
+        assert 'note' not in dict(jd.blockers(lead))
+        assert jd.eligible(lead) is True
+
+
+def test_a_person_writing_from_the_look_of_it_is_still_a_person():
+    """Matched at the START only, so prose beginning "From the" is prose."""
+    with flask_app.app_context():
+        lead = _lead()
+        db.session.add(LeadNote(
+            lead_id=lead.id,
+            note_text='From the look of it they want a low bed',
+            author='EMP572012'))
+        db.session.commit()
+        assert len(jd.human_notes(lead)) == 1
+        assert 'note' in dict(jd.blockers(lead))
+
+
+def test_the_stamp_and_the_author_are_both_asked():
+    """A bulk run can stamp a note AND name the employee it assigned to."""
+    with flask_app.app_context():
+        lead = _lead()
+        db.session.add(LeadNote(
+            lead_id=lead.id,
+            note_text='[10-Oct-26] Owner auto-assigned → somebody',
+            author='EMP572012', author_name='Vijay T V'))
+        db.session.commit()
+        note = LeadNote.query.filter_by(lead_id=lead.id).first()
+        human, why = jd.note_is_human(note)
+        assert human is False
+        assert 'dated stamp' in why

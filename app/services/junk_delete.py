@@ -36,6 +36,7 @@ How it disappears
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 
 #: (code, label, block the sender by default). The dialog offers
@@ -190,49 +191,165 @@ def _check_outgoing_mail(lead):
     return None
 
 
+#: `LeadActivity.kind` values that mean a person reached out or was
+#: reached: a call, a meeting, a visit, a mail, an RFQ. The row is the
+#: log of them doing it.
+CONTACT_KINDS = ('call', 'meeting', 'visit', 'email', 'rfq', 'note')
+
+#: The kind the system writes for itself on every stage move.
+STAGE_CHANGE_KIND = 'stage_change'
+
+
 def _check_human_activity(lead):
-    """A call, a meeting or a logged activity. The strongest of the three.
+    """A call, a meeting, a visit — somebody made contact.
 
-    `LeadActivity` is only written when somebody logs a call, a
-    meeting or a visit, so its presence is unambiguous.
+    Narrowed to the kinds that mean that. The docstring here used to
+    say `LeadActivity` "is only written when somebody logs a call, a
+    meeting or a visit", and that was not true: every stage move writes
+    a row with `kind='stage_change'`, so the check reported a logged
+    call on leads where nobody had ever rung anybody.
 
-    Notes and completed tasks were in here too and are now their own
-    checks. Not a loosening — all three still block — but a caller
-    that has been authorised to tolerate one of them needs to be able
-    to name it, and one key covering three different facts cannot be
-    named. See `blockers` and `mark_not_relevant`'s `ignore`.
+    A stage change is still work, and still blocks — as its own key,
+    with its own sentence. The outcome does not change; what changes is
+    that the reason given is true. A refusal that misdescribes the
+    evidence is a refusal nobody can act on, and these two were read
+    side by side on fifteen live leads before anybody noticed.
     """
     from app import LeadActivity
 
-    if _has_rows(LeadActivity, lead.id):
+    try:
+        rows = LeadActivity.query.filter(
+            LeadActivity.lead_id == lead.id,
+            LeadActivity.kind.in_(CONTACT_KINDS)).limit(1).all()
+    except Exception:                                     # noqa: BLE001
+        return None
+    if rows:
         return 'a call, meeting or activity is logged on it'
     return None
 
 
-def _check_note(lead):
-    """Somebody wrote a remark on it.
+def _check_stage_change(lead):
+    """Somebody moved it along the journey.
 
-    The weakest of the human-activity signals, and the one worth
-    telling apart. On a marketing lead the note is very often the word
-    "junk" — somebody reading it, deciding, and having no button to
-    press. Treating that as evidence the lead matters is exactly
-    backwards, which is why `blockers` names this separately and the
-    Not-relevant run prints what the note actually says.
-
-    It still blocks by default. Nothing is tolerated unless a caller
-    names it.
+    Work, and not the same work as a logged call. The person who moved
+    a lead from New to Call Done did something to it; they did not
+    necessarily speak to anybody.
     """
-    from app import LeadNote, db
+    from app import LeadActivity
 
     try:
-        has_note = db.session.query(
-            LeadNote.query.filter(
-                LeadNote.lead_id == lead.id,
-                LeadNote.is_deleted.isnot(True)).exists()).scalar()
-        if has_note:
-            return 'somebody wrote a note on it'
+        rows = LeadActivity.query.filter(
+            LeadActivity.lead_id == lead.id,
+            LeadActivity.kind == STAGE_CHANGE_KIND).limit(1).all()
     except Exception:                                     # noqa: BLE001
-        pass
+        return None
+    if rows:
+        return 'somebody moved it to another stage'
+    return None
+
+
+#: Notes the system wrote about itself, not remarks anybody made.
+#:
+#: Every one of these was found on the live data on 2 Nov, under
+#: "somebody wrote a note on it". Not one was written by a person:
+#:
+#:   'CAUTION: This email originated from outside of the organization'
+#:        the Exchange external-sender banner, captured out of the mail
+#:        body when the old combined notes field was split up;
+#:   '[10-Oct-26] Owner auto-assigned -> Vijay T V (same vertical)'
+#:        the CRM's own assignment log, stamped by a bulk run;
+#:   '[10-Oct-26] phone "+91-99582-48203" -> +91-9958248203'
+#:        the CRM normalising a phone number and saying so;
+#:   'From: Sina Deipenau <...> Sent: Tuesday, 1 Sep'
+#:        a quoted mail header, again out of the body.
+#:
+#: Matched at the START of the note only. A person writing "From the
+#: look of it they want a trailer" is a person; a note that OPENS with
+#: a mail header is a mail header.
+MACHINE_NOTE_PREFIXES = (
+    'caution: this email originated',
+    'caution:',
+    'from:',
+    'sent:',
+    'subject:',
+    'external email',
+    'this message originated',
+)
+
+#: The house stamp a bulk run leaves: '[10-Oct-26] something'.
+MACHINE_NOTE_STAMP = re.compile(
+    r'^\s*\[\d{1,2}-[A-Za-z]{3}-\d{2,4}\]')
+
+
+def note_is_human(note):
+    """Did a PERSON write this note. (True/False, why not).
+
+    Three questions, and the first is the model's own:
+
+      * `migrated_from_legacy` — the column exists to record exactly
+        this. Its comment: "set when the row was rescued out of the old
+        combined field, so a reader knows it may be email text rather
+        than somebody's note";
+      * does it open with a machine stamp or a mail header;
+      * is anybody named as the author. A note nobody signed was not
+        written by anybody.
+
+    All three, not any one. A bulk run can stamp a note AND name the
+    employee it assigned the lead to, which would pass the author test
+    on its own.
+    """
+    if getattr(note, 'migrated_from_legacy', False):
+        return False, ('it was rescued out of the old notes field — it '
+                       'may be email text rather than a remark')
+    text = (getattr(note, 'note_text', '') or '').strip()
+    low = text.lower()
+    if MACHINE_NOTE_STAMP.match(text):
+        return False, ('it carries a dated stamp from a bulk run, not a '
+                       'remark somebody typed')
+    for prefix in MACHINE_NOTE_PREFIXES:
+        if low.startswith(prefix):
+            return False, (f'it opens with {prefix!r} — a mail header or '
+                           f'a banner, captured out of the body')
+    if not (getattr(note, 'author', '') or '').strip():
+        return False, 'nobody is named as its author'
+    return True, ''
+
+
+def human_notes(lead):
+    """[note] that a person actually wrote."""
+    from app import LeadNote
+
+    try:
+        rows = (LeadNote.query
+                .filter(LeadNote.lead_id == lead.id,
+                        LeadNote.is_deleted.isnot(True)).all())
+    except Exception:                                     # noqa: BLE001
+        return []
+    return [r for r in rows if note_is_human(r)[0]]
+
+
+def _check_note(lead):
+    """Somebody wrote a remark on it. A PERSON, not the system.
+
+    This read "any row in lead_notes", and that was wrong twice over.
+
+    First, the CRM writes notes about itself — the assignment log, a
+    phone number it normalised — and the mail ingest captured the
+    Exchange external-sender banner and quoted headers into notes when
+    the old combined field was split. On the live data every single
+    note under "somebody wrote a note on it" was one of those, and all
+    fifteen named marketing senders were held back by it.
+
+    Second, even a real note on a marketing lead is very often the word
+    "junk" — somebody reading it, deciding, and having no button to
+    press. That is why `blockers` names this separately from a logged
+    call, and why the Not-relevant run prints what each note says.
+
+    A human note still blocks. Nothing is tolerated unless a caller
+    names it.
+    """
+    if human_notes(lead):
+        return 'somebody wrote a note on it'
     return None
 
 
@@ -306,6 +423,7 @@ CHECKS = (
     ('paperwork', _check_paperwork),
     ('outgoing_mail', _check_outgoing_mail),
     ('activity', _check_human_activity),
+    ('stage_change', _check_stage_change),
     ('note', _check_note),
     ('task', _check_task),
     ('links', _check_links),
@@ -319,7 +437,7 @@ CHECKS = (
 #: lead somebody quoted, and a lead at Lost carries a decision
 #: somebody took. Neither is softer than the quote itself.
 WORK_KEYS = ('paperwork', 'outgoing_mail', 'links', 'activity',
-             'worked', 'closed')
+             'stage_change', 'worked', 'closed')
 
 #: What a disabled Delete says on hover.
 HOVER = 'This lead has activity — use Close as Lost.'
