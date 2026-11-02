@@ -1069,3 +1069,122 @@ The audit reads the TMS repository rather than a copy of its field
 names kept here, and refuses to run without it. A vendored list is a
 list that drifts, and drift is the whole problem this check exists to
 find.
+
+## 55 — the Godrej rule is why an auto-merge needs a GSTIN check
+
+Module 2.3: "Auto-merge where they share the same GSTIN, the same
+email domain, or the same name after normalising."
+
+`scripts/account_duplicates.py` already finds clusters on exactly
+those three kinds of evidence, and it deliberately refuses to merge
+in bulk — its docstring says "There is no 'merge everything it
+suggested'". The 2 November decision overrides that caution, so the
+auto-merge is built; what it needed was a line drawn somewhere, and
+the same pack says where:
+
+> **Godrej block:** apply it only to the Godrej company already named
+> in the 21 Oct decision. Other Godrej group companies are not
+> blocked.
+
+Godrej & Boyce and Godrej Agrovet share `godrej.com`. `clusters()`
+joins on any single piece of evidence, transitively, so a domain
+match puts them in one cluster — and an auto-merge on the domain rule
+would make them one account, after which one block decision applies
+to both and the pack's own sentence becomes impossible to honour.
+
+So the rule is: **two different GSTINs in one cluster is never one
+customer**, whatever else matches. A GSTIN is a legal identity.
+`merge_confidence()` auto-merges only on one GSTIN across the
+cluster, or on names that all normalise to the same string with no
+GSTIN conflict; a cluster joined only by a shared email domain goes
+to Seema's queue, because a corporate domain is shared by a group and
+not by a company.
+
+That leaves fewer automatic merges than the decision's wording
+suggests. It leaves none that are wrong.
+
+## 56 — the "inactive owners" in Module 2.2 are mostly active
+
+Module 2.2 rule 2 is headed "Inactive owners, as per the agreed map"
+and names Manju, Manas, Suketu, Venkatesh, Setu, Sumit, Dhanashree,
+Laxmi and Abhishek Singh.
+
+Six of those resolve to employees who are `is_active = 1` in the CRM
+today: Manjurul Hoque, Venkatesh Ramarao Althada, Sumit Mondal,
+Dhanashree Pawar, Laxmi Ram Singh and Abhishek Singh. Dhanashree is
+confirmed active in the same pack, twice.
+
+So the map is applied as what it *does* rather than what it is
+called: a re-pointing of CRM account and lead ownership. Nothing in
+`accounts_module2.py` writes `is_active` — a test asserts that
+against the module's own source, with comments stripped, because the
+first version of the test matched a comment instead — and `plan()`
+prints each active person under the heading so the list can be
+corrected rather than applied under a description that does not match
+the data.
+
+Two of the nine names match nobody in the employee master at all
+(Manas, Setu, Suketu), which is reported and not an error: somebody
+who has already gone from the master has nothing left to move.
+
+And Tamal Das, named in rule 1 for Sarens, is not in the employee
+master either. That refuses rather than guesses, as it did in
+CRM-COCKPIT-02 §6.6: a wrong employee code in an owner column is
+silent, and the account simply stops appearing on anybody's list.
+
+## 57 — I rebuilt a feature that already existed
+
+Module 3 asks for a monthly RFQ target per salesperson per vertical.
+I grepped for `kpi_target`, found a bare table from a dashboard
+script with no model and no readers, concluded there was nothing
+there, and wrote a model, a service, a screen and a migration.
+
+`rfq_targets` already existed. CRM-LEAD-JOURNEY-01 §6.3 built it,
+`app/models/rfq_target.py` was its model, and the journey screen, the
+RFQ reports and the pilot readiness check all read it. I had written
+my file over it with `cat >`.
+
+The test suite caught it — four tests in `test_lead_journey` and
+`test_rfq_reports` went red, because their column is `target_rfqs`
+and mine was `target`, and one of them is called
+`test_a_target_is_unique_per_month_vertical_and_person`. The original
+file came back out of git, and Module 3 is now two nullable columns
+on that table (`source`, `basis`) and one new table beside it
+(`rfq_target_history`), which is all it ever needed.
+
+Worth recording for the grep that misled me. I searched for the
+*name I expected the feature to have* rather than for the thing it
+does, and a single negative result read as proof of absence. The
+cheap check I skipped — `grep -rn "target" app/models/` — would have
+taken one command.
+
+## 58 — a target of zero is not a target
+
+Module 3.1 pre-fills from "each person's average monthly RFQ count
+over the last 4 months, plus 20%".
+
+Three tables could answer "how many RFQs did this person raise", and
+on production they do not agree: the RFQ Chain's own `rfqs` table is
+effectively empty, so a seed that read it would propose 0 for
+everybody. Zero plus twenty per cent is zero — a target that passes
+every review automatically, and that looks on the screen like a
+number somebody chose.
+
+So `counted()` tries `rfqs`, then leads that reached RFQ Generated,
+then `rfq_date`, and **names the source it used** in each target's
+basis. A number nobody can trace is a number nobody will accept
+being measured against.
+
+And where a person has no history at all, the seed proposes nothing
+and lists them. The screen says why, and an administrator sets theirs
+by hand. That is the honest outcome and it is also Module 3.2's
+screen doing its job on day one.
+
+One more thing the empty case found. `_vertical()` used
+`vertical_heads.master_vertical()` for every name, and that function
+falls back to **Management** for anything it cannot map — so on a
+database whose vertical master has not been loaded, every vertical
+became Management and the entire module silently proposed nothing for
+anybody. One of the four selling verticals is now itself without a
+lookup, and only the aliases go through the table. A name that is
+already a master vertical should not need a table to stay itself.

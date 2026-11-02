@@ -6644,6 +6644,10 @@ for _mod_path, _bp_name in [
     # against a quote, and the special conditions that override a
     # standard clause. Not behind a feature switch.
     ('app.quote_terms.routes',   'quote_terms_bp'),
+    # Module 3 — the monthly RFQ target per salesperson per vertical,
+    # pre-filled from the last four months and editable on one screen
+    # with its history kept.
+    ('app.rfq_targets.routes',   'rfq_targets_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])

@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RFQ targets — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+{% include "_csrf_fetch.html" %}
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .rt { max-width:1000px; margin:0 auto; padding:18px 16px 60px; }
+  .rt h1 { font-family:Barlow,sans-serif; font-size:23px;
+      font-weight:800; margin:0 0 4px; }
+  .rt .lede { color:#6b7280; font-size:13.5px; margin:0 0 20px;
+      max-width:64ch; line-height:1.55; }
+  .rt h2 { font-family:Barlow,sans-serif; font-size:14px;
+      font-weight:700; margin:26px 0 8px; letter-spacing:.02em; }
+  .rt-card { background:#fff; border:1px solid #e5e7eb;
+      border-radius:10px; padding:12px 14px; margin-bottom:10px; }
+  .rt table { width:100%; border-collapse:collapse;
+      font-size:13px; }
+  .rt th { text-align:left; font-weight:700; color:#374151;
+      font-size:11.5px; letter-spacing:.04em;
+      text-transform:uppercase; padding:6px 8px;
+      border-bottom:1px solid #e5e7eb; white-space:nowrap; }
+  .rt td { padding:7px 8px; border-bottom:1px solid #f3f4f6;
+      color:#374151; vertical-align:middle; }
+  .rt td.n { text-align:right;
+      font-variant-numeric:tabular-nums; }
+  .rt input[type=number] { width:78px; padding:5px 7px;
+      border:1px solid #d1d5db; border-radius:6px; font-size:13px;
+      font-variant-numeric:tabular-nums; }
+  .rt-src { font-size:12px; color:#6b7280; }
+  .rt-tag { font-size:10.5px; font-weight:800; letter-spacing:.04em;
+      border-radius:5px; padding:2px 7px; }
+  .rt-seeded { background:#e0e7ff; color:#3730a3; }
+  .rt-manual { background:#dcfce7; color:#166534; }
+  .rt-btn { font-family:Inter,sans-serif; font-size:12.5px;
+      font-weight:600; border:0; border-radius:7px; padding:6px 12px;
+      background:#111827; color:#fff; cursor:pointer; }
+  .rt-warn { background:#fef3c7; border-color:#fde68a; }
+  .rt-msg { font-size:12.5px; margin:0; }
+  .rt-err { color:#991b1b; } .rt-ok { color:#166534; }
+  .rt-scroll { overflow-x:auto; }
+  @media (max-width:520px) { .rt { padding:14px 16px 50px; } }
+</style>
+</head>
+<body>
+<div class="rt">
+
+  <h1>RFQ targets — {{ period.strftime('%B %Y') }}</h1>
+  <p class="lede">
+    One target per salesperson per vertical. The first one is the
+    CRM's reading of the last four months plus 20%; after that it is
+    whatever you set here, and every change is kept with your name on
+    it.
+  </p>
+
+  <h2>This month</h2>
+  {% if not rows %}
+    <div class="rt-card"><p class="rt-msg">
+      No targets set for {{ period.strftime('%B %Y') }} yet. Run
+      <code>scripts/2026_11_02_rfq_targets.py --check</code> to see
+      what the seed proposes, then <code>--apply</code>.
+    </p></div>
+  {% else %}
+    <div class="rt-card rt-scroll">
+      <table>
+        <thead><tr>
+          <th>Who</th><th>Vertical</th><th class="n">Target</th>
+          <th>How</th><th>Basis</th><th></th>
+        </tr></thead>
+        <tbody>
+        {% for r in rows %}
+          <tr data-emp="{{ r.emp_code }}"
+              data-vertical="{{ r.vertical }}">
+            <td>{{ r.name }}{% if not r.active %}
+                <span class="rt-src">— inactive</span>{% endif %}</td>
+            <td>{{ r.vertical }}</td>
+            <td class="n">
+              <input type="number" min="0" step="1"
+                     id="t-{{ r.id }}" value="{{ r.target_rfqs }}">
+            </td>
+            <td><span class="rt-tag rt-{{ r.source }}">
+              {{ r.source }}</span></td>
+            <td class="rt-src">{{ r.basis }}</td>
+            <td><button class="rt-btn">Save</button>
+                <p class="rt-msg"></p></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+
+  <h2>What the seed reads</h2>
+  <div class="rt-card">
+    <p class="rt-msg">
+      {{ proposals['from'] }} to {{ proposals['to'] }}, counted from
+      <b>{{ proposals.source }}</b>.
+      {{ proposals['rows']|length }} person-vertical pair(s) have
+      history.
+    </p>
+  </div>
+
+  {% if proposals['no_history'] %}
+    <div class="rt-card rt-warn">
+      <p class="rt-msg">
+        <b>{{ proposals['no_history']|length }} salespeople have no
+        RFQ history in that window, so the seed proposes nothing for
+        them.</b>
+        A target of 0 plus 20% is 0 — it would pass every review
+        automatically and look like a number somebody chose. Set
+        theirs here.
+      </p>
+      <p class="rt-src" style="margin:8px 0 0">
+        {% for p in proposals['no_history'][:40] %}{{ p.name }}
+        ({{ p.vertical }}){% if not loop.last %} · {% endif %}
+        {% endfor %}
+        {% if proposals['no_history']|length > 40 %}
+          … and {{ proposals['no_history']|length - 40 }} more
+        {% endif %}
+      </p>
+    </div>
+  {% endif %}
+
+  {% if history %}
+    <h2>Recent changes</h2>
+    <div class="rt-card rt-scroll">
+      <table>
+        <thead><tr>
+          <th>When</th><th>Who</th><th>Vertical</th>
+          <th>Month</th><th class="n">From</th><th class="n">To</th>
+          <th>By</th><th>Why</th>
+        </tr></thead>
+        <tbody>
+        {% for h in history %}
+          <tr>
+            <td class="rt-src">{{ h.at }}</td>
+            <td>{{ h.emp_code }}</td>
+            <td>{{ h.vertical }}</td>
+            <td class="rt-src">{{ h.period }}</td>
+            <td class="n">{{ h.old_target if h.old_target is not none
+                             else '—' }}</td>
+            <td class="n"><b>{{ h.new_target }}</b></td>
+            <td class="rt-src">{{ h.actor }}</td>
+            <td class="rt-src">{{ h.reason }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+
+</div>
+<script>
+  const P = "{{ url_prefix }}";
+
+  document.querySelectorAll('tr[data-emp] button').forEach(btn => {
+    btn.addEventListener('click', async function () {
+      const row = this.closest('tr');
+      const msg = row.querySelector('.rt-msg');
+      const value = row.querySelector('input[type=number]').value;
+      const reason = prompt(
+        'Why is this target changing? (kept with the change)') || '';
+      if (reason === null) return;
+      this.disabled = true;
+      msg.textContent = 'Saving…';
+      msg.className = 'rt-msg';
+      try {
+        const r = await fetch(P + '/api/rfq-targets', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            emp_code: row.dataset.emp,
+            vertical: row.dataset.vertical,
+            target: value, reason: reason})
+        });
+        const d = await r.json();
+        if (!r.ok || !d.ok) {
+          msg.textContent = d.error || 'That did not save.';
+          msg.className = 'rt-msg rt-err';
+          this.disabled = false;
+          return;
+        }
+        msg.textContent = 'Saved.';
+        msg.className = 'rt-msg rt-ok';
+        setTimeout(() => location.reload(), 600);
+      } catch (e) {
+        msg.textContent = 'That did not save: ' + e;
+        msg.className = 'rt-msg rt-err';
+        this.disabled = false;
+      }
+    });
+  });
+</script>
+</body>
+</html>
