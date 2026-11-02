@@ -309,27 +309,74 @@ def quote_pdf(qid):
         from app.services import quote_terms as qt
         printed = qt.for_print(quote)
         if printed['special']:
+            # Numbered down the whole list rather than by the seq
+            # each row carries: the client's standing conditions and
+            # this quote's both start at 1, and two clauses numbered
+            # 1 on one page is a quote nobody can cite.
             story.append(Spacer(1, 4 * mm))
             story.append(Paragraph('<b>Special conditions</b>', b))
-            for c in printed['special']:
+            for n, c in enumerate(printed['special'], start=1):
+                tail = ('  <i>(standing agreement with this '
+                        'client)</i>' if c['scope'] == 'client' else '')
                 story.append(Paragraph(
-                    f'{c["seq"]}. {_esc(c["text"])}', b))
+                    f'{n}. {_esc(c["text"])}{tail}', b))
+        # Module 1: the Procam Standard T&C, then the vertical
+        # annexure, then whatever the client sent. A clause an SCC
+        # has overridden is printed struck through rather than
+        # dropped, so the quote shows what was replaced — the client
+        # can see the standard term and the term that beat it, which
+        # is the argument this section exists to prevent.
+        def _set(block, heading):
+            if block['missing']:
+                return
+            story.append(Spacer(1, 4 * mm))
+            story.append(Paragraph(
+                f'<b>{_esc(block["title"] or heading)}</b> '
+                f'(v{block["version"]})', b))
+            for clause in block['clauses']:
+                text = _esc(clause['text'])
+                if clause['overridden_by']:
+                    whose = ('agreed with this client'
+                             if clause['overridden_scope'] == 'client'
+                             else 'replaced for this quote')
+                    story.append(Paragraph(
+                        f'<strike>{text}</strike> '
+                        f'<i>({whose} — see special conditions)</i>',
+                        b))
+                else:
+                    story.append(Paragraph(text, b))
+
         std = printed['standard']
-        story.append(Spacer(1, 4 * mm))
-        if std['missing']:
+        if printed['replaced']:
+            story.append(Spacer(1, 4 * mm))
+            doc_names = ', '.join(d['filename']
+                                  for d in printed['documents']
+                                  if d['mode'] == 'replace')
+            story.append(Paragraph(
+                f'<b>Terms and conditions:</b> as per '
+                f'{_esc(doc_names)}, attached. The Procam standard '
+                f'terms do not apply to this quotation.', b))
+        elif std['missing']:
             # Said out loud rather than printed blank: a quote that
-            # silently carries no terms is the one argued about.
+            # silently carries no terms is the one argued about. It
+            # still goes out — Module 1.5.
+            story.append(Spacer(1, 4 * mm))
             story.append(Paragraph(
-                f'<b>Standard terms:</b> none published for '
-                f'{_esc(printed["vertical"])}. This quote carries no '
-                f'standard terms.', b))
+                '<b>Standard terms:</b> none published. This quote '
+                'carries no standard terms.', b))
         else:
+            _set(std, 'Procam Standard Terms and Conditions')
+            _set(printed['annexure'],
+                 f'{printed["vertical"]} annexure')
+
+        added = [d for d in printed['documents']
+                 if d['mode'] == 'add']
+        if added:
+            story.append(Spacer(1, 3 * mm))
             story.append(Paragraph(
-                f'<b>{_esc(std["title"])}</b> '
-                f'(v{std["version"]})', b))
-            for para in (std['body'] or '').split('\n'):
-                if para.strip():
-                    story.append(Paragraph(_esc(para.strip()), b))
+                '<b>Also applicable:</b> '
+                + _esc(', '.join(d['filename'] for d in added))
+                + ', attached.', b))
 
     if _rev_on:
         for flowable in _pdf.footer(quote, body, styles):

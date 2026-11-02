@@ -990,3 +990,82 @@ the same confusion in the deadline card — a UTC moment under an IST
 heading — and I still wrote `when.date()` in the route next door.
 Dates and datetimes do not look like the same bug, and one timezone
 used consistently for storage does not make the dates right.
+
+## 53 — "remove every DRAFT flag" is not the same as deleting the word
+
+Module 1 says: "Publish it as v1 and remove every DRAFT flag (CRM2
+STC/SCC library and RFQ Chain term sets)."
+
+The six October term sets say `DRAFT — replace before issuing.` in
+their first line, and the prose under it is a placeholder that says
+what a clause is *for* rather than what Procam's contract says:
+
+    DRAFT — replace before issuing.
+    1. Storage is charged per the unit and period stated, part
+       periods counting as whole.
+
+Deleting the first line would have satisfied the instruction exactly
+and left placeholder wording looking approved, on quotes going to
+clients. So `scripts/2026_11_02_terms_master.py` replaces each
+annexure's wording instead — the company-wide clauses move up into
+the master, where the decision puts them, and the annexure keeps only
+what genuinely differs by vertical.
+
+Two things that follow from doing it that way:
+
+**ODC is not a vertical.** The decision lists "ODC: survey and permit
+lead time" beside three verticals. ODC work is quoted inside Heavy
+Transport, so those clauses are in the Heavy Transport annexure.
+
+**One vertical keeps its DRAFT.** Sea Freight has a term set and
+nobody has given me clauses for it, so it is left exactly as it is,
+marker included, and both `--check` and the Admin screen say so. A
+vertical whose contract language nobody has written is not one I can
+write for, and an unmarked placeholder is the worse of the two
+failures.
+
+## 54 — the handover pack omitted fields rather than inventing them
+
+Module 1 ends: "replace the invented handover fields (9 in
+FF-COMMS-01, 21 in CRM2) with the fields the TMS Job / FF Job create
+screens actually require, read from the TMS code. Invent no fields."
+
+I read the TMS source rather than correcting a list by hand, and the
+finding was the other way round from the brief. `scripts/handover_field_audit.py`
+reports **0 invented fields** — every field the pack sends has a place
+at the far end. What it found instead:
+
+* **`po_currency`, not `currency`.** The TMS ClientPO column is
+  `po_currency`. The pack said `currency`, so the value was dropped
+  without a word and the order read INR — by fallback, which is right
+  by accident for INR and wrong for every other currency we quote.
+* **Four cargo columns declared and never filled.** `cargo_weight_kg`
+  and the three sides were in `PART_B_JOB` and nothing wrote them, so
+  the weight and dimensions CRM-COCKPIT-02 §5 had just started
+  capturing went nowhere and the TMS job was typed from the enquiry
+  mail a second time. `split_dimensions()` now splits the one string a
+  person types into the three columns and the unit the TMS keeps, and
+  **refuses rather than guesses** — an ODC job is priced on its
+  dimensions, and 7.2 in the wrong unit is worse than a blank.
+* **`cha_name` and `scope`** are read by the TMS and not sent. Both
+  are reported, neither is filled: I have no CRM source for a CHA's
+  name, and inventing one is the thing the instruction forbids.
+
+Two findings were my own audit being wrong, and are worth recording
+because both would have produced a confident, false correction:
+
+1. It called `ClientPO.po_number` "required and not sent". The TMS
+   issues that number itself, and the CRM's own `THEIRS_TO_NUMBER`
+   already said not to send it — I had subtracted that list from the
+   omissions and forgotten to subtract it from the requirements.
+2. It called `client_name` an invented field. The TMS stores
+   `client_id`, an integer into its own client master, so `client_name`
+   is a **match key** — it is in the pack so the person importing can
+   find the right client. Acting on "invented" would have deleted the
+   one column that makes the pack usable. `LOOKUP_KEYS` now names the
+   difference.
+
+The audit reads the TMS repository rather than a copy of its field
+names kept here, and refuses to run without it. A vendored list is a
+list that drifts, and drift is the whole problem this check exists to
+find.

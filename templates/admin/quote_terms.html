@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Quote terms — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+{% include "_csrf_fetch.html" %}
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .qt { max-width:900px; margin:0 auto; padding:18px 16px 60px; }
+  .qt h1 { font-family:Barlow,sans-serif; font-size:23px;
+      font-weight:800; margin:0 0 4px; }
+  .qt .lede { color:#6b7280; font-size:13.5px; margin:0 0 20px;
+      max-width:62ch; line-height:1.55; }
+  .qt h2 { font-family:Barlow,sans-serif; font-size:14px;
+      font-weight:700; margin:26px 0 8px; letter-spacing:.02em; }
+  .qt-card { background:#fff; border:1px solid #e5e7eb;
+      border-radius:10px; padding:14px 16px; margin-bottom:10px; }
+  .qt-ver { font-size:11.5px; font-weight:700; color:#166534;
+      background:#dcfce7; border-radius:5px; padding:3px 8px; }
+  .qt-draft { font-size:11.5px; font-weight:800; color:#991b1b;
+      background:#fee2e2; border-radius:5px; padding:3px 8px; }
+  .qt-head { display:flex; gap:10px; align-items:center;
+      margin-bottom:9px; flex-wrap:wrap; }
+  .qt-head b { font-size:14.5px; font-weight:700; }
+  .qt-cl { font-size:13px; line-height:1.6; color:#374151;
+      padding:5px 0; border-top:1px solid #f3f4f6; }
+  .qt-cl:first-of-type { border-top:0; }
+  .qt-lab { font-weight:700; color:#111827; }
+  .qt-none { color:#6b7280; font-size:13px; font-style:italic; }
+  .qt textarea { width:100%; min-height:220px; font-family:
+      ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px;
+      line-height:1.6; padding:10px; border:1px solid #d1d5db;
+      border-radius:8px; box-sizing:border-box; }
+  .qt-btn { font-family:Inter,sans-serif; font-size:13px;
+      font-weight:600; border:0; border-radius:8px; padding:9px 16px;
+      background:#111827; color:#fff; cursor:pointer; }
+  .qt-btn[disabled] { opacity:.5; cursor:default; }
+  .qt-ghost { background:#fff; color:#374151;
+      border:1px solid #d1d5db; }
+  .qt-msg { font-size:13px; margin:8px 0 0; }
+  .qt-err { color:#991b1b; }
+  .qt-ok { color:#166534; }
+  .qt-hist { font-size:12.5px; color:#6b7280; line-height:1.7; }
+  @media (max-width:520px) { .qt { padding:14px 16px 50px; } }
+</style>
+</head>
+<body>
+<div class="qt">
+
+  <h1>Quote terms</h1>
+  <p class="lede">
+    One <b>Procam Standard T&amp;C</b> goes on every quote, in every
+    vertical. A vertical annexure adds only what differs there — free
+    time, surcharges, permit lead time, site readiness. Publishing
+    makes a new version; nothing is edited in place, because a quote
+    printed last month was printed under last month's wording and the
+    client has it in their hand.
+  </p>
+
+  <h2>Procam Standard T&amp;C</h2>
+  {% if master %}
+    <div class="qt-card">
+      <div class="qt-head">
+        <b>{{ master.title }}</b>
+        <span class="qt-ver">v{{ master.version }}</span>
+        {% if master.effective_from %}
+          <span class="qt-hist">effective
+            {{ master.effective_from }}</span>
+        {% endif %}
+      </div>
+      {% for c in master_clauses %}
+        <div class="qt-cl">
+          {%- if c.label %}<span class="qt-lab">{{ c.label }}:</span>
+            {{ c.text.split(':', 1)[1].strip() }}
+          {%- else %}{{ c.text }}{% endif -%}
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="qt-card">
+      <p class="qt-none">
+        No Procam Standard T&amp;C is published. Quotes still go out —
+        they are never blocked for want of terms — but they go out
+        carrying none.
+      </p>
+    </div>
+  {% endif %}
+
+  <div class="qt-card">
+    <div class="qt-head"><b>Publish a new version</b></div>
+    <p class="qt-hist" style="margin:0 0 8px">
+      One clause per line, written as <b>Label: wording</b>. The label
+      is what a special condition names when it overrides the clause
+      on one quote, so it is part of the contract and not formatting.
+    </p>
+    <textarea id="mbody" spellcheck="false">{{ master.body if master else '' }}</textarea>
+    <p style="margin:10px 0 0">
+      <button class="qt-btn" id="msave">Publish as
+        v{{ (master.version + 1) if master else 1 }}</button>
+    </p>
+    <p class="qt-msg" id="mmsg"></p>
+  </div>
+
+  {% if history|length > 1 %}
+    <p class="qt-hist">
+      Earlier versions:
+      {% for h in history[1:] %}v{{ h.version }}{% if not loop.last %},
+      {% endif %}{% endfor %} — kept, so every printed quote can still
+      say what it printed under.
+    </p>
+  {% endif %}
+
+  <h2>Vertical annexures</h2>
+  {% if not verticals %}
+    <div class="qt-card"><p class="qt-none">
+      None on file. Every quote prints the master alone.
+    </p></div>
+  {% endif %}
+  {% for v in verticals %}
+    <div class="qt-card">
+      <div class="qt-head">
+        <b>{{ v.vertical }}</b>
+        <span class="qt-ver">v{{ v.version }}</span>
+        {% if v.draft %}<span class="qt-draft">DRAFT</span>{% endif %}
+      </div>
+      {% if v.draft %}
+        <p class="qt-msg qt-err" style="margin:0 0 8px">
+          This annexure still says DRAFT in its first line. The
+          wording under it is a placeholder. Replace it before a
+          quote in {{ v.vertical }} goes out.
+        </p>
+      {% endif %}
+      {% for c in v.clauses %}
+        <div class="qt-cl">
+          {%- if c.label %}<span class="qt-lab">{{ c.label }}:</span>
+            {{ c.text.split(':', 1)[1].strip() }}
+          {%- else %}{{ c.text }}{% endif -%}
+        </div>
+      {% endfor %}
+      <p style="margin:10px 0 0">
+        <button class="qt-btn qt-ghost"
+                onclick="editAnnexure('{{ v.vertical }}')">Edit</button>
+      </p>
+      <div id="ed-{{ loop.index }}" data-v="{{ v.vertical }}"
+           style="display:none">
+        <textarea spellcheck="false">{{ v.body }}</textarea>
+        <p style="margin:10px 0 0">
+          <button class="qt-btn">Publish as v{{ v.version + 1 }}</button>
+        </p>
+        <p class="qt-msg"></p>
+      </div>
+    </div>
+  {% endfor %}
+
+</div>
+<script>
+  const P = "{{ url_prefix }}";
+
+  function say(el, text, ok) {
+    el.textContent = text;
+    el.className = 'qt-msg ' + (ok ? 'qt-ok' : 'qt-err');
+  }
+
+  async function publish(url, body, btn, msg) {
+    btn.disabled = true;
+    say(msg, 'Publishing…', true);
+    try {
+      const r = await fetch(P + url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({body: body})
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) {
+        say(msg, d.error || 'That did not save.', false);
+        btn.disabled = false;
+        return;
+      }
+      say(msg, 'Published as v' +
+          ((d.master || d.annexure || {}).version) +
+          '. Reloading…', true);
+      setTimeout(() => location.reload(), 700);
+    } catch (e) {
+      say(msg, 'That did not save: ' + e, false);
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById('msave').addEventListener('click', function () {
+    publish('/api/quote-terms/master',
+            document.getElementById('mbody').value,
+            this, document.getElementById('mmsg'));
+  });
+
+  function editAnnexure(vertical) {
+    const box = [...document.querySelectorAll('[data-v]')]
+      .find(d => d.dataset.v === vertical);
+    if (!box) return;
+    box.style.display = box.style.display === 'none' ? '' : 'none';
+    if (box.dataset.wired) return;
+    box.dataset.wired = '1';
+    box.querySelector('button').addEventListener('click', function () {
+      publish('/api/quote-terms/annexure/' +
+              encodeURIComponent(vertical),
+              box.querySelector('textarea').value,
+              this, box.querySelector('.qt-msg'));
+    });
+  }
+</script>
+</body>
+</html>

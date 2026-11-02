@@ -125,13 +125,32 @@ def build_payload(quote, *, pack=None, lead=None, account=None,
                                if lead is not None else None),
     })
 
+    # The cargo, from the lead rather than the RFQ: CRM-COCKPIT-02
+    # §5 put weight and dimensions on the lead, and they were going
+    # nowhere — `cargo_weight_kg` and the three sides were declared
+    # in PART_B_JOB and never filled, so the TMS job was typed from
+    # the enquiry mail a second time.
+    weight_mt = getattr(lead, 'cargo_weight_mt', None) if lead else None
+    sides = tms_intake.split_dimensions(
+        getattr(lead, 'cargo_dimensions', None) if lead else None)
+
     job = tms_intake.prune({
         'name': _job_name(rfq, lead, vertical),
         'currency': currency,
         'job_value': total,
         'job_type': job_type_for(vertical),
         'mod': MOD.get(vertical, 'Road'),
-        'cargo_description': getattr(rfq, 'cargo', None),
+        'cargo_description': (getattr(rfq, 'cargo', None)
+                              or (getattr(lead, 'cargo_type', None)
+                                  if lead else None)),
+        # The TMS stores kilogrammes; the CRM asks for tonnes,
+        # because that is the unit every ODC enquiry is written in.
+        'cargo_weight_kg': (round(float(weight_mt) * 1000, 2)
+                            if weight_mt else None),
+        'cargo_length': sides[0] if sides else None,
+        'cargo_width': sides[1] if sides else None,
+        'cargo_height': sides[2] if sides else None,
+        'cargo_dimension_unit': sides[3] if sides else None,
         'discharge_port': (getattr(rfq, 'destination', None)
                            if vertical in ('Project Freight',
                                            'Freight Forwarding')
@@ -157,7 +176,10 @@ def build_payload(quote, *, pack=None, lead=None, account=None,
             account=account),
         'po_date': str(datetime.utcnow().date()),
         'po_value': total,
-        'currency': currency,
+        # `po_currency`: the TMS ClientPO column. This said
+        # `currency`, which the far end has no place for, so it was
+        # dropped silently and the order read INR by fallback.
+        'po_currency': currency,
     })
 
     return {

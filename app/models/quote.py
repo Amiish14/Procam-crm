@@ -64,9 +64,17 @@ class Quote(db.Model):
     #: FF-COMMS-01 R2, carried from the enquiry.
     crn           = db.Column(db.String(24), index=True)
 
-    #: The standard-terms version this quote printed under. Set
+    #: The vertical annexure version this quote printed under. Set
     #: once, never moved: the client has that wording in their hand.
+    #: Named `terms_version_id` from before there was a master; left
+    #: alone because six readers and a printed quote number depend on
+    #: it, and renaming a column to improve a comment is how a
+    #: printed quote stops being able to say what it printed under.
     terms_version_id = db.Column(db.Integer, nullable=True)
+    #: The Procam Standard T&C version this quote printed under
+    #: (Module 1.1). Both are recorded, because the master and the
+    #: annexure are versioned separately and a quote is the pair.
+    terms_master_version_id = db.Column(db.Integer, nullable=True)
     incoterm      = db.Column(db.String(8))
     #: The named place that completes the Incoterm — "FOB" alone is
     #: not a term, "FOB Chennai" is. Beside the Incoterm because

@@ -33,6 +33,8 @@ What this module will not do
 """
 from __future__ import annotations
 
+import re
+
 # ── Part A: the FF Handover Pack ─────────────────────────────────────
 #: Every field the reader knows, in the document's order. The pack
 #: must use exactly these spellings; anything else is ignored by the
@@ -109,14 +111,93 @@ PART_B_PROJECT = (
 PART_B_JOB = (
     'name', 'currency', 'job_value', 'job_type', 'mod',
     'cargo_description', 'cargo_weight_kg', 'cargo_packages',
+    # The TMS keeps the three sides and the unit as separate
+    # columns, not as the one string a person types. CRM-COCKPIT-02
+    # §5 gave the lead a `cargo_dimensions` field, so there is now
+    # something to split — `split_dimensions()` below does it, and
+    # refuses rather than guesses.
+    'cargo_length', 'cargo_width', 'cargo_height',
+    'cargo_dimension_unit',
     'shipper_name', 'consignee_name', 'supplier_cha_name',
     'discharge_port', 'final_site', 'sbu_unit',
     'client_billing_method',
 )
+
+#: What the TMS accepts in `cargo_dimension_unit` (4 characters, and
+#: it defaults to metres).
+DIMENSION_UNITS = ('m', 'cm', 'mm', 'ft', 'in')
+
+
+def split_dimensions(text):
+    """'7.2 x 3.1 x 3.4 m' -> (7.2, 3.1, 3.4, 'm'), else None.
+
+    Deliberately all-or-nothing. An ODC job is priced on its
+    dimensions, and a partial read — length only, or three numbers
+    whose unit was a guess — is worse on that screen than a blank,
+    because a blank is obviously missing and 7.2 in the wrong unit
+    is not.
+
+    So: exactly three numbers, separated by x or *, optionally with
+    one unit after them. No unit means metres, which is both the
+    TMS default and what every Procam quote writes. Anything else
+    returns None and the pack leaves the four columns empty for the
+    person typing the job.
+    """
+    raw = (text or '').strip().lower()
+    if not raw:
+        return None
+    raw = raw.replace('×', 'x').replace('*', 'x')
+    match = re.match(
+        r'^\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*'
+        r'(\d+(?:\.\d+)?)\s*([a-z]{1,4})?\s*$', raw)
+    if not match:
+        return None
+    unit = (match.group(4) or 'm').strip()
+    # 'mtr', 'mtrs', 'meter' all mean metres; anything this does not
+    # recognise is a unit nobody should be billed in.
+    unit = {'mtr': 'm', 'mtrs': 'm', 'mts': 'm', 'metr': 'm',
+            'feet': 'ft', 'foot': 'ft'}.get(unit, unit)
+    if unit not in DIMENSION_UNITS:
+        return None
+    sides = tuple(float(match.group(i)) for i in (1, 2, 3))
+    if any(side <= 0 for side in sides):
+        return None
+    return sides + (unit,)
 PART_B_ORDER = (
     'client_name', 'client_po_number', 'gst_treatment', 'po_date',
-    'po_value', 'currency',
+    # `po_currency`, not `currency`. The TMS ClientPO column is
+    # `po_currency`; a pack that said `currency` was dropped at the
+    # far end without a word, and the order read INR because INR is
+    # what a project with no currency falls back to. Found by
+    # scripts/handover_field_audit.py, which reads the TMS source.
+    'po_value', 'po_currency',
 )
+
+#: Fields in the packs above that are **match keys**, not values the
+#: TMS stores under that name. `client_name` is the clearest: the TMS
+#: Project and ClientPO both hold `client_id`, an integer into their
+#: own client master, and their create screens refuse without it. The
+#: name is how the person importing finds the right client — so it
+#: belongs in the pack, and it is not a field.
+#:
+#: Named here so the audit can tell the two apart. Without this, a
+#: lookup key reads as an invented field and the honest fix looks
+#: like deleting the one column that makes the pack usable.
+LOOKUP_KEYS = ('client_name', 'linked_lead_number', 'customer',
+               'customer_code', 'quote_reference')
+
+#: Theirs to issue, like THEIRS_TO_NUMBER, but for the things the TMS
+#: decides rather than numbers. `procam_gst_reg_id` is which Procam
+#: GST registration raises the invoice: a function of the billing
+#: entity and the place of supply, both settled in the TMS. The CRM
+#: naming one would be guessing at somebody else's compliance.
+#: `status` and `phase` are deliberately NOT here. A project's
+#: status is the TMS's to move, but the pack proposes the one it
+#: starts at, which is useful and is what the create screen expects.
+#: The test that holds this list would have failed on `status`, and
+#: the right answer was to shorten the list rather than to stop
+#: sending a field the far end asks for.
+THEIRS_TO_DECIDE = ('procam_gst_reg_id', 'business_id', 'branch_id')
 
 #: The six the TMS accepts. Legacy 'FCM' / 'RCM' are aliased at the
 #: far end to the Transport variants; we send the full names.

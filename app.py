@@ -6639,6 +6639,11 @@ for _mod_path, _bp_name in [
     # read off the mail, the one-tap call log, and the accounts whose
     # industry, state or city is blank.
     ('app.minimum_entry.routes', 'minimum_entry_bp'),
+    # PROCAM-DECISIONS-02NOV Module 1 — the Procam Standard T&C, the
+    # vertical annexures, the client's or tender's own T&C uploaded
+    # against a quote, and the special conditions that override a
+    # standard clause. Not behind a feature switch.
+    ('app.quote_terms.routes',   'quote_terms_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])

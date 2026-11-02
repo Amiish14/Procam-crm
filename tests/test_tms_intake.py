@@ -409,7 +409,12 @@ def test_part_b_never_sends_a_number_the_tms_issues(ff_world,
         assert payload['client_order']['gst_treatment'] == \
             'TRANSPORT_FCM'
         assert payload['client_order']['po_value'] == 4850000.0
-        assert payload['client_order']['currency'] == 'INR'
+        # `po_currency`, the TMS ClientPO column. It was
+        # `currency`, which the far end has no place for, so the
+        # value was dropped and the order read INR by fallback —
+        # right by accident for INR and wrong for every other.
+        assert payload['client_order']['po_currency'] == 'INR'
+        assert 'currency' not in payload['client_order']
         db.session.rollback()
 
 
@@ -610,3 +615,61 @@ def test_the_cha_mode_follows_the_end_that_clears_customs(
     r.direction, r.pol_name, r.pod_name = direction, pol, pod
     r.origin = r.destination = None
     assert ff_handover._cha_mode(r) == expected
+
+
+# ── PROCAM-DECISIONS-02NOV Module 1: the handover's real fields ─────
+def test_the_cargo_dimensions_are_split_into_the_tms_columns():
+    """The TMS keeps three sides and a unit; a person types one
+    string. CRM-COCKPIT-02 §5 gave the lead that string and nothing
+    carried it, so the job was typed from the enquiry mail twice."""
+    assert tms_intake.split_dimensions('7.2 x 3.1 x 3.4 m') == \
+        (7.2, 3.1, 3.4, 'm')
+    assert tms_intake.split_dimensions('12.0 X 3.5 X 4.2') == \
+        (12.0, 3.5, 4.2, 'm')
+    assert tms_intake.split_dimensions('900 x 300 x 250 cm') == \
+        (900.0, 300.0, 250.0, 'cm')
+    assert tms_intake.split_dimensions('7.2 × 3.1 × 3.4 mtrs') == \
+        (7.2, 3.1, 3.4, 'm')
+
+
+def test_a_dimension_it_cannot_read_is_refused_not_guessed():
+    """An ODC job is priced on its dimensions. A partial read is
+    worse than a blank: a blank is obviously missing, and 7.2 in the
+    wrong unit is not."""
+    for text in ('about 7 metres long', '7.2 x 3.1', '',
+                 '7.2 x 3.1 x 3.4 yards', '0 x 3 x 4 m',
+                 'L 7.2 W 3.1 H 3.4', None):
+        assert tms_intake.split_dimensions(text) is None, text
+
+
+def test_the_dimension_unit_fits_the_tms_column():
+    """`cargo_dimension_unit` is VARCHAR(4) at the far end."""
+    for unit in tms_intake.DIMENSION_UNITS:
+        assert len(unit) <= 4
+
+
+def test_a_lookup_key_is_not_a_field():
+    """`client_name` finds the client whose id the TMS stores. It is
+    in the pack on purpose, and counting it as an invented field
+    would make the fix look like deleting the column that makes the
+    pack usable."""
+    assert 'client_name' in tms_intake.LOOKUP_KEYS
+    assert 'client_name' in tms_intake.PART_B_PROJECT
+    assert 'client_name' in tms_intake.PART_B_ORDER
+
+
+def test_the_order_pack_names_the_tms_currency_column():
+    assert 'po_currency' in tms_intake.PART_B_ORDER
+    assert 'currency' not in tms_intake.PART_B_ORDER
+
+
+def test_nothing_the_tms_decides_is_in_a_pack():
+    """Which Procam GST registration raises the invoice is a function
+    of the billing entity and the place of supply, both settled over
+    there. Naming one here would be guessing at somebody else's
+    compliance."""
+    packs = (tms_intake.PART_B_PROJECT, tms_intake.PART_B_JOB,
+             tms_intake.PART_B_ORDER)
+    for field in tms_intake.THEIRS_TO_DECIDE:
+        for pack in packs:
+            assert field not in pack, field
