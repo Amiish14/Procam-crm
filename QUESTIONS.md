@@ -1369,3 +1369,93 @@ opt-in section that is not in the default set at all: marking leads not
 relevant is its own decision with its own preview, and a section that
 runs only when named cannot be swept along by somebody running the
 whole thing.
+
+## 62 — no bulk account creation, and three things that followed
+
+Decided 2 Nov after the second dry run: **no account is created in
+bulk.** Every lead in `module2_accounts_to_create.csv` stays in Account
+check for a vertical head to confirm on screen.
+
+`CREATE_ACCOUNTS = False` in `accounts_module2`, and the rules still
+run and still report. The plan keeps marking those rows `create` and
+naming the account it would have proposed, rather than quietly dropping
+the proposal, because that CSV **is** the list the heads work from. What
+changed is that `apply_queue` will not write one, counts what it held
+back, and says so.
+
+Linking is untouched. Rule 1 — a lead whose sender domain or whose
+normalised name is exactly an existing account — still links, because
+that is not a new record and the certainty is the one the matcher uses
+everywhere else.
+
+The creation test was kept rather than deleted, with the switch flipped
+for its own duration: when a head confirms an account on screen the same
+dated remark has to appear, and that test is the only thing holding the
+creation path to rule 0.2.
+
+### The fifteen named senders, and the domain that must not be guessed
+
+The decision names fifteen senders and asks for their domains on the
+Not-relevant classes. It names them by **name**, and a domain invented
+from a name is a rule that either never fires or fires on somebody
+else: "MeetCleanBase" is not obviously `meetcleanbase.com`, and
+"Akmglobal-Mailer" is a mailer for a firm whose own domain it may not
+share.
+
+So `scripts/2026_11_02_not_relevant_senders.py` finds the leads first,
+by typed name, sender address and sender domain, and writes the domains
+they **actually arrived from**. A name matching no lead gets no rule:
+a domain nobody has seen mail from is not a rule worth having. On the
+test data, twelve of the fifteen matched nothing.
+
+**The correction worth recording.** The first version counted every
+domain it saw, including on the leads it had just refused to touch — so
+Opterix, whose one lead is at Quoted, had `*@opterix.example` added
+anyway, and the client who sent that quote would have had their next
+mail filed as junk. Rules are now built from eligible leads only, and
+the domains excluded for that reason are printed rather than dropped
+silently.
+
+### Two sender lists, not one
+
+`system_senders` is the ingest block list: matched mail never becomes a
+lead at all, and is written to `mail_ingest_log` as blocked. "Future
+mail goes there" means the Not-relevant **queue**, not the ingest log —
+so the fifteen go on a new Master Data list,
+`not_relevant_sender`, read by `not_relevant_class` right after the
+block list. The mail still becomes a lead; the lead classifies as not
+relevant.
+
+The difference is not academic. A directory portal sends one real
+enquiry a year, because a client's buyer sometimes mails from a portal
+account — invisible if blocked at ingest, correctly filed if listed
+here.
+
+The list has **no seeds**. A sender named in code is a sender nobody
+can take off, and a test asserts none of the fifteen appears in the
+module. `why_not_a_pattern` refuses a Procam domain (every internal
+forward would be filed as not relevant, and a forward is how most real
+enquiries arrive), a free-mail provider, a catch-all, and a bare domain
+with no `@` — which would be a rule that silently never fires, because
+a sender address is `somebody@domain`.
+
+### Why "Lntecc" did not link: there was no alias
+
+`squash("Larsen & Toubro")` is `larsentoubro` and `squash("Lntecc")` is
+`lntecc`. Neither is a prefix of the other and neither contains the
+other, so nothing but an alias can connect them — and `aliases`
+defaults to an empty list, filled only when a merge happens, since a
+merge keeps the loser's spelling as an alias of the survivor. An account
+never merged into has none. That is the whole answer, and
+`scripts/2026_11_02_lnt_alias.py` confirms it on the live data rather
+than assuming it.
+
+It adds the alias and nothing else: no rename, no merge, no lead
+linked. And it refuses to choose between two candidate accounts — a
+company that size usually has one per division, and which of them owns
+the alias decides where every future "Lntecc" lead lands.
+
+One bug caught while writing it: `aliases` is a JSON column, and
+SQLAlchemy does not notice a list being mutated in place. An
+`aliases.append(...)` saves nothing and reports success. The list is
+reassigned, and a test asserts the source does that.

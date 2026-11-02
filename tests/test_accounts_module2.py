@@ -612,9 +612,48 @@ def test_applying_the_owners_is_reversible(world):
         assert row.emp_code == 'EMP3962025'
 
 
-def test_a_created_account_carries_a_dated_remark(world):
-    """Rule 0.2: every changed record gets a dated audit remark."""
+def test_nothing_is_created_in_bulk(world):
+    """Decided 2 Nov. The leads stay in Account check.
+
+    The proposal is still made and still reported — the CSV is the list
+    the vertical heads work from — and `apply_queue` writes none of it.
+    Linking is untouched: an exact domain or name match is not a new
+    record.
+    """
     script = _load('2026_11_02_accounts_module2')
+    assert m2.CREATE_ACCOUNTS is False
+    with flask_app.app_context():
+        from app.services import bulk_log
+
+        lead = _lead(company='Nocreate Test Ltd',
+                     email='x@nocreatetest.example',
+                     procam_vertical='Warehousing',
+                     assigned_to='DIR72012')
+        db.session.commit()
+        rows = [r for r in m2.autoclear_plan()[0]
+                if r['lead'].id == lead.id]
+        assert rows and rows[0]['create'] is True, \
+            'it is still proposed, so the heads have a list'
+        with bulk_log.batch('test.module2.nocreate', actor='TEST') as log:
+            linked, created, held = script.apply_queue(rows, log)
+        db.session.commit()
+        assert (created, held) == (0, 1)
+        assert linked == 0, 'nothing to link it to either'
+        assert Company.query.filter_by(
+            name='Nocreate Test Ltd').first() is None
+        assert db.session.get(Lead, lead.id).company_id is None
+
+
+def test_a_created_account_carries_a_dated_remark(world, monkeypatch):
+    """Rule 0.2: every changed record gets a dated audit remark.
+
+    Creation is switched off, so the switch is flipped for this test
+    alone. Kept rather than deleted: when a head confirms an account on
+    screen the same remark has to appear, and this is the only thing
+    that holds the creation path to it.
+    """
+    script = _load('2026_11_02_accounts_module2')
+    monkeypatch.setattr(m2, 'CREATE_ACCOUNTS', True)
     with flask_app.app_context():
         from app.services import bulk_log
 
@@ -626,7 +665,7 @@ def test_a_created_account_carries_a_dated_remark(world):
         rows = [r for r in m2.autoclear_plan()[0]
                 if r['lead'].id == lead.id]
         with bulk_log.batch('test.module2.queue', actor='TEST') as log:
-            linked, created = script.apply_queue(rows, log)
+            linked, created, _held = script.apply_queue(rows, log)
         db.session.commit()
         assert (linked, created) == (1, 1)
         account = Company.query.filter_by(
@@ -1045,3 +1084,193 @@ def test_the_opt_in_section_is_not_in_the_default_set(world):
         'a bare --apply must not mark leads not relevant'
     assert 'notrelevant' in script.ALL_SECTIONS
     assert 'merges' in script.SECTIONS
+
+
+# ══ the Not-relevant sender list ════════════════════════════════════
+def test_a_listed_sender_is_not_relevant(world):
+    """A second Master Data list, so future mail lands in the queue.
+
+    Not the ingest block list: a blocked sender's mail never becomes a
+    lead at all, so a real enquiry from a portal account would be
+    invisible rather than filed in the right place.
+    """
+    with flask_app.app_context():
+        from app.services import not_relevant_senders as nrs
+        assert nrs.add('*@gastechevent.example', why='named 2 Nov',
+                       actor='TEST') == 'added'
+        db.session.commit()
+        lead = _lead(company='Gastechevent',
+                     email='news@gastechevent.example',
+                     procam_vertical='Project Freight',
+                     assigned_to='EMP372012')
+        db.session.commit()
+        code, why = m2.not_relevant_class(lead)
+        assert code == 'listed_sender'
+        assert 'gastechevent' in why
+
+
+def test_the_two_lists_are_not_the_same_list(world):
+    from app.services import not_relevant_senders as nrs
+    from app.services import system_senders
+    assert nrs.LIST_KEY != system_senders.LIST_KEY
+
+
+def test_our_own_domain_can_never_be_listed(world):
+    """Every internal forward would be filed as not relevant."""
+    from app.services import not_relevant_senders as nrs
+    for pattern in ('*@procamlogistics.com', '*@procamgroup.in',
+                    '*@mail.procamgroup.in'):
+        why = nrs.why_not_a_pattern(pattern)
+        assert why, pattern
+        assert 'our own' in why
+
+
+def test_a_bare_domain_is_refused_because_it_would_never_fire(world):
+    from app.services import not_relevant_senders as nrs
+    why = nrs.why_not_a_pattern('gastechevent.com')
+    assert 'no @ in it' in why
+    assert '*@gastechevent.com' in why
+
+
+def test_a_free_mailbox_provider_cannot_be_listed(world):
+    from app.services import not_relevant_senders as nrs
+    assert 'personal mailbox' in nrs.why_not_a_pattern('*@gmail.com')
+
+
+def test_a_catch_all_is_refused(world):
+    from app.services import not_relevant_senders as nrs
+    for pattern in ('*@*', '*', '*@'):
+        assert nrs.why_not_a_pattern(pattern)
+
+
+def test_the_list_starts_empty_and_is_not_seeded_in_code(world):
+    """A sender in code is a sender nobody can take off."""
+    source = open(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'app', 'services', 'not_relevant_senders.py')).read()
+    assert 'SEEDS' not in source
+    for name in ('gastechevent', 'luxuryescapes', 'marineinsight'):
+        assert name not in source.lower()
+
+
+# ══ the fifteen named senders ═══════════════════════════════════════
+def test_the_dry_run_names_fifteen_and_writes_nothing(world):
+    script = _load('2026_11_02_not_relevant_senders')
+    assert len(script.NAMED) == 15
+    with flask_app.app_context():
+        lead = _lead(company='Bricsamail',
+                     email='news@bricsa.example',
+                     procam_vertical='Project Freight')
+        db.session.commit()
+        found = script.find(script.NAMED)
+        assert lead.id in [l.id for l in found['Bricsamail']]
+        rows = script.survey(found)
+        mine = [r for r in rows if r['name'] == 'Bricsamail'][0]
+        assert lead.id in [l.id for l in mine['eligible']]
+        # the domain is READ off the lead, never guessed from the name
+        assert 'bricsa.example' in mine['domains']
+        rules = script.plan_rules(rows)
+        assert '*@bricsa.example' in [p for p, _w in rules]
+        # and nothing was written
+        assert db.session.get(Lead, lead.id).junk_deleted is not True
+
+
+def test_a_name_matching_no_lead_adds_no_rule(world):
+    """A domain nobody has seen mail from is not a rule worth having."""
+    script = _load('2026_11_02_not_relevant_senders')
+    with flask_app.app_context():
+        rows = script.survey(script.find(('Nosuchsenderatall',)))
+        assert rows[0]['leads'] == []
+        assert script.plan_rules(rows) == []
+
+
+def test_a_lead_with_a_quote_is_skipped(world):
+    """One of the fifteen having a real enquiry is what the skip is for."""
+    script = _load('2026_11_02_not_relevant_senders')
+    with flask_app.app_context():
+        from app.services import junk_delete as jd
+        lead = _lead(company='Opterix', email='x@opterix.example',
+                     stage='Quoted',
+                     procam_vertical='Project Freight')
+        db.session.commit()
+        assert jd.blockers(lead), 'a Quoted lead is not junk'
+        rows = script.survey(script.find(('Opterix',)))
+        mine = rows[0]
+        assert mine['eligible'] == []
+        assert len(mine['refused']) == 1
+
+
+def test_the_script_never_blocks_the_sender(world):
+    script = _load('2026_11_02_not_relevant_senders')
+    source = open(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'scripts', '2026_11_02_not_relevant_senders.py')).read()
+    assert 'block_sender=False' in source
+    assert 'block_sender=True' not in source
+
+
+# ══ the L&T alias ═══════════════════════════════════════════════════
+def test_lntecc_cannot_reach_larsen_toubro_without_an_alias(world):
+    """The answer to "why did it not link": there is no alias.
+
+    `squash("Larsen & Toubro")` is 'larsentoubro' and `squash("Lntecc")`
+    is 'lntecc'. Neither is a prefix of the other and neither contains
+    the other, so nothing but an alias can connect them.
+    """
+    with flask_app.app_context():
+        account = _plain('Larsen & Toubro')
+        db.session.commit()
+        assert m2.squash('Larsen & Toubro') == 'larsentoubro'
+        assert m2.squash('Lntecc') == 'lntecc'
+        index = m2._alias_index([account])
+        found, _how = m2.looks_like_existing('Lntecc', '', index, {})
+        assert found is None, 'without the alias there is nothing to match'
+
+        account.aliases = ['LNT']
+        db.session.commit()
+        index = m2._alias_index([account])
+        found, how = m2.looks_like_existing('Lntecc', '', index, {})
+        assert found is not None and found.id == account.id
+        assert 'LNT' in how
+
+
+def test_the_alias_script_refuses_to_choose_between_two_accounts(world):
+    script = _load('2026_11_02_lnt_alias')
+    with flask_app.app_context():
+        _plain('Larsen & Toubro')
+        _plain('Larsen & Toubro Construction')
+        db.session.commit()
+        found = script.candidates()
+        assert len(found) >= 2, \
+            'both are candidates, and the script must not pick one'
+
+
+def test_the_alias_is_reassigned_not_appended(world):
+    """A JSON column does not notice a list being mutated in place."""
+    source = open(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'scripts', '2026_11_02_lnt_alias.py')).read()
+    assert 'account.aliases = aliases' in source
+
+
+def test_a_domain_seen_only_on_a_working_lead_is_not_added(world):
+    """The correction that matters most in this script.
+
+    The first version counted every domain it saw, including on leads it
+    had just refused to touch — so a sender with one live quote behind
+    it had its domain added, and the client who sent that quote would
+    have had their next mail filed as junk.
+    """
+    script = _load('2026_11_02_not_relevant_senders')
+    with flask_app.app_context():
+        _lead(company='Promedia', email='sales@promedia-live.example',
+              stage='Quoted', procam_vertical='Project Freight')
+        db.session.commit()
+        rows = script.survey(script.find(('Promedia',)))
+        assert rows[0]['eligible'] == []
+        assert len(rows[0]['refused']) == 1
+        assert '*@promedia-live.example' not in [
+            p for p, _w in script.plan_rules(rows)]
+        # and the exclusion is reported, not silent
+        held = script.held_back_rules(rows)
+        assert '*@promedia-live.example' in [p for p, _n, _c in held]

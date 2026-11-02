@@ -120,6 +120,29 @@ def _employee_by_name(name, *, Employee):
 
 
 # ── 2.1 what may never become an account ────────────────────────────
+#: Whether this module may create an account at all.
+#:
+#: **No.** Decided 2 Nov, after the dry run: every lead that the rules
+#: would have created an account for stays in Account check, and a
+#: vertical head confirms it on screen.
+#:
+#: The rules still run and still report. `module2_accounts_to_create.csv`
+#: is the list the heads work from — which is why the plan keeps marking
+#: these rows `create` and naming the account it would have proposed,
+#: rather than quietly dropping the proposal. What changed is that
+#: `apply_queue` will not write one.
+#:
+#: Linking is NOT creation and is unaffected. Rule 1 — a lead whose
+#: sender domain or whose normalised name is exactly an existing
+#: account — still links, because that is not a new record and the
+#: certainty is the same certainty the matcher uses everywhere else.
+CREATE_ACCOUNTS = False
+
+#: Why, in one sentence, for the screen and the CSV.
+NO_CREATION = ('no account is created in bulk (decided 2 Nov) — the '
+               'vertical head confirms this one on Account check')
+
+
 #: A name this module refuses to create an account from.
 #:
 #: Found by the dry run. Rule 2 says "create the account from the name
@@ -316,12 +339,16 @@ PROCUREMENT_PORTALS = ('ariba', 'gem.gov.in', 'eproc', 'tender',
 def not_relevant_class(lead):
     """(code, why) when this lead is not a customer, else (None, '').
 
-    Two kinds, in order:
+    Three kinds, in order:
 
-      1. the sender is on the block list. That list is a decision
-         somebody already made, in Master Data, and this reads it
-         rather than holding a second copy;
-      2. the mail is one of the five classes above.
+      1. the sender is on the ingest block list. That list is a
+         decision somebody already made, in Master Data, and this
+         reads it rather than holding a second copy;
+      2. the sender is on the Not-relevant sender list — a second
+         Master Data list, for senders whose mail should still become
+         a lead and should land in the Not-relevant queue. See
+         `not_relevant_senders` for why the two are not one list;
+      3. the mail is one of the five classes above.
 
     Nothing here marks anything. The caller stops short of creating an
     account and reports the lead for the Not-relevant queue, which is
@@ -339,6 +366,15 @@ def not_relevant_class(lead):
         if hit:
             return 'blocked_sender', (f'the sender is on the block list '
                                       f'({pattern}): {why}')
+    except Exception:                                     # noqa: BLE001
+        pass
+
+    try:
+        from app.services import not_relevant_senders
+        hit, pattern, why = not_relevant_senders.matches(sender)
+        if hit:
+            return 'listed_sender', (f'the sender is on the Not-relevant '
+                                     f'list ({pattern}): {why}')
     except Exception:                                     # noqa: BLE001
         pass
 

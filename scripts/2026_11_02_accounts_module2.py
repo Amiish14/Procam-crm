@@ -137,6 +137,11 @@ def apply_owners(plan, log):
 
 
 # ── 2.1 the queue ───────────────────────────────────────────────────
+def CREATE_ACCOUNTS_NOW():
+    from app.services.accounts_module2 import CREATE_ACCOUNTS
+    return CREATE_ACCOUNTS
+
+
 def write_creates_csv(rows, path):
     """The full set of accounts that would be created, for review.
 
@@ -156,7 +161,8 @@ def write_creates_csv(rows, path):
     with open(path, 'w', newline='', encoding='utf-8') as fh:
         out = csv.writer(fh)
         out.writerow(['lead', 'typed name', 'proposed account', 'owner',
-                      'owner code', 'why the owner', 'vertical', 'rule'])
+                      'owner code', 'why the owner', 'vertical', 'rule',
+                      'what happens now'])
         for row in sorted(rows,
                           key=lambda r: (r['account_name'].lower(),
                                          r['lead'].id)):
@@ -169,6 +175,9 @@ def write_creates_csv(rows, path):
                 row['owner_why'],
                 row['vertical'],
                 row['rule'],
+                ('created by --apply' if CREATE_ACCOUNTS_NOW()
+                 else 'stays in Account check — the vertical head '
+                      'confirms it'),
             ])
     return path
 
@@ -266,8 +275,17 @@ def report_queue(rows, review, stays=(), not_relevant=()):
     groups = {}
     for row in creates:
         groups.setdefault(squash(row['account_name']), []).append(row)
-    print(f'\n  accounts that would be created: {len(groups)}'
-          f'  (from {len(creates)} lead(s))')
+    from app.services.accounts_module2 import CREATE_ACCOUNTS
+    if CREATE_ACCOUNTS:
+        print(f'\n  accounts that would be created: {len(groups)}'
+              f'  (from {len(creates)} lead(s))')
+    else:
+        print(f'\n  {len(groups)} account(s) PROPOSED for {len(creates)} '
+              f'lead(s) — none will be created.')
+        print('    Decided 2 Nov: no bulk account creation. These leads '
+              'stay in Account\n    check and a vertical head confirms '
+              'each one on screen. The CSV below\n    is the list they '
+              'work from.')
     spread = {k: v for k, v in groups.items() if len(v) > 1}
     if spread:
         print(f'    {len(spread)} of them are proposed by more than one '
@@ -338,6 +356,7 @@ def apply_not_relevant(rows):
     #: soliciting once may be a customer next year.
     REASON = {
         'blocked_sender': 'spam',
+        'listed_sender': 'spam',
         'marketing': 'spam',
         'events': 'spam',
         'portals': 'spam',
@@ -379,7 +398,7 @@ def apply_queue(rows, log):
     from app.services import audit
 
     made = {}
-    linked = created = 0
+    linked = created = skipped_creates = 0
     for row in rows:
         account_id = row['account_id']
         if account_id is None:
@@ -388,6 +407,15 @@ def apply_queue(rows, log):
             # creation is the irreversible half, and an account called
             # Unknown cannot be undone by deleting it once leads,
             # notes and quotes point at it.
+            from app.services.accounts_module2 import (CREATE_ACCOUNTS,
+                                                        NO_CREATION)
+            if not CREATE_ACCOUNTS:
+                # Decided 2 Nov: no bulk creation. The lead keeps its
+                # place in Account check and a vertical head confirms
+                # the account on screen. Counted, not silent — a run
+                # that did less than it was asked must say so.
+                skipped_creates += 1
+                continue
             refused = m2_why_not(row['account_name'])
             if refused:
                 print(f'    !! #{row["lead"].id} not created: {refused}')
@@ -429,7 +457,7 @@ def apply_queue(rows, log):
                      reason=(f'Module 2.1 {row["rule"]}: {row["why"]}; '
                              f'owner is {row["owner_why"]}'),
                      commit=False)
-    return linked, created
+    return linked, created, skipped_creates
 
 
 # ── 2.3 the merges ──────────────────────────────────────────────────
@@ -564,9 +592,12 @@ def main():
                     print(f'  owners changed: '
                           f'{apply_owners(owners[0], log)}')
                 if queue is not None and 'queue' in wanted:
-                    linked, created = apply_queue(queue[0], log)
+                    linked, created, held = apply_queue(queue[0], log)
                     print(f'  leads linked:   {linked}')
                     print(f'  accounts made:  {created}')
+                    if held:
+                        print(f'  accounts NOT made: {held} — left in '
+                              f'Account check for a vertical head')
                 name = log.name
             db.session.commit()
 
