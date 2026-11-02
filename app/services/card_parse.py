@@ -2,7 +2,7 @@
 Deterministic business-card parsing — text in, structured contact out.
 
 Why this exists
-    The scanner's only extraction path is Claude Vision, which returns
+    The scanner's only extraction path is the vision model, which returns
     structured JSON directly.  That means a single point of failure: no
     API key, no credit, a malformed response or a refusal, and the whole
     scan degrades to an empty review form.  It also means nothing ever

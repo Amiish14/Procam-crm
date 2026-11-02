@@ -1,0 +1,22 @@
+# Lines the brand check is allowed to see a vendor name on.
+#
+# BRAND-NEUTRAL-01 §4 allows a provider name in server-side
+# configuration, and an adapter cannot be written without naming the
+# SDK it imports. Every line below is inside the AI Outreach adapter in
+# app.py — which cannot be excluded by path, because app.py is also the
+# whole application.
+#
+# The test is always the same: does this string reach a person. None of
+# these does; they are an import, a client construction and two model
+# names read from the environment. The 503 message a few lines above
+# them DID reach a person and was changed.
+#
+# Matched as whole fixed strings, so these are the lines of code
+# themselves and carry no file or line number: a line number drifts the
+# moment anything above it is edited, and a file name here would hide
+# every future vendor name added anywhere in app.py.
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+            model=os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-4-5-20250929'),
+        model=os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-4-5-20250929'),

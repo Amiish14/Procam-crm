@@ -737,7 +737,7 @@ class Lead(db.Model):
 
     # Email ingest (source=email) — dedup key from Microsoft Graph internetMessageId
     email_message_id = db.Column(db.String(255), unique=True, index=True, nullable=True)
-    # Structured JSON extracted from the email by Claude Haiku (see email_ingest/ai_extractor.py).
+    # Structured JSON extracted from the email on import (see email_ingest/ai_extractor.py).
     # Includes: company, contact_name, designation, phone_primary, phone_secondary,
     # email_primary, email_secondary, origin, destination, cargo_type, cargo_weight_mt,
     # cargo_dimensions, cargo_qty, procam_vertical, requirement_type, urgency,
@@ -904,7 +904,7 @@ class Lead(db.Model):
             **_lead_value_dict(self),
             'relevance':        self.relevance or 'Undecided',
             # AI-extracted structured summary (populated only for source=email leads
-            # that went through Claude Haiku). Renders as the "Lead Summary" card
+            # that went through the extractor). Renders as the "Lead Summary" card
             # at the top of the lead detail modal.
             'email_extracted': (json.loads(self.email_extracted_json)
                                 if self.email_extracted_json else None),
@@ -5349,15 +5349,21 @@ def api_lead_history(lid):
     return jsonify(events)
 
 
-# ---------- AI Outreach (Claude) ----------
+# ---------- AI Outreach ----------
 @app.route('/api/outreach/generate', methods=['POST'])
 @require_auth
 @limiter.limit("20/hour")
 def api_outreach_generate():
     api_key = os.environ.get('ANTHROPIC_API_KEY')
     if not api_key:
+        # The user sees this. BRAND-NEUTRAL-01, and rule 0.6 of
+        # PROCAM-DECISIONS-02NOV: no provider or model name in an error.
+        # Naming the environment variable named the vendor, in the one
+        # place a salesperson would have read it — and told them to go
+        # and set a server variable, which is not their job either.
         return jsonify({'error':
-            'AI Outreach not configured — set ANTHROPIC_API_KEY on the server.'}), 503
+            'AI Outreach is not switched on yet. The tech team sets it '
+            'up on the server — raise a ticket and it will be done.'}), 503
     d = request.get_json(force=True) or {}
     lead_id = d.get('lead_id')
     channel = d.get('channel', 'email')

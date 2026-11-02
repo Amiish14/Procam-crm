@@ -1,0 +1,20 @@
+groq
+openai
+gpt-3
+gpt-4
+gpt-5
+gpt-oss
+chatgpt
+anthropic
+claude
+gemini
+bard
+palm
+vertex ai
+llama
+mistral
+mixtral
+cohere
+deepseek
+perplexity
+huggingface

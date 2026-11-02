@@ -1188,3 +1188,46 @@ became Management and the entire module silently proposed nothing for
 anybody. One of the four selling verticals is now itself without a
 lookup, and only the aliases go through the table. A name that is
 already a master vertical should not need a table to stay itself.
+
+## 59 — the CRM had no brand check, only a brand fixer
+
+PROCAM-DECISIONS-02NOV §9.4 asks for the brand check run "across CRM
+and TMS … Zero hits before go-live". The TMS has
+`scripts/brand_check.sh` and has had it since the BRAND-NEUTRAL-01
+sweep. The CRM had `scripts/rebrand_procam_ai.py`, which *fixes* text
+and cannot answer "is it clean now" — so a release could be checked in
+one repo and merely hoped about in the other, which is how rule 0.6
+would eventually be broken without anybody noticing.
+
+Ported, and the first run found one thing that genuinely reached a
+person. `/api/outreach/generate` answered, when the key was not set:
+
+> AI Outreach not configured — set ANTHROPIC_API_KEY on the server.
+
+A 503 body rendered in the UI, naming the vendor in the one place a
+salesperson would read it, and telling them to go and set a server
+environment variable — which is not their job either. It now says the
+feature is not switched on yet and to raise a ticket.
+
+The other 52 hits were server-side: the adapters that import a
+vendor's SDK, the module whose job is to know the vendor names so it
+can strip them, and the config auditor that lists the key names.
+BRAND-NEUTRAL-01 §4 allows a provider name in server-side
+configuration, so those are excluded **by path**, with the reason
+written next to each. Four were comments and docstrings that named the
+model for no reason and now do not.
+
+Two things worth recording about the check itself.
+
+The five adapter lines inside `app.py` cannot be excluded by path,
+because `app.py` is also the whole application — so they are in
+`scripts/ai_terms_allow.txt` as the exact lines of code, with no file
+or line number. A line number drifts the moment anything above it is
+edited; a file name there would hide every future vendor name added
+anywhere in a 6,600-line file.
+
+And the allow-list is fed to `grep -vFf`, which treats **every** line
+of the file as a pattern — including a blank one, which matches every
+line and silently passes the whole check. The TMS allow file is empty
+today, which is precisely when that trap is invisible. Both scripts now
+strip comments and blanks before the grep.

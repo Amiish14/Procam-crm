@@ -3,7 +3,7 @@ Mail from a machine is not an enquiry.
 
 Two Microsoft 365 quarantine digests became leads called
 "Microsoft", sat in the pipeline until somebody closed them, and
-one of them is why the word "Claude" was in a notes field — the
+one of them is why a model name once ended up in a notes field — the
 digest was listing a spammer's subject line. They are not the only
 ones: a bounce, an out-of-office and a delivery notification all
 arrive in leads@ looking like mail from a person.
