@@ -1274,3 +1274,135 @@ def test_a_domain_seen_only_on_a_working_lead_is_not_added(world):
         # and the exclusion is reported, not silent
         held = script.held_back_rules(rows)
         assert '*@promedia-live.example' in [p for p, _n, _c in held]
+
+
+# ══ what the live run of 2 Nov found ════════════════════════════════
+def test_a_lead_at_new_is_not_past_new_opportunity(world):
+    """The bug the live run exposed.
+
+    `New` is the FIRST stage on the journey and `New Opportunity` the
+    fourth. The gate read `stage != ELIGIBLE_STAGE`, which refused
+    every brand-new lead — the exact population the junk module exists
+    for. All fifteen named senders came back "it is at New, not New
+    Opportunity" and nothing could be filed.
+    """
+    with flask_app.app_context():
+        from app.services import junk_delete as jd
+        from app.services import stage_map
+        assert stage_map.position('New') < \
+            stage_map.position('New Opportunity')
+        lead = _lead(company='Brandnew Ltd', email='x@brandnew.example',
+                     stage='New')
+        db.session.commit()
+        assert 'stage' not in dict(jd.blockers(lead))
+        assert jd.eligible(lead) is True
+
+
+def test_a_lead_past_new_opportunity_is_still_refused(world):
+    with flask_app.app_context():
+        from app.services import junk_delete as jd
+        for stage in ('RFQ Generated', 'Quoted', 'Under Negotiation'):
+            lead = _lead(company=f'Worked {stage}',
+                         email=f'x@{stage.replace(" ", "")}.example',
+                         stage=stage)
+            db.session.commit()
+            why = dict(jd.blockers(lead))
+            assert 'worked' in why, stage
+            assert 'past New Opportunity' in why['worked']
+
+
+def test_a_closed_lead_is_refused_and_says_so(world):
+    """Lost is terminal, and three of the live Promedia leads are Lost."""
+    with flask_app.app_context():
+        from app.services import junk_delete as jd
+        lead = _lead(company='Closed Ltd', email='x@closedltd.example',
+                     stage='Lost')
+        db.session.commit()
+        why = dict(jd.blockers(lead))
+        assert 'closed' in why
+        assert 'closed' in why['closed']
+
+
+def test_sales_work_can_never_be_ignored(world):
+    """No flag makes a quote untrue."""
+    with flask_app.app_context():
+        from app.services import junk_delete as jd
+        lead = _lead(company='Quoted Ltd', email='x@quotedltd.example',
+                     stage='New')
+        db.session.commit()
+        for key in jd.WORK_KEYS:
+            with pytest.raises(ValueError) as caught:
+                jd.mark_not_relevant(lead, reason='spam', actor='TEST',
+                                     ignore=(key,), commit=False)
+            assert 'cannot be ignored' in str(caught.value)
+
+
+def test_a_note_can_be_overlooked_only_when_it_is_named(world):
+    with flask_app.app_context():
+        from app import LeadNote
+        from app.services import junk_delete as jd
+        lead = _lead(company='Noted Ltd', email='x@notedltd.example',
+                     stage='New')
+        db.session.add(LeadNote(lead_id=lead.id, note_text='junk'))
+        db.session.commit()
+        assert 'note' in dict(jd.blockers(lead))
+        with pytest.raises(ValueError):
+            jd.mark_not_relevant(lead, reason='spam', actor='TEST',
+                                 commit=False)
+        out = jd.mark_not_relevant(lead, reason='spam', actor='TEST',
+                                   ignore=('note',), commit=True)
+        assert out
+        assert db.session.get(Lead, lead.id).junk_deleted is True
+
+
+def test_the_run_prints_what_the_note_says(world):
+    """Nobody can judge "somebody wrote a note on it" without reading it."""
+    script = _load('2026_11_02_not_relevant_senders')
+    with flask_app.app_context():
+        from app import LeadNote
+        lead = _lead(company='Marineinsight', stage='New',
+                     email='news@info.marineinsight.example')
+        db.session.add(LeadNote(lead_id=lead.id, note_text='junk'))
+        db.session.commit()
+        rows = script.survey(script.find(('Marineinsight',)))
+        refused = rows[0]['refused']
+        assert refused and 'note' in refused[0]['keys']
+        assert 'junk' in refused[0]['notes']
+
+
+def test_a_soft_blocker_still_yields_a_domain_rule(world):
+    """A note is not a live enquiry, so the domain is still worth a rule."""
+    script = _load('2026_11_02_not_relevant_senders')
+    with flask_app.app_context():
+        from app import LeadNote
+        lead = _lead(company='Itemsecure', stage='New',
+                     email='news@softblock.example')
+        db.session.add(LeadNote(lead_id=lead.id, note_text='junk'))
+        db.session.commit()
+        rows = script.survey(script.find(('Itemsecure',)))
+        mine = [r for r in rows if r['name'] == 'Itemsecure'][0]
+        assert mine['eligible'] == []
+        assert '*@softblock.example' in [
+            p for p, _w in script.plan_rules(rows)], \
+            'a note is soft — the sender is still a sender'
+
+
+def test_the_alias_script_names_the_account_the_leads_use(world):
+    """Four candidates on live data, and no way to tell them apart.
+
+    The one the business already uses is the one its leads point at.
+    """
+    script = _load('2026_11_02_lnt_alias')
+    with flask_app.app_context():
+        big = _plain('LARSEN & TOUBRO LIMITED')
+        small = _plain('Larsen & Toubro Hydrocarbon')
+        db.session.commit()
+        for i in range(4):
+            _lead(company='LARSEN & TOUBRO LIMITED',
+                  email=f'a{i}@lt.example', company_id=big.id)
+        _lead(company='Larsen & Toubro Hydrocarbon',
+              email='b@lth.example', company_id=small.id)
+        db.session.commit()
+        counts = script.lead_counts([big.id, small.id])
+        assert counts[big.id] == 4
+        assert counts[small.id] == 1

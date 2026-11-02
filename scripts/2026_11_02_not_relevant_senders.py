@@ -132,9 +132,16 @@ def find(names):
     return found
 
 
-def survey(found):
-    """What would happen, per name. Writes nothing."""
+def survey(found, tolerate=()):
+    """What would happen, per name. Writes nothing.
+
+    `tolerate` names blocker keys the run has been authorised to
+    overlook — only ever from --allow on the command line, and never
+    one of `junk_delete.WORK_KEYS`, which that module refuses outright.
+    """
     from app.services import junk_delete as jd
+
+    tolerate = set(tolerate or ())
 
     out = []
     for name, leads in found.items():
@@ -142,10 +149,26 @@ def survey(found):
         domains, held_domains = Counter(), Counter()
         for lead in leads:
             domain = _domain(jd.sender_of(lead))
-            why = jd.blockers(lead)
+            why = [(k, w) for k, w in jd.blockers(lead)
+                   if k not in tolerate]
+            work = [k for k, _w in jd.blockers(lead)
+                    if k in jd.WORK_KEYS]
             if why:
-                refused.append((lead, '; '.join(w for _k, w in why)))
-                if domain:
+                refused.append({
+                    'lead': lead,
+                    'keys': [k for k, _w in why],
+                    'why': '; '.join(w for _k, w in why),
+                    'work': work,
+                    'notes': notes_on(lead),
+                })
+                # A domain is still worth a rule when the only thing in
+                # the way is soft — a note, or a stage. It is not when
+                # there is sales work on the lead: that is a live
+                # enquiry, and filing its sender would file the client's
+                # next mail as junk.
+                if domain and not work:
+                    domains[domain] += 1
+                elif domain:
                     held_domains[domain] += 1
             else:
                 eligible.append(lead)
@@ -157,8 +180,33 @@ def survey(found):
     return out
 
 
+def notes_on(lead, limit=2):
+    """What the notes on this lead actually say.
+
+    Printed because the live run came back with "somebody wrote a note
+    on it" against all fifteen senders, and on a marketing lead that
+    note is very often the word "junk" — somebody reading it, deciding,
+    and having no button to press. Treating that as evidence the lead
+    matters is exactly backwards, and nobody can tell which it is
+    without reading them.
+    """
+    try:
+        from app import LeadNote
+        rows = (LeadNote.query
+                .filter(LeadNote.lead_id == lead.id,
+                        LeadNote.is_deleted.isnot(True))
+                .order_by(LeadNote.id).limit(limit).all())
+        return [(r.note_text or '').strip().replace('\n', ' ')[:70]
+                for r in rows]
+    except Exception:                                     # noqa: BLE001
+        return []
+
+
 def report(rows, show):
+    from app.services import junk_delete as jd
     from app.services import not_relevant_senders as nrs
+
+    WORK = set(jd.WORK_KEYS)
 
     total = sum(len(r['leads']) for r in rows)
     ready = sum(len(r['eligible']) for r in rows)
@@ -183,14 +231,33 @@ def report(rows, show):
               f'{len(row["refused"]):>2} skipped   {shown}')
 
     if held:
-        print('\n── the skipped ones, and what is on them ──')
-        print('  NOT touched. A lead with work on it is not junk, '
-              'whatever its sender\n  looks like — and one of these '
-              'fifteen having a real enquiry behind it\n  is exactly '
-              'what this check is for.')
+        by_key = Counter()
         for row in rows:
-            for lead, why in row['refused'][:show]:
-                print(f'    #{lead.id:<7} {row["name"][:22]:<22} {why}')
+            for item in row['refused']:
+                for key in item['keys']:
+                    by_key[key] += 1
+        print('\n── why each skipped lead is skipped, per rule ──')
+        for key, count in by_key.most_common():
+            mark = '  (sales work)' if key in WORK else '  (soft)'
+            print(f'  {count:>4}  {key}{mark}')
+        print('\n  A lead with SALES WORK on it is not junk, whatever '
+              'its sender looks\n  like — one of these fifteen having a '
+              'real enquiry behind it is exactly\n  what that check is '
+              'for, and no flag can overrule it.')
+        soft = sorted(k for k in by_key if k not in WORK)
+        if soft:
+            print(f'\n  The soft ones — {", ".join(soft)} — can be '
+                  f'overlooked with --allow, once\n  you have read the '
+                  f'notes printed below and decided they say nothing.')
+
+        print('\n── the skipped ones, and what is on them ──')
+        for row in rows:
+            for item in row['refused'][:show]:
+                lead = item['lead']
+                print(f'    #{lead.id:<7} {row["name"][:22]:<22} '
+                      f'{item["why"]}')
+                for text in item['notes']:
+                    print(f'                 note: {text!r}')
 
     print('\n── the sender rules that would be added ──')
     rules = plan_rules(rows)
@@ -203,10 +270,11 @@ def report(rows, show):
     held_back = held_back_rules(rows)
     if held_back:
         print(f'\n── {len(held_back)} domain(s) deliberately NOT added ──')
-        print('  The only mail from each of these is a lead somebody is '
-              'working. A\n  domain whose only evidence is a live '
-              'enquiry is not evidence of\n  anything, and adding it '
-              'would file that client\'s next mail as junk.')
+        print('  Every lead from each of these carries sales work — an '
+              'RFQ, a quote, an\n  outgoing mail, a logged call or an '
+              'opportunity. A domain whose only\n  evidence is a live '
+              'enquiry is not evidence of anything, and adding it\n'
+              '  would file that client\'s next mail as junk.')
         for pattern, name, count in held_back:
             print(f'    {pattern:<42} {name} — {count} skipped lead(s) '
                   f'only')
@@ -266,7 +334,7 @@ def held_back_rules(rows):
     return out
 
 
-def apply_it(rows, actor):
+def apply_it(rows, actor, tolerate=()):
     from app.services import junk_delete as jd
     from app.services import not_relevant_senders as nrs
 
@@ -279,7 +347,8 @@ def apply_it(rows, actor):
                     note=f'{WHY} ({row["name"]})',
                     actor=actor,
                     # The sender is NOT blocked. See the docstring.
-                    block_sender=False, commit=False)
+                    block_sender=False, commit=False,
+                    ignore=tolerate)
                 marked += 1
             except ValueError as exc:
                 problems.append((lead.id, str(exc)))
@@ -306,16 +375,25 @@ def main():
     ap.add_argument('--show', type=int, default=25)
     ap.add_argument('--name', action='append',
                     help='one name instead of the fifteen; repeatable')
+    ap.add_argument('--allow', action='append', default=None,
+                    metavar='KEY',
+                    help='overlook a SOFT blocker — note, task, stage. '
+                         'Repeatable. Never a sales-work blocker: '
+                         'junk_delete refuses those outright. Read the '
+                         'notes the dry run prints before using it.')
     args = ap.parse_args()
 
     names = tuple(args.name) if args.name else NAMED
+    tolerate = tuple(args.allow or ())
 
     with app.app_context():
         print(f'database: {db.engine.url}')
         print('PROCAM-DECISIONS-02NOV — senders whose mail is not an '
               'enquiry.' + ('' if args.apply else ' DRY RUN.'))
 
-        rows = survey(find(names))
+        rows = survey(find(names), tolerate=tolerate)
+        if tolerate:
+            print(f'  overlooking: {", ".join(tolerate)}')
         ready, _held = report(rows, args.show)
 
         if not args.apply:
@@ -333,7 +411,8 @@ def main():
             db.session.rollback()
             return 1
 
-        marked, problems, added, skipped = apply_it(rows, args.actor)
+        marked, problems, added, skipped = apply_it(
+            rows, args.actor, tolerate=tolerate)
         print('\n' + '─' * 64)
         print(f'  marked not relevant: {marked}')
         print(f'  sender rules added:  {added}')

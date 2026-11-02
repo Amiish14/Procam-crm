@@ -184,11 +184,18 @@ def test_a_fresh_mail_lead_is_eligible():
 
 
 def test_a_lead_past_new_opportunity_is_not():
+    """Its own key since 2 Nov: `worked`, not `stage`.
+
+    A lead at a stage nobody recognises is a data oddity; a lead at
+    Quoted is a lead somebody quoted. The two were one key and meant
+    opposite things.
+    """
     with flask_app.app_context():
         lead = _lead(stage='Quoted')
         keys = dict(jd.blockers(lead))
-        assert 'stage' in keys
-        assert 'New Opportunity' in keys['stage']
+        assert 'worked' in keys
+        assert 'New Opportunity' in keys['worked']
+        assert 'worked' in jd.WORK_KEYS
 
 
 def test_a_lead_with_an_rfq_is_not():
@@ -243,12 +250,15 @@ def test_a_logged_call_stops_it():
 
 
 def test_a_note_somebody_wrote_stops_it():
+    """Still blocks. Its own key since 2 Nov, so a caller authorised
+    to tolerate a note can name it and nothing else."""
     with flask_app.app_context():
         lead = _lead()
         db.session.add(LeadNote(lead_id=lead.id,
                                 note_text='Spoke to the buyer'))
         db.session.commit()
-        assert 'activity' in dict(jd.blockers(lead))
+        assert 'note' in dict(jd.blockers(lead))
+        assert jd.eligible(lead) is False
 
 
 def test_a_deleted_note_does_not_stop_it():
@@ -523,7 +533,8 @@ def test_a_completed_task_does_block_it():
             entity_id=lead.id, owner_user_id=OWNER,
             status=TaskInstanceStatus.COMPLETED))
         db.session.commit()
-        assert 'activity' in dict(jd.blockers(lead))
+        assert 'task' in dict(jd.blockers(lead))
+        assert jd.eligible(lead) is False
         TaskInstance.query.filter_by(task_key='zz.junk.done').delete()
         db.session.commit()
 

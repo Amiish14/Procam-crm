@@ -72,6 +72,17 @@ def candidates():
     return out
 
 
+def lead_counts(account_ids):
+    """{account_id: how many leads point at it}."""
+    if not account_ids:
+        return {}
+    rows = (db.session.query(Lead.company_id, db.func.count(Lead.id))
+            .filter(Lead.company_id.in_(list(account_ids)),
+                    Lead.junk_deleted.isnot(True))
+            .group_by(Lead.company_id).all())
+    return {company_id: n for company_id, n in rows}
+
+
 def leads_affected():
     """The leads whose typed name or sender looks like L&T."""
     from app.services import junk_delete as jd
@@ -98,12 +109,27 @@ def report():
 
     found = candidates()
     print(f'\n── {len(found)} account(s) that could be L&T ──')
-    for account in found:
+    # With the lead count beside each, because the live run came back
+    # with four candidates and no way to tell them apart. The account
+    # the business already uses is the one its leads point at, and that
+    # is a fact rather than a preference.
+    counts = lead_counts([a.id for a in found])
+    for account in sorted(found, key=lambda a: -counts.get(a.id, 0)):
         aliases = list(account.aliases or [])
         has = ALIAS.lower() in {str(a).strip().lower() for a in aliases}
-        print(f'  #{account.id:<6} {account.name[:38]:<38} '
+        print(f'  #{account.id:<6} {account.name[:34]:<34} '
+              f'{counts.get(account.id, 0):>5} lead(s)  '
               f'aliases={aliases or "(none)"}'
               f'{"   <- already has " + ALIAS if has else ""}')
+    if len(found) > 1:
+        top = max(found, key=lambda a: counts.get(a.id, 0))
+        share = counts.get(top.id, 0)
+        total = sum(counts.get(a.id, 0) for a in found)
+        print(f'\n  #{top.id} holds {share} of the {total} lead(s) '
+              f'across all {len(found)}.')
+        print('  That is the account the business is already using. It '
+              'is still not\n  this script\'s choice to make — pass '
+              f'--account {top.id} if it is yours.')
     if not found:
         print('  (none) — there is no Larsen & Toubro account on this '
               'database, so the\n  alias has nowhere to go. Create the '
@@ -133,9 +159,11 @@ def report():
     elif len(found) > 1:
         print(f'\n  [STOP] {len(found)} accounts could be L&T. This run '
               f'will not choose:\n  which one owns the alias decides '
-              f'where every future "Lntecc" lead\n  lands. Merge them '
-              f'first on /admin/account-duplicates, or run this with\n'
-              f'  --account <id>.')
+              f'where every future "Lntecc" lead\n  lands. Either merge '
+              f'them first on /admin/account-duplicates — which is the\n'
+              f'  real fix, and gives the survivor the losers\' names as '
+              f'aliases for\n  nothing — or name one with --account '
+              f'<id>.')
     return found, affected
 
 

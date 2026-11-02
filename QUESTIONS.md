@@ -1459,3 +1459,85 @@ One bug caught while writing it: `aliases` is a JSON column, and
 SQLAlchemy does not notice a list being mutated in place. An
 `aliases.append(...)` saves nothing and reports success. The list is
 reassigned, and a test asserts the source does that.
+
+## 63 — the live run marked nothing, and the reason was a bug in the gate
+
+`scripts/2026_11_02_not_relevant_senders.py` on production: **0 leads
+would be marked**, and all fifteen senders refused with some
+combination of
+
+> it is at New, not New Opportunity; somebody wrote a note on it
+
+### "it is at New, not New Opportunity"
+
+`junk_delete.ELIGIBLE_STAGE` is `'New Opportunity'` and the check was
+`stage != ELIGIBLE_STAGE`. Its own comment says what it meant —
+*"the stage a lead has to still be at. Anything further means somebody
+worked it"* — and the code is the opposite: **`New` is the FIRST stage
+on the journey and `New Opportunity` the fourth**, so an equality test
+refused every brand-new lead, which is the exact population the junk
+module exists for.
+
+Not an edge case and not new. The Delete button has been disabled on
+every lead at New since the module shipped, and nobody noticed, because
+a disabled button looks like a rule rather than a fault. It is now a
+ceiling: eligible at or before New Opportunity, refused past it.
+
+Splitting it was the rest of the fix, because one key meant three
+opposite things:
+
+    stage    a stage nobody recognises — a data oddity
+    worked   past the ceiling. A lead at Quoted is a lead somebody
+             quoted, which is sales work
+    closed   terminal. Three of the live Promedia leads are at Lost,
+             and reopening whether a closed lead was junk is not this
+             module's business
+
+`worked` and `closed` are in `WORK_KEYS` with the quote and the
+outgoing mail. Nothing in that set can be ignored by any caller,
+whatever it asks — `mark_not_relevant` refuses the request and names
+the key.
+
+### "somebody wrote a note on it"
+
+This was folded into `activity` with logged calls and completed tasks.
+They are not the same evidence. A logged call is unambiguous. **A note
+on a marketing lead is very often the word "junk"** — somebody read it,
+decided, and had no button to press. Counting that as proof the lead
+matters is exactly backwards.
+
+So `note` and `task` are their own keys; all three still block by
+default; and `mark_not_relevant` grew an `ignore` list so a run
+authorised to overlook a soft blocker can name it and nothing else.
+`--allow note` is how this run does it, and the dry run **prints what
+each note actually says** first, because nobody can judge "somebody
+wrote a note on it" without reading it.
+
+With `--allow note`, the simulation files Gastechevent, Luxuryescapes
+and All India Info-Database, and still refuses the Lost Promedia leads.
+
+### Two smaller things the live run settled
+
+**The domain rule follows the soft/work split.** A domain is proposed
+when the only thing in the way is soft; it is held back when there is
+sales work on every lead from it. The earlier version held back a
+domain whenever the lead was refused for any reason at all, which with
+this bug in place meant all fifteen — "(none — no domain was
+observed)".
+
+**`*@gmail.com` is what "All India Info-Database" mails from.** No
+domain rule can ever work for that sender, and `why_not_a_pattern`
+refuses it: several real customers mail from a personal provider. The
+report prints it with `!!` so the gap is visible rather than silently
+absent. If that sender needs catching, it has to be by name.
+
+### And the L&T alias: four candidate accounts
+
+The live run found four, and the earlier report gave no way to tell
+them apart. It now prints the **lead count against each**, because the
+account the business is already using is the one its leads point at —
+on production that is #74, holding 106 of them. It still refuses to
+choose: merging the four on `/admin/account-duplicates` is the real
+fix, and it gives the survivor the losers' names as aliases for
+nothing, which is where "Lntecc" would have come from in the first
+place.

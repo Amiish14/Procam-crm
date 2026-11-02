@@ -62,8 +62,20 @@ BULK_ADMIN_ABOVE = 25
 #: What one non-admin may delete in a day before Nilesh is told.
 DAILY_CAP = 50
 
-#: The stage a lead has to still be at. Anything further means
-#: somebody worked it, whatever the other checks say.
+#: The furthest a lead may have got. Anything PAST this means somebody
+#: worked it, whatever the other checks say.
+#:
+#: Read as a ceiling, not an equality. It was written as an equality,
+#: and that was backwards: 'New' is the FIRST stage on the journey and
+#: 'New Opportunity' the fourth, so `stage != ELIGIBLE_STAGE` refused
+#: every brand-new lead — the exact population this module exists for.
+#: Found on 2 Nov, when the fifteen named marketing senders came back
+#: with "it is at New, not New Opportunity" against all of them and
+#: nothing could be filed.
+#:
+#: A terminal stage is still refused, and separately: a Lost lead is
+#: closed, and reopening the question of whether it was junk is not
+#: this module's business.
 ELIGIBLE_STAGE = 'New Opportunity'
 
 ACTION = 'lead.junk_deleted'
@@ -90,8 +102,52 @@ def _has_rows(model, lead_id, column='lead_id'):
 
 
 def _check_stage(lead):
-    if (lead.stage or '') != ELIGIBLE_STAGE:
-        return f'it is at {lead.stage or "no stage"}, not New Opportunity'
+    from app.services import stage_map
+
+    stage = (lead.stage or '').strip()
+    if not stage:
+        # No stage at all is as early as a lead gets.
+        return None
+    here = stage_map.position(stage)
+    if here is None and stage not in stage_map.TERMINAL:
+        return f'{stage} is not a stage on the journey'
+    return None
+
+
+def _check_closed(lead):
+    """A terminal stage. Somebody decided this lead's outcome.
+
+    Its own key, and not ignorable: three of the live Promedia leads
+    are at Lost, and reopening the question of whether a closed lead
+    was junk is not this module's business.
+    """
+    from app.services import stage_map
+
+    stage = (lead.stage or '').strip()
+    if stage in stage_map.TERMINAL:
+        return (f'it is at {stage}, which is closed — a closed lead is '
+                f'not filed as junk')
+    return None
+
+
+def _check_worked(lead):
+    """It got past the ceiling, so somebody worked it.
+
+    Kept apart from `stage` because the two mean opposite things. A
+    lead at a stage nobody recognises is a data oddity; a lead at Quoted
+    is a lead somebody quoted, which is sales work and can no more be
+    ignored than the quote itself.
+    """
+    from app.services import stage_map
+
+    stage = (lead.stage or '').strip()
+    if not stage or stage in stage_map.TERMINAL:
+        return None
+    here = stage_map.position(stage)
+    ceiling = stage_map.position(ELIGIBLE_STAGE)
+    if here is not None and ceiling is not None and here > ceiling:
+        return (f'it is at {stage}, past {ELIGIBLE_STAGE} — somebody '
+                f'worked it')
     return None
 
 
@@ -135,19 +191,39 @@ def _check_outgoing_mail(lead):
 
 
 def _check_human_activity(lead):
-    """A person did something. System auto-tasks do not count.
+    """A call, a meeting or a logged activity. The strongest of the three.
 
-    `LeadActivity` and `LeadNote` are only written when somebody
-    logs a call, a meeting or a remark, so their presence is the
-    signal. Task instances are raised by the engine on every new
-    lead, so an *open* task says nothing; a closed one says a person
-    dealt with it.
+    `LeadActivity` is only written when somebody logs a call, a
+    meeting or a visit, so its presence is unambiguous.
+
+    Notes and completed tasks were in here too and are now their own
+    checks. Not a loosening — all three still block — but a caller
+    that has been authorised to tolerate one of them needs to be able
+    to name it, and one key covering three different facts cannot be
+    named. See `blockers` and `mark_not_relevant`'s `ignore`.
     """
-    from app import LeadActivity, LeadNote, db
-    from app.models.task_engine import TaskInstance, TaskInstanceStatus
+    from app import LeadActivity
 
     if _has_rows(LeadActivity, lead.id):
         return 'a call, meeting or activity is logged on it'
+    return None
+
+
+def _check_note(lead):
+    """Somebody wrote a remark on it.
+
+    The weakest of the human-activity signals, and the one worth
+    telling apart. On a marketing lead the note is very often the word
+    "junk" — somebody reading it, deciding, and having no button to
+    press. Treating that as evidence the lead matters is exactly
+    backwards, which is why `blockers` names this separately and the
+    Not-relevant run prints what the note actually says.
+
+    It still blocks by default. Nothing is tolerated unless a caller
+    names it.
+    """
+    from app import LeadNote, db
+
     try:
         has_note = db.session.query(
             LeadNote.query.filter(
@@ -157,6 +233,18 @@ def _check_human_activity(lead):
             return 'somebody wrote a note on it'
     except Exception:                                     # noqa: BLE001
         pass
+    return None
+
+
+def _check_task(lead):
+    """A task on it was completed.
+
+    Task instances are raised by the engine on every new lead, so an
+    *open* task says nothing; a closed one says a person dealt with it.
+    """
+    from app import db
+    from app.models.task_engine import TaskInstance, TaskInstanceStatus
+
     try:
         if db.inspect(db.engine).has_table(TaskInstance.__tablename__):
             done = db.session.query(
@@ -213,11 +301,25 @@ def _check_already(lead):
 CHECKS = (
     ('already', _check_already),
     ('stage', _check_stage),
+    ('closed', _check_closed),
+    ('worked', _check_worked),
     ('paperwork', _check_paperwork),
     ('outgoing_mail', _check_outgoing_mail),
     ('activity', _check_human_activity),
+    ('note', _check_note),
+    ('task', _check_task),
     ('links', _check_links),
 )
+
+#: Blockers that mean somebody did SALES WORK on the lead — raised an
+#: RFQ, quoted it, wrote to the client, linked it to an opportunity.
+#: Separated from the rest so a caller can tell "this is a live
+#: enquiry" from "this is a lead at New that somebody glanced at".
+#: `worked` and `closed` are here with the rest: a lead at Quoted is a
+#: lead somebody quoted, and a lead at Lost carries a decision
+#: somebody took. Neither is softer than the quote itself.
+WORK_KEYS = ('paperwork', 'outgoing_mail', 'links', 'activity',
+             'worked', 'closed')
 
 #: What a disabled Delete says on hover.
 HOVER = 'This lead has activity — use Close as Lost.'
@@ -297,7 +399,7 @@ def blocks_sender_by_default(reason):
 
 
 def mark_not_relevant(lead, *, reason, note=None, actor,
-                      block_sender=False, commit=True):
+                      block_sender=False, commit=True, ignore=()):
     """Mark one lead not relevant. Returns a dict of what happened.
 
     Named for what it does rather than for what the button says.
@@ -311,6 +413,18 @@ def mark_not_relevant(lead, *, reason, note=None, actor,
     reason that needs words has none, or when the lead is not
     eligible — the caller has already been told by `blockers`, so
     reaching here means something changed underneath it.
+
+    `ignore` names blocker keys the caller has been authorised to
+    tolerate, and defaults to none. It exists for one case: a bulk run
+    against senders a decision has already named, where the only thing
+    standing in the way is a note that very often reads "junk" —
+    somebody having looked at the lead and had no button to press.
+
+    Nothing in `WORK_KEYS` may be ignored, whatever is asked. A lead
+    with an RFQ, a quote, an outgoing mail, a logged call or an
+    opportunity on it is work somebody did, and no flag makes that
+    untrue. The refusal names the key so a caller passing it learns
+    why rather than wondering.
     """
     from app import db
     from app.services import audit
@@ -321,7 +435,14 @@ def mark_not_relevant(lead, *, reason, note=None, actor,
     if reason in NEEDS_NOTE and not note:
         raise ValueError(
             'Others needs a sentence; Duplicate needs the lead number.')
-    why = blockers(lead)
+    tolerated = {str(k) for k in (ignore or ())}
+    forbidden = tolerated & set(WORK_KEYS)
+    if forbidden:
+        raise ValueError(
+            f'{", ".join(sorted(forbidden))} cannot be ignored: a lead '
+            f'with sales work on it is not junk, whatever its sender '
+            f'looks like.')
+    why = [(k, w) for k, w in blockers(lead) if k not in tolerated]
     if why:
         raise ValueError('; '.join(w for _k, w in why))
 
