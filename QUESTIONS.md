@@ -1231,3 +1231,58 @@ of the file as a pattern — including a blank one, which matches every
 line and silently passes the whole check. The TMS allow file is empty
 today, which is precisely when that trap is invisible. Both scripts now
 strip comments and blanks before the grep.
+
+## 60 — rule 2 of Module 2.1, followed literally, creates an account called "Unknown"
+
+The dry run on live data proposed creating accounts named **Unknown**
+for leads #10096 and #10098. Rule 2 of the decision says "create the
+account from the name the user typed", and that is what somebody had
+typed.
+
+The fault is not new and is already named in this codebase.
+`account_match.not_a_customer` refuses to **link** a lead to an account
+called Unknown, and its docstring says why: every lead filed under a
+placeholder looks placed, so it never reaches Account check again, and
+the histories of several real customers pool under one meaningless row.
+Account #847 "New Lead" holds both fried-sped.de and
+jindalstainless.com today. Account #983 "Unknown" lists
+`procamgroup.in`, so every internal forward matched it on an exact
+rule — and had only not linked because the flag was still off.
+
+That guard could not catch this one, because at the moment rule 2 runs
+the account **does not exist yet**. So the same rule now applies one
+step earlier, at creation: `why_not_an_account_name` refuses a blank, a
+placeholder, punctuation only, anything containing "procam", and any
+candidate whose sender domain is one of ours.
+
+Three things worth recording about how it is built.
+
+**The list is not written out again.** `PLACEHOLDER_NAMES` and
+`OUR_DOMAINS` already existed and are read by the matcher and by
+`not_a_customer`. A second copy is exactly how a word gets added to one
+and not the other, and then an account nobody may link to is one this
+module happily creates. A test asserts the words are not re-typed in
+`accounts_module2.py`. The shared set gained `to review`, `review`,
+`tbd`, `new`, `lead`, `enquiry` and three more — which strengthens the
+linking guard at the same time, for free.
+
+**A refusal is a different destination from a review.** These leads do
+not go to Nilesh's Thursday review; they **stay in Account check**,
+where a person reads the enquiry and types the customer's name. That is
+the one thing no rule can do, and it is not a decision for a director.
+The "no name and no domain" case moved there too — it had been going to
+Thursday, and nothing about it needs deciding.
+
+**The guard is asked twice.** Once when the plan is built, and again in
+`apply_queue` at the moment of writing. Creating is the irreversible
+half: an account called Unknown cannot be undone by deleting it once
+leads, notes and quotes point at it, and the bulk log restores column
+values, not rows.
+
+Also added, because the report prints thirty rows and the
+thirty-first is the one that creates Unknown: `--csv` writes **every**
+proposed account — lead, typed name, proposed account, owner, why that
+owner, vertical, rule — one line per lead rather than per account, so
+two leads collapsing into one account is visible. That is either the
+same customer twice, which is right, or two customers whose typed names
+normalise together, which is not.

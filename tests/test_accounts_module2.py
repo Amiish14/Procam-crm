@@ -442,7 +442,7 @@ def test_a_lead_whose_domain_is_known_is_linked(world):
                      procam_vertical='Heavy Transport',
                      assigned_to='EMP572012')
         db.session.commit()
-        rows, review = m2.autoclear_plan()
+        rows, review, _stays = m2.autoclear_plan()
         mine = [r for r in rows if r['lead'].id == lead.id]
         assert mine, 'the rules have to place it'
         assert mine[0]['account_id'] == account.id
@@ -460,7 +460,7 @@ def test_a_free_mail_domain_is_not_a_company(world):
                      procam_vertical='Heavy Transport',
                      assigned_to='EMP572012')
         db.session.commit()
-        rows, _review = m2.autoclear_plan()
+        rows, _review, _stays = m2.autoclear_plan()
         mine = [r for r in rows if r['lead'].id == lead.id]
         assert mine[0]['create'] is True
         assert mine[0]['account_name'] == 'Somebody New'
@@ -473,7 +473,7 @@ def test_no_match_creates_from_the_typed_name(world):
                      procam_vertical='Warehousing',
                      assigned_to='DIR72012')
         db.session.commit()
-        rows, _review = m2.autoclear_plan()
+        rows, _review, _stays = m2.autoclear_plan()
         mine = [r for r in rows if r['lead'].id == lead.id]
         assert mine[0]['create'] is True
         assert mine[0]['rule'] == 'create from the typed name'
@@ -486,21 +486,28 @@ def test_no_name_falls_back_to_the_domain(world):
                      procam_vertical='Warehousing',
                      assigned_to='DIR72012')
         db.session.commit()
-        rows, _review = m2.autoclear_plan()
+        rows, _review, _stays = m2.autoclear_plan()
         mine = [r for r in rows if r['lead'].id == lead.id]
         assert mine[0]['rule'] == 'create from the sender domain'
         assert mine[0]['account_name'] == 'Newcorp'
 
 
-def test_neither_a_name_nor_a_domain_goes_to_the_review(world):
+def test_neither_a_name_nor_a_domain_stays_in_account_check(world):
+    """It went to Nilesh's Thursday review until 2 Nov; now it stays.
+
+    Nothing about it needs a decision — it needs somebody to read the
+    enquiry and type the customer's name, which is Account check's job
+    and not a thing to put on a director's Thursday.
+    """
     with flask_app.app_context():
         lead = _lead(company='', email='',
                      procam_vertical='Warehousing')
         db.session.commit()
-        _rows, review = m2.autoclear_plan()
-        mine = [r for r in review if r['lead'].id == lead.id]
+        _rows, review, stays = m2.autoclear_plan()
+        mine = [r for r in stays if r['lead'].id == lead.id]
         assert mine, 'it has to be reported, not dropped'
-        assert 'nothing to name an account after' in mine[0]['why']
+        assert 'no company name' in mine[0]['why']
+        assert not [r for r in review if r['lead'].id == lead.id]
 
 
 def test_the_owner_is_the_lead_owner_first(world):
@@ -510,7 +517,7 @@ def test_the_owner_is_the_lead_owner_first(world):
                      procam_vertical='Heavy Transport',
                      assigned_to='EMP572012')
         db.session.commit()
-        rows, _review = m2.autoclear_plan()
+        rows, _review, _stays = m2.autoclear_plan()
         mine = [r for r in rows if r['lead'].id == lead.id]
         assert mine[0]['owner'] == 'EMP572012'
         assert mine[0]['owner_why'] == 'the lead owner'
@@ -533,7 +540,7 @@ def test_an_unowned_lead_goes_to_the_vertical_head(world):
                      email='x@headless.example',
                      procam_vertical='Warehousing', assigned_to=None)
         db.session.commit()
-        rows, _review = m2.autoclear_plan()
+        rows, _review, _stays = m2.autoclear_plan()
         mine = [r for r in rows if r['lead'].id == lead.id]
         assert mine[0]['owner'] == 'DIR72012'
         assert 'head' in mine[0]['owner_why']
@@ -551,7 +558,7 @@ def test_an_ambiguous_name_waits_for_the_merge(world):
                      procam_vertical='Heavy Transport',
                      assigned_to='EMP572012')
         db.session.commit()
-        rows, review = m2.autoclear_plan()
+        rows, review, _stays = m2.autoclear_plan()
         in_review = [r for r in review if r['lead'].id == lead.id]
         in_rows = [r for r in rows if r['lead'].id == lead.id]
         assert in_review and not in_rows
@@ -627,3 +634,139 @@ def test_a_created_account_carries_a_dated_remark(world):
         assert account is not None
         assert '2 Nov 2026' in (account.notes or '')
         assert db.session.get(Lead, lead.id).company_id == account.id
+
+
+# ══ 2.1 what may never become an account ════════════════════════════
+# The dry run proposed creating accounts called "Unknown" for leads
+# #10096 and #10098, because rule 2 says "create the account from the
+# name the user typed" and that is what somebody had typed. An account
+# called Unknown is the fault `account_match.not_a_customer` already
+# refuses to LINK to — #847 "New Lead" holds both fried-sped.de and
+# jindalstainless.com — and the linking guard cannot catch it, because
+# at that moment the account does not exist yet.
+def test_a_placeholder_typed_name_creates_nothing(world):
+    with flask_app.app_context():
+        lead = _lead(company='Unknown',
+                     email='buyer@realcustomer.example',
+                     procam_vertical='Heavy Transport',
+                     assigned_to='EMP572012')
+        db.session.commit()
+        rows, _review, stays = m2.autoclear_plan()
+        assert not [r for r in rows if r['lead'].id == lead.id], \
+            'no rule may clear a lead whose account would be "Unknown"'
+        mine = [s for s in stays if s['lead'].id == lead.id]
+        assert mine, 'it has to stay in Account check'
+        assert 'placeholder' in mine[0]['why']
+
+
+@pytest.mark.parametrize('typed', ['Unknown', 'New Lead', 'To review',
+                                   'Info', 'Email', '   ', '-', '...',
+                                   'n/a', 'TBD'])
+def test_the_whole_named_set_is_refused(world, typed):
+    with flask_app.app_context():
+        assert m2.why_not_an_account_name(typed), \
+            f'{typed!r} must never name an account'
+
+
+def test_our_own_name_is_refused_however_it_is_spelt(world):
+    for typed in ('Procam', 'Procam Logistics', 'PROCAM GROUP',
+                  'procam-logistics', 'Procam  Warehousing Pvt Ltd'):
+        why = m2.why_not_an_account_name(typed)
+        assert why, f'{typed!r} is us, not a customer'
+        assert 'us, not a customer' in why
+
+
+def test_our_own_mail_domain_is_refused(world):
+    assert m2.why_not_an_account_name('Some Name',
+                                      domain='procamlogistics.com')
+    assert m2.why_not_an_account_name('Some Name',
+                                      domain='mail.procamgroup.in')
+    # and a customer's domain is not
+    assert m2.why_not_an_account_name('Indo Tech',
+                                      domain='indotech.example') == ''
+
+
+def test_a_lead_forwarded_by_a_colleague_creates_nothing(world):
+    """The sender is a colleague, so the domain is ours.
+
+    `_name_from_domain('procamlogistics.com')` would produce an account
+    called Procamlogistics and then swallow every later forward.
+    """
+    with flask_app.app_context():
+        lead = _lead(company='', email='sanjna@procamlogistics.com',
+                     procam_vertical='Project Freight',
+                     assigned_to='EMP372012')
+        db.session.commit()
+        rows, _review, stays = m2.autoclear_plan()
+        assert not [r for r in rows if r['lead'].id == lead.id]
+        mine = [s for s in stays if s['lead'].id == lead.id]
+        assert mine
+        assert 'own mail domain' in mine[0]['why'] or \
+            'us, not a customer' in mine[0]['why']
+
+
+def test_a_real_name_is_still_created(world):
+    """The guard must not be so wide that it stops the rule working."""
+    with flask_app.app_context():
+        lead = _lead(company='Walchandnagar Industries',
+                     email='rfq@walchand.example',
+                     procam_vertical='Heavy Transport',
+                     assigned_to='EMP572012')
+        db.session.commit()
+        rows, _review, stays = m2.autoclear_plan()
+        mine = [r for r in rows if r['lead'].id == lead.id]
+        assert mine and mine[0]['create'] is True
+        assert mine[0]['account_name'] == 'Walchandnagar Industries'
+        assert not [s for s in stays if s['lead'].id == lead.id]
+
+
+def test_the_shared_placeholder_list_is_the_only_one(world):
+    """One list, read by the matcher, not_a_customer and this.
+
+    A second copy is how a name gets added to one and not the other,
+    and then an account nobody may link to is one this module happily
+    creates.
+    """
+    from app.services import account_match
+    source = open(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'app', 'services', 'accounts_module2.py')).read()
+    assert 'PLACEHOLDER_NAMES' in source
+    for word in ('unknown', 'new lead', 'to review'):
+        assert word in account_match.PLACEHOLDER_NAMES
+        # and not written out again in this module's own code
+        assert f"'{word}'" not in source
+
+
+def test_the_csv_lists_every_proposed_account(world):
+    """Thirty are printed; the thirty-first is the one that matters."""
+    import csv as _csv
+    import importlib.util
+    import tempfile
+
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'scripts', '2026_11_02_accounts_module2.py')
+    spec = importlib.util.spec_from_file_location('m2script', path)
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+
+    with flask_app.app_context():
+        leads = []
+        for i in range(35):
+            leads.append(_lead(company=f'Customer {i:02d}',
+                               email=f'rfq@c{i:02d}.example',
+                               procam_vertical='Heavy Transport',
+                               assigned_to='EMP572012'))
+        db.session.commit()
+        rows, _review, _stays = m2.autoclear_plan()
+        creates = [r for r in rows if r['create']]
+        assert len(creates) >= 35
+
+        out = os.path.join(tempfile.mkdtemp(), 'creates.csv')
+        script.write_creates_csv(creates, out)
+        with open(out, newline='', encoding='utf-8') as fh:
+            read = list(_csv.reader(fh))
+    assert read[0][:4] == ['lead', 'typed name', 'proposed account',
+                           'owner']
+    assert len(read) - 1 == len(creates), 'every row, not a sample'

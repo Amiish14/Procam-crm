@@ -403,6 +403,13 @@ def _by_name(company_name):
 PLACEHOLDER_NAMES = frozenset((
     'unknown', 'new lead', 'email', 'info', 'n/a', 'na', 'test',
     'customer', 'client', 'none', '-', '--', '.',
+    # 2 Nov: found by the Module 2.1 dry run, which proposed creating
+    # accounts called "Unknown" (leads #10096, #10098) because the
+    # typed name was a placeholder nobody had listed here. These are
+    # what the account-check queue actually holds when somebody has
+    # looked at a lead and not yet named its customer.
+    'to review', 'review', 'to be reviewed', 'unknown customer',
+    'not known', 'tbd', 'to be updated', 'new', 'lead', 'enquiry',
 ))
 
 

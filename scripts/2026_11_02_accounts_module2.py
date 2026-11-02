@@ -42,6 +42,13 @@ from app import Company, Employee, Lead, app, db           # noqa: E402
 ACTOR = 'PROCAM-DECISIONS-02NOV'
 SECTIONS = ('owners', 'queue', 'merges')
 
+#: Where --csv writes when no path is given. In the repo rather than
+#: /tmp, because the file is the evidence for rule 0.3's approval and
+#: somebody will want it a week later.
+DEFAULT_CSV = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'docs', 'reference', 'module2_accounts_to_create.csv')
+
 
 def _name(code):
     if not code:
@@ -123,7 +130,43 @@ def apply_owners(plan, log):
 
 
 # ── 2.1 the queue ───────────────────────────────────────────────────
-def report_queue(rows, review):
+def write_creates_csv(rows, path):
+    """The full set of accounts that would be created, for review.
+
+    Every row, not a sample: the report prints thirty and the whole
+    point of this file is that the thirty-first is the one that
+    creates an account called Unknown.
+
+    One line per LEAD, not per account, because two leads creating one
+    account is the case worth seeing — it is either the same customer
+    twice, which is right, or two customers whose typed names
+    normalise together, which is not.
+    """
+    import csv
+    import os
+
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, 'w', newline='', encoding='utf-8') as fh:
+        out = csv.writer(fh)
+        out.writerow(['lead', 'typed name', 'proposed account', 'owner',
+                      'owner code', 'why the owner', 'vertical', 'rule'])
+        for row in sorted(rows,
+                          key=lambda r: (r['account_name'].lower(),
+                                         r['lead'].id)):
+            out.writerow([
+                row['lead'].id,
+                (row['lead'].company or '').strip(),
+                row['account_name'],
+                _name(row['owner']),
+                row['owner'],
+                row['owner_why'],
+                row['vertical'],
+                row['rule'],
+            ])
+    return path
+
+
+def report_queue(rows, review, stays=()):
     from collections import Counter
 
     print('\n── 2.1  the account check queue ' + '─' * 31)
@@ -153,6 +196,31 @@ def report_queue(rows, review):
     if len(review) > 20:
         print(f'    … and {len(review) - 20} more')
 
+    stays = list(stays or [])
+    print(f'\n  {len(stays)} lead(s) STAY IN ACCOUNT CHECK — no account '
+          f'is created')
+    if stays:
+        print('    A person types the real customer\'s name on '
+              '/CRM/admin/account-check.')
+        print('    This run will not name an account after a '
+              'placeholder or after us:')
+        reasons = Counter()
+        for item in stays:
+            first = item['why'].split(' — ')[0].split(' is ')[-1]
+            reasons[first] += 1
+        for reason, count in reasons.most_common():
+            print(f'    {count:>4}  {reason}')
+        for item in stays[:30]:
+            print(f'    #{item["lead"].id:<7}'
+                  f' {item["candidate"][:26]:<26} {item["why"]}')
+        if len(stays) > 30:
+            print(f'    … and {len(stays) - 30} more')
+
+
+def m2_why_not(name):
+    from app.services.accounts_module2 import why_not_an_account_name
+    return why_not_an_account_name(name)
+
 
 def apply_queue(rows, log):
     from app.services import audit
@@ -162,6 +230,15 @@ def apply_queue(rows, log):
     for row in rows:
         account_id = row['account_id']
         if account_id is None:
+            # Asked again at the moment of writing, not only when the
+            # plan was built. The plan is the only caller today; the
+            # creation is the irreversible half, and an account called
+            # Unknown cannot be undone by deleting it once leads,
+            # notes and quotes point at it.
+            refused = m2_why_not(row['account_name'])
+            if refused:
+                print(f'    !! #{row["lead"].id} not created: {refused}')
+                continue
             key = row['account_name'].strip().lower()
             if key in made:
                 account_id = made[key]
@@ -247,6 +324,11 @@ def main():
                     help='reverse a batch this script wrote')
     ap.add_argument('--only', choices=SECTIONS, action='append',
                     help='one section; repeatable')
+    ap.add_argument('--csv', metavar='PATH', nargs='?',
+                    const=DEFAULT_CSV, default=None,
+                    help='write every account that would be created to '
+                         'a CSV — lead, typed name, proposed account, '
+                         f'owner. Defaults to {DEFAULT_CSV}')
     args = ap.parse_args()
     if len([a for a in (args.check, args.apply, args.undo) if a]) != 1:
         raise SystemExit('Choose one: --check, --apply or --undo.')
@@ -280,6 +362,11 @@ def main():
         if 'queue' in wanted:
             queue = m2.autoclear_plan()
             report_queue(*queue)
+            if args.csv:
+                creates = [r for r in queue[0] if r['create']]
+                where = write_creates_csv(creates, args.csv)
+                print(f'\n  {len(creates)} proposed account(s), every '
+                      f'one of them, written to:\n    {where}')
         if 'merges' in wanted:
             dupes = _dupes()
             found = dupes.clusters()

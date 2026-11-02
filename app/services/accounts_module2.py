@@ -119,6 +119,83 @@ def _employee_by_name(name, *, Employee):
     return rows[0], None
 
 
+# ── 2.1 what may never become an account ────────────────────────────
+#: A name this module refuses to create an account from.
+#:
+#: Found by the dry run. Rule 2 says "create the account from the name
+#: the user typed", and leads #10096 and #10098 had the typed name
+#: "Unknown" — so the rule, followed literally, would have created an
+#: account called Unknown and linked them to it. That is the exact
+#: fault `account_match.not_a_customer` was written to stop on the
+#: LINKING side: a lead filed under "Unknown" looks placed, so it never
+#: reaches Account check again, and the histories of several real
+#: customers pool under one meaningless row. Account #847 "New Lead"
+#: already holds both fried-sped.de and jindalstainless.com.
+#:
+#: The linking guard could not catch this one, because the account did
+#: not exist yet. So the same rule is applied one step earlier: at
+#: creation.
+#:
+#: The list is NOT written out again here. `PLACEHOLDER_NAMES` and
+#: `OUR_DOMAINS` already exist and are read by the matcher and by
+#: `not_a_customer`; a second copy is how a name gets added to one and
+#: not the other, and then an account nobody may link to is an account
+#: this module happily creates.
+
+#: What is left of a name once the punctuation and spacing are gone.
+#: '???' and '...' and '  -  ' are all blank, and all three are in the
+#: company column today.
+def _bare(text):
+    return ''.join(c for c in (text or '').lower() if c.isalnum())
+
+
+def why_not_an_account_name(text, *, domain=None):
+    """'' if an account may be created with this name, else why not.
+
+    Five reasons, in the order they are cheapest to check:
+
+      * nothing to name it after;
+      * a placeholder — the shared list, so adding one word protects
+        the matcher, `not_a_customer` and this at the same time;
+      * punctuation only, which `_bare` reduces to nothing;
+      * us. An account called Procam anything is an internal forward
+        that matched itself, and once created it swallows every later
+        one;
+      * our own mail domain, for the same reason — #983 "Unknown"
+        lists `procamgroup.in`, and every internal forward matched it
+        on an exact rule.
+
+    A refusal is not a failure. The lead stays in Account check, where
+    a person types the real customer's name, which is the one thing no
+    rule can do.
+    """
+    from app.services.account_match import PLACEHOLDER_NAMES
+
+    name = (text or '').strip()
+    if not name:
+        return 'there is no company name to create an account from'
+    if name.lower() in PLACEHOLDER_NAMES:
+        return (f'{name!r} is a placeholder, not a company — an account '
+                f'named this collects unrelated customers and is never '
+                f'looked at again')
+    if not _bare(name):
+        return (f'{name!r} is punctuation, not a name')
+    if 'procam' in _bare(name):
+        return (f'{name!r} is us, not a customer — an account named '
+                f'after Procam swallows every internal forward')
+    if domain:
+        try:
+            from app.services.mail_signals import OUR_DOMAINS
+            low = str(domain).strip().lower()
+            if any(low == d or low.endswith('.' + d) for d in OUR_DOMAINS):
+                return (f'{low} is our own mail domain — the sender is a '
+                        f'colleague forwarding an enquiry, not the '
+                        f'customer')
+        except Exception:                                 # noqa: BLE001
+            pass
+    return ''
+
+
 # ── 2.1 the account check queue ─────────────────────────────────────
 def autoclear_plan():
     """What the queue would do to itself (Module 2.1).
@@ -128,11 +205,16 @@ def autoclear_plan():
       1. the email domain or the name matches an existing account →
          link the lead to it
       2. no match → create the account from the name the user typed,
-         else the domain name
+         else the domain name — unless that name is a placeholder or
+         is us, in which case the lead STAYS IN ACCOUNT CHECK for a
+         person to name. See `why_not_an_account_name`.
       3. the owner is the lead owner, else the vertical head
       4. anything the rules cannot settle → Nilesh's Thursday review
 
-    Returns [{lead, rule, account_id, account_name, owner, why}].
+    Returns (rows, review, stays): the leads the rules clear, the ones
+    for Thursday, and the ones a person must name. Three lists and not
+    two, because "a person types the customer's name" and "Nilesh
+    decides something" are different jobs for different people.
     """
     from app import Company, Employee, Lead, db
     from app.services import (account_match, company_match,
@@ -144,7 +226,7 @@ def autoclear_plan():
     index = company_match.build_index(accounts)
     by_domain = _domain_index(accounts)
 
-    rows, review = [], []
+    rows, review, stays = [], [], []
     for lead in _queue_leads(Lead=Lead, db=db):
         vertical = None
         try:
@@ -183,19 +265,26 @@ def autoclear_plan():
                         f'accounts — merge them first (Module 2.3)')})
                 continue
 
-        # 2 — create it.
+        # 2 — create it, if there is anything real to name it after.
         created_name = ''
         if account is None:
-            created_name = ((lead.company or '').strip()
-                            or _name_from_domain(domain))
-            if not created_name:
-                review.append({
+            typed = (lead.company or '').strip()
+            created_name = typed or _name_from_domain(domain)
+            # Both candidates are checked, and the typed name is checked
+            # as a NAME while the domain is checked as a domain: "Procam
+            # Logistics" typed into the company box and an enquiry
+            # forwarded from procamlogistics.com are the same mistake
+            # arriving two ways.
+            refused = why_not_an_account_name(created_name, domain=domain)
+            if refused:
+                stays.append({
                     'lead': lead,
-                    'why': 'no company name and no sender domain — '
-                           'nothing to name an account after'})
+                    'candidate': created_name or '(nothing)',
+                    'why': refused,
+                    'owner': (lead.assigned_to or '').strip(),
+                })
                 continue
-            rule = ('create from the typed name'
-                    if (lead.company or '').strip()
+            rule = ('create from the typed name' if typed
                     else 'create from the sender domain')
             why = f'no account matched; create {created_name!r}'
 
@@ -223,7 +312,7 @@ def autoclear_plan():
             'vertical': vertical or '',
             'owner': owner, 'owner_why': owner_why,
         })
-    return rows, review
+    return rows, review, stays
 
 
 def _domain_index(accounts):
