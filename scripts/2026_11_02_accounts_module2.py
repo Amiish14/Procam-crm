@@ -40,7 +40,14 @@ sys.path.insert(0, os.path.dirname(_HERE))
 from app import Company, Employee, Lead, app, db           # noqa: E402
 
 ACTOR = 'PROCAM-DECISIONS-02NOV'
+
+#: What a bare --check or --apply covers. `notrelevant` is deliberately
+#: NOT here: marking leads not relevant is its own decision with its
+#: own preview, and a section that only runs when it is asked for
+#: cannot be swept along by somebody running the whole thing.
 SECTIONS = ('owners', 'queue', 'merges')
+OPT_IN_SECTIONS = ('notrelevant',)
+ALL_SECTIONS = SECTIONS + OPT_IN_SECTIONS
 
 #: Where --csv writes when no path is given. In the repo rather than
 #: /tmp, because the file is the evidence for rule 0.3's approval and
@@ -166,7 +173,85 @@ def write_creates_csv(rows, path):
     return path
 
 
-def report_queue(rows, review, stays=()):
+def _sibling(path, suffix):
+    """A second CSV beside the first, so one --csv gives all three."""
+    root, ext = os.path.splitext(path)
+    return f'{root}_{suffix}{ext or ".csv"}'
+
+
+def write_stays_csv(stays, path):
+    """The leads a person must name, and the account suggested for each."""
+    import csv
+
+    out_path = _sibling(path, 'account_check')
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    with open(out_path, 'w', newline='', encoding='utf-8') as fh:
+        out = csv.writer(fh)
+        out.writerow(['lead', 'typed name', 'candidate name',
+                      'suggested existing account', 'account id',
+                      'why no account was created', 'owner'])
+        for item in sorted(stays, key=lambda i: i['lead'].id):
+            suggest = item.get('suggest')
+            out.writerow([
+                item['lead'].id,
+                (item['lead'].company or '').strip(),
+                item['candidate'],
+                getattr(suggest, 'name', ''),
+                getattr(suggest, 'id', ''),
+                item['why'],
+                _name(item.get('owner') or ''),
+            ])
+    return out_path
+
+
+def write_not_relevant_csv(rows, path):
+    """The leads that are not a customer, with the class and the sender."""
+    import csv
+
+    out_path = _sibling(path, 'not_relevant')
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    with open(out_path, 'w', newline='', encoding='utf-8') as fh:
+        out = csv.writer(fh)
+        out.writerow(['lead', 'class', 'sender', 'typed name', 'subject',
+                      'why'])
+        for item in sorted(rows, key=lambda i: (i['class'], i['lead'].id)):
+            lead = item['lead']
+            out.writerow([
+                lead.id, item['class'], item['sender'],
+                (lead.company or '').strip(),
+                (getattr(lead, 'original_email_subject', '') or '')[:120],
+                item['why'],
+            ])
+    return out_path
+
+
+def report_not_relevant(rows):
+    from collections import Counter
+
+    print('\n── 2.1  leads that are not a customer at all ' + '─' * 19)
+    print(f'\n  {len(rows)} lead(s), per class:')
+    for code, count in Counter(r['class'] for r in rows).most_common():
+        print(f'    {count:>4}  {code}')
+    if not rows:
+        print('    (none)')
+        return
+    print('\n  No account is created for any of them. They belong in the '
+          'Not-relevant\n  queue, where a person confirms. This section '
+          'runs only when you ask for\n  it by name, and nothing here '
+          'is applied by a bare --apply.')
+    for item in rows[:30]:
+        print(f'    #{item["lead"].id:<7} {item["class"]:<16}'
+              f' {item["sender"][:34]:<34} {item["why"][:60]}')
+    if len(rows) > 30:
+        print(f'    … and {len(rows) - 30} more')
+    print('\n  A procurement portal is NOT one of these. Ariba, GeM and '
+          'the client\n  tender portals are how a large customer sends an '
+          'RFQ — two such leads\n  are open opportunities with owners '
+          'right now, which is why `portals`\n  names the directory sites '
+          'that solicit us and not the portals that buy\n  from us.')
+
+
+def report_queue(rows, review, stays=(), not_relevant=()):
     from collections import Counter
 
     print('\n── 2.1  the account check queue ' + '─' * 31)
@@ -177,8 +262,23 @@ def report_queue(rows, review, stays=()):
     if not rows:
         print('    (none)')
     creates = [r for r in rows if r['create']]
-    print(f'\n  accounts that would be created: '
-          f'{len({r["account_name"].lower() for r in creates})}')
+    from app.services.accounts_module2 import squash
+    groups = {}
+    for row in creates:
+        groups.setdefault(squash(row['account_name']), []).append(row)
+    print(f'\n  accounts that would be created: {len(groups)}'
+          f'  (from {len(creates)} lead(s))')
+    spread = {k: v for k, v in groups.items() if len(v) > 1}
+    if spread:
+        print(f'    {len(spread)} of them are proposed by more than one '
+              f'lead:')
+        for _key, members in sorted(
+                spread.items(), key=lambda kv: -len(kv[1]))[:12]:
+            spellings = sorted({r['lead'].company or '' for r in members})
+            print(f'      {members[0]["account_name"][:30]:<30}'
+                  f' {len(members)} lead(s)'
+                  + (f'  spelt: {", ".join(s for s in spellings if s)[:60]}'
+                     if len(spellings) > 1 else ''))
     by_owner = Counter(row['owner_why'] for row in rows)
     for why, count in sorted(by_owner.items()):
         print(f'    {count:>4}  owner: {why}')
@@ -215,6 +315,59 @@ def report_queue(rows, review, stays=()):
                   f' {item["candidate"][:26]:<26} {item["why"]}')
         if len(stays) > 30:
             print(f'    … and {len(stays) - 30} more')
+
+
+def apply_not_relevant(rows):
+    """Put them in the Not-relevant queue. Reversible, one at a time.
+
+    Uses `junk_delete.mark_not_relevant`, which is the existing path and
+    the only one with a `restore`. Its eligibility rules still apply and
+    are not bypassed: a lead with a quote, an outgoing mail or any human
+    activity on it is REFUSED and reported, because such a lead is not
+    junk whatever its sender looks like — it is work somebody has done.
+
+    The reason recorded is one of the six the dialog offers, mapped from
+    the class. No new reason code is invented: the Not-relevant screen
+    groups by that field and a seventh value would appear nowhere.
+    """
+    from app.services import junk_delete as jd
+
+    #: class -> the existing reason code that fits it. `spam` blocks the
+    #: sender by default and `not_logistics` does not, which is the
+    #: right split: a newsletter will send another, an insurance broker
+    #: soliciting once may be a customer next year.
+    REASON = {
+        'blocked_sender': 'spam',
+        'marketing': 'spam',
+        'events': 'spam',
+        'portals': 'spam',
+        'insurance': 'not_logistics',
+        'broker': 'not_logistics',
+    }
+
+    marked, refused = 0, []
+    for item in rows:
+        lead = item['lead']
+        why = jd.blockers(lead)
+        if why:
+            refused.append((lead.id, '; '.join(w for _k, w in why)))
+            continue
+        reason = REASON.get(item['class'], 'not_logistics')
+        try:
+            jd.mark_not_relevant(
+                lead, reason=reason,
+                note=f'{ACTOR} Module 2.1: {item["why"]}',
+                actor=ACTOR,
+                # The sender block is a separate decision with its own
+                # screen. This run reads that list; it does not add to
+                # it, because one wrongly classified lead would then
+                # block a real customer's mailbox.
+                block_sender=False, commit=False)
+            marked += 1
+        except ValueError as exc:
+            refused.append((lead.id, str(exc)))
+    db.session.commit()
+    return marked, refused
 
 
 def m2_why_not(name):
@@ -322,8 +475,11 @@ def main():
     ap.add_argument('--apply', action='store_true')
     ap.add_argument('--undo', metavar='BATCH',
                     help='reverse a batch this script wrote')
-    ap.add_argument('--only', choices=SECTIONS, action='append',
-                    help='one section; repeatable')
+    ap.add_argument('--only', choices=ALL_SECTIONS, action='append',
+                    help='one section; repeatable. Sections run and '
+                         'apply independently, so --apply --only merges '
+                         'does the merges and nothing else. '
+                         f'{OPT_IN_SECTIONS[0]!r} runs only when named.')
     ap.add_argument('--csv', metavar='PATH', nargs='?',
                     const=DEFAULT_CSV, default=None,
                     help='write every account that would be created to '
@@ -367,6 +523,17 @@ def main():
                 where = write_creates_csv(creates, args.csv)
                 print(f'\n  {len(creates)} proposed account(s), every '
                       f'one of them, written to:\n    {where}')
+                stays_csv = write_stays_csv(queue[2], args.csv)
+                print(f'  {len(queue[2])} lead(s) for Account check:'
+                      f'\n    {stays_csv}')
+        if 'notrelevant' in wanted:
+            if queue is None:
+                queue = m2.autoclear_plan()
+            report_not_relevant(queue[3])
+            if args.csv:
+                nr_csv = write_not_relevant_csv(queue[3], args.csv)
+                print(f'  {len(queue[3])} lead(s) for the Not-relevant '
+                      f'queue:\n    {nr_csv}')
         if 'merges' in wanted:
             dupes = _dupes()
             found = dupes.clusters()
@@ -382,19 +549,26 @@ def main():
 
         print('\n' + '─' * 64)
         print('applying\n')
-        batch = f'module2.{datetime.utcnow():%Y%m%d%H%M%S}'
-        with bulk_log.batch(batch, actor=ACTOR,
-                            note='PROCAM-DECISIONS-02NOV Module 2') \
-                as log:
-            if owners is not None:
-                print(f'  owners changed: '
-                      f'{apply_owners(owners[0], log)}')
-            if queue is not None:
-                linked, created = apply_queue(queue[0], log)
-                print(f'  leads linked:   {linked}')
-                print(f'  accounts made:  {created}')
-            name = log.name
-        db.session.commit()
+        # The bulk log is only opened for the sections that write
+        # through it. `--apply --only merges` used to open an empty
+        # batch and then print an undo command for it, which undid
+        # nothing and read as though the merges could be reversed.
+        name = None
+        logged = [sec for sec in ('owners', 'queue') if sec in wanted]
+        if logged:
+            batch = f'module2.{datetime.utcnow():%Y%m%d%H%M%S}'
+            with bulk_log.batch(batch, actor=ACTOR,
+                                note='PROCAM-DECISIONS-02NOV Module 2') \
+                    as log:
+                if owners is not None:
+                    print(f'  owners changed: '
+                          f'{apply_owners(owners[0], log)}')
+                if queue is not None and 'queue' in wanted:
+                    linked, created = apply_queue(queue[0], log)
+                    print(f'  leads linked:   {linked}')
+                    print(f'  accounts made:  {created}')
+                name = log.name
+            db.session.commit()
 
         if merges is not None:
             # Outside the bulk log on purpose: a merge re-points
@@ -408,11 +582,30 @@ def main():
             print(f'  left for a person: {len(merges[1])} cluster(s) '
                   f'on /admin/account-duplicates')
 
-        print(f'\n  batch: {name}')
-        print(f'  undo:  scripts/2026_11_02_accounts_module2.py '
-              f'--undo {name}')
-        print('  (the merges are not in that batch — see the note '
-              'the undo prints)')
+        if 'notrelevant' in wanted and queue is not None:
+            marked, refused = apply_not_relevant(queue[3])
+            print(f'  marked not relevant: {marked}')
+            if refused:
+                print(f'  refused: {len(refused)} — each has activity on '
+                      f'it and is not junk:')
+                for lead_id, why in refused[:20]:
+                    print(f'    #{lead_id:<7} {why}')
+            print('  restore one with the Restore button on the '
+                  'Not-relevant screen.')
+
+        if name:
+            print(f'\n  batch: {name}')
+            print(f'  undo:  scripts/2026_11_02_accounts_module2.py '
+                  f'--undo {name}')
+            print('  (the merges are not in that batch — see the note '
+                  'the undo prints)')
+        else:
+            print('\n  no bulk-log batch: this run wrote nothing that a '
+                  'batch can\n  reverse. A merge goes back through '
+                  'account_duplicates with the\n  survivor and the loser '
+                  'the other way round, which is a decision\n  rather '
+                  'than a rollback; a lead marked not relevant goes back '
+                  'with\n  Restore on its own screen.')
 
 
 if __name__ == '__main__':

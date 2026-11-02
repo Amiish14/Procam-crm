@@ -442,7 +442,7 @@ def test_a_lead_whose_domain_is_known_is_linked(world):
                      procam_vertical='Heavy Transport',
                      assigned_to='EMP572012')
         db.session.commit()
-        rows, review, _stays = m2.autoclear_plan()
+        rows, review, _stays, _nr = m2.autoclear_plan()
         mine = [r for r in rows if r['lead'].id == lead.id]
         assert mine, 'the rules have to place it'
         assert mine[0]['account_id'] == account.id
@@ -460,7 +460,7 @@ def test_a_free_mail_domain_is_not_a_company(world):
                      procam_vertical='Heavy Transport',
                      assigned_to='EMP572012')
         db.session.commit()
-        rows, _review, _stays = m2.autoclear_plan()
+        rows, _review, _stays, _nr = m2.autoclear_plan()
         mine = [r for r in rows if r['lead'].id == lead.id]
         assert mine[0]['create'] is True
         assert mine[0]['account_name'] == 'Somebody New'
@@ -473,7 +473,7 @@ def test_no_match_creates_from_the_typed_name(world):
                      procam_vertical='Warehousing',
                      assigned_to='DIR72012')
         db.session.commit()
-        rows, _review, _stays = m2.autoclear_plan()
+        rows, _review, _stays, _nr = m2.autoclear_plan()
         mine = [r for r in rows if r['lead'].id == lead.id]
         assert mine[0]['create'] is True
         assert mine[0]['rule'] == 'create from the typed name'
@@ -486,7 +486,7 @@ def test_no_name_falls_back_to_the_domain(world):
                      procam_vertical='Warehousing',
                      assigned_to='DIR72012')
         db.session.commit()
-        rows, _review, _stays = m2.autoclear_plan()
+        rows, _review, _stays, _nr = m2.autoclear_plan()
         mine = [r for r in rows if r['lead'].id == lead.id]
         assert mine[0]['rule'] == 'create from the sender domain'
         assert mine[0]['account_name'] == 'Newcorp'
@@ -503,7 +503,7 @@ def test_neither_a_name_nor_a_domain_stays_in_account_check(world):
         lead = _lead(company='', email='',
                      procam_vertical='Warehousing')
         db.session.commit()
-        _rows, review, stays = m2.autoclear_plan()
+        _rows, review, stays, _nr = m2.autoclear_plan()
         mine = [r for r in stays if r['lead'].id == lead.id]
         assert mine, 'it has to be reported, not dropped'
         assert 'no company name' in mine[0]['why']
@@ -517,7 +517,7 @@ def test_the_owner_is_the_lead_owner_first(world):
                      procam_vertical='Heavy Transport',
                      assigned_to='EMP572012')
         db.session.commit()
-        rows, _review, _stays = m2.autoclear_plan()
+        rows, _review, _stays, _nr = m2.autoclear_plan()
         mine = [r for r in rows if r['lead'].id == lead.id]
         assert mine[0]['owner'] == 'EMP572012'
         assert mine[0]['owner_why'] == 'the lead owner'
@@ -540,7 +540,7 @@ def test_an_unowned_lead_goes_to_the_vertical_head(world):
                      email='x@headless.example',
                      procam_vertical='Warehousing', assigned_to=None)
         db.session.commit()
-        rows, _review, _stays = m2.autoclear_plan()
+        rows, _review, _stays, _nr = m2.autoclear_plan()
         mine = [r for r in rows if r['lead'].id == lead.id]
         assert mine[0]['owner'] == 'DIR72012'
         assert 'head' in mine[0]['owner_why']
@@ -558,7 +558,7 @@ def test_an_ambiguous_name_waits_for_the_merge(world):
                      procam_vertical='Heavy Transport',
                      assigned_to='EMP572012')
         db.session.commit()
-        rows, review, _stays = m2.autoclear_plan()
+        rows, review, _stays, _nr = m2.autoclear_plan()
         in_review = [r for r in review if r['lead'].id == lead.id]
         in_rows = [r for r in rows if r['lead'].id == lead.id]
         assert in_review and not in_rows
@@ -651,7 +651,7 @@ def test_a_placeholder_typed_name_creates_nothing(world):
                      procam_vertical='Heavy Transport',
                      assigned_to='EMP572012')
         db.session.commit()
-        rows, _review, stays = m2.autoclear_plan()
+        rows, _review, stays, _nr = m2.autoclear_plan()
         assert not [r for r in rows if r['lead'].id == lead.id], \
             'no rule may clear a lead whose account would be "Unknown"'
         mine = [s for s in stays if s['lead'].id == lead.id]
@@ -697,7 +697,7 @@ def test_a_lead_forwarded_by_a_colleague_creates_nothing(world):
                      procam_vertical='Project Freight',
                      assigned_to='EMP372012')
         db.session.commit()
-        rows, _review, stays = m2.autoclear_plan()
+        rows, _review, stays, _nr = m2.autoclear_plan()
         assert not [r for r in rows if r['lead'].id == lead.id]
         mine = [s for s in stays if s['lead'].id == lead.id]
         assert mine
@@ -713,7 +713,7 @@ def test_a_real_name_is_still_created(world):
                      procam_vertical='Heavy Transport',
                      assigned_to='EMP572012')
         db.session.commit()
-        rows, _review, stays = m2.autoclear_plan()
+        rows, _review, stays, _nr = m2.autoclear_plan()
         mine = [r for r in rows if r['lead'].id == lead.id]
         assert mine and mine[0]['create'] is True
         assert mine[0]['account_name'] == 'Walchandnagar Industries'
@@ -759,7 +759,7 @@ def test_the_csv_lists_every_proposed_account(world):
                                procam_vertical='Heavy Transport',
                                assigned_to='EMP572012'))
         db.session.commit()
-        rows, _review, _stays = m2.autoclear_plan()
+        rows, _review, _stays, _nr = m2.autoclear_plan()
         creates = [r for r in rows if r['create']]
         assert len(creates) >= 35
 
@@ -770,3 +770,278 @@ def test_the_csv_lists_every_proposed_account(world):
     assert read[0][:4] == ['lead', 'typed name', 'proposed account',
                            'owner']
     assert len(read) - 1 == len(creates), 'every row, not a sample'
+
+
+# ══ 2.1 the three rules added on 2 Nov after the first dry run ══════
+def _plain(name, **kw):
+    """An account under its real name, with no test prefix.
+
+    The squashed-name comparisons are the point of these tests, so the
+    name has to be exactly what it would be in production.
+    """
+    row = Company(name=name, is_active=True, **kw)
+    db.session.add(row)
+    db.session.flush()
+    return row
+
+
+# ── names that are too short, or a word for what the business does ──
+@pytest.mark.parametrize('typed,expect', [
+    ('Se', 'too short'),
+    ('ABB', 'too short'),
+    ('Global', 'what the business does'),
+    ('Group', 'what the business does'),
+    ('Logistics', 'what the business does'),
+    ('Transport', 'what the business does'),
+])
+def test_a_short_or_generic_name_creates_nothing(world, typed, expect):
+    with flask_app.app_context():
+        lead = _lead(company=typed, email=f'x@{typed.lower()}x.example',
+                     procam_vertical='Heavy Transport',
+                     assigned_to='EMP572012')
+        db.session.commit()
+        rows, _review, stays, _nr = m2.autoclear_plan()
+        assert not [r for r in rows if r['lead'].id == lead.id]
+        mine = [s for s in stays if s['lead'].id == lead.id]
+        assert mine, f'{typed!r} has to reach Account check'
+        assert expect in mine[0]['why']
+
+
+def test_a_generic_word_inside_a_real_name_is_fine(world):
+    """"Global" is refused; "Global Calcium" is a company."""
+    with flask_app.app_context():
+        assert m2.why_not_an_account_name('Global Calcium') == ''
+        assert m2.why_not_an_account_name('Global')
+
+
+def test_beml_is_exactly_long_enough(world):
+    """The four-letter floor is the rule that costs the most."""
+    assert m2.why_not_an_account_name('BEML') == ''
+    assert m2.why_not_an_account_name('BEM')
+
+
+# ── a name that is already an account under another spelling ────────
+def test_a_missing_space_proposes_a_link_not_a_second_account(world):
+    with flask_app.app_context():
+        account = _plain('Hitachi Energy')
+        db.session.commit()
+        lead = _lead(company='Hitachienergy',
+                     email='rfq@someother.example',
+                     procam_vertical='Heavy Transport',
+                     assigned_to='EMP572012')
+        db.session.commit()
+        rows, _review, stays, _nr = m2.autoclear_plan()
+        assert not [r for r in rows if r['lead'].id == lead.id], \
+            'it must not create a second Hitachi Energy'
+        mine = [s for s in stays if s['lead'].id == lead.id]
+        assert mine
+        assert mine[0]['suggest'].id == account.id
+        assert 'link it to the account that exists' in mine[0]['why']
+
+
+def test_an_alias_is_what_resolves_lntecc(world):
+    """"Lntecc" is L&T ECC, and only the alias can say so.
+
+    A prefix of an account NAME is not enough — that would propose
+    linking "Global Calcium" to "Global". An alias is a spelling
+    somebody deliberately recorded, which a merge does automatically.
+    """
+    with flask_app.app_context():
+        account = _plain('Larsen & Toubro', aliases=['LNT', 'L&T'])
+        db.session.commit()
+        lead = _lead(company='Lntecc', email='rfq@lntecc.example',
+                     procam_vertical='Heavy Transport',
+                     assigned_to='EMP572012')
+        db.session.commit()
+        rows, _review, stays, _nr = m2.autoclear_plan()
+        assert not [r for r in rows if r['lead'].id == lead.id]
+        mine = [s for s in stays if s['lead'].id == lead.id]
+        assert mine
+        assert mine[0]['suggest'].id == account.id
+        assert 'LNT' in mine[0]['why']
+
+
+def test_a_name_prefix_alone_does_not_propose_a_link(world):
+    """Without the alias, nothing is proposed and nothing is wrong."""
+    with flask_app.app_context():
+        _plain('Global')
+        db.session.commit()
+        index = m2._alias_index(
+            [c for c in Company.query.filter_by(is_active=True).all()])
+        found, _how = m2.looks_like_existing('Global Calcium', '',
+                                             index, {})
+        assert found is None, \
+            '"Global" is six letters; a prefix that short is a coincidence'
+
+
+def test_the_senders_domain_resolves_the_account_with_nothing_typed(world):
+    with flask_app.app_context():
+        account = _plain('Westfracht')
+        db.session.commit()
+        lead = _lead(company='', email='ops@westfracht.example',
+                     procam_vertical='Project Freight',
+                     assigned_to='EMP372012')
+        db.session.commit()
+        rows, _review, stays, _nr = m2.autoclear_plan()
+        assert not [r for r in rows if r['lead'].id == lead.id]
+        mine = [s for s in stays if s['lead'].id == lead.id]
+        assert mine and mine[0]['suggest'].id == account.id
+
+
+# ── one account per company, however many ways it is spelt ──────────
+def test_case_and_punctuation_variants_collapse_into_one(world):
+    with flask_app.app_context():
+        for i, typed in enumerate(['TQCERT', 'T.Q. Cert', 'tqcert',
+                                   'TQ  CERT']):
+            _lead(company=typed, email=f'a{i}@tq{i}.example',
+                  procam_vertical='Heavy Transport',
+                  assigned_to='EMP572012')
+        db.session.commit()
+        rows, _review, _stays, _nr = m2.autoclear_plan()
+        creates = [r for r in rows if r['create']
+                   and m2.squash(r['account_name']) == 'tqcert']
+        assert len(creates) == 4, 'all four leads are placed'
+        assert len({r['account_name'] for r in creates}) == 1, \
+            'and they propose one account, not four'
+
+
+def test_the_longest_spelling_wins_a_tie(world):
+    """"Drewes Group" over "Drewes": the longer one carries more."""
+    with flask_app.app_context():
+        _lead(company='Drewes', email='a@d1.example',
+              procam_vertical='Project Freight', assigned_to='EMP372012')
+        _lead(company='Drewes Group', email='b@d2.example',
+              procam_vertical='Project Freight', assigned_to='EMP372012')
+        db.session.commit()
+        rows, _review, _stays, _nr = m2.autoclear_plan()
+        creates = [r for r in rows if r['create']
+                   and m2.squash(r['account_name']) == 'drewes']
+        assert len(creates) == 2
+        assert creates[0]['account_name'] == 'Drewes Group'
+
+
+def test_a_collapsed_row_says_what_was_typed_on_it(world):
+    """A name no other test uses: the earlier Westfracht account would
+    make this a LINK rather than a create, and the test would then be
+    measuring the wrong rule."""
+    with flask_app.app_context():
+        _lead(company='Nordfracht', email='a@nf1.example',
+              procam_vertical='Project Freight', assigned_to='EMP372012')
+        odd = _lead(company='NORDFRACHT', email='b@nf2.example',
+                    procam_vertical='Project Freight',
+                    assigned_to='EMP372012')
+        db.session.commit()
+        rows, _review, _stays, _nr = m2.autoclear_plan()
+        mine = [r for r in rows if r['lead'].id == odd.id]
+        assert mine, 'it has to be a create, not a link'
+        assert mine[0]['create'] is True
+        assert mine[0]['account_name'] == 'Nordfracht'
+        assert "spelt 'NORDFRACHT'" in mine[0]['why']
+
+
+# ── leads that are not a customer at all ───────────────────────────
+@pytest.mark.parametrize('subject,expect', [
+    ('Our monthly newsletter — unsubscribe here', 'marketing'),
+    ('Invitation: India Logistics Summit 2027 — early bird', 'events'),
+    ('Premium listing package for your business', 'portals'),
+    ('We offer marine cargo insurance cover at best rates', 'insurance'),
+    ('We are a leading freight forwarder — agent network enquiry',
+     'broker'),
+])
+def test_the_five_classes_are_recognised(world, subject, expect):
+    with flask_app.app_context():
+        lead = _lead(company='Somebody Ltd', email='x@sender.example',
+                     original_email_subject=subject,
+                     procam_vertical='Project Freight',
+                     assigned_to='EMP372012')
+        db.session.commit()
+        code, why = m2.not_relevant_class(lead)
+        assert code == expect, why
+
+
+def test_a_not_relevant_lead_creates_no_account(world):
+    with flask_app.app_context():
+        lead = _lead(company='Conference Org Ltd',
+                     email='events@someorganiser.example',
+                     original_email_subject='Sponsorship for our summit',
+                     procam_vertical='Project Freight',
+                     assigned_to='EMP372012')
+        db.session.commit()
+        rows, _review, stays, nr = m2.autoclear_plan()
+        assert not [r for r in rows if r['lead'].id == lead.id]
+        assert not [s for s in stays if s['lead'].id == lead.id]
+        mine = [n for n in nr if n['lead'].id == lead.id]
+        assert mine and mine[0]['class'] == 'events'
+
+
+def test_a_procurement_portal_is_not_a_not_relevant_class(world):
+    """Two Ariba leads are open opportunities with owners right now.
+
+    `junk_suggest` records the measurement that kept `noreply@*` off
+    the block list for exactly this reason.
+    """
+    with flask_app.app_context():
+        lead = _lead(company='Big Client Ltd',
+                     email='no-reply@eusmtp.ariba.com',
+                     original_email_subject=(
+                         'RFQ invitation — register now on our portal'),
+                     procam_vertical='Heavy Transport',
+                     assigned_to='EMP572012')
+        db.session.commit()
+        code, _why = m2.not_relevant_class(lead)
+        assert code is None, \
+            'an Ariba RFQ invitation is how a large client sends an RFQ'
+
+
+def test_a_real_enquiry_mentioning_insurance_is_not_a_solicitation(world):
+    """Half of all freight enquiries say who insures the cargo."""
+    with flask_app.app_context():
+        lead = _lead(company='Indo Tech Transformers',
+                     email='rfq@indotech.example',
+                     original_email_subject=(
+                         'Transformer movement Vadodara to Lapanga — '
+                         'cargo insurance by us'),
+                     procam_vertical='Heavy Transport',
+                     assigned_to='EMP572012')
+        db.session.commit()
+        code, why = m2.not_relevant_class(lead)
+        assert code is None, why
+
+
+def test_the_block_list_is_read_not_copied(world):
+    with flask_app.app_context():
+        from app.models.master_data import MasterItem
+        from app.services import system_senders
+        db.session.add(MasterItem(
+            list_key=system_senders.LIST_KEY,
+            code='robot@someportal.example', label='robot',
+            description='a robot', is_active=True))
+        db.session.commit()
+        lead = _lead(company='Somebody Ltd',
+                     email='robot@someportal.example',
+                     procam_vertical='Project Freight',
+                     assigned_to='EMP372012')
+        db.session.commit()
+        code, why = m2.not_relevant_class(lead)
+        assert code == 'blocked_sender'
+        assert 'block list' in why
+        # and the module holds no second copy of that list
+        source = open(os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'app', 'services', 'accounts_module2.py')).read()
+        assert 'robot@someportal.example' not in source
+
+
+# ── the sections run independently ─────────────────────────────────
+def test_the_opt_in_section_is_not_in_the_default_set(world):
+    import importlib.util
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'scripts', '2026_11_02_accounts_module2.py')
+    spec = importlib.util.spec_from_file_location('m2script2', path)
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    assert 'notrelevant' not in script.SECTIONS, \
+        'a bare --apply must not mark leads not relevant'
+    assert 'notrelevant' in script.ALL_SECTIONS
+    assert 'merges' in script.SECTIONS

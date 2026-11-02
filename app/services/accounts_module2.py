@@ -149,6 +149,50 @@ def _bare(text):
     return ''.join(c for c in (text or '').lower() if c.isalnum())
 
 
+def squash(text):
+    """`company_match.norm`, then the spaces out too.
+
+    One key for "Hitachi Energy", "Hitachienergy" and "HITACHI
+    ENERGY"; one key for "TQCERT", "TQ Cert" and "T.Q. Cert". `norm`
+    alone keeps the spaces, which is right for its own job — it is the
+    key the matcher LINKS on, and linking on a squashed key would join
+    two companies whose names differ only by a word break. Here the
+    squashed key is used for two softer things: collapsing the
+    spellings of one proposed account, and *proposing* a link for a
+    person to confirm. Neither links anything by itself.
+    """
+    from app.services.company_match import norm
+    return ''.join(ch for ch in norm(text) if ch.isalnum())
+
+
+#: A name must have this many letters or digits left after squashing.
+#: "Se" and "ABB" do not; both go to Account check for a person to
+#: name properly. Set by the decision of 2 Nov, and it is the rule
+#: that costs the most false refusals — BEML has exactly four, and
+#: anything shorter that is a real customer reaches Account check
+#: rather than being lost.
+MIN_NAME_LETTERS = 4
+
+#: A word that is not a company on its own. The whole name, not a part
+#: of it: "Global" is refused and "Global Calcium" is not.
+#:
+#: These are the words the company column holds when somebody typed
+#: what the business DOES instead of who it is. An account called
+#: Logistics collects every enquiry whose sender signed off with their
+#: department.
+GENERIC_NAMES = frozenset((
+    'global', 'group', 'logistics', 'logistic', 'transport',
+    'transports', 'transportation', 'shipping', 'shipment', 'freight',
+    'cargo', 'courier', 'services', 'service', 'solutions', 'solution',
+    'india', 'international', 'enterprises', 'enterprise', 'industries',
+    'industry', 'trading', 'traders', 'exports', 'export', 'imports',
+    'import', 'company', 'corporation', 'projects', 'project',
+    'engineering', 'engineers', 'warehouse', 'warehousing', 'supply',
+    'supplies', 'procurement', 'purchase', 'purchasing', 'sales',
+    'marketing', 'accounts', 'admin', 'office', 'se', 'sa', 'ag',
+))
+
+
 def why_not_an_account_name(text, *, domain=None):
     """'' if an account may be created with this name, else why not.
 
@@ -183,6 +227,15 @@ def why_not_an_account_name(text, *, domain=None):
     if 'procam' in _bare(name):
         return (f'{name!r} is us, not a customer — an account named '
                 f'after Procam swallows every internal forward')
+    key = squash(name)
+    if len(key) < MIN_NAME_LETTERS:
+        return (f'{name!r} is {len(key)} letter(s) long once the '
+                f'punctuation and the legal suffix are off — too short '
+                f'to be sure what company it is')
+    if key in GENERIC_NAMES or name.strip().lower() in GENERIC_NAMES:
+        return (f'{name!r} is what the business does, not who it is — '
+                f'an account named this collects every enquiry whose '
+                f'sender typed their department')
     if domain:
         try:
             from app.services.mail_signals import OUR_DOMAINS
@@ -194,6 +247,195 @@ def why_not_an_account_name(text, *, domain=None):
         except Exception:                                 # noqa: BLE001
             pass
     return ''
+
+
+# ── 2.1 senders that are not customers at all ───────────────────────
+#: The Not-relevant classes, each with the words that identify it.
+#:
+#: Matched against the sender address, the subject and the typed
+#: company name — never the body, because a real enquiry quoting a
+#: conference it is shipping to would match `events` on its own text.
+#:
+#: Narrower than it reads. Every pattern below was chosen so that a
+#: real enquiry does not match it: `insurance` looks for a solicitation
+#: ("we offer cargo cover"), not for the word insurance, which appears
+#: in half of all freight enquiries because the client is telling us
+#: who insures the cargo.
+NOT_RELEVANT_CLASSES = (
+    ('marketing', 'marketing or a newsletter', (
+        r'\bnewsletter\b', r'\bunsubscribe\b', r'\bwebinar\b',
+        r'\bpromotional?\b', r'\bdiscount\b', r'\bfree trial\b',
+        r'\bsubscribe now\b', r'\bdigest\b', r'\bcampaign\b',
+        r'\bmailchimp\b', r'\bsendgrid\b', r'\bhubspot\b',
+        r'@mailer\.', r'@sendgrid\.', r'@mailchimp',
+    )),
+    ('events', 'an event, a conference or sponsorship', (
+        r'\bconferences?\b', r'\bsummit\b', r'\bexpo\b',
+        r'\bexhibition\b', r'\bawards?\b', r'\bdelegate\b',
+        r'\bsponsorship\b', r'\bspeaker (slot|opportunity)\b',
+        r'\bregister (now|today)\b', r'\bearly bird\b',
+        r'\btrade fair\b',
+    )),
+    ('portals', 'a directory or listing portal soliciting us', (
+        r'@justdial\.', r'@indiamart\.', r'@tradeindia\.',
+        r'@exportersindia\.', r'@sulekha\.', r'@yellowpages',
+        r'\blisting (package|plan)\b', r'\bpremium listing\b',
+        r'\bverified supplier\b', r'\bbuy leads?\b',
+    )),
+    ('insurance', 'an insurance or cover solicitation', (
+        r'\b(we|our firm) (offer|provide)s? .{0,30}'
+        r'(insuranc|cover|polic)',
+        r'\bmarine (cargo )?(insuranc|cover) (quote|offer|plan)s?\b',
+        r'\binsurance (broker|advisor|agency)\b',
+        r'\bpolicy renewal\b', r'\bpremium quote\b',
+    )),
+    ('broker', 'a forwarder or broker soliciting business', (
+        r'\b(agent|partner)(ship)? (network|enquiry|proposal)\b',
+        r'\blooking for (a )?(partner|agent|associate)s?\b',
+        r'\bwe are a (leading |reputed )?(freight |customs )?'
+        r'(forwarder|broker|agent)\b',
+        r'\bour (rates|tariff) (for|are) (your )?reference\b',
+        r'\boffer(ing)? (you )?(our )?(best )?(rates|tariff)s?\b',
+        r'\bco-?loader\b', r'\bnvocc\b.{0,20}\b(offer|rates)\b',
+    )),
+)
+
+#: What a `portals` match deliberately does NOT catch.
+#:
+#: `junk_suggest` records the measurement: `noreply@*` was left off the
+#: block list because 226 of the 247 leads it would have held were
+#: freight load postings and SAP Ariba RFQ invitations, "two of which
+#: are open opportunities with owners right now". A tender or
+#: procurement portal is how a large client sends an RFQ, so the
+#: pattern list above names the directory portals that solicit US and
+#: not the procurement portals that buy FROM us.
+PROCUREMENT_PORTALS = ('ariba', 'gem.gov.in', 'eproc', 'tender',
+                       'coupa', 'jaggaer', 'sap.com', 'bidding')
+
+
+def not_relevant_class(lead):
+    """(code, why) when this lead is not a customer, else (None, '').
+
+    Two kinds, in order:
+
+      1. the sender is on the block list. That list is a decision
+         somebody already made, in Master Data, and this reads it
+         rather than holding a second copy;
+      2. the mail is one of the five classes above.
+
+    Nothing here marks anything. The caller stops short of creating an
+    account and reports the lead for the Not-relevant queue, which is
+    where a person decides.
+    """
+    import re
+
+    from app.services import junk_delete as jd
+
+    sender = jd.sender_of(lead)
+
+    try:
+        from app.services import system_senders
+        hit, pattern, why = system_senders.blocks(sender)
+        if hit:
+            return 'blocked_sender', (f'the sender is on the block list '
+                                      f'({pattern}): {why}')
+    except Exception:                                     # noqa: BLE001
+        pass
+
+    subject = (getattr(lead, 'original_email_subject', '') or '')
+    typed = (getattr(lead, 'company', '') or '')
+    haystack = ' '.join((sender, subject, typed)).lower()
+
+    if any(p in haystack for p in PROCUREMENT_PORTALS):
+        # A procurement portal is how a large client sends an RFQ. Two
+        # of the leads this would otherwise have caught are open
+        # opportunities with owners.
+        return None, ''
+
+    for code, label, patterns in NOT_RELEVANT_CLASSES:
+        for pattern in patterns:
+            if re.search(pattern, haystack, re.I):
+                return code, (f'{label} — matched {pattern!r} in the '
+                              f'sender, subject or typed name')
+    return None, ''
+
+
+# ── 2.1 a name that is already an account under another spelling ────
+def _alias_index(accounts):
+    """{squashed spelling: (account, which spelling)} over names and aliases.
+
+    Aliases are included because a merge keeps the loser's spelling as
+    an alias of the survivor — which is exactly the record that says
+    "Lntecc is L&T", and the only place that fact can live.
+    """
+    out = {}
+    for account in accounts:
+        for spelling, source in ([(account.name, 'its name')]
+                                 + [(a, 'an alias')
+                                    for a in (account.aliases or [])]):
+            key = squash(spelling)
+            if key and key not in out:
+                out[key] = (account, source, str(spelling))
+    return out
+
+
+def looks_like_existing(name, domain, aliases, by_domain):
+    """(account, how) when this name is probably an account already.
+
+    Wider than `company_match.match` on purpose, because the outcome is
+    different: `match` LINKS, and this only PROPOSES a link for a
+    person to confirm on Account check. So it can afford the comparisons
+    that would be unsafe to act on automatically.
+
+    Four, in descending certainty:
+
+      1. the squashed name is exactly an account's name or alias —
+         "Hitachienergy" is "Hitachi Energy" with the space missing;
+      2. the sender's domain, read as a name, is — a mail from
+         hitachienergy.com with nothing typed at all;
+      3. the squashed name starts with an ALIAS of three or more
+         letters — "Lntecc" starts with the alias "LNT". Aliases only,
+         and three is low on purpose: an alias is a spelling somebody
+         deliberately recorded, and the outcome here is a proposal a
+         person confirms. A prefix of an account NAME is held to eight,
+         because proposing that "Global Calcium" is "Global" would be
+         wrong often enough to teach people to ignore the suggestion;
+      4. the squashed name starts with an account name of eight or
+         more letters, which is long enough that a shared prefix is
+         not a coincidence.
+    """
+    key = squash(name)
+    if not key:
+        return None, ''
+
+    if key in aliases:
+        account, source, spelling = aliases[key]
+        return account, (f'{name!r} is {account.name} — same name once '
+                         f'the spacing and punctuation are off'
+                         + ('' if source == 'its name'
+                            else f' (matched {spelling!r}, {source})'))
+
+    if domain:
+        from_domain = squash(_name_from_domain(domain))
+        if from_domain and from_domain in aliases:
+            account, _source, _spelling = aliases[from_domain]
+            return account, (f'{domain} reads as {account.name}')
+        account = by_domain.get(domain)
+        if account is not None:
+            return account, f'{domain} is already {account.name}'
+
+    best = None
+    for other, (account, source, spelling) in aliases.items():
+        floor = 3 if source == 'an alias' else 8
+        if len(other) < floor or not key.startswith(other):
+            continue
+        if best is None or len(other) > len(best[0]):
+            best = (other, account, spelling, source)
+    if best is not None:
+        _other, account, spelling, source = best
+        return account, (f'{name!r} starts with {spelling!r} ({source} '
+                         f'of {account.name})')
+    return None, ''
 
 
 # ── 2.1 the account check queue ─────────────────────────────────────
@@ -225,9 +467,22 @@ def autoclear_plan():
                 if not account_match.not_a_customer(a)]
     index = company_match.build_index(accounts)
     by_domain = _domain_index(accounts)
+    aliases = _alias_index(accounts)
 
-    rows, review, stays = [], [], []
+    rows, review, stays, not_relevant = [], [], [], []
     for lead in _queue_leads(Lead=Lead, db=db):
+        # Before any of the four rules: is this a customer at all. A
+        # lead from a conference organiser has a company name, a sender
+        # domain and nothing else wrong with it, so every rule below
+        # would clear it happily and create the account.
+        nr_code, nr_why = not_relevant_class(lead)
+        if nr_code:
+            from app.services import junk_delete as jd
+            not_relevant.append({
+                'lead': lead, 'class': nr_code, 'why': nr_why,
+                'sender': jd.sender_of(lead),
+            })
+            continue
         vertical = None
         try:
             vertical = account_gate.vertical_of(lead)
@@ -281,6 +536,28 @@ def autoclear_plan():
                     'lead': lead,
                     'candidate': created_name or '(nothing)',
                     'why': refused,
+                    'suggest': None,
+                    'owner': (lead.assigned_to or '').strip(),
+                })
+                continue
+            # One more question before creating: is this already an
+            # account under a different spelling. `match` said no,
+            # because it compares the normalised name with the spaces
+            # still in it — so "Hitachienergy" and "Hitachi Energy" are
+            # two different keys to it and one company to a reader.
+            #
+            # A proposal, never a link. The lead goes to Account check
+            # with the account named on it, and a person presses the
+            # button. That is the difference between this and rule 1.
+            similar, how = looks_like_existing(created_name, domain,
+                                               aliases, by_domain)
+            if similar is not None:
+                stays.append({
+                    'lead': lead,
+                    'candidate': created_name,
+                    'why': (f'{how} — link it to the account that exists '
+                            f'rather than creating a second one'),
+                    'suggest': similar,
                     'owner': (lead.assigned_to or '').strip(),
                 })
                 continue
@@ -312,7 +589,63 @@ def autoclear_plan():
             'vertical': vertical or '',
             'owner': owner, 'owner_why': owner_why,
         })
-    return rows, review, stays
+    collapse_creations(rows)
+    return rows, review, stays, not_relevant
+
+
+def collapse_creations(rows):
+    """One proposed account per company, however many ways it is spelt.
+
+    "Drewes Group" and "Drewes", "Westfracht" and "WESTFRACHT",
+    "TQCERT" and "T.Q. Cert" are each one customer. Keyed on `squash`,
+    so case, punctuation, spacing and the legal suffix all stop
+    mattering.
+
+    The canonical spelling is the one the most leads used. A tie is
+    broken in three steps, and the order was settled by watching it get
+    one wrong:
+
+      1. the FEWEST punctuation marks. Raw length was tried first and
+         picked "T.Q. Cert" over "TQCERT", because the dots made it
+         longer without saying anything;
+      2. then the MOST words — "Drewes Group" over "Drewes", because
+         the extra word is information and the shorter name can be read
+         out of the longer one;
+      3. then the one that is not shouting, so "Westfracht" beats
+         "WESTFRACHT". An account name is printed on a quote.
+
+    `apply_queue` already keys its own cache on the lower-cased name,
+    which collapsed the case variants and nothing else. Doing it here
+    instead means the number in the preview is the number of accounts
+    that will exist, which is what rule 0.3 asks Nilesh to approve.
+    """
+    from collections import Counter
+
+    groups = {}
+    for row in rows:
+        if not row['create']:
+            continue
+        groups.setdefault(squash(row['account_name']), []).append(row)
+
+    collapsed = []
+    for key, members in groups.items():
+        spellings = Counter(r['account_name'].strip() for r in members)
+        def _rank(item):
+            name, count = item
+            punctuation = sum(1 for ch in name
+                              if not ch.isalnum() and not ch.isspace())
+            return (-count, punctuation, -len(name.split()),
+                    name.isupper(), name)
+
+        canonical = sorted(spellings.items(), key=_rank)[0][0]
+        if len(spellings) > 1:
+            collapsed.append((canonical, dict(spellings)))
+        for row in members:
+            if row['account_name'].strip() != canonical:
+                row['why'] += (f'; spelt {row["account_name"].strip()!r} '
+                               f'on this lead, filed as {canonical!r}')
+                row['account_name'] = canonical
+    return collapsed
 
 
 def _domain_index(accounts):

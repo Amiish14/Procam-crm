@@ -1286,3 +1286,86 @@ owner, vertical, rule — one line per lead rather than per account, so
 two leads collapsing into one account is visible. That is either the
 same customer twice, which is right, or two customers whose typed names
 normalise together, which is not.
+
+## 61 — the four rules that stop Module 2.1 creating junk accounts
+
+The second dry run, after QUESTIONS.md 60, found more. Four rules now
+sit in front of rule 2, and the order matters because each is cheaper
+than the next.
+
+**Not a customer at all.** Before any of the four decision rules, the
+lead is asked whether it is an enquiry. A lead from a conference
+organiser has a company name, a sender domain and nothing else wrong
+with it — so every rule would clear it happily and create the account.
+`not_relevant_class` reads the Master Data block list first (a decision
+somebody already made, read rather than copied) and then five classes:
+marketing, events, portals, insurance and broker solicitations.
+
+The `portals` class is narrower than the word suggests, and
+deliberately: it names the directory sites that solicit **us** —
+JustDial, IndiaMART, TradeIndia and the "premium listing package" mail
+— and **not** the procurement portals that buy **from** us.
+`junk_suggest` already records the measurement that settles this:
+`noreply@*` was kept off the block list because 226 of the 247 leads it
+would have held were freight load postings and SAP Ariba RFQ
+invitations, "two of which are open opportunities with owners right
+now". So Ariba, GeM, Coupa, Jaggaer and anything with "tender" or
+"eproc" in it are excluded from the whole classifier by name, before
+any pattern is tried. A tender portal is how a large client sends an
+RFQ.
+
+The same restraint shapes `insurance`. It looks for a *solicitation* —
+"we offer cargo cover" — not for the word insurance, which appears in
+half of all freight enquiries because the client is telling us who
+insures the cargo. A test holds that.
+
+**Too short, or a word for what the business does.** Under four letters
+once the punctuation and legal suffix are off, or the whole name is one
+of `GENERIC_NAMES`. This is the rule that costs the most false
+refusals: BEML has exactly four letters and ABB has three, so ABB
+reaches Account check for a person to name. That is the right way round
+— a person naming ABB costs a minute, and an account called "Global"
+collecting every enquiry whose sender typed their department costs a
+year.
+
+**Already an account under another spelling.** `company_match.norm`
+keeps the spaces, which is right for its own job: it is the key the
+matcher LINKS on, and linking on a squashed key would join two
+companies whose names differ only by a word break. So "Hitachienergy"
+and "Hitachi Energy" are two keys to it and one company to a reader.
+`squash` adds the second key, and `looks_like_existing` uses it to
+**propose** a link rather than make one — which is why it can afford
+comparisons that would be unsafe to act on automatically.
+
+Aliases are in that index, and they are what resolves "Lntecc". A merge
+keeps the loser's spelling as an alias of the survivor, so the alias
+list is the only place the fact "LNT is Larsen & Toubro" can live. An
+alias prefix is honoured from three letters; an account *name* prefix
+only from eight, because proposing that "Global Calcium" is "Global"
+would be wrong often enough to teach people to ignore the suggestion.
+
+**One account per company, however it is spelt.** Grouped on `squash`
+and given one canonical spelling. The tie-break took three goes:
+
+* raw length picked "T.Q. Cert" over "TQCERT", because the dots made it
+  longer without saying anything. So punctuation count comes first;
+* then the most words, which gives "Drewes Group" over "Drewes" — the
+  extra word is information, and the shorter name can be read out of
+  the longer one;
+* then the one that is not shouting: "Westfracht" over "WESTFRACHT". An
+  account name is printed on a quote.
+
+`apply_queue` already collapsed case variants through its own
+lower-cased cache. Doing it in the plan instead means the number in the
+preview is the number of accounts that will exist, which is what rule
+0.3 asks Nilesh to approve.
+
+**And the sections now stand alone.** `--apply --only merges` does the
+merges and nothing else — it already did, but it opened an empty
+bulk-log batch and printed an undo command for it, which undid nothing
+and read as though the merges were reversible. The batch is now opened
+only for the sections that write through it. `notrelevant` is an
+opt-in section that is not in the default set at all: marking leads not
+relevant is its own decision with its own preview, and a section that
+runs only when named cannot be swept along by somebody running the
+whole thing.
