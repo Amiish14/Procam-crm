@@ -98,18 +98,32 @@ MAPPING = {
 #: and not two: Freight Forwarding folds into Project Freight, which
 #: she already held.
 #:
-#: Installation is Gowdhaman Rajakrishnan, not Sethupathy Sundaram.
-#: This map said DIR52011 — the name the vertical master carried from
-#: the start — and `scripts/2026_10_25_installation_head.py` corrected
-#: the live row to EMP472012 on 25 October (D12). The apply path below
-#: writes `head_emp_code` for every vertical in this map, so running it
-#: with DIR52011 here would have silently reverted that correction and
-#: handed the Installation Account check queue back to the wrong
-#: person. A map that is also a write is a map that has to be right.
+#: Installation is Sethupathy Sundaram. This line has now been both
+#: ways, so the dates matter more than the names:
+#:
+#:   24 Oct  D12 said the head was Gowdhaman Rajakrishnan, and
+#:           `scripts/2026_10_25_installation_head.py` wrote EMP472012
+#:           to the live row the next day.
+#:    2 Nov  PROCAM-DECISIONS-02NOV: "Installation vertical head =
+#:           Sethupathy Sundaram, in CRM and TMS. Ignore the earlier
+#:           note to set Gowdhaman R as Installation head."
+#:
+#: So DIR52011 — the name the vertical master carried from the start —
+#: is right after all, and `scripts/2026_11_02_installation_head.py`
+#: puts the live row back. The 25 October script is guarded shut
+#: rather than left runnable, because this map is also a write: the
+#: apply path below sets `head_emp_code` for every vertical in it, and
+#: a stale value here reverts the standing decision silently — nothing
+#: in the report mentions a head it did not mean to change.
+#:
+#: Being head of Installation and owning accounts in it are different
+#: jobs. Gowdhaman keeps the six Installation accounts he owns and the
+#: Nippon Express ownership Module 2 gives him; only the head row
+#: moves.
 HEADS = {
     'Heavy Transport': 'DIR22010',      # James Francis Xavier
     'Project Freight': 'EMP372011',     # Sanjna Vardhan
-    'Installation': 'EMP472012',        # Gowdhaman Rajakrishnan
+    'Installation': 'DIR52011',         # Sethupathy Sundaram
     'Warehousing': 'DIR72012',          # Srinivas Marella
     'Management': 'DIR12010',           # Nilesh Kumar Sinha — the
                                         # fallback for anything unmapped

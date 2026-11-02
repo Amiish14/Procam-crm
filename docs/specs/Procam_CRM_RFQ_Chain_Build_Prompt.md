@@ -63,7 +63,7 @@ Before any code, confirm each item with `path:line` evidence and report back:
 | D9 | The sales funnel sheet lines "Project Cargo Management" and "3PL" map to the Warehousing vertical. | 24 Oct |
 | D10 | Margin floors (21 Oct): PTM own hydraulic 38%, market vehicle 14%, mechanical trailer 12%, freight forwarding 10%, warehousing 18%, installation 25%. Head approves up to ₹25 lakh; a director approves above that or below the floor. | 21 Oct |
 | D11 | Target is 98% of steps on time. A step "finished early" means within 50% of its standard time; this is a setting. | 24 Oct |
-| D12 | The Installation vertical head is **Gowdhaman Rajakrishnan**. The CRM vertical list (CRM-VERTICAL-MASTER-01) shows Sethupathy Sundaram. Change it in Admin → Vertical heads (a setting, not code) before R1, and check the Installation account owners and Account check routing that follow from it. | 24 Oct |
+| D12 | ~~The Installation vertical head is **Gowdhaman Rajakrishnan**.~~ **WITHDRAWN 2 Nov 2026** by PROCAM-DECISIONS-02NOV: "Installation vertical head = Sethupathy Sundaram, in CRM and TMS. Ignore the earlier note to set Gowdhaman R as Installation head." The row written on 25 Oct is put back by `scripts/2026_11_02_installation_head.py`; the 25 Oct script is guarded shut. Gowdhaman keeps his role and the accounts he owns. | 24 Oct, withdrawn 2 Nov |
 
 ## 2a. Decisions since 24 October
 

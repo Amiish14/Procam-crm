@@ -1125,19 +1125,20 @@ def test_blank_verticals_and_accounts_are_left_alone(master_b):
                 for c in Company.query.all()] == accounts_before
 
 
-def test_the_installation_head_is_gowdhaman_not_the_old_master(master_b):
-    """D12, decided 25 October and applied by its own script.
+def test_the_installation_head_is_sethupathy(master_b):
+    """The 2 November decision, which withdraws the 24 October one.
 
     `vertical_master_apply.HEADS` is not a reference list: the apply
-    path writes `head_emp_code` from it. While it said DIR52011, every
-    run of this script reverted the Installation head to Sethupathy
-    Sundaram and handed his Account check queue to the wrong person —
-    silently, because nothing in the report mentions a head it did not
-    change.
+    path writes `head_emp_code` from it. So whichever way this line
+    is wrong, every run of the script reverts the standing decision
+    and hands the Installation Account check queue to the wrong
+    person — silently, because nothing in the report mentions a head
+    it did not mean to change. It has now been wrong in both
+    directions, which is the reason the assertion is here.
     """
     import scripts.vertical_master_apply as vm
 
-    assert vm.HEADS['Installation'] == 'EMP472012'
+    assert vm.HEADS['Installation'] == 'DIR52011'
 
 
 def test_every_head_in_the_map_is_an_employee_on_file(master_b):
@@ -1151,8 +1152,9 @@ def test_every_head_in_the_map_is_an_employee_on_file(master_b):
             assert emp is not None, f'{vertical} -> {code}'
 
 
-def test_the_apply_writes_gowdhaman_as_the_installation_head(master_b,
-                                                             monkeypatch):
+def test_the_apply_writes_sethupathy_as_the_installation_head(
+        master_b, monkeypatch):
+    """Starting from the value the 25 October run left behind."""
     import scripts.vertical_master_apply as vm
     from app.models.email_admin import VerticalHead
 
@@ -1161,7 +1163,7 @@ def test_the_apply_writes_gowdhaman_as_the_installation_head(master_b,
         if row is None:
             row = VerticalHead(vertical='Installation')
             db.session.add(row)
-        row.head_emp_code, row.active = 'DIR52011', True
+        row.head_emp_code, row.active = 'EMP472012', True
         db.session.commit()
 
         monkeypatch.setattr(sys, 'argv',
@@ -1171,4 +1173,33 @@ def test_the_apply_writes_gowdhaman_as_the_installation_head(master_b,
         except SystemExit as exc:
             assert not exc.code, exc
         row = VerticalHead.query.filter_by(vertical='Installation').first()
-        assert row.head_emp_code == 'EMP472012'
+        assert row.head_emp_code == 'DIR52011'
+
+
+def test_the_october_head_script_refuses_to_run(master_b):
+    """It would flip the head back to EMP472012 without saying so."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        'oct25_head',
+        os.path.join(_ROOT, 'scripts',
+                     '2026_10_25_installation_head.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with pytest.raises(SystemExit) as caught:
+        mod.main()
+    assert 'superseded' in str(caught.value).lower()
+    assert '2026_11_02_installation_head' in str(caught.value)
+
+
+def test_the_november_script_puts_the_head_back(master_b):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        'nov2_head',
+        os.path.join(_ROOT, 'scripts',
+                     '2026_11_02_installation_head.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.NEW_HEAD == 'DIR52011'
+    assert mod.OCTOBER_HEAD == 'EMP472012'

@@ -905,3 +905,88 @@ nest (30D ⊆ 15D ⊆ 7D), which is what acceptance check 6 holds.
 mail Nilesh, or move the item in the Build Prompt Tracker.
 `docs/operations/COCKPIT02_GO_LIVE.md` is the runbook, in order, with
 the undo for every step.
+
+## 50 — the Installation head, decided twice in nine days
+
+PROCAM-DECISIONS-02NOV: "Installation vertical head = Sethupathy
+Sundaram, in CRM and TMS. Ignore the earlier note to set Gowdhaman R
+as Installation head."
+
+Worth recording because the first decision was already applied. On
+24 October D12 said the head was Gowdhaman Rajakrishnan (EMP472012);
+`scripts/2026_10_25_installation_head.py` wrote that to
+`vertical_head` the next day, and on 31 October I corrected
+`vertical_master_apply.HEADS` to match it — after finding that its
+apply path *writes* `head_emp_code` for every vertical in the map, so
+the stale DIR52011 there would have reverted the correction silently.
+
+The 2 November decision puts it back. The same hazard now points the
+other way, so three things changed together rather than one:
+
+* `HEADS['Installation']` is DIR52011 again, with both dates in the
+  comment, because a value that has been wrong in both directions is
+  not safe to leave uncommented;
+* `scripts/2026_11_02_installation_head.py` moves the live row,
+  reversibly, and refuses if DIR52011 is not an employee on file;
+* `scripts/2026_10_25_installation_head.py` is **guarded shut** — it
+  raises before argument parsing, so no form of the command runs,
+  `--down` included. Its text is kept: the row it wrote is what the
+  new script has to find, and a one-line script that still runs is a
+  script somebody runs.
+
+Gowdhaman keeps his role, the six Installation accounts he owns, and
+the Nippon Express ownership Module 2 gives him. Heading a vertical
+and serving customers in it are different jobs.
+
+## 51 — the mailbox check was reporting the right answer as a conflict
+
+Rule 7 of the pack ("CRM outgoing mail goes from tms@ with the [CRM]
+subject prefix. No crm@ mailbox. Remove every 'waiting for crm@' hold")
+turned out to need no code change: the sender is already tms@, the
+`[CRM]` prefix is applied in `app/services/mailer.py` from
+`mail_subject_prefix`, and no path waits on a crm@ mailbox.
+
+What it did find is a reporting bug. `scripts/crm_figures.py` checked
+this decision against the **12 October** version of it, which gave the
+CRM its own crm@ mailbox:
+
+    state='CONFLICT' if 'tms@' in sender else 'check'
+
+So the report flagged the correct sender as a conflict, and would have
+gone on doing so for as long as the system stayed right. It now reads
+the 20 October decision and needs both halves — sending as tms@ *and*
+the prefix being set, because one address with nothing to tell the two
+applications apart is the problem the prefix exists to solve.
+
+A check written against a superseded decision does not fail loudly. It
+reports a conflict that is really a compliance, and the person reading
+it goes looking for a bug that is not there.
+
+## 52 — "today" was the server's date, not the users'
+
+Found by the test suite, not by reading the code: the first run of it
+after 18:30 UTC failed on a one-line assertion.
+
+    assert got.phone_call_date == date.today()
+    E  assert datetime.date(2026, 11, 2) == datetime.date(2026, 11, 1)
+
+The call-log route stamped `phone_call_date` from `datetime.utcnow()`
+and the test compared against the server's local date. Both were
+wrong in the same way, which is why they had agreed until then: the
+database keeps naive UTC, so between 18:30 and midnight UTC it is
+already tomorrow in IST. A call logged at 01:00 IST on Tuesday was
+stamped Monday, and `followup.propose()` counted "today + 2" from a
+day that had already ended in Mumbai — for five and a half hours of
+every day, a follow-up landed a day early and the call was on the
+wrong day's report.
+
+`quote_due.today_ist()` is now the one answer to "what day is it
+where the users are", next to the `to_ist()` the deadline card
+already used, and the call log and the follow-up proposal both read
+it. Three tests hold it, including the 18:29/18:30 turnover.
+
+Worth writing down because of how it was found. CRM-COCKPIT-02 fixed
+the same confusion in the deadline card — a UTC moment under an IST
+heading — and I still wrote `when.date()` in the route next door.
+Dates and datetimes do not look like the same bug, and one timezone
+used consistently for storage does not make the dates right.

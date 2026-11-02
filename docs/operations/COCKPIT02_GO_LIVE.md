@@ -127,6 +127,11 @@ that an auction closed at 15:15 yesterday.
 
 ## 6. The acceptance checks (§9)
 
+PROCAM-DECISIONS-02NOV, Module 0.2, asks for three people and for the
+output on the ticket: "run `scripts/cockpit02_acceptance.py` for
+DIR12010, EMP372011 and EMP572012, and attach the output to the
+ticket."
+
 ```bash
 .venv/bin/python scripts/cockpit02_acceptance.py --as DIR12010
 ```
@@ -137,12 +142,26 @@ record to act on create their own, marked
 `ZZ-ACCEPTANCE-CRM-COCKPIT-02`, and close it as a Duplicate when they
 finish; the run says how many it left open, which should be 0.
 
-Run it again for the other two people §9 names:
+Run it again for the other two people §9 names — Sanjna Vardhan, who
+sees one vertical, and Vijay T V, who sees one mailbox:
 
 ```bash
 .venv/bin/python scripts/cockpit02_acceptance.py --as EMP372011
 .venv/bin/python scripts/cockpit02_acceptance.py --as EMP572012
 ```
+
+Three people, not one, because every cockpit number is now a number
+*over a population* (§4.3). A run as the director reads over
+everything and would pass even if the scoping were wrong; the two
+narrower runs are what prove it is not.
+
+### §4.2 is accepted as built
+
+Module 0.2 settles the one place CRM-COCKPIT-02 read the prompt rather
+than followed it: "§4.2 is accepted as built: the No-activity tiles
+and the ageing chart share one population and source, and are not
+forced to be equal." No change is needed, and acceptance check 6
+holds what *is* guaranteed — that the tiles nest, 30D ⊆ 15D ⊆ 7D.
 
 ## Undoing any of it
 

@@ -84,8 +84,15 @@ DEFAULTS = {
         'Who may approve a quote below its minimum margin or above the '
         'head\'s limit — the director, and whoever stands in for him '
         '(add their employee code).'),
+    #: The 20 October decision, confirmed 2 November: exactly four
+    #: people. Not a role — "every admin" is a larger and growing
+    #: group than the four the decision names, and a buy rate is the
+    #: one number on a Freight Forwarding quote that must not travel.
     'margin_viewers_ff': (
-        ['DIR12010'],
+        ['DIR12010',        # Nilesh Kumar Sinha
+         'DIR42010',        # Tg Ramalingam
+         'EMP3892025',      # Bhavin Vinodhbhai Jiilka
+         'EMP372011'],      # Sanjna Vardhan
         'The only people who see buy rates and margin on Freight '
         'Forwarding / Project Freight quotes. Add employee codes on this '
         'screen.'),

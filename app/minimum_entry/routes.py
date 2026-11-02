@@ -168,8 +168,13 @@ def api_call_log(lead_id):
     from app import LeadActivity
     from app.services import audit, followup, last_activity as la
 
+    from app.services import quote_due as qd
+
     when = datetime.utcnow()
-    lead.phone_call_date = when.date()
+    # The moment is stored UTC like every other datetime here; the
+    # *date* a person is held to is the IST one. `when.date()` stamped
+    # a call made at 01:00 IST on Tuesday as Monday's.
+    lead.phone_call_date = qd.today_ist()
     lead.next_action = next_action
     db.session.add(LeadActivity(
         lead_id=lead.id, kind='call',

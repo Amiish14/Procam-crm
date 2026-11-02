@@ -29,7 +29,7 @@ A lot of the fix is **already built but switched off** (see §1). This prompt cl
 - No AI provider or model name anywhere in the UI, mails or logs users see. AI features present as "Procam AI" / "Procam software".
 - CRM mails go from **tms@procamgroup.in** with "CRM" in the subject (decision 20 Oct 2026 — there is **no crm@ mailbox**; replace any code or checklist that still waits for crm@).
 - Every CRM notification copies the lead's vertical head and Nilesh.
-- 4 verticals only: Heavy Transport → James Francis Xavier · Project Freight → Sanjna Vardhan · Installation → Gowdhaman R · Warehousing → Srinivas Marella. No vertical → Nilesh (DIR12010).
+- 4 verticals only: Heavy Transport → James Francis Xavier · Project Freight → Sanjna Vardhan · Installation → **Sethupathy Sundaram** · Warehousing → Srinivas Marella. No vertical → Nilesh (DIR12010). (Installation was Gowdhaman R between 24 Oct and 2 Nov; PROCAM-DECISIONS-02NOV withdrew that.)
 - Dropdowns wherever a value can be standardised.
 
 ---
@@ -46,7 +46,7 @@ These are coded and pushed but dark. Deploy, run the dry-run, send counts to Nil
 | A4 | CRM-AUTO-ASSIGN-01 | Check the auto-assign is actually firing on new mail leads — 60 of the latest 300 have no owner. Apply the 454-row owner seed if not applied; confirm the digest timer runs. | `FEATURE_AUTO_ASSIGN` |
 | A5 | CRM-DECISIONS-01 (part 1) | Merge PR #1, run `scripts/2026_10_21_crm_decisions.py`, install the 2 timers, set tender-desk email / stand-in approver / FF viewer codes on /admin/crm-rules. Send Godrej preview list. | (keep `FEATURE_MARGIN_GATE` off) |
 | A6 | crm-autoclose-tasks-closed-leads | Close tasks 1342/1541/1283/1536; send dry-run counts for the bulk close. | — |
-| A7 | crm-rfq-chain-01 / crm2-full-build-v2 / ff-comms-01-crm | Replace every "waiting for crm@ mailbox" dependency with tms@procamgroup.in + "CRM" in subject so held clarification mails go out. | — |
+| A7 | crm-rfq-chain-01 / crm2-full-build-v2 / ff-comms-01-crm | **Done.** CRM mail sends as tms@procamgroup.in with the `[CRM]` prefix (`mail_subject_prefix`, applied in `app/services/mailer.py`); no code path waits on a crm@ mailbox. Re-confirmed under PROCAM-DECISIONS-02NOV rule 7, which also fixed `scripts/crm_figures.py` — it was reporting the correct sender as a CONFLICT against the withdrawn 12 Oct decision. | — |
 
 Report the result of A1–A7 in the deploy mail (one line each: done / blocked + why).
 

@@ -420,7 +420,14 @@ def test_one_tap_records_the_call_and_the_next_step(world):
     assert body['followup']
     with flask_app.app_context():
         got = db.session.get(Lead, lead.id)
-        assert got.phone_call_date == date.today()
+        # IST, not the server's date. This assertion was
+        # `date.today()` and failed the first time the suite ran
+        # between 18:30 UTC and midnight: the route stamped the UTC
+        # date and the test compared the local one, so a call logged
+        # at 01:00 IST on Tuesday was Monday's on screen.
+        from app.services import quote_due as qd
+
+        assert got.phone_call_date == qd.today_ist()
         assert LeadActivity.query.filter_by(lead_id=got.id,
                                             kind='call').count() == 1
 

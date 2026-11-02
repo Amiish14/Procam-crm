@@ -5,10 +5,27 @@ D12 — the Installation vertical head.
     .venv/bin/python scripts/2026_10_25_installation_head.py --apply
     .venv/bin/python scripts/2026_10_25_installation_head.py --down --yes
 
-The vertical master names Sethupathy Sundaram (DIR52011); the
-business says Gowdhaman Rajakrishnan (EMP472012). This is a row in
-`vertical_head`, which is Admin-maintained data, so it changes here
-and not in code.
+SUPERSEDED on 2 November 2026 — this script no longer runs.
+
+PROCAM-DECISIONS-02NOV says: "Installation vertical head =
+Sethupathy Sundaram, in CRM and TMS. Ignore the earlier note to set
+Gowdhaman R as Installation head." Use
+`scripts/2026_11_02_installation_head.py`, which puts the row back
+to DIR52011.
+
+The file is kept, and guarded shut rather than deleted, for two
+reasons. The row this script wrote on 25 October is what the new
+script has to find, so its value belongs somewhere readable. And a
+one-line script that still runs is a script somebody runs: a
+re-run here would flip the head back to EMP472012 without saying
+that it had contradicted a standing decision.
+
+What it did when it ran
+-----------------------
+The vertical master named Sethupathy Sundaram (DIR52011); D12, on
+24 October, said Gowdhaman Rajakrishnan (EMP472012). This is a row
+in `vertical_head`, which is Admin-maintained data, so it changed
+here and not in code.
 
 Two things it deliberately does not do, decided 25 October:
 
@@ -58,7 +75,23 @@ def _report(row):
     print(f'  accounts he owns    {owned} (unchanged by this)')
 
 
+#: Why this script refuses. Not a comment: the guard below prints it.
+SUPERSEDED = (
+    'This script is superseded. PROCAM-DECISIONS-02NOV (2 Nov 2026) '
+    'makes Sethupathy Sundaram the Installation head and withdraws '
+    'the 24 Oct D12 note naming Gowdhaman R.\n'
+    'Run instead:  scripts/2026_11_02_installation_head.py --check')
+
+
 def main():
+    # A guard, not a comment, and before the argument parsing so that
+    # every form of the command stops here — including --down, which
+    # would otherwise look like the safe way to undo this and would
+    # in fact restore whatever the row held before 25 October.
+    raise SystemExit(SUPERSEDED)
+
+
+def _main_as_it_ran():
     ap = argparse.ArgumentParser()
     ap.add_argument('--check', action='store_true')
     ap.add_argument('--apply', action='store_true')

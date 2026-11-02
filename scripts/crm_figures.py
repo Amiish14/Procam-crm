@@ -59,8 +59,15 @@ CRM2_TABLES = ('crm_parameter', 'holiday_calendar', 'quotes',
 #: The 12 October Freight Forwarding decisions, as given in the
 #: request. Each is checked against what is actually in the system.
 FF_DECISIONS = (
+    #: SUPERSEDED by the 20 October decision and confirmed again on
+    #: 2 November: there is no crm@ mailbox. CRM mail goes from tms@
+    #: with the [CRM] subject prefix. The check below reads it that
+    #: way round; the 12 October wording is kept so the row still
+    #: says which decision it is reporting on.
     ('crm@ / tms@ mailboxes',
-     'Two mailboxes, one per application.'),
+     'One mailbox: CRM mail from tms@ with the [CRM] subject prefix '
+     '(20 Oct, confirmed 2 Nov — the 12 Oct "two mailboxes" '
+     'decision is withdrawn).'),
     ('CRN scheme <BU>-<C|T><FY>-<NNNNNN>',
      'A client reference number in that shape.'),
     ('FF Client PO created in TMS',
@@ -482,16 +489,40 @@ def readiness(now, today):
               detail=(f'{rows} row(s)' if present
                       else 'the spec expects it; it does not exist'))
 
-    from app.services import mailer
+    from app.services import admin_settings, mailer
     sender = ''
     try:
         sender = mailer.sender() or ''
     except Exception:                                     # noqa: BLE001
         sender = '(unreadable)'
-    s.add(area='FF decision 12 Oct', item='crm@ / tms@ mailboxes',
-          state='CONFLICT' if 'tms@' in sender else 'check',
-          detail=f'the CRM sends as {sender!r}; the decision gives the '
-                 f'CRM its own crm@ mailbox')
+    # This check used to be the wrong way round: it called 'tms@' a
+    # CONFLICT, because it was written against the 12 October decision
+    # that gave the CRM its own crm@ mailbox. That decision was
+    # replaced on 20 October and again on 2 November — there is no
+    # crm@ mailbox — so a CRM that sends as tms@ is right, and the
+    # report was flagging the correct state.
+    #
+    # Both halves have to hold: sending as tms@ without the prefix
+    # means CRM mail and TMS mail arrive from one address with
+    # nothing to tell them apart.
+    try:
+        prefix = (admin_settings.get('mail_subject_prefix') or '').strip()
+    except Exception:                                     # noqa: BLE001
+        prefix = ''
+    if 'tms@' in sender and prefix:
+        state, detail = 'ok', (f'the CRM sends as {sender!r} with the '
+                               f'{prefix} subject prefix')
+    elif 'tms@' in sender:
+        state, detail = 'CONFLICT', (
+            f'the CRM sends as {sender!r}, but no subject prefix is '
+            f'set — CRM and TMS mail arrive from one address with '
+            f'nothing to tell them apart')
+    else:
+        state, detail = 'CONFLICT', (
+            f'the CRM sends as {sender!r}; it should send as '
+            f'tms@procamgroup.in — there is no crm@ mailbox')
+    s.add(area='FF decision 12 Oct, replaced 20 Oct',
+          item='crm@ / tms@ mailboxes', state=state, detail=detail)
 
     crn_cols = [c for c in (col['name'] for col in
                             inspect(db.engine).get_columns('leads'))

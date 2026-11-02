@@ -96,17 +96,17 @@ def propose(lead, *, stage=None, today=None):
     is set is a follow-up that is already overdue, which is how 154
     of these ended up on an overdue list nobody could clear.
     """
+    from app.services import quote_due as qd
+
     stage = stage if stage is not None else getattr(lead, 'stage', '')
     if is_exempt(stage):
         return None
-    today = today or date.today()
+    today = today or qd.today_ist()
     days = days_for(stage)
 
     if days == BEFORE_DUE:
         due = getattr(lead, 'quote_due_at', None)
         if due is not None:
-            from app.services import quote_due as qd
-
             # A day before the deadline, in IST — the deadline is
             # stored in UTC and "the day before" is a working day,
             # not a 24-hour subtraction.
@@ -123,7 +123,9 @@ def propose(lead, *, stage=None, today=None):
 
 def quick_picks(lead, *, today=None):
     """[(key, label, date)] for the screen's one-tap buttons."""
-    today = today or date.today()
+    from app.services import quote_due as qd
+
+    today = today or qd.today_ist()
     out = []
     for key, label, days in QUICK_PICKS:
         if days is not None:
@@ -132,7 +134,6 @@ def quick_picks(lead, *, today=None):
         due = getattr(lead, 'quote_due_at', None)
         if due is None:
             continue        # nothing to be after
-        from app.services import quote_due as qd
         after = qd.to_ist(due).date() + timedelta(days=1)
         out.append((key, label, max(after, today + timedelta(days=1))))
     return out

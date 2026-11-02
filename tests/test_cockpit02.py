@@ -913,3 +913,41 @@ def test_the_board_leads_with_the_people_carrying_live_work(world):
     rows = body.get('pic_board') or []
     actives = [r['active'] for r in rows]
     assert actives == sorted(actives, reverse=True)
+
+
+# ── the date it is where the users are ───────────────────────────────
+def test_today_is_the_ist_date_not_the_servers(world):
+    """Caught by the suite running after 18:30 UTC.
+
+    The server keeps naive UTC, so between 18:30 and midnight UTC it
+    is already tomorrow in IST. A call logged at 01:00 IST on Tuesday
+    was being stamped Monday, and a follow-up proposed "today + 2"
+    landed a day early for five and a half hours of every day.
+    """
+    from datetime import datetime, timedelta
+
+    from app.services import quote_due as qd
+
+    assert qd.today_ist() == (datetime.utcnow() + timedelta(
+        hours=5, minutes=30)).date()
+
+
+def test_the_ist_date_turns_over_at_1830_utc(world):
+    from datetime import datetime
+
+    from app.services import quote_due as qd
+
+    # 18:29 UTC on the 1st is still the 1st in IST (23:59);
+    # 18:30 is the 2nd (00:00).
+    assert qd.to_ist(datetime(2026, 11, 1, 18, 29)).date().day == 1
+    assert qd.to_ist(datetime(2026, 11, 1, 18, 30)).date().day == 2
+
+
+def test_a_follow_up_is_never_proposed_for_today_in_ist(world):
+    """The rule §3.2 exists to hold: a follow-up due the moment it is
+    set is already overdue."""
+    from app.services import followup, quote_due as qd
+
+    lead = _lead(stage='Contacted')
+    proposed = followup.propose(lead)
+    assert proposed is None or proposed > qd.today_ist()

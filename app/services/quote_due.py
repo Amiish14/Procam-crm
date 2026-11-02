@@ -363,6 +363,18 @@ def to_ist(at):
     return (at + IST) if at else None
 
 
+def today_ist():
+    """The date it is where the users are.
+
+    `date.today()` is the server's date, and the server keeps naive
+    UTC. Between 18:30 and midnight UTC it is already tomorrow in
+    IST, so a call logged at 01:00 IST on Tuesday is stamped Monday,
+    and a follow-up proposed "today + 2" lands a day early. Every
+    date a person reads or is held to comes from here.
+    """
+    return (datetime.utcnow() + IST).date()
+
+
 def shown(at):
     """'04 Nov 2026 18:00' — the one way this is written on screen."""
     local = to_ist(at)
