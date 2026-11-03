@@ -267,6 +267,17 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                                            reason='already ingested')
                         continue
 
+                # §4 — "forward as attachment", the same unwrap the
+                # webhook does. Both intake paths or neither: a
+                # backfill that built leads out of covering notes
+                # would be a second, quieter version of the bug.
+                try:
+                    from . import attached_message as _att
+                    _att.unwrap(msg, graph, mailbox)
+                except Exception:
+                    log.exception('could not read the attached message '
+                                  'on %s', msg_id_internet)
+
                 extracted = email_parser.extract_lead(msg)
                 if extracted is None:
                     stats["skipped"] += 1

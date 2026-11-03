@@ -533,6 +533,25 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
         # would have wanted to skip is kept as a 'triage_tag' in opp_notes
         # so the sales team can sort in the UI. Silently dropping mail =
         # losing business.
+        # CRM-USER-ISSUES-02NOV §4 — "forward as attachment". The
+        # enquiry is an itemAttachment hanging off this mail and the
+        # body is the covering note, so the lead used to be built from
+        # "FYI" with no cargo, no route and no customer. Rendered into
+        # the text shape an ordinary forward has and spliced onto the
+        # body, so the parser, the classifier and the AI extraction all
+        # see a forward they already know how to read. Before the
+        # parse, because everything after this reads the body.
+        _attached = {'spliced': False, 'found': 0, 'skipped': 'not run'}
+        try:
+            from . import attached_message as _att
+            _attached = _att.unwrap(msg, graph, mailbox)
+            if _attached.get('spliced'):
+                log.info('%s carried an attached message from %s — '
+                         'spliced into the body', imid,
+                         (_attached.get('messages') or [{}])[0].get('from'))
+        except Exception:
+            log.exception('could not read the attached message on %s', imid)
+
         try:
             extracted = email_parser.extract_lead(msg)
         except Exception as e:
@@ -1223,10 +1242,18 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                                   'lead %s', lead.id)
 
             db.session.commit()
+            # §4 — say when the enquiry came out of an attached
+            # message. "The lead looks empty" and "the lead was built
+            # from the covering note" are the same symptom, and this
+            # is what tells them apart on the Mail ingest screen.
+            _why = (('rescued from an internal forward — ' + _rescue['how'])
+                    if _rescue else 'new enquiry')
+            if _attached.get('spliced'):
+                _why += (' · read from the message attached to it'
+                         + (f' ({_attached["found"]} attached)'
+                            if _attached.get('found', 0) > 1 else ''))
             _record_ingest('created', msg, decision, lead_id=lead.id,
-                           reason=('rescued from an internal forward — '
-                                   + _rescue['how']) if _rescue
-                                  else 'new enquiry')
+                           reason=_why)
             return {'status': 'created', 'lead_id': lead.id,
                     'internet_message_id': imid, 'reason': None}
         except Exception as e:

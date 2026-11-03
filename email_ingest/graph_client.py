@@ -6,9 +6,11 @@ time.
 
 Only the surface the ingest pipeline needs is implemented:
     - list_messages(mailbox, since_utc, ...)
+    - list_attachments(mailbox, message_id)        — files
+    - list_item_attachments(mailbox, message_id)   — attached messages
     - mark_as_read(mailbox, message_id)
 
-Everything else (folders, attachments, subscriptions) is out of scope.
+Everything else (folders, subscriptions) is out of scope.
 """
 from __future__ import annotations
 
@@ -248,6 +250,71 @@ class GraphClient:
         atts = data.get("value") or []
         return [a for a in atts
                 if str(a.get("@odata.type", "")).endswith("fileAttachment")]
+
+    #: Attachment kinds Graph reports. A `fileAttachment` carries bytes
+    #: in `contentBytes`; an `itemAttachment` carries another Outlook
+    #: object — a message, a contact, an event — and has to be expanded
+    #: to be read at all.
+    ITEM_ATTACHMENT = 'itemAttachment'
+
+    def list_item_attachments(self, mailbox: str,
+                              message_id: str) -> list[dict]:
+        """The messages attached *to* this message, already expanded.
+
+        CRM-USER-ISSUES-02NOV §4. `list_attachments` above filters to
+        fileAttachment and drops these, and its docstring has said
+        since it was written that they "need different handling". This
+        is that handling.
+
+        It matters because of how Outlook forwards. "Forward" puts the
+        original into the body as text, which the parser unwraps.
+        "Forward as attachment" — and Outlook for Mac's default drag of
+        a message onto a new one — produces an `itemAttachment`
+        instead: the outer mail's body is the covering note or nothing
+        at all, and the enquiry is in an object that has to be asked
+        for separately.
+
+        `$expand=microsoft.graph.itemAttachment/item` is the only way
+        to see inside one; without it the attachment is a name and a
+        size. `$select` is deliberately not combined with the expand:
+        Graph rejects several of the fields the embedded message
+        carries when both are present, and the payloads here are one
+        or two messages, not a mailbox.
+
+        Returns the embedded message objects, each in the same shape
+        `list_messages` yields, so the rest of the ingest cannot tell
+        where one came from. Non-message items — an attached contact or
+        calendar entry — are left out: they are not enquiries.
+        """
+        path = (
+            f"/users/{quote(mailbox)}/messages/{quote(message_id, safe='')}"
+            "/attachments"
+        )
+        resp = self._request(
+            "GET", path,
+            params={"$expand": "microsoft.graph.itemAttachment/item"})
+        if resp.status_code >= 400:
+            raise RuntimeError(
+                f"Graph list_item_attachments failed: "
+                f"HTTP {resp.status_code} — {resp.text[:500]}"
+            )
+        out = []
+        for att in (resp.json().get("value") or []):
+            if not str(att.get("@odata.type", "")).endswith(
+                    self.ITEM_ATTACHMENT):
+                continue
+            item = att.get("item") or {}
+            if not str(item.get("@odata.type", "")).endswith("message"):
+                # An attached contact or appointment. Not an enquiry.
+                continue
+            # The embedded object has no id of its own that Graph will
+            # serve, and often no internetMessageId either, so the
+            # caller is told which attachment it came from instead.
+            item = dict(item)
+            item["_attachment_id"] = att.get("id")
+            item["_attachment_name"] = att.get("name")
+            out.append(item)
+        return out
 
     def mark_as_read(self, mailbox: str, message_id: str) -> None:
         """Best-effort — PATCH isRead=true. Logs on failure, never raises."""

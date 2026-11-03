@@ -1936,3 +1936,98 @@ had no teardown at all, rather than by loosening the assertions: the
 counts are the point of those tests, and tolerating strays would stop
 them noticing a second assignment, which is what that test exists to
 catch.
+
+## 70 — Forward-as-attachment: reading the enquiry, not the covering note
+
+CRM-USER-ISSUES-02NOV §4, second pass. QUESTIONS 68 left this as the
+one piece of §4 unbuilt, because it needed a Graph call I could not
+test from the laptop. Decision taken 3 Nov: build it.
+
+### Two kinds of forward, and only one of them worked
+
+Outlook's **Forward** puts the original into the body as text under
+`---------- Forwarded message ----------`, and the parser has unwrapped
+that for months: `analyze_forward` promotes the customer over the
+colleague who relayed it.
+
+Outlook's **Forward as attachment** — and dragging a message onto a new
+one, which is the default on Outlook for Mac — does something else. The
+enquiry becomes an `itemAttachment`, a whole Outlook object hanging off
+the outer mail, and the outer body is the covering note or nothing.
+`graph_client.list_attachments` filtered those out and its own
+docstring said they "need different handling".
+
+**This never looked like missing mail, which is why it lasted.** A lead
+was still created — this path captures everything — but out of "FYI,
+please quote": no customer, no route, no cargo, no weights, and the
+enquiry in an attachment nobody read. It presented as an empty lead,
+not as an absent one. `test_without_the_unwrap_the_colleague_is_the_lead`
+asserts the old behaviour so the fix cannot be quietly reverted.
+
+### Why it renders text rather than parsing the attached object
+
+The tempting move is to hand the attached Graph message to the parser
+instead of the outer one. This does not, because the covering note
+matters: who forwarded it, what they said, and that it was relayed at
+all are things the CRM records, and swapping the object would lose
+`forwarded_by` and the note with it.
+
+Instead the attached message is rendered into the exact text shape an
+ordinary forward has and spliced onto the end of the outer body. Then
+`split_forwarded_body`, `analyze_forward`, the sender promotion, the
+signals, the AI extraction and `forwarded_by` all work unchanged —
+because from their point of view this is now an ordinary forward. One
+code path for both kinds, and it is the path already proven on 501 real
+messages rather than a second one beside it.
+
+### Two traps, both found while building it, both now tested
+
+1. **The forward cache.** `analyze_forward` caches its verdict on
+   `msg['_forward']` and returns it unconditionally next time. Anything
+   that asked before the splice had cached "not a forward" against the
+   covering note, and that stale answer would have outlived the body —
+   the splice would land and change nothing. The cache is popped.
+2. **An HTML outer body.** Appending plain text to an HTML body leaves
+   `_get_body_text` running an HTML strip over the rendered headers,
+   which eats anything in angle brackets — including every address. The
+   outer body is converted to text *first*.
+
+### The cost, and the gate
+
+One extra Graph call per message, because
+`$expand=microsoft.graph.itemAttachment/item` is the only way to see
+inside one and it is per-message. Gated three ways before any call:
+`hasAttachments` must be true (free, already on the message); the body
+must not already carry a resolvable forward (then the enquiry is in
+hand and fetching is waste); and a Graph failure returns empty rather
+than raising, so the outer message still becomes a lead exactly as it
+did before. Messages with only file attachments cost one call and find
+nothing — that is the price of the ones that matter, and it is paid on
+the create path, not on every refusal.
+
+Several attached messages: counted, the first read, and the count put
+on the ingest row. Guessing which of a relayed batch the lead is about
+would be worse than saying so.
+
+Both intake paths unwrap, with a test asserting it. A backfill that
+built leads out of covering notes would be a second, quieter version of
+the same bug.
+
+### The --check script
+
+`scripts/2026_11_03_attached_forwards.py --check`. Read-only by
+construction: there is no `--apply`, a test asserts the module never
+calls `add`, `delete` or `commit`, and `--check` is required rather than
+default so running it by accident does nothing. For each recent message
+it prints whether an attached message is there, who it is *really*
+from, what the parser would extract, and what the CRM holds for that
+message today — so the before-and-after is visible on real mail rather
+than asserted. Where a lead already exists naming a different sender,
+it says so: that is the population the fix is for.
+
+### The 180-day fallback stays
+
+Confirmed 3 Nov: the 30-day window applies to the new `thread_key` path
+only, and `find_by_subject` stays at 180. Narrowing it would match
+fewer replies and so create more duplicates. QUESTIONS 66 has the
+reasoning; this records the decision as taken rather than open.
