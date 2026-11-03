@@ -36,6 +36,29 @@ def _thread_of(msg):
         return {}
 
 
+def _record_ingest(outcome, msg, decision=None, *, lead_id=None, reason=''):
+    """One row per message in mail_ingest_log, whatever happened.
+
+    CRM-USER-ISSUES-02NOV §4 asks for "every message the poller saw
+    and didn't turn into a lead or a timeline entry, with the reason".
+    The log and its screen already existed; only `single_message.py`
+    — the webhook — ever wrote to it. This path wrote nothing at all,
+    so a backfill run with EMAIL_INGESTION_MODE=azure_api processed
+    mail and left no trace of what it decided.
+
+    Wrapped, like its twin in single_message.py, so a failure to write
+    the log can never be the thing that loses an email.
+    """
+    try:
+        from app.services import mail_ingest as _mi
+        _mi.record(outcome, msg, lead_id=lead_id, reason=reason,
+                   classifier_label=getattr(decision, 'klass', '') or '',
+                   confidence=getattr(decision, 'confidence', None),
+                   commit=True)
+    except Exception:
+        log.exception('could not record the ingest outcome')
+
+
 def _thread_key_for(msg, sender=None):
     """The stored thread key, keyed on the customer's own address."""
     try:
@@ -239,12 +262,18 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     if exists:
                         stats["skipped"] += 1
                         skip_counter["already ingested"] += 1
+                        if not dry_run:
+                            _record_ingest('skipped', msg,
+                                           reason='already ingested')
                         continue
 
                 extracted = email_parser.extract_lead(msg)
                 if extracted is None:
                     stats["skipped"] += 1
                     skip_counter["parser returned None"] += 1
+                    if not dry_run:
+                        _record_ingest('skipped', msg,
+                                       reason='the parser could not read it')
                     continue
 
                 if extracted.get("skip_reason"):
@@ -255,6 +284,8 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                         "Skip [%s] subject=%r reason=%s",
                         msg_id_internet, extracted.get("subject", "")[:80], reason,
                     )
+                    if not dry_run:
+                        _record_ingest('skipped', msg, reason=reason)
                     continue
 
                 # ── Intake classification ────────────────────────────
@@ -309,6 +340,11 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                 if sender_email and sender_email in existing_emails:
                     stats["skipped"] += 1
                     skip_counter["existing lead: same email"] += 1
+                    if not dry_run:
+                        _record_ingest(
+                            'skipped', msg,
+                            reason='a lead already exists for this '
+                                   'sender address')
                     continue
 
                 # DB dedup 2: same domain within 30 days. Kept only as a
@@ -319,6 +355,13 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                         and sender_domain in existing_recent_domains:
                     stats["skipped"] += 1
                     skip_counter[f"existing lead: same domain <{DEDUP_DOMAIN_WINDOW_DAYS}d"] += 1
+                    if not dry_run:
+                        _record_ingest(
+                            'skipped', msg,
+                            reason=f'another lead from this domain in '
+                                   f'the last {DEDUP_DOMAIN_WINDOW_DAYS} '
+                                   f'days, and the classifier could not '
+                                   f'run')
                     continue
 
                 # Per-run dedup 1: same sender email seen twice in this run
@@ -327,6 +370,12 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     if confidence <= prev_conf:
                         stats["skipped"] += 1
                         skip_counter["dup sender in this run"] += 1
+                        if not dry_run:
+                            _record_ingest(
+                                'skipped', msg,
+                                reason='the same sender appeared earlier '
+                                       'in this run with equal or higher '
+                                       'confidence')
                         continue
                     stats["created"] -= 1   # supersede the earlier queued lead
                     skip_counter["dup sender: superseded by stronger msg"] += 1
@@ -579,6 +628,14 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     except Exception:
                         log.exception('could not record the classification '
                                       'for lead %s', lead.id)
+
+                # §4 — the created rows too, so the log is "every
+                # message the poller saw" and not "every message it
+                # refused". A screen that lists only the refusals
+                # cannot answer "did our enquiry reach the CRM?",
+                # which is the first of the two questions the log
+                # exists for.
+                _record_ingest('created', msg, decision, lead_id=lead.id)
 
                 stats["created"] += 1
                 pending_since_commit += 1

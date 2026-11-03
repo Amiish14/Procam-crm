@@ -1815,3 +1815,83 @@ common cause. Employee codes, never names.
 
 A test asserts the log can never break what it is logging, and a source
 guard asserts `notify.send`'s result is not discarded again.
+
+## 68 — "Forwarded mail never reaches the CRM": the log that was bypassed
+
+CRM-USER-ISSUES-02NOV §4. The log, the screen and the re-process button
+all already existed: `mail_ingest_log`, `/admin/mail-ingest`, and
+`create-lead`. What did not hold was the promise `_record_ingest` makes
+in its own docstring — "one row per message, whatever happened".
+
+**Six paths returned without writing a row.** Four in
+`process_single_message`, found by reading, and two more found by the
+AST guard in the new test after I thought I had them all:
+
+* `already ingested`;
+* `previously purged as irrelevant` — a permanent verdict, silently;
+* `already classified`;
+* **`blocklist.check`** — the worst one, below;
+* the **client block register**, which wrote an `EmailEvent` the Intake
+  boards show but no `mail_ingest_log` row, so the enquiry was absent
+  from the screen somebody actually opens to ask where their mail went;
+* `return _attach_outbound(...)` — a false positive. It logs inside the
+  callee, which the guard now checks rather than assumes.
+
+And `pipeline.py`, the poll path, never wrote a single row in its life.
+
+### The denylist is where the silence was
+
+`blocklist.check` drops by domain from `data/blocked_senders.txt` and
+by local part on **any** domain: `_BULK_LOCAL_RE` matches `mailer@`,
+`bulk@`, `broadcast@`, `digest@`, `campaign@`, `offers@` and `deals@`.
+A real enquiry relayed from an address shaped like that was dropped
+with no trace anywhere — not a lead, not a timeline entry, not a log
+row. From outside the CRM that is indistinguishable from mail that
+never arrived, which is exactly how §4 was reported.
+
+Now recorded with outcome `blocked` rather than `skipped`, so the
+denylist's work is readable without scrolling past every "already
+ingested", and the row carries the pattern that matched so the rule can
+be corrected rather than guessed at.
+
+**`force` now overrides the denylist**, as it already did the
+system-sender block and for the same stated reason: a person replaying
+a message by hand has already decided. Without that the rows this
+change puts on the screen could be read and never acted on — §4's
+"re-process one" would come straight back to the denylist and skip
+again.
+
+### The four things §4 asked me to check
+
+1. **Forwarded mail with an attached `.eml`** — a real gap, and *not*
+   fixed here. `graph_client.list_attachments` filters to
+   `fileAttachment` and drops `itemAttachment`, which is what Outlook's
+   "forward as attachment" produces; its own docstring says those
+   "need different handling" and that handling was never written. A
+   dragged-in `.eml` file arrives as a `fileAttachment` and is fine; a
+   forward-as-attachment loses the attached message. The lead is still
+   created — this path captures everything — but with the outer
+   forward's empty body, so the enquiry itself is lost. Unwrapping
+   `itemAttachment` needs `$expand=microsoft.graph.itemAttachment/item`
+   and I cannot test Graph behaviour from here, so it is written up
+   rather than guessed at. **This is the one piece of §4 I have not
+   built.**
+2. **HTML-only bodies** — not a fault. `parser._get_body_text` converts
+   `contentType == 'html'` through `_html_to_text`. Tested.
+3. **The filters and sender rules, "including the 14 rules added this
+   week"** — those fourteen are *not* the ingest denylist. They went to
+   the Not-relevant classes (QUESTIONS 62), which classify a lead that
+   has already been created and cannot drop mail; the module refuses
+   any pattern matching a Procam domain precisely because a forward is
+   how most real enquiries arrive. They are not a candidate, and a test
+   now says so.
+4. **The poll window** — not in play. `service.poll_should_run()` is
+   False unless `EMAIL_INGESTION_MODE=azure_api`, and the default is
+   `mailbox`: the 09:00 poll was retired and the webhook is the only
+   live path. So there is no window to widen. The corollary is worth
+   stating plainly: **the webhook is a single point of failure.** If the
+   Graph subscription lapses, no mail arrives and nothing is logged,
+   because nothing looked. There is a renewal timer
+   (`procam-crm-graph-subscription.timer`, renewing daily against a
+   ~2.9-day expiry) and `app/ops/checks.py` watches it, so the guard
+   exists — but it is worth knowing that this is what it guards.

@@ -449,6 +449,16 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
             hit = (db.session.query(Lead.id)
                    .filter(Lead.email_message_id == imid).first())
             if hit:
+                # CRM-USER-ISSUES-02NOV §4. _record_ingest's own
+                # docstring says "one row per message, whatever
+                # happened"; four paths in this function returned
+                # without writing one, and this was the first. A
+                # message the CRM deliberately dropped and a message
+                # that never arrived looked identical, which is what
+                # "forwarded mail never reaches the CRM" looks like
+                # from the outside.
+                _record_ingest('skipped', msg, lead_id=hit[0],
+                               reason='already ingested')
                 return {'status': 'skipped', 'reason': 'already ingested',
                         'lead_id': hit[0], 'internet_message_id': imid}
 
@@ -461,6 +471,13 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                       .filter(EmailEvent.internet_message_id == imid,
                               EmailEvent.status == 'lead_deleted').first())
             if purged:
+                # §4 — a permanent verdict, and until now a silent
+                # one. Worth a row precisely because it cannot be
+                # undone by a re-poll: somebody asking "where did our
+                # enquiry go?" needs to be told it was purged.
+                _record_ingest('skipped', msg,
+                               reason='previously purged as irrelevant '
+                                      '— the verdict is permanent')
                 return {'status': 'skipped',
                         'reason': 'previously purged as irrelevant',
                         'lead_id': None, 'internet_message_id': imid}
@@ -500,6 +517,8 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                                EmailClassification.created_lead_id.is_(None))
                        .order_by(EmailClassification.id.desc()).first())
             if decided:
+                _record_ingest('skipped', msg, lead_id=decided[1],
+                               reason=f'{decided[0]}: already classified')
                 return {'status': 'skipped',
                         'reason': f'{decided[0]}: already classified',
                         'lead_id': decided[1],
@@ -549,9 +568,27 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
         # already unwrapped by this point), so a newsletter relayed in by
         # the auto-forward is blocked on its true origin, not on whoever
         # forwarded it. Editable in data/blocked_senders.txt.
-        blocked = blocklist.check(sender_email)
+        # `force` overrides the denylist, exactly as it overrides the
+        # system-sender block above and for the same reason: a person
+        # replaying a message from the Mail ingest screen has already
+        # decided. Without this the rows §4 adds to that screen could
+        # be read and never acted on — the "re-process one" button
+        # would come straight back here and skip again.
+        blocked = blocklist.check(sender_email) if not force else None
         if blocked:
             log.info('Blocked %s [%s]', imid, blocked)
+            # §4, and the one that matters most. This is the sender
+            # denylist: data/blocked_senders.txt by domain, plus
+            # _BULK_LOCAL_RE on any domain, which matches mailer@,
+            # bulk@, broadcast@, digest@, campaign@, offers@ and
+            # deals@. A real enquiry relayed from an address shaped
+            # like that was dropped here with no trace anywhere —
+            # not a lead, not a timeline entry, not a log row. The
+            # outcome is 'blocked' rather than 'skipped' so the
+            # denylist's work is readable on its own, and the row
+            # carries the pattern that matched so the rule can be
+            # corrected rather than guessed at.
+            _record_ingest('blocked', msg, reason=blocked)
             return {'status': 'skipped', 'reason': blocked,
                     'lead_id': None, 'internet_message_id': imid}
         sender_domain = sender_email.split('@', 1)[1] if '@' in sender_email else ''
@@ -611,6 +648,16 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
             except Exception:
                 db.session.rollback()
                 log.exception('could not record the blocked intake %s', imid)
+            # §4 — _log_blocked_intake writes an EmailEvent, which the
+            # Intake screens show. It does not write a mail_ingest_log
+            # row, so this enquiry was absent from /admin/mail-ingest —
+            # the screen somebody actually opens to ask "where did our
+            # mail go?". Both, now: the EmailEvent for the Intake
+            # boards and this row for that question.
+            _record_ingest('blocked', msg,
+                           reason=f'{_verdict.company_name} is on the '
+                                  f'client block register — '
+                                  f'{_verdict.reason_summary}')
             return {'status': 'skipped',
                     'reason': f'client blocked: {_verdict.company_name}',
                     'classification': 'blocked_client',
