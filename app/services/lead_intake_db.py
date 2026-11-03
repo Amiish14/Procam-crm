@@ -40,12 +40,27 @@ def internal_domains():
 
 
 # ─── thread matching — step 3, the decisive one ──────────────────────────
-def find_by_thread(conversation_id=None, in_reply_to=None, reference_ids=None):
+def find_by_thread(conversation_id=None, in_reply_to=None, reference_ids=None,
+                   thread_key=None):
     """The lead this message's conversation already belongs to.
 
     Checked against both the lead and its email trail: the enquiry
     carries the first message's identity, the trail carries every reply
     since, and a reply four messages deep matches the trail, not the lead.
+
+    Three keys, in order of how much they prove — which is the order
+    CRM-USER-ISSUES-02NOV §2 asks for:
+
+        1. the conversation id;
+        2. In-Reply-To and References, against the message ids we hold;
+        3. the stored `thread_key`.
+
+    The third is last because it is the only one that can be a guess.
+    Where it is a conversation id it proves as much as (1); where it is
+    a normalised subject and a sender domain it is windowed to thirty
+    days by `lead_thread.find_by_key`, because "RFQ" from a regular
+    customer is the same key in March and in November and those are two
+    different enquiries.
     """
     from app import Lead, LeadEmail
 
@@ -70,6 +85,16 @@ def find_by_thread(conversation_id=None, in_reply_to=None, reference_ids=None):
             LeadEmail.message_id.in_(candidates)).first()
         if mail:
             return mail.lead_id
+
+    # The stored key. This is what catches a reply whose conversation
+    # id we never saw — a thread whose first message predates this
+    # mailbox, or one a mail client rewrote — and it is answered by the
+    # index on leads.thread_key rather than by a scan.
+    if thread_key:
+        from app.services import lead_thread
+        hit = lead_thread.find_by_key(thread_key)
+        if hit:
+            return hit
     return None
 
 

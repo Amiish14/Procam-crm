@@ -360,15 +360,33 @@ def headers(msg):
 
 
 def thread_keys(msg):
-    """Everything that identifies this message's conversation."""
+    """Everything that identifies this message's conversation.
+
+    `thread_key` is the stored, indexed form — Exchange's conversation
+    id where there is one, otherwise the normalised subject and the
+    sender's domain. It is what `leads.thread_key` holds, and it is
+    how a reply is recognised after a mail client has stripped the
+    `Re:` that the subject rules depend on. Pure string work, like
+    everything else here: no lookup, no database.
+    """
     hdr = headers(msg)
     refs = hdr.get('references', '')
+    from app.services.lead_merge import thread_key as _key
+    resolved = (msg.get('_resolved_sender') or '').strip()
     return {
         'conversation_id': (msg.get('conversationId') or '').strip() or None,
         'in_reply_to': (hdr.get('in-reply-to') or '').strip() or None,
         'references': refs or None,
         'reference_ids': re.findall(r'<[^>]+>', refs) if refs else [],
         'message_id': (msg.get('internetMessageId') or '').strip() or None,
+        'thread_key': _key(
+            conversation_id=(msg.get('conversationId') or '').strip(),
+            subject=(msg.get('subject') or ''),
+            # The customer's own address where the parser resolved a
+            # forward, not the colleague who relayed it — otherwise
+            # every relayed enquiry keys on the relayer's domain and
+            # two unrelated forwards become one thread.
+            domain=domain_of(resolved or effective_sender(msg))) or None,
     }
 
 
@@ -577,7 +595,8 @@ def classify(msg, ctx=None):
     hit = ctx.find_by_thread(
         conversation_id=keys['conversation_id'],
         in_reply_to=keys['in_reply_to'],
-        reference_ids=keys['reference_ids'])
+        reference_ids=keys['reference_ids'],
+        thread_key=keys.get('thread_key'))
     if hit:
         klass = (Klass.FORWARD if kind == 'forward'
                  else Klass.REPLY if kind == 'reply'

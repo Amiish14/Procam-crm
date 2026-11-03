@@ -36,6 +36,15 @@ def _thread_of(msg):
         return {}
 
 
+def _thread_key_for(msg, sender=None):
+    """The stored thread key, keyed on the customer's own address."""
+    try:
+        from app.services import lead_thread
+        return lead_thread.key_for_message(msg, sender=sender) or None
+    except Exception:
+        return None
+
+
 def _attach_to_lead(db, decision, msg, extracted, log):
     """File an email that is not a new lead against the lead it belongs to.
 
@@ -489,6 +498,18 @@ def run_ingest(lookback_hours: int = 26, dry_run: bool = False) -> dict:
                     conversation_id=(msg.get('conversationId') or None),
                     in_reply_to=_thread_of(msg).get('in_reply_to'),
                     references_header=_thread_of(msg).get('references'),
+                    # CRM-USER-ISSUES-02NOV §2. The column has existed
+                    # since 2026_10_30_lead_flow and nothing ever wrote
+                    # it, so the one *certain* duplicate rule in
+                    # lead_merge.candidates() could never fire.
+                    #
+                    # `sender_email` and not the message's From: this
+                    # path sets `_resolved_sender` on a copy of the
+                    # message for the classifier, so asking the
+                    # original would key a relayed enquiry on the
+                    # colleague who forwarded it and make two
+                    # unrelated forwards from one person one thread.
+                    thread_key=_thread_key_for(msg, sender_email),
                     classification=(decision.klass if decision else None),
                     lead_confidence=(decision.confidence if decision else None),
                     duplicate_score=(decision.duplicate_score if decision else None),

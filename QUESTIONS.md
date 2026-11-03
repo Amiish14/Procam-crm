@@ -1666,3 +1666,73 @@ snapshot guards the legacy All Leads list against the lead_v2 pilot's
 changes. The archived filter is deliberate and for everybody, not part
 of the pilot, so the snapshot was retaken — which is the path the test
 itself documents.
+
+## 66 — "A reply creates a duplicate": the column nothing ever wrote
+
+CRM-USER-ISSUES-02NOV §2.
+
+Almost all of this was built and correct. `lead_intake.classify` matches
+on the thread headers at step 3 — "deterministic, final, outranks
+everything" — and files a reply against the lead it belongs to.
+`lead_merge.thread_key()` computes a key. `leads.thread_key` is a
+column, indexed, migrated by `scripts/2026_10_30_lead_flow.py`, and its
+comment in app.py reads: "Filled at intake; a reply whose thread is
+already here joins the lead instead of starting another."
+
+It was never filled. Not by any code path, ever — only by three tests
+that set it by hand. It has been NULL in live data since the day the
+column was created. Two consequences:
+
+* `lead_merge.candidates()` asks `other.thread_key == mine_thread` for
+  its one **certain** duplicate rule. NULL == NULL, so the rule was
+  dead code and thread duplicates fell through to the subject
+  heuristic, which by its own comment "only ever draws a banner".
+* Step 3 still worked, but only via `conversation_id` and stored
+  message ids. A reply carrying a conversation we never saw — relayed
+  by a colleague, sent from a client that rewrote the headers, or on a
+  thread that started before this mailbox existed — had nothing to
+  match.
+
+Now filled in both intake paths, and keyed on the **resolved** sender.
+Both paths set `_resolved_sender` on a *copy* of the message for the
+classifier, so reading the original message would key a relayed
+enquiry on the colleague who forwarded it and make two unrelated
+forwards from one person look like one thread. I wrote that bug into
+the first version of this change and caught it before pushing.
+
+`find_by_thread` now tries the stored key last, after the headers,
+because it is the only one of the three that can be a guess. A `c:`
+key proves as much as a conversation id and is not windowed; an `s:`
+key is subject-plus-domain and is windowed to `lead_merge.WINDOW_DAYS`
+(30), because "RFQ" from a regular customer is the same key in March
+and in November and those are two different enquiries.
+
+### One thing in §2 I did not do, deliberately
+
+§2 says "then the normalised subject + sender domain **within 30
+days**". `find_by_subject` — the existing subject fallback at step 5 —
+runs at **180** days. I left it there.
+
+Narrowing 180 to 30 would match *fewer* replies to existing leads, so
+it would create **more** duplicates, which is the opposite of what §2
+is about. The 30-day window is applied to the new `thread_key` path,
+where it is the right bound for a key that can be a coincidence. If
+the intent was to narrow the existing fallback as well, say so and I
+will — but it should be a deliberate choice rather than a side effect,
+because it loosens dedup rather than tightening it.
+
+### The report
+
+`scripts/2026_11_03_thread_duplicates.py`. Report by default, writes
+nothing, and there is no `--merge` and will not be one: §2 says "I
+decide". `--backfill` fills the NULL keys and is still a dry run
+without `--apply`. The report does not need the backfill to have run —
+it computes the key in Python from the columns the intake did store —
+so the listing can be read and argued with before anything is written.
+A test asserts the script's only assignment is `thread_key`.
+
+Pairs are counted as certain (conversation id) or likely (subject and
+domain) separately, because they are not equally certain and whoever
+decides what to merge needs to know which is which. The window is
+measured between the two leads, not against today, so a pair from
+March is still a pair in November.

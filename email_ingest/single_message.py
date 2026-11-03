@@ -71,6 +71,15 @@ def _stamp_quote(lead, mail_row, got, log):
     log.info('quote recorded on lead %s: %s', lead.id, quote)
 
 
+def _thread_key_for(msg, sender=None):
+    """The stored thread key, keyed on the customer's own address."""
+    try:
+        from app.services import lead_thread
+        return lead_thread.key_for_message(msg, sender=sender) or None
+    except Exception:
+        return None
+
+
 def _thread_keys(msg):
     """Conversation and RFC-822 threading headers, in one shape."""
     try:
@@ -973,6 +982,14 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                 conversation_id   = _keys.get('conversation_id'),
                 in_reply_to       = _keys.get('in_reply_to'),
                 references_header = _keys.get('references'),
+                # CRM-USER-ISSUES-02NOV §2 — see the note in
+                # pipeline.py. Both intake paths fill it or neither
+                # does, and the webhook is the live one. Keyed on the
+                # resolved sender for the same reason: `_keys` comes
+                # from the untouched message, and a forward's From is
+                # the colleague who relayed it.
+                thread_key        = _thread_key_for(
+                    msg, extracted.get('email')),
                 classification    = (decision.klass if decision else None),
                 lead_confidence   = (decision.confidence if decision else None),
                 duplicate_score   = (decision.duplicate_score if decision else None),
