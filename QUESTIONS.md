@@ -1736,3 +1736,82 @@ domain) separately, because they are not equally certain and whoever
 decides what to merge needs to know which is which. The window is
 measured between the two leads, not against today, so a pair from
 March is still a pair in November.
+
+## 67 — "Some PICs don't get the new-lead mail": five silences
+
+CRM-USER-ISSUES-02NOV §3. The question was where the recipient
+resolution fails. The answer is that it failed in five places and
+reported none of them.
+
+`app/services/notify.py` is the one function every notification goes
+through, and it returns `{'notified', 'emailed', 'suppressed',
+'error'}`. `lead_assignment.py` — the caller that sends the new-lead
+mail — called it as a bare statement and threw the dict away. So every
+one of these returned an `error` that nobody ever read:
+
+1. **No address on the employee.** `'no email address on file'`.
+2. **`outbox.enqueue` refused it** — already queued, muted, or not an
+   internal address. `mail_policy` allows only `@procamlogistics.com`
+   and `@procamgroup.in`, so a PIC whose record carries a personal
+   address was refused at the transport and nothing said so.
+3. **FEATURE_EMAIL_NOTIFY off.** The direct transport is used, with no
+   outbox row, no retry and no record. One throttled response from
+   Office 365 — which caps a mailbox at thirty a minute — lost the
+   notification outright.
+4. **An exception.** `log.exception` and `return False`.
+5. **Suppressed as a recent duplicate**, which is correct behaviour and
+   was also invisible, so "nothing was sent" and "nothing needed to be
+   sent" looked the same.
+
+**Inactive employees were not checked at all.** §3 lists it as a
+candidate and it turned out to be a real gap: a leaver's address was
+mailed exactly as if they were still here, the send succeeded, and the
+lead looked notified. Now refused, with the address kept on the row so
+the reassignment is obvious from one line.
+
+### Why a new table and not a column on email_outbox
+
+Because the rows this is about never became outbox rows.
+`/admin/email/log` is a log of messages that reached the queue, and a
+message missing from it is indistinguishable from a message nobody was
+owed. That indistinguishability is the bug. `notification_attempts`
+records the attempt, and `outbox_id` links to the queue row where one
+was created: this table answers "did the CRM get as far as trying?",
+the outbox answers "what did the mail server say?".
+
+Written in `notify.send`, not at the call site. Recording in
+`lead_assignment` would have logged the assignment mail and missed the
+other callers — the same mistake as filtering archived leads in
+thirty-three modules and not in the scope (QUESTIONS 65).
+
+### Retry: three, and what three means
+
+§3 says "retry failures 3 times". Two kinds of failure need two
+answers, and treating them alike would be the easy wrong thing.
+
+A **transport** failure can succeed on a second try. Anything queued
+already gets five attempts with back-off from the outbox, and nothing
+was added there. The gap was the direct path, which had none; it now
+gets three.
+
+A **resolution** failure cannot. "No address on file" says the same
+thing three times and buries the one fact that matters, which is that
+somebody must fix the record. Those are recorded and left for a person.
+`notify_log.retryable()` tells them apart, and treats an *unknown*
+error as retryable — the cost of being wrong is three attempts rather
+than a notification lost for good.
+
+A person retrying from the screen is deliberate and is allowed either
+way, because somebody who has just corrected an address is exactly the
+case for it.
+
+### The screen
+
+`/admin/notifications`, beside the email log, defaulting to the
+failures. The address is shown even when it was refused: "failed,
+somebody@gmail.com, not an internal address" answers the question in
+one line, and storing it only when it worked would have hidden the most
+common cause. Employee codes, never names.
+
+A test asserts the log can never break what it is logging, and a source
+guard asserts `notify.send`'s result is not discarded again.

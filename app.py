@@ -5725,6 +5725,10 @@ def init_db():
                    'app.models.notification', 'app.models.review',
                    'app.models.mailops', 'app.models.restriction',
                    'app.models.ingest_log', 'app.models.integration',
+                   # CRM-USER-ISSUES-02NOV §3 — every notification the
+                   # CRM tried, including the ones that never reached
+                   # the outbox, which is where §3's silence lived.
+                   'app.models.notification_log',
                    'app.models.email_admin', 'app.models.assignment',
                    'app.models.escalation', 'app.models.intel',
                    # After rfq and quote: ff_rate_requests points at

@@ -7,6 +7,7 @@ The screens for outbound email.
     /admin/email/health           the queue: waiting, failed, refused
     /admin/email/settings         who is copied, and on what
     /admin/mail-ingest            every message the leads mailbox saw
+    /admin/notifications          every notification, and what failed
 
 The three admin screens need `admin.email`, the permission that already
 governs the ingest settings — the person who looks after what comes in
@@ -1099,3 +1100,76 @@ def replacements_screen():
         active=sorted([e for e in by_code.values() if e.is_active],
                       key=lambda e: (e.name or '')),
         saved=saved, error=error)
+
+
+# ── CRM-USER-ISSUES-02NOV §3 · every notification, and what failed ───
+#
+# /admin/email/log already shows everything that reached the outbox.
+# This shows what did not: the notification that was never queued
+# because the employee had no address, because the address was not
+# internal, because they are not active any more, or because something
+# raised and was swallowed. That was §3's silence, and a message
+# missing from a log of sent mail is indistinguishable from one that
+# was never owed.
+@bp.route('/admin/notifications')
+@access.require('admin.email')
+def notification_log():
+    from app.models.notification_log import STATUSES
+    from app.services import notify_log
+
+    status = (request.args.get('status') or 'failed').strip()
+    who = (request.args.get('who') or '').strip().upper()
+    days = max(1, min(90, int(request.args.get('days') or 7)))
+    limit = max(10, min(1000, int(request.args.get('limit') or 200)))
+
+    if status == 'failed':
+        rows = notify_log.failures(limit=limit, user_code=who or None)
+    else:
+        from app.models.notification_log import NotificationAttempt
+        q = NotificationAttempt.query
+        if status and status != 'all':
+            q = q.filter(NotificationAttempt.status == status)
+        if who:
+            q = q.filter(NotificationAttempt.user_code == who)
+        rows = (q.order_by(NotificationAttempt.id.desc())
+                .limit(limit).all())
+
+    return render_template(
+        'mailops/notifications.html',
+        rows=rows, status=status, who=who, days=days, limit=limit,
+        statuses=('failed', 'queued', 'sent', 'suppressed', 'in_app',
+                  'all'),
+        known=STATUSES,
+        summary=notify_log.summary(days=days))
+
+
+@bp.route('/admin/notifications/<int:rid>/retry', methods=['POST'])
+@access.require('admin.email')
+def notification_retry(rid):
+    """Send one failed notification again.
+
+    Deliberate, so it is allowed even where the automatic retry would
+    not bother: somebody who has just put an address on a record is
+    exactly the case this is for.
+    """
+    from app.models.notification_log import NotificationAttempt
+    from app.services import notify_log
+
+    row = NotificationAttempt.query.get(rid)
+    out = notify_log.retry(row, actor=_me())
+    if request.path.startswith('/api/') or request.is_json:
+        return jsonify(**out), (200 if out.get('ok') else 400)
+    return redirect(url_for('mailops.notification_log',
+                            status=request.args.get('status') or 'failed'))
+
+
+@bp.route('/api/admin/notifications')
+@access.require('admin.email')
+def notification_log_json():
+    from app.services import notify_log
+
+    rows = notify_log.failures(
+        limit=max(10, min(1000, int(request.args.get('limit') or 200))))
+    return jsonify(ok=True, rows=[r.to_dict() for r in rows],
+                   summary=notify_log.summary())
+

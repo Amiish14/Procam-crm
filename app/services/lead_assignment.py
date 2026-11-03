@@ -248,7 +248,12 @@ def _notify(lead, employee, emp_code, is_primary, actor=None):
             except Exception:
                 files = None
             from email_ingest import notifier
-            notify.send(
+            # §3 — the return value used to be discarded here, which
+            # is how every one of notify.send's documented failure
+            # modes became silence. notify.send now writes its own row
+            # whatever happens, so this only has to say so in the log
+            # when the mail did not go.
+            _sent = notify.send(
                 emp_code,
                 kind='lead_assigned',
                 event_key=('lead.assigned' if is_primary
@@ -262,6 +267,15 @@ def _notify(lead, employee, emp_code, is_primary, actor=None):
                 attachments=files,
                 in_app=False,      # the bell row is written above
                 dedupe=False)
+            if not (_sent.get('queued') or _sent.get('emailed')):
+                try:
+                    flask_app.logger.warning(
+                        'lead %s: the assignment mail to %s did not go '
+                        '— %s. See /admin/notifications.',
+                        lead.id, emp_code,
+                        _sent.get('error') or 'no reason given')
+                except Exception:
+                    pass
         except Exception:
             try:
                 flask_app.logger.exception(

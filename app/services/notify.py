@@ -226,6 +226,8 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
         _collect(user_code, kind, title, body, url)
         out['suppressed'] = True
         out['collected'] = True
+        _log(user_code, 'suppressed', kind, event_key, title,
+             entity_type, entity_id, error='collected by a bulk run')
         return out
     try:
         digest = content_hash(title, body)
@@ -234,6 +236,10 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
             if _recent_duplicate(user_code, kind, entity_type, entity_id,
                                  since, digest=digest):
                 out['suppressed'] = True
+                _log(user_code, 'suppressed', kind, event_key, title,
+                     entity_type, entity_id,
+                     error='a duplicate of one sent in the last '
+                           f'{DEDUPE_MINUTES} minutes')
                 return out
         if in_app:
             row = Notification(
@@ -258,14 +264,37 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
             pass
         _logger().exception('could not write a notification for %s', user_code)
         out['error'] = str(exc)[:200]
+        _log(user_code, 'failed', kind, event_key, title,
+             entity_type, entity_id, error=out['error'])
         return out
+
+    if not email:
+        # No mail was asked for. Recorded anyway, so "was anybody told
+        # at all?" is answerable for a lead where only the bell row
+        # went out.
+        _log(user_code, 'in_app', kind, event_key, title,
+             entity_type, entity_id)
 
     if email:
         try:
             emp = Employee.query.filter_by(emp_code=user_code).first()
             address = (getattr(emp, 'email', '') or '').strip()
             if not address:
+                # §3's first failure mode, and the one that was
+                # hardest to see: it returned a dict nobody read.
                 out['error'] = 'no email address on file'
+                _log(user_code, 'failed', kind, event_key, title,
+                     entity_type, entity_id, error=out['error'])
+            elif emp is not None and not getattr(emp, 'is_active', True):
+                # §3 names "inactive user" as a candidate. It was not
+                # checked at all: an address on a leaver's record was
+                # mailed exactly as if they were still here, and the
+                # lead looked notified. Refused and recorded, with the
+                # address, so the reassignment is obvious.
+                out['error'] = 'the employee is not active'
+                _log(user_code, 'failed', kind, event_key, title,
+                     entity_type, entity_id, address=address,
+                     error=out['error'])
             else:
                 html = email_html or _plain_html(title, body, url)
                 from app.services import flags
@@ -289,8 +318,18 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
                     if row is None:
                         out['error'] = ('already queued, muted, or not an '
                                         'internal address')
+                        _log(user_code, 'failed', kind, event_key, title,
+                             entity_type, entity_id, address=address,
+                             error=out['error'])
+                    else:
+                        # Queued is as far as this function goes. The
+                        # outbox row owns delivery and retry from here,
+                        # and `outbox_id` is the link between the two
+                        # halves of the story.
+                        _log(user_code, 'queued', kind, event_key, title,
+                             entity_type, entity_id, address=address,
+                             outbox_id=getattr(row, 'id', None))
                 else:
-                    from app.services import mailer
                     files = None
                     if attachments:
                         from app.services import outbox
@@ -301,14 +340,49 @@ def send(user_code, *, kind, title, body='', url=None, entity_type=None,
                     # should not have to learn a new signature to keep
                     # working.
                     extra = {'attachments': files} if files else {}
-                    out['emailed'] = bool(mailer.send(
-                        address, title, html, **extra))
-                    if not out['emailed']:
-                        out['error'] = 'the mail server refused it'
+                    # §3 — three tries, not one. This path calls the
+                    # transport directly and had no retry at all: a
+                    # throttled or briefly unreachable mail server lost
+                    # the notification outright, which is one of the
+                    # ways a PIC never got their mail.
+                    from app.services import notify_log
+                    ok, why, tried = notify_log.send_with_retries(
+                        address, title, html, **extra)
+                    out['emailed'] = bool(ok)
+                    out['attempts'] = tried
+                    if not ok:
+                        out['error'] = why or 'the mail server refused it'
+                    _log(user_code, 'sent' if ok else 'failed', kind,
+                         event_key, title, entity_type, entity_id,
+                         address=address, error=None if ok else out['error'],
+                         attempts=tried)
         except Exception as exc:
             _logger().exception('could not email %s', user_code)
             out['error'] = str(exc)[:200]
+            _log(user_code, 'failed', kind, event_key, title,
+                 entity_type, entity_id, error=out['error'])
     return out
+
+
+def _log(user_code, status, kind, event_key, title, entity_type, entity_id,
+         *, address=None, error=None, outbox_id=None, attempts=0):
+    """Write the attempt down. Never raises, never rolls anything back.
+
+    CRM-USER-ISSUES-02NOV §3. Every return path above goes through
+    here, including the ones that decided not to send: a notification
+    nobody received and one nobody was owed looked identical before
+    this, and both were silence.
+    """
+    try:
+        from app.services import notify_log
+        notify_log.record(
+            user_code=user_code, status=status, kind=kind,
+            event_key=event_key, title=title, address=address,
+            entity_type=entity_type, entity_id=entity_id, error=error,
+            outbox_id=outbox_id, attempts=attempts)
+    except Exception:                                     # noqa: BLE001
+        _logger().exception('could not log the notification for %s',
+                            user_code)
 
 
 def _dedupe_key(user_code, event_key, entity_type, entity_id, digest=None):

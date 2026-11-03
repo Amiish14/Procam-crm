@@ -1,0 +1,104 @@
+{% extends 'mailops/_shell.html' %}
+{% block title %}Notifications — Procam CRM{% endblock %}
+{% block heading %}Notifications{% endblock %}
+{% block strap %}Every notification the CRM tried, including the ones it
+  never managed to queue{% endblock %}
+
+{% block body %}
+{# CRM-USER-ISSUES-02NOV §3. The email log next door shows what reached
+   the outbox. This shows what did not — which is where "some PICs
+   don't get the new-lead mail" was hiding, because a message missing
+   from a log of sent mail looks exactly like a message nobody was
+   owed. #}
+<div class="mo-card">
+  <h3>Last {{ days }} day(s)</h3>
+  <p class="mo-note">
+    {% for name in known %}
+      {% set n = summary.get(name, 0) %}
+      <span style="display:inline-block;margin-right:16px">
+        <strong style="{% if name == 'failed' and n %}color:#991B1B{% endif %}">
+          {{ n }}</strong> {{ name }}</span>
+    {% endfor %}
+  </p>
+  <p class="mo-note">
+    A <em>failed</em> row never reached anybody. A <em>queued</em> row is
+    the outbox's from there — follow its number into
+    <a href="{{ url_prefix }}/admin/email/log">the email log</a> for what
+    the mail server then did. <em>suppressed</em> is a deliberate
+    silence: a duplicate inside the dedupe window, or a bulk run
+    collecting them. <em>in_app</em> means a bell row and no mail asked
+    for.
+  </p>
+</div>
+
+<form method="get" action="{{ url_prefix }}/admin/notifications"
+      class="mo-card" style="display:flex;gap:14px;align-items:flex-end;
+      flex-wrap:wrap">
+  <div><label class="muted" for="st">Status</label><br>
+    <select id="st" name="status" style="width:150px">
+      {% for s in statuses %}
+      <option value="{{ s }}" {% if status == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select></div>
+  <div><label class="muted" for="who">Employee code</label><br>
+    <input id="who" name="who" value="{{ who }}" placeholder="e.g. DIR12010"
+           style="width:160px;padding:7px 9px;border:1px solid #d1d5db;
+                  border-radius:6px"></div>
+  <div><label class="muted" for="days">Days</label><br>
+    <input id="days" name="days" value="{{ days }}" type="number" min="1"
+           max="90" style="width:90px;padding:7px 9px;
+           border:1px solid #d1d5db;border-radius:6px"></div>
+  <button class="btn" type="submit">Filter</button>
+</form>
+
+<table class="mo">
+  <tr>
+    <th>When</th><th>To</th><th>Address used</th><th>About</th>
+    <th>What</th><th>Status</th><th>Why it did not go</th><th></th>
+  </tr>
+  {% for r in rows %}
+  <tr>
+    <td style="white-space:nowrap">{{ r.created_at|string|truncate(16, True, '') }}</td>
+    <td>{{ r.user_code or '—' }}</td>
+    {# The address is shown even when it was refused: "failed,
+       somebody@gmail.com, not an internal address" answers the
+       question in one line. #}
+    <td>{{ r.address or '— none on file —' }}</td>
+    <td>
+      {% if r.entity_type == 'Lead' and r.entity_id %}
+        <a href="{{ url_prefix }}/app?lead={{ r.entity_id }}">Lead #{{ r.entity_id }}</a>
+      {% elif r.entity_type %}{{ r.entity_type }} {{ r.entity_id or '' }}
+      {% else %}—{% endif %}
+    </td>
+    <td>{{ r.title or r.kind or '—' }}</td>
+    <td>
+      <strong style="{% if r.status == 'failed' %}color:#991B1B{% endif %}">
+        {{ r.status }}</strong>
+      {% if r.outbox_id %}
+        <a href="{{ url_prefix }}/admin/email/log?q={{ r.user_code }}"
+           title="The outbox row that owns delivery">#{{ r.outbox_id }}</a>
+      {% endif %}
+      {% if r.attempts and r.attempts > 1 %}
+        <span class="muted">· {{ r.attempts }} tries</span>
+      {% endif %}
+    </td>
+    <td>{{ r.error or '' }}</td>
+    <td>
+      {% if r.status == 'failed' %}
+      <form method="post" style="display:inline"
+            action="{{ url_prefix }}/admin/notifications/{{ r.id }}/retry?status={{ status }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn" type="submit">Send again</button>
+      </form>
+      {% endif %}
+      {% if r.retried_by %}
+        <span class="muted">retried by {{ r.retried_by }}</span>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="8" style="text-align:center;padding:30px"
+          class="muted">Nothing to show.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}
