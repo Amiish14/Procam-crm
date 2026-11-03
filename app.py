@@ -2467,7 +2467,22 @@ def _apply_dashboard_filters(q, args):
 @app.route('/api/leads', methods=['GET'])
 @require_auth
 def api_leads():
-    q = leads_for_user()
+    # CRM-USER-ISSUES-02NOV §1 — archived leads are out of every list
+    # by default; the exclusion lives in app/access/scope.leads so it
+    # is one rule rather than one per screen. This is the filter that
+    # shows them again, which is what makes an archive reversible in
+    # practice: a lead nobody can list is a lead nobody can restore.
+    #   archived=only  just the archived ones
+    #   archived=all   both, for a search that should not miss one
+    _arch = (request.args.get('archived') or '').strip().lower()
+    if _arch in ('only', '1', 'true', 'yes', 'all'):
+        from app.access import scope as _arch_scope
+        q = _arch_scope.leads(sc=_arch_scope.current(),
+                              include_archived=True)
+        if _arch != 'all':
+            q = q.filter(Lead.is_archived.is_(True))
+    else:
+        q = leads_for_user()
     # Filters
     stage   = request.args.get('stage','')
     vert    = request.args.get('vertical','')
@@ -6654,6 +6669,11 @@ for _mod_path, _bp_name in [
     # pre-filled from the last four months and editable on one screen
     # with its history kept.
     ('app.rfq_targets.routes',   'rfq_targets_bp'),
+    # CRM-USER-ISSUES-02NOV §1 — archiving one lead, with a reason,
+    # and putting it back. The columns and the writer already existed;
+    # this is the door onto them. Not behind a feature switch: the
+    # issue reported is that there is no way in at all.
+    ('app.lead_archive.routes',  'lead_archive_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])

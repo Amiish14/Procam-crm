@@ -223,7 +223,8 @@ def _lead_task_ids(sc):
             .with_entities(TaskInstance.entity_id))
 
 
-def leads(q=None, sc=None, *, include_deleted=False):
+def leads(q=None, sc=None, *, include_deleted=False,
+          include_archived=False):
     """Leads the viewer may see — primary or secondary PIC counts.
 
     Secondary is included deliberately: WP5 made the secondary PIC a
@@ -236,6 +237,14 @@ def leads(q=None, sc=None, *, include_deleted=False):
     here is what makes "it disappears from everywhere" true instead
     of true in the places somebody remembered. The Admin bin passes
     `include_deleted=True`; it is the only caller that does.
+
+    Archived leads (§58, and CRM-USER-ISSUES-02NOV §1 which finally
+    gives a person a way to archive one) are excluded on exactly the
+    same grounds. Thirty-three modules filtered `is_archived` for
+    themselves and this function did not, which made "it drops out of
+    lists, dashboards and reports" true in thirty-three places and
+    false in the main lead list — the one screen everybody uses. A
+    caller that wants them asks: `include_archived=True`.
 
     Two allowances on top of ownership (decision 21 Oct 2026,
     behind FEATURE_LEAD_ALLOWANCES): a vertical-scoped viewer sees
@@ -251,6 +260,8 @@ def leads(q=None, sc=None, *, include_deleted=False):
     q = q if q is not None else Lead.query
     if not include_deleted:
         q = q.filter(Lead.junk_deleted.isnot(True))
+    if not include_archived:
+        q = q.filter(Lead.is_archived.isnot(True))
     if not (sc.lead_allowances and allowances_on()):
         return _narrow(q, Lead.assigned_to, sc,
                        extra_columns=(Lead.secondary_owner,))

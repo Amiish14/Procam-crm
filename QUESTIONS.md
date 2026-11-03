@@ -1613,3 +1613,56 @@ Three bugs in one gate, all found by printing what the data actually
 said instead of trusting what the code claimed about it. The stage
 equality (QUESTIONS.md 63) had hidden the other two: while every lead
 was refused for being at New, nobody had reason to read the notes.
+
+## 65 — Archive a lead: the columns were there, the door was not
+
+CRM-USER-ISSUES-02NOV §1, reported as "there's no delete/archive
+option, even for super admin."
+
+Two separate things were missing, and only one of them was a button.
+
+**The door.** `is_archived`, `archived_at`, `archived_by` and
+`archive_reason` have existed since §58, and so has the writer —
+`bulk_admin.archive()` / `unarchive()`, which also writes the
+`DeletionAudit` row and the batch event. The only entrance was the bulk
+admin screen, which takes a list of ids and is not where anybody works.
+So nothing was added to the data model and no second writer was
+introduced: `app/services/lead_archive.py` is the per-lead door onto
+the one that exists. A second writer would have set the four columns
+without the audit row, and the trail would then have been complete for
+a bulk archive and silent for the archive a person actually performed.
+
+**The exclusion.** This is the half no button would have fixed.
+Thirty-three modules filtered `is_archived` for themselves.
+`app/access/scope.leads` — the one function "every board, count,
+digest and report goes through", by its own docstring, and the function
+that excludes junk-deleted leads for exactly this reason — did not. So
+"it drops out of lists, dashboards and reports" was true in
+thirty-three places and false in the main lead list, which is the
+screen everybody uses. The filter now sits beside the junk one, with
+`include_archived=True` for the caller that wants them.
+
+`bulk_admin` queries `Lead.query` directly rather than through the
+scope, so its own archived view is unaffected.
+
+**The reason is required in the service, not in the browser.** A reason
+enforced in JavaScript is a reason absent from every other caller.
+`MIN_REASON = 4` admits "spam" and "dupe", which people mean, and
+refuses the stray keypress a mandatory field otherwise collects. Over
+200 characters is refused rather than truncated, because filing half a
+sentence as the explanation is worse than saying no.
+
+**Who may** is the owner, the vertical head of the lead's vertical, or
+a CRM admin — `junk_delete.may_delete`, imported rather than restated.
+Two copies of a permission rule drift, and the copy that drifts is the
+one that lets somebody through. A super admin is an admin by role, so
+"even for super admin" needs no clause of its own.
+
+Archiving an already-archived lead is refused: the second reason would
+overwrite the first and why it actually went would be lost.
+
+One accepted change: `tests/fixtures/all_leads_flag_off.sha256`. That
+snapshot guards the legacy All Leads list against the lead_v2 pilot's
+changes. The archived filter is deliberate and for everybody, not part
+of the pilot, so the snapshot was retaken — which is the path the test
+itself documents.

@@ -1424,6 +1424,10 @@ catch (err) { console.error('Employee list could not start loading', err); }
       <input class="fi" id="aCt" placeholder="Country" oninput="rAll()" style="width:120px;">
       <input class="fi" id="aCi" placeholder="City"    oninput="rAll()" style="width:120px;">
       <select class="fi" id="aSrc" onchange="rAll()"><option value="">All Sources</option><option value="manual">Manual</option><option value="import">Imported</option><option value="news">News Lead</option><option value="jul2025">Jul-2025</option><option value="manju">Manju</option><option value="new_project">Archive</option><option value="subsidiary">Subsidiary</option></select>
+      <!-- CRM-USER-ISSUES-02NOV §1. Archived leads are out of every
+           list by default. This is how somebody finds one again,
+           which is what makes the archive reversible in practice. -->
+      <select class="fi" id="aArch" onchange="rAll()" title="Archived leads are hidden by default."><option value="">Not archived</option><option value="only">Archived only</option><option value="all">Both</option></select>
       <button class="btn btn-ghost btn-sm" onclick="clrF('a')">Clear</button>
       {% if feature_enabled('FEATURE_LEAD_POPUP_V2') %}
       {# Default view: a user's own open leads, an admin's all open
@@ -1913,6 +1917,15 @@ catch (err) { console.error('Employee list could not start loading', err); }
       <button class="btn btn-ghost" id="ldJunk" style="display:none"
               onclick="junkLd()">Delete – not relevant</button>
       <span id="ldJunkWhy" style="display:none;font-size:11.5px;
+            color:var(--text-3);align-self:center;max-width:230px"></span>
+      <!-- CRM-USER-ISSUES-02NOV §1. Archive is the ordinary way to
+           take a lead out of the pipeline and keep it: the owner, the
+           head of its vertical and an administrator all see it, and
+           the same button restores a lead that is already archived.
+           Hidden until /archive-state says this person may. -->
+      <button class="btn btn-ghost" id="ldArch" style="display:none"
+              onclick="archiveLd()">Archive</button>
+      <span id="ldArchWhy" style="display:none;font-size:11.5px;
             color:var(--text-3);align-self:center;max-width:230px"></span>
       <button class="btn btn-ghost" onclick="closeLd()">Cancel</button>
       <button class="btn btn-red" onclick="saveLd()">Save</button>
@@ -2862,8 +2875,9 @@ async function rLeads(){
 
 async function rAll(){
   const s=(g('aS')?.value||'').toLowerCase(),st=g('aSt')?.value||'',as=g('aAsgn')?.value||'',v=g('aV')?.value||'',src=g('aSrc')?.value||'',
-        rel=g('aRel')?.value||'', ct=g('aCt')?.value||'', ci=g('aCi')?.value||'';
-  let leads=await api('/api/leads?'+qp({stage:st,assigned:as,vertical:v,source:src,q:s,relevance:rel,country:ct,city:ci,limit:300}));
+        rel=g('aRel')?.value||'', ct=g('aCt')?.value||'', ci=g('aCi')?.value||'',
+        arch=g('aArch')?.value||'';
+  let leads=await api('/api/leads?'+qp({stage:st,assigned:as,vertical:v,source:src,q:s,relevance:rel,country:ct,city:ci,archived:arch,limit:300}));
   if(!Array.isArray(leads))leads=[];
   g('aCnt').textContent=leads.length+' leads';
   g('aTb').innerHTML=leads.length?leads.map((l,i)=>`<tr onclick="openLd(${l.id})">
@@ -3296,6 +3310,7 @@ async function openLd(id){
   `;
   g('ldMob').style.display='flex';
   junkCheck(id);
+  archiveCheck(id);
   laLoad(id);
   // The Copilot panel answers "this lead" questions about the lead on
   // screen; opening it from a list does not change the URL it reads.
@@ -4602,6 +4617,80 @@ function laSay(text, bad){
 
 let JUNK = null;          // what /junk-check said about the open lead
 let JUNK_ON = false;      // is the feature here for this person at all
+
+/* ── CRM-USER-ISSUES-02NOV §1 · Archive ──────────────────────────
+   The reason is free text, not a dropdown: archiving is not a closed
+   set of outcomes the way "not relevant" is. It is required, and the
+   service requires it too — this prompt is a courtesy, not the rule,
+   so an archive from anywhere else is held to the same thing. */
+let ARCH = null;          // what /archive-state said about the open lead
+
+async function archiveCheck(id){
+  ARCH = null;
+  const btn = g('ldArch'), why = g('ldArchWhy');
+  if (btn) btn.style.display = 'none';
+  if (why) { why.style.display = 'none'; why.textContent = ''; }
+  let r = null;
+  try { r = await api('/api/leads/' + id + '/archive-state'); } catch(_){}
+  if (!r || !r.ok) return;
+  ARCH = r;
+  if (!btn) return;
+  btn.style.display = '';
+  btn.textContent = r.archived ? 'Restore from archive' : 'Archive';
+  if (r.may){
+    btn.disabled = false;
+    btn.style.opacity = '';
+    btn.title = r.archived
+      ? 'Puts it back into the active pipeline. Archived '
+        + (r.archived_at || '') + (r.reason ? ' — ' + r.reason : '')
+      : 'Takes it out of the lists, dashboards and reports and keeps '
+        + 'it, with its number. Reversible.';
+  } else {
+    /* Disabled rather than hidden, for the same reason as the junk
+       button: "why can I not" is worth answering where it is asked. */
+    btn.disabled = true;
+    btn.style.opacity = '.45';
+    btn.title = r.why_not || '';
+    if (why){ why.textContent = r.why_not || ''; why.style.display = ''; }
+  }
+}
+
+async function archiveLd(){
+  if (!activeId || !ARCH || !ARCH.may) return;
+
+  if (ARCH.archived){
+    const r = await api('/api/leads/' + activeId + '/archive-restore',
+                        {method:'POST', body: JSON.stringify({})});
+    if (r && r.ok){
+      toast('Restored to the active pipeline ✓', 'ok');
+      closeLd();
+      refreshLeadViews();
+    } else {
+      toast((r && r.error) || 'Could not restore it', 'err');
+    }
+    return;
+  }
+
+  const reason = prompt(
+    'Archive this lead.\n\nIt leaves the lists, dashboards and '
+    + 'reports, keeps its number, and can be restored.\n\nWhy is it '
+    + 'being archived?', '');
+  if (reason === null) return;              /* Cancel, not an empty reason */
+  if (!reason.trim() || reason.trim().length < (ARCH.min_reason || 4)){
+    toast('Say why — a few words is enough', 'err');
+    return;
+  }
+  const r = await api('/api/leads/' + activeId + '/archive',
+                      {method:'POST',
+                       body: JSON.stringify({reason: reason.trim()})});
+  if (r && r.ok){
+    toast('Archived ✓', 'ok');
+    closeLd();
+    refreshLeadViews();
+  } else {
+    toast((r && r.error) || 'Could not archive it', 'err');
+  }
+}
 
 async function junkAvailable(){
   let r = null;
