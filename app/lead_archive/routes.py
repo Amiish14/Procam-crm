@@ -15,6 +15,8 @@ reason that was rejected and not their permission.
 """
 from __future__ import annotations
 
+from functools import wraps
+
 from flask import Blueprint, abort, jsonify, request, session
 
 bp = Blueprint('lead_archive', __name__)
@@ -22,6 +24,26 @@ bp = Blueprint('lead_archive', __name__)
 
 def _me():
     return session.get('emp_code')
+
+
+def _archive(f):
+    """Signed in. Who may archive a *given* lead is a second check.
+
+    Its own decorator, like every other module's, so the route audit
+    in scripts/generate_reference_docs.py can name the gate instead of
+    reporting these as open — an audit with known-good exceptions in it
+    is an audit people learn to ignore.
+
+    There is no feature switch in front of it, unlike the junk routes:
+    §1 is a reported absence, and a fix for an absence that is itself
+    switched off leaves the absence in place.
+    """
+    @wraps(f)
+    def wrap(*a, **kw):
+        if not _me():
+            return jsonify(ok=False, error='Sign in first.'), 401
+        return f(*a, **kw)
+    return wrap
 
 
 def _lead(lid):
@@ -34,22 +56,19 @@ def _lead(lid):
 
 
 @bp.route('/api/leads/<int:lid>/archive-state')
+@_archive
 def state(lid):
     from app.services import lead_archive as la
 
-    code = _me()
-    if not code:
-        return jsonify(ok=False, error='Sign in first.'), 401
-    return jsonify(ok=True, **la.state_for(_lead(lid), code))
+    return jsonify(ok=True, **la.state_for(_lead(lid), _me()))
 
 
 @bp.route('/api/leads/<int:lid>/archive', methods=['POST'])
+@_archive
 def archive(lid):
     from app.services import lead_archive as la
 
     code = _me()
-    if not code:
-        return jsonify(ok=False, error='Sign in first.'), 401
     lead = _lead(lid)
     body = request.get_json(silent=True) or {}
     try:
@@ -68,12 +87,11 @@ def archive(lid):
 
 
 @bp.route('/api/leads/<int:lid>/archive-restore', methods=['POST'])
+@_archive
 def restore(lid):
     from app.services import lead_archive as la
 
     code = _me()
-    if not code:
-        return jsonify(ok=False, error='Sign in first.'), 401
     lead = _lead(lid)
     try:
         out = la.restore(lead, actor=code)

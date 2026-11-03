@@ -48,6 +48,31 @@ def _ago(hours):
 def world():
     with flask_app.app_context():
         db.create_all()
+        # Every test module in this suite shares one database — the
+        # first `os.environ.setdefault('DATABASE_URL', ...)` to run
+        # wins for the whole process — and SQLite reuses row ids after
+        # a delete. So a lead created here can inherit the assignment
+        # history of a lead another module created and removed, and a
+        # one-row assertion then sees three with nothing to explain
+        # why. test_junk_delete.py's `_purge` documents the same trap.
+        #
+        # Purged here rather than asserted around, because the counts
+        # below are the point of the tests: loosening them to tolerate
+        # strays would stop them noticing a second assignment, which
+        # is exactly what test_assigning_from_the_dashboard_uses_the
+        # _wp5_path exists to catch.
+        from app import LeadAssignmentHistory
+        from app.models.notification import Notification
+        for model in (LeadActivity, LeadStageHistory,
+                      LeadAssignmentHistory, Lead):
+            model.query.delete()
+        # The bell rows are keyed to the lead by entity_id, so they
+        # inherit a reused id exactly as the history rows do — and the
+        # assertion below is a set of recipients, which strays break
+        # just as quietly.
+        Notification.query.filter_by(entity_type='Lead').delete(
+            synchronize_session=False)
+        db.session.commit()
         for code, name, role, admin in (
                 ('TRIADM', 'Triage Admin', 'admin', True),
                 ('SALES1', 'Sales One', 'user', False),

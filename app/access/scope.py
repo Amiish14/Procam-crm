@@ -261,7 +261,18 @@ def leads(q=None, sc=None, *, include_deleted=False,
     if not include_deleted:
         q = q.filter(Lead.junk_deleted.isnot(True))
     if not include_archived:
-        q = q.filter(Lead.is_archived.isnot(True))
+        # `mark_not_relevant` sets `is_archived` as well as
+        # `junk_deleted` — deliberately, so the modules that already
+        # hid archived leads hid junk too without being changed. That
+        # makes the two filters overlap: a plain archived exclusion
+        # would empty the bin for a caller that asked for the deleted
+        # ones, because every junked lead is also archived. So a
+        # caller that asked for the deleted rows keeps them, and
+        # ordinary archived rows still need include_archived.
+        archived = Lead.is_archived.isnot(True)
+        if include_deleted:
+            archived = or_(archived, Lead.junk_deleted.is_(True))
+        q = q.filter(archived)
     if not (sc.lead_allowances and allowances_on()):
         return _narrow(q, Lead.assigned_to, sc,
                        extra_columns=(Lead.secondary_owner,))

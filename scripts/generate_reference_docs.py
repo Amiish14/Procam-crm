@@ -96,6 +96,14 @@ _GATES = (
     # session. Who may delete a given lead is a second check inside
     # each write - its owner, its vertical head, or an admin - and
     # the Admin bin adds @_admin_only on top.
+    # Archive a lead (CRM-USER-ISSUES-02NOV §1). The same shape as
+    # @_junk minus the feature switch: §1 is a reported absence, and a
+    # fix for an absence that is itself switched off leaves the
+    # absence in place. Who may archive a given lead is a second check
+    # inside each write — its owner, its vertical head, or an admin,
+    # which is junk_delete.may_delete imported rather than restated.
+    (re.compile(r"@_archive\b"), 'signed in; archiving is owner, '
+                                 'head-of-vertical or admin'),
     (re.compile(r"@_junk\b"), 'FEATURE_JUNK_DELETE, then signed in; '
                               'deleting is owner, head-of-vertical '
                               'or admin'),

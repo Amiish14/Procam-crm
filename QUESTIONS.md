@@ -1895,3 +1895,44 @@ again.
    (`procam-crm-graph-subscription.timer`, renewing daily against a
    ~2.9-day expiry) and `app/ops/checks.py` watches it, so the guard
    exists — but it is worth knowing that this is what it guards.
+
+## 69 — Three the full suite caught
+
+All three were mine, and I checked rather than assumed: the suite was
+**5032 passed, 0 failed** at d8f01a1 in a clean worktree, so none of
+them was pre-existing. I had initially leaned towards "pre-existing
+pollution" on the third and was wrong.
+
+**1. Three ungated routes.** The archive routes checked
+`session.get('emp_code')` inline, which `scripts/generate_reference_docs
+.py` cannot see, so the route audit reported them as open. Listing them
+in `PUBLIC_ROUTES` would have been a lie — they are not public. They
+now carry an `@_archive` decorator registered in `_GATES` with its
+reason, which is what every other module does. An audit with
+known-good exceptions in it is an audit people learn to ignore.
+
+**2. The Admin bin would have been empty.** `mark_not_relevant` sets
+`is_archived` as well as `junk_deleted` — deliberately, so the modules
+that already hid archived leads hid junk too without being changed.
+That makes the two filters overlap, and my new archived exclusion in
+`scope.leads` therefore removed every junked lead from a caller that
+had explicitly asked for them with `include_deleted=True`. The live bin
+survived only because `junk_delete.deleted()` queries `Lead.query`
+directly; the contract the test encodes was broken, and the next caller
+to use it would have got an empty bin. Now a caller that asks for the
+deleted rows keeps them, and ordinary archived rows still need
+`include_archived`.
+
+**3. Id reuse across modules, which this repo already documents.**
+Every test module shares one database — the first
+`os.environ.setdefault('DATABASE_URL', ...)` to run wins for the whole
+process — and SQLite reuses row ids after a delete. My four new modules
+shifted the id sequence, so `test_lead_triage`'s "Six Hours Co"
+inherited another module's `LeadAssignmentHistory` and `Notification`
+rows, and a one-row assertion saw three.
+`tests/test_junk_delete.py::_purge` describes this exact trap in a
+comment. Fixed by purging those tables in the triage fixture, which
+had no teardown at all, rather than by loosening the assertions: the
+counts are the point of those tests, and tolerating strays would stop
+them noticing a second assignment, which is what that test exists to
+catch.
