@@ -49,6 +49,16 @@ those are two different enquiries. The two kinds are counted
 separately in the summary, because they are not equally certain and a
 reader deciding what to merge needs to know which is which.
 
+WHICH ONE IT SUGGESTS KEEPING
+
+It used to say keep the oldest, which in this data is almost always
+the wrong one: the pairs on file are an empty first copy somebody
+marked Lost and a second copy the owner actually worked. So the
+suggestion is now the one that got furthest down the journey, and
+where two sit on the same stage, the newer. It is still only a
+suggestion, printed next to both leads, and nothing in this script
+acts on it.
+
 WHAT IT DELIBERATELY DOES NOT DO
 
 It does not guess at pairs with no key at all. A lead with no
@@ -64,6 +74,7 @@ import io
 import os
 import sys
 from collections import defaultdict
+from datetime import datetime
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
@@ -71,10 +82,55 @@ sys.path.insert(0, os.path.dirname(_HERE))
 from app import Lead, app, db                              # noqa: E402
 
 from app.services import lead_merge, lead_thread           # noqa: E402
+from app.services import stage_map                         # noqa: E402
 
 #: Where the CSV goes when --csv is passed with no path.
 DEFAULT_CSV = os.path.join(_HERE, '..', 'data',
                            'thread_duplicates_03NOV.csv')
+
+
+#: Closed states, least worth keeping first. `stage_map.TERMINAL`
+#: names four and one of them — Won — is the far end of the journey
+#: rather than a dead end, so it is ranked with the live stages and
+#: not here. On Hold can come back and Lost will not, which is the
+#: order. A test asserts this covers TERMINAL, so a new closed state
+#: has to be placed deliberately rather than falling somewhere by
+#: accident.
+CLOSED_ORDER = ('Lost', 'Not Interested', 'On Hold')
+
+#: For leads with no created_at, so the tie-break can sort them.
+_NO_DATE = datetime.min
+
+
+def advancement(lead):
+    """How far down the journey this lead got. Bigger is further.
+
+    Read off `stage_map.JOURNEY` rather than written out again here,
+    so it cannot drift from the order the funnel, the board and the
+    reports all use. Won is the end of that journey and so ranks
+    highest: a thread that produced a win keeps the win.
+    """
+    stage = stage_map.canonical(lead.stage)
+    if stage in stage_map.JOURNEY:
+        return 100 + stage_map.JOURNEY.index(stage)
+    if stage in CLOSED_ORDER:
+        return CLOSED_ORDER.index(stage)
+    # A stage name nothing recognises. Above the closed states and
+    # below every live one: it is probably something live, and letting
+    # an unknown word outrank a real Under Negotiation would be worse
+    # than this.
+    return len(CLOSED_ORDER)
+
+
+def rank(lead):
+    """Sort key for "which of these would you keep". Highest wins.
+
+    Most advanced, then newest. Newest and not oldest for the same
+    reason as the whole change: where two copies sit on the same
+    stage, the later one is the one carrying the reply that created
+    it, and the earlier one is usually the husk.
+    """
+    return (advancement(lead), lead.created_at or _NO_DATE, lead.id)
 
 
 def _live():
@@ -127,7 +183,11 @@ def pairs(groups):
             'kind': ('subject + sender domain' if windowed
                      else 'conversation id'),
             'certain': not windowed,
-            'leads': sorted(leads, key=lambda l: l.id),
+            # Best first, so the suggestion is the line a reader's eye
+            # lands on and the ones below it are the candidates to
+            # close.
+            'leads': sorted(leads, key=rank, reverse=True),
+            'keep': max(leads, key=rank),
         })
     # The certain ones first, then the biggest groups: that is the
     # order somebody working through the list would choose.
@@ -169,7 +229,7 @@ def report(found, unkeyable, show):
         print(f'   key: {group["key"][:90]}')
         for lead in group['leads']:
             r = _row(lead)
-            keep = '(keep?)' if lead is group['leads'][0] else '       '
+            keep = '(keep?)' if lead is group['keep'] else '       '
             print(f'   {keep} #{r["lead"]:<7} {r["created"]}  '
                   f'{r["stage"]:<16} {r["owner"]:<10} '
                   f'{r["company"]:<40} {r["sender"]}')
@@ -178,8 +238,9 @@ def report(found, unkeyable, show):
     if len(found) > show:
         print(f'\n… and {len(found) - show} more. --show {len(found)} '
               f'for all of them.')
-    print('\nNothing is merged by this script. The oldest lead in each '
-          'thread is marked "(keep?)" as a suggestion only — merging '
+    print('\nNothing is merged by this script. "(keep?)" marks the '
+          'lead that got furthest down the journey — and where two '
+          'are level, the newer one. It is a suggestion only: merging '
           'is done on /admin/account-duplicates, where whoever decides '
           'can see both leads.')
     return certain, likely
@@ -197,7 +258,7 @@ def write_csv(found, path):
             out.writerow([group['key'], group['kind'],
                           'yes' if group['certain'] else 'no',
                           len(group['leads']), r['lead'],
-                          'yes' if lead is group['leads'][0] else 'no',
+                          'yes' if lead is group['keep'] else 'no',
                           r['company'], r['stage'], r['owner'],
                           r['created'], r['sender'], r['subject']])
     path = os.path.abspath(path)

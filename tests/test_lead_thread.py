@@ -328,8 +328,8 @@ def test_the_report_groups_two_leads_on_one_thread():
         b = _lead(thread_key=key)
         groups, _unkeyable = mod.survey()
         found = mod.pairs(groups)
-        ids = [[l.id for l in g['leads']] for g in found]
-        assert [a.id, b.id] in ids
+        ids = [sorted(l.id for l in g['leads']) for g in found]
+        assert sorted([a.id, b.id]) in ids
 
 
 def test_a_lone_lead_is_not_a_pair():
@@ -339,14 +339,146 @@ def test_a_lone_lead_is_not_a_pair():
         assert mod.pairs(mod.survey()[0]) == []
 
 
-def test_the_oldest_is_the_one_suggested_to_keep():
+def _group_holding(mod, lead_id):
+    """The reported group that holds this lead.
+
+    Looked up by lead rather than by key because `survey()` computes
+    the key from the lead's own columns — a thread_key passed to the
+    fixture is not what it groups on.
+    """
+    for group in mod.pairs(mod.survey()[0]):
+        if any(l.id == lead_id for l in group['leads']):
+            return group
+    raise AssertionError(f'lead {lead_id} was not reported in any group')
+
+
+# ── which one it suggests keeping ────────────────────────────────────
+#
+# This was "the oldest" until the report was read against real data,
+# where the oldest is almost always the empty first copy somebody
+# marked Lost and the newer one is what the owner actually worked.
+# Keeping the oldest would have discarded the work and kept the husk.
+def test_the_worked_lead_is_kept_not_the_older_lost_copy():
+    """The case that prompted the change."""
     with flask_app.app_context():
         mod = _script()
         key = lt.key_for_message(_msg())
-        first = _lead(thread_key=key)
-        _lead(thread_key=key)
+        husk = _lead(thread_key=key, stage='Lost',
+                     created=datetime.utcnow() - timedelta(days=3))
+        worked = _lead(thread_key=key, stage='Under Negotiation')
         group = mod.pairs(mod.survey()[0])[0]
-        assert group['leads'][0].id == first.id
+        assert group['keep'].id == worked.id
+        assert group['keep'].id != husk.id
+        # And it is printed first, so it is the line the eye lands on.
+        assert group['leads'][0].id == worked.id
+
+
+def test_the_order_the_user_gave_holds_in_both_directions():
+    """Under Negotiation > RFQ Generated > New Opportunity > New >
+    Lost. Checked pairwise and with the newer lead on the losing side
+    each time, so a stage ranking that was really just "newest" would
+    fail."""
+    ladder = ['Under Negotiation', 'RFQ Generated', 'New Opportunity',
+              'New', 'Lost']
+    with flask_app.app_context():
+        mod = _script()
+        for i, better in enumerate(ladder):
+            for worse in ladder[i + 1:]:
+                # A sender of its own, because the key the report
+                # groups on is computed from subject + sender domain.
+                sender = f'buyer@zzrank-{i}-{worse.replace(" ", "")}' \
+                         f'.example'
+                _lead(sender=sender, stage=better,
+                      created=datetime.utcnow() - timedelta(days=2))
+                loser = _lead(sender=sender, stage=worse)
+                group = _group_holding(mod, loser.id)
+                assert group['keep'].stage == better, (
+                    f'{worse} outranked {better}')
+                assert group['keep'].id != loser.id
+
+
+def test_level_stages_break_to_the_newer_one():
+    """Two copies on the same stage: the later one is the one carrying
+    the reply that created it."""
+    with flask_app.app_context():
+        mod = _script()
+        key = lt.key_for_message(_msg())
+        _lead(thread_key=key, stage='New Opportunity',
+              created=datetime.utcnow() - timedelta(days=4))
+        newer = _lead(thread_key=key, stage='New Opportunity')
+        group = mod.pairs(mod.survey()[0])[0]
+        assert group['keep'].id == newer.id
+
+
+def test_a_won_lead_is_never_the_one_discarded():
+    """Won is the end of the journey, not a dead end beside Lost."""
+    with flask_app.app_context():
+        mod = _script()
+        key = 'c:AAQkAD-won'
+        _lead(thread_key=key, conversation='AAQkAD-won',
+              stage='Under Negotiation')
+        won = _lead(thread_key=key, conversation='AAQkAD-won',
+                    stage='Won',
+                    created=datetime.utcnow() - timedelta(days=10))
+        group = mod.pairs(mod.survey()[0])[0]
+        assert group['keep'].id == won.id
+
+
+def test_a_retired_stage_name_ranks_where_it_means():
+    """`stage_map.ALIASES` folds "Visit Done" onto Business
+    Discussion, which is further along than New. A lead nobody has
+    saved since the rename should not be treated as the husk."""
+    with flask_app.app_context():
+        mod = _script()
+        sender = 'buyer@zzalias-client.example'
+        visit = _lead(sender=sender, stage='Visit Done',
+                      created=datetime.utcnow() - timedelta(days=2))
+        plain = _lead(sender=sender, stage='New')
+        group = _group_holding(mod, plain.id)
+        assert group['keep'].id == visit.id
+
+
+def test_an_unknown_stage_outranks_closed_and_not_a_live_one():
+    """It is probably something live, so it beats Lost; but letting a
+    word nothing recognises outrank a real Under Negotiation would be
+    worse than ranking it low."""
+    with flask_app.app_context():
+        mod = _script()
+        mystery = _lead(stage='Sent To Pricing Desk')
+        assert mod.advancement(mystery) > mod.advancement(
+            _lead(stage='Lost'))
+        assert mod.advancement(mystery) < mod.advancement(
+            _lead(stage='New'))
+
+
+def test_every_closed_stage_is_ranked_deliberately():
+    """So adding a terminal state to stage_map makes this fail here
+    rather than putting leads somewhere by accident."""
+    from app.services import stage_map
+
+    mod = _script()
+    closed = [s for s in stage_map.TERMINAL
+              if s not in stage_map.JOURNEY]
+    assert sorted(closed) == sorted(mod.CLOSED_ORDER), (
+        f'stage_map.TERMINAL has {sorted(closed)}; the report ranks '
+        f'{sorted(mod.CLOSED_ORDER)}')
+
+
+def test_the_suggestion_is_still_only_a_suggestion():
+    """§2: "Don't merge them; I decide." A better suggestion is still
+    a suggestion — nothing in the script acts on `keep`."""
+    import ast as _ast
+
+    path = os.path.join(_ROOT, 'scripts',
+                        '2026_11_03_thread_duplicates.py')
+    tree = _ast.parse(open(path).read())
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Subscript):
+            index = node.slice
+            if isinstance(index, _ast.Constant) and index.value == 'keep':
+                # Only ever compared or printed, never assigned to.
+                assert not isinstance(getattr(node, 'ctx', None),
+                                      _ast.Store)
 
 
 def test_a_conversation_pair_is_reported_as_certain():

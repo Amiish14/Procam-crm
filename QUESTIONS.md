@@ -2031,3 +2031,53 @@ Confirmed 3 Nov: the 30-day window applies to the new `thread_key` path
 only, and `find_by_subject` stays at 180. Narrowing it would match
 fewer replies and so create more duplicates. QUESTIONS 66 has the
 reasoning; this records the decision as taken rather than open.
+
+## 71 — "(keep?)" was the oldest, and the oldest is the husk
+
+Reported 3 Nov, after the thread-duplicate report was read against the
+real data: no merges are needed, because in every pair the extra lead
+is already Lost — and the lead the report suggested keeping was that
+Lost one, because it was the older of the two.
+
+That is backwards for the way these pairs come about. A reply arrives
+on a thread the CRM did not recognise, so a second lead is created; a
+person notices the first copy is empty and marks it Lost; the owner
+works the second. The oldest is therefore the copy with nothing in it,
+and the newest is the one carrying the enquiry.
+
+### The order
+
+Most advanced live status first, then newest:
+
+    Won > Under Negotiation > Quoted > RFQ Generated >
+    New Opportunity > Business Discussion > Call Done > New >
+    (unrecognised) > On Hold > Not Interested > Lost
+
+The five the request named sit in that order. The rest are not written
+out again in the script: `advancement()` reads the position off
+`stage_map.JOURNEY`, so the report cannot drift from the order the
+funnel, the board and the reports all use, and `stage_map.canonical`
+folds a retired name like "Visit Done" onto the stage it means — a
+lead nobody has saved since the rename is not the husk.
+
+Two calls beyond what was asked for, both stated here rather than
+buried:
+
+**Won ranks highest**, above Under Negotiation. Won is the far end of
+`JOURNEY`, not a dead end beside Lost, and a thread that produced a win
+should keep the win.
+
+**An unrecognised stage name ranks above every closed state and below
+every live one.** It is probably something live, so it should beat
+Lost; but letting a word nothing recognises outrank a real Under
+Negotiation would be worse. `CLOSED_ORDER` is asserted against
+`stage_map.TERMINAL` in a test, so a new closed state has to be placed
+deliberately instead of landing somewhere by accident.
+
+### Still only a suggestion
+
+§2 said "I decide", and that has not changed. The report prints
+"(keep?)" against one line of a group it prints in full, writes
+`suggested_keep` in the CSV, and does nothing with either. The group
+is now printed best-first so the suggestion is the line the eye lands
+on. A test walks the script's AST and asserts nothing assigns to it.
