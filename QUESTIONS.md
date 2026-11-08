@@ -2293,3 +2293,84 @@ truer answer and the one a person reading the audit row can check.
 A named id that is not an open task **stops the run**. Closing nine
 hundred rows while quietly dropping one of four asked for by name
 reports a job half done as a job finished.
+
+## 73 — fault 3, half of it: two tasks that waited on one stage name
+
+`lead.qualify` (17 open) and `lead.rfq_review` (22 open) pile up, and
+it is the same fault twice: a completion rule naming exactly one
+stage, and a lead under no obligation to pass through it.
+
+**`lead.qualify` waited on `Lead / Profile Sent`, and that stage no
+longer exists.** `stage_map.ALIASES` retired it onto Call Done, so
+nothing writes it and the task could never complete. The October
+release note records it as "closes on Profile Sent ✓" — which was
+true the day it was written and stopped being true when the stage was
+renamed. Nothing connected the rename to the task definition, and
+nothing reported the task as unclosable afterwards.
+
+**`lead.rfq_review` waited on `Lead / Quoted`.** That stage does
+exist, but RFQ Generated → Under Negotiation is what happens when the
+customer negotiates off a verbal, and RFQ Generated → Lost is what
+happens when they go elsewhere. Neither route passes through Quoted,
+so the task stayed open on a lead nobody was working.
+
+### Past the point, not at it
+
+Each task now closes on every state at or beyond the point its work
+belongs to, plus the terminal states. A lead that reached Won
+obviously got qualified; a lead marked Lost obviously will not be.
+Both are answers, and an open task is not.
+
+The lists are computed from `stage_map.JOURNEY` and
+`stage_map.TERMINAL`, never typed — a typed list is how this broke
+the first time. A test asserts the computed set equals the journey
+past the anchor plus the terminals, so adding a stage fails there
+instead of quietly producing another immortal task. Another asserts
+`closing_states` contains no stage literal at all.
+
+### The one engine change, and the half of it I did not make
+
+`_state_matches` now accepts `states`, a list, so a rule can name
+several closing stages. It also gained `fold_aliases`, which reads
+both sides through `stage_map.canonical` so a lead still written
+'Visit Done' matches a rule naming Business Discussion.
+
+**`fold_aliases` is passed on the closing side only.** Folding when
+closing can only ever close more tasks, which is the point. Folding
+when creating would make more tasks — a release that quietly doubled
+the task count would be a worse fault than the one being fixed. A
+test pins both directions.
+
+### Why the rule and the sweep are one run
+
+The rule alone leaves the existing backlog open forever:
+`on_state_change` fires on the next transition, and these leads have
+already had theirs. The sweep alone clears the backlog and the engine
+immediately starts making more. So `--apply` does both, in one
+transaction.
+
+### Completed or Cancelled, and why both
+
+Where the lead advanced through the journey the work happened — a
+lead cannot reach Quoted without its RFQ having been reviewed — so
+the row is **Completed**. Where the lead died the work became moot
+and nobody did it, so it is **Cancelled**. Marking them all Completed
+records work nobody did; marking them all Cancelled erases work that
+was done. Each row's notes says which and why, and each gets an audit
+row.
+
+### What is still open
+
+`deal.lost.debrief` and `competitor.log` — the other two immortals,
+and by far the larger number — are **not** fixed. One has no
+completion state at all; the other waits on an Opportunity state that
+was never built. Neither needs a longer list of stages; each needs a
+decision about what "done" means. The script counts them every run so
+the remaining backlog stays honest rather than looking solved.
+
+### A note on §9
+
+`scripts/close_named_tasks.py` already exists for ids 1342, 1541,
+1283 and 1536 specifically. `--task` on the backlog report is the
+general form of the same thing, which is what §9 asked for; either
+closes those four.

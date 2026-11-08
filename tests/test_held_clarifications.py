@@ -70,11 +70,41 @@ def clean():
 
 
 def _purge():
-    TaskInstance.query.delete()
-    RFQ.query.delete()
-    Lead.query.delete()
-    AuditEvent.query.filter(
-        AuditEvent.entity_type == 'rfq').delete(synchronize_session=False)
+    """Only the rows this module made.
+
+    It used to delete every Lead, RFQ and TaskInstance in the
+    database. Every test module here shares one database, so a
+    wholesale delete takes other modules' fixtures with it — and the
+    module that notices is whichever one runs next and measures
+    something company-wide. `test_hygiene` scores the whole book, so
+    it read a book this module had emptied and reported a population
+    of one.
+    """
+    from app.models.mailops import EmailOutbox
+
+    rfq_ids = [r.id for r in RFQ.query.filter(
+        RFQ.rfq_number.like('RFQ-ZH%')).all()]
+    lead_ids = [l.id for l in Lead.query.filter(
+        Lead.company.like('ZHeld%')).all()]
+
+    if rfq_ids:
+        TaskInstance.query.filter(
+            TaskInstance.entity_type == 'RFQ',
+            TaskInstance.entity_id.in_(rfq_ids)).delete(
+                synchronize_session=False)
+        AuditEvent.query.filter(
+            AuditEvent.entity_type == 'rfq',
+            AuditEvent.entity_id.in_([str(i) for i in rfq_ids])).delete(
+                synchronize_session=False)
+        EmailOutbox.query.filter(
+            EmailOutbox.entity_type == 'rfq',
+            EmailOutbox.entity_id.in_(rfq_ids)).delete(
+                synchronize_session=False)
+    RFQ.query.filter(RFQ.rfq_number.like('RFQ-ZH%')).delete(
+        synchronize_session=False)
+    if lead_ids:
+        Lead.query.filter(Lead.id.in_(lead_ids)).delete(
+            synchronize_session=False)
     db.session.commit()
 
 

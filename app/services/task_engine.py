@@ -127,7 +127,8 @@ def _close_matching_open_tasks(entity, entity_type, new_state,
                      .filter(TaskDefinition.is_active.is_(True))
                      .all())
     matches = [d for d in matching_defs
-               if _state_matches(d.completion_state, entity_type, new_state)]
+               if _state_matches(d.completion_state, entity_type,
+                                 new_state, fold_aliases=True)]
     if not matches:
         return
     keys = {d.task_key for d in matches}
@@ -274,20 +275,53 @@ def _resolve_owners(entity, tdef):
 # =========================================================================
 # HELPERS
 # =========================================================================
-def _state_matches(rule, entity_type, state):
+def _state_matches(rule, entity_type, state, *, fold_aliases=False):
     """rule is a dict like {'entity': 'Lead', 'state': 'RFQ Generated'}.
 
     A rule with `state='*'` matches any state (useful for wildcards).
     A rule with `state='__created__'` fires on entity creation.
+
+    A rule may instead carry `states`, a list, and matches any of
+    them. That is what fixes fault 3: a task that closes on exactly
+    one stage name stays open forever on every lead that does not
+    happen to pass through it, and leads legitimately go RFQ
+    Generated → Under Negotiation, or straight to Lost. See
+    `app.services.task_close_rules`.
+
+    `fold_aliases` reads both sides through `stage_map.canonical`, so
+    a lead still written 'Visit Done' matches a rule naming Business
+    Discussion. It is passed on the **closing** side only. Folding
+    when closing can only ever close more tasks, which is the point;
+    folding when creating would make more tasks, which nobody asked
+    for — and a release that quietly doubled the task count would be
+    a worse fault than the one being fixed.
     """
     if not rule or not isinstance(rule, dict):
         return False
     if str(rule.get('entity', '')).lower() != str(entity_type).lower():
         return False
-    r_state = str(rule.get('state', '')).lower()
-    if r_state == '*':
+
+    def _norm(value):
+        text = str(value or '')
+        if fold_aliases:
+            try:
+                from app.services import stage_map
+                text = stage_map.canonical(text) or text
+            except Exception:                             # noqa: BLE001
+                pass
+        return text.lower()
+
+    wanted = [rule.get('state')] if rule.get('state') is not None else []
+    listed = rule.get('states')
+    if isinstance(listed, (list, tuple)):
+        wanted.extend(listed)
+    if not wanted:
+        return False
+
+    if any(str(w or '').lower() == '*' for w in wanted):
         return True
-    return r_state == str(state).lower()
+    here = _norm(state)
+    return any(_norm(w) == here for w in wanted)
 
 
 def _entity_display(entity, entity_type):

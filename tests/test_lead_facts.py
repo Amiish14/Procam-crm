@@ -94,6 +94,17 @@ def _lead(**kw):
     lead = Lead(**kw)
     db.session.add(lead)
     db.session.commit()
+    # Every test module in this suite shares one database and SQLite
+    # reuses row ids, so the id this lead just took may already carry
+    # `lead.stage_change` audit rows left behind by a deleted fixture
+    # in another module. `lead_dates.evidence()` reads exactly those,
+    # so a lead created here with nothing dated would be handed
+    # another module's stage history and come back `estimated`.
+    AuditEvent.query.filter(
+        AuditEvent.entity_type == 'lead',
+        AuditEvent.entity_id == str(lead.id)).delete(
+            synchronize_session=False)
+    db.session.commit()
     return lead
 
 
