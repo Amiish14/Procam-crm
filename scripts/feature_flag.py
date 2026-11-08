@@ -43,6 +43,22 @@ The kill switch is not a feature
     is a sentence nobody intends. `--include-kill-switch` turns it on
     deliberately, and `--code EMAIL_KILL_SWITCH --on` always works.
 
+Holding one back
+    `--except FEATURE_X` leaves a named flag out of `--all-on`.
+    Repeatable, and a comma-separated list is accepted.
+
+    It exists for FEATURE_JUNK_PURGE. That flag lets an administrator
+    permanently remove deleted leads older than ninety days, after an
+    export — the one switch in this list that enables a hard delete,
+    against a standing rule that nothing is ever hard-deleted. "Every
+    feature on" almost certainly does not mean "and the purge", so
+    there has to be a way to say so in one command rather than
+    switching everything on and then switching one back off, which
+    leaves a window where it was on.
+
+    What is held back is printed, every run, so a flag left out is
+    never left out silently.
+
 The rollback file
     Written before the first change, and the run stops if it cannot
     be written. It holds every flag's stored state, both pilot lists,
@@ -76,6 +92,16 @@ ROLLBACK_DIR = os.path.join('backups', 'flags')
 
 #: The one flag `--all-on` will not touch. See the module docstring.
 KILL_SWITCH = 'EMAIL_KILL_SWITCH'
+
+#: Flags worth holding back from "everything on", and why. Printed
+#: as a suggestion, never applied on its own — the decision is the
+#: director's, and a script that quietly withheld a release would be
+#: worse than one that turns on more than was wanted.
+WORTH_HOLDING = {
+    'FEATURE_JUNK_PURGE':
+        'it permanently removes deleted leads older than 90 days, '
+        'which is the only hard delete in this list',
+}
 
 
 # ── reading where things stand ───────────────────────────────────────
@@ -116,6 +142,27 @@ def resolve(code):
     if ('FEATURE_' + want) in flags.DEFAULTS:
         return 'FEATURE_' + want
     return None
+
+
+def resolve_many(raw):
+    """--except values to flag names, in the order given.
+
+    Refuses an unknown name rather than ignoring it: a typo that is
+    silently dropped turns "everything except the purge" into
+    "everything", and the person running it would have no way to tell
+    from the output.
+    """
+    out = []
+    for item in (raw or []):
+        for part in str(item).replace(' ', ',').split(','):
+            if not part:
+                continue
+            name = resolve(part)
+            if name is None:
+                raise SystemExit(f'--except: no such flag {part!r}')
+            if name not in out:
+                out.append(name)
+    return out
 
 
 def live_for(name):
@@ -375,6 +422,10 @@ def main(argv=None):
                     help='with --code: off for everybody')
     ap.add_argument('--restore', default='',
                     help='a rollback file to put back')
+    ap.add_argument('--except', dest='excluded', action='append',
+                    default=None, metavar='FLAG',
+                    help='leave this flag out of --all-on. Repeatable, '
+                         'and a comma-separated list is accepted.')
     ap.add_argument('--include-kill-switch', action='store_true',
                     help='let --all-on touch EMAIL_KILL_SWITCH, which '
                          'stops all outbound mail')
@@ -446,6 +497,30 @@ def main(argv=None):
                       f'outbound mail.')
                 print('  --include-kill-switch turns it on deliberately.')
                 print()
+
+            held = resolve_many(args.excluded)
+            if held:
+                names = [n for n in names if n not in held]
+                print('Held back by --except:')
+                for name in held:
+                    why = WORTH_HOLDING.get(name, '')
+                    print(f'  {name}' + (f' — {why}' if why else ''))
+                print()
+
+            # Named rather than withheld. A flag this script thinks is
+            # worth holding back is still switched on unless somebody
+            # says otherwise — the decision belongs to the person
+            # running it, and the only job here is that it is not made
+            # by accident.
+            unheld = [n for n in WORTH_HOLDING if n in names]
+            if unheld:
+                print('About to switch on, and worth a second look:')
+                for name in unheld:
+                    print(f'  {name} — {WORTH_HOLDING[name]}')
+                print(f'  --except {",".join(unheld)} leaves '
+                      f'{"it" if len(unheld) == 1 else "them"} off.')
+                print()
+
             what = 'all-on'
             steps = plan_on(names, rows=rows)
         else:

@@ -360,3 +360,80 @@ def test_set_pilot_off_actually_turns_the_flag_off(monkeypatch):
         flags.cache_clear()
         assert not flags.on(ONE)
         assert flags.only_for(ONE) == ()
+
+
+# ── --except: holding one flag back from "everything on" ─────────────
+#
+# CRM-FINAL-CLOSEOUT-01 §1 asks for every built feature on for all
+# users. FEATURE_JUNK_PURGE is the one switch in the list that
+# enables a hard delete, against a standing rule that nothing is ever
+# hard-deleted — so there has to be a way to say "everything except
+# that" in one command. Switching everything on and then switching
+# one back off leaves a window in which it was on.
+def test_all_on_except_leaves_that_flag_alone(tmp_path):
+    assert _run('--all-on', '--except', 'FEATURE_JUNK_PURGE',
+                '--apply', *_rollback_dir(tmp_path)) == 0
+    with flask_app.app_context():
+        flags.cache_clear()
+        assert not flags.on('FEATURE_JUNK_PURGE')
+        # And everything else still went on.
+        assert flags.on('FEATURE_FF_CRM')
+        assert flags.on('FEATURE_RFQ_CHAIN')
+        assert flags.on('FEATURE_CRM2')
+
+
+def test_except_takes_a_list_and_several_options(tmp_path):
+    assert _run('--all-on',
+                '--except', 'FEATURE_JUNK_PURGE,FEATURE_JUNK_SUGGEST',
+                '--except', 'FEATURE_WEEKLY_PACK',
+                '--apply', *_rollback_dir(tmp_path)) == 0
+    with flask_app.app_context():
+        flags.cache_clear()
+        for name in ('FEATURE_JUNK_PURGE', 'FEATURE_JUNK_SUGGEST',
+                     'FEATURE_WEEKLY_PACK'):
+            assert not flags.on(name), name
+        assert flags.on('FEATURE_CRM2')
+
+
+def test_except_accepts_the_short_name():
+    """The name in somebody's hand came out of a release note."""
+    assert ff.resolve_many(['junk_purge']) == ['FEATURE_JUNK_PURGE']
+    assert ff.resolve_many(['FEATURE_JUNK_PURGE']) == \
+        ['FEATURE_JUNK_PURGE']
+
+
+def test_an_unknown_except_stops_the_run():
+    """A typo that is silently dropped turns "everything except the
+    purge" into "everything", and the output would not say so."""
+    with pytest.raises(SystemExit):
+        ff.resolve_many(['FEATURE_NO_SUCH_THING'])
+
+
+def test_except_writes_nothing_on_a_dry_run(tmp_path):
+    assert _run('--all-on', '--except', 'FEATURE_JUNK_PURGE',
+                *_rollback_dir(tmp_path)) == 0
+    with flask_app.app_context():
+        flags.cache_clear()
+        assert not flags.on('FEATURE_CRM2')
+
+
+def test_the_hard_delete_flag_is_the_one_named_as_worth_holding():
+    """If another hard delete is ever added behind a flag, this is
+    where somebody has to decide about it."""
+    assert 'FEATURE_JUNK_PURGE' in ff.WORTH_HOLDING
+    assert 'hard delete' in ff.WORTH_HOLDING['FEATURE_JUNK_PURGE']
+
+
+def test_a_held_flag_is_restored_by_the_rollback_file(tmp_path):
+    """The way back has to put back what was actually there, which
+    for a held flag is "no row at all"."""
+    assert _run('--all-on', '--except', 'FEATURE_JUNK_PURGE',
+                '--apply', *_rollback_dir(tmp_path)) == 0
+    files = sorted(os.listdir(str(tmp_path)))
+    assert files, 'no rollback file was written'
+    saved = json.load(open(os.path.join(str(tmp_path), files[-1])))
+    held = [r for r in saved['flags']
+            if r['name'] == 'FEATURE_JUNK_PURGE'][0]
+    assert held['stored'] is None, (
+        'the rollback file should record that it had no row, not that '
+        'it was false')

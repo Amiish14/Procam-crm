@@ -2081,3 +2081,215 @@ deliberately instead of landing somewhere by accident.
 `suggested_keep` in the CSV, and does nothing with either. The group
 is now printed best-first so the suggestion is the line the eye lands
 on. A test walks the script's AST and asserts nothing assigns to it.
+
+## 72 — CRM-FINAL-CLOSEOUT-01: nine items, and what each one really was
+
+Three of the nine were already built and needed a command, not code.
+Two were half-built. Four were absent. The split is recorded because
+"switch it on" and "build it" look identical in a release note.
+
+### §1 — the flags, and the one that should not go on
+
+`scripts/feature_flag.py --all-on` already did this, and the only
+change needed was a way to hold one flag back.
+
+**FEATURE_JUNK_PURGE lets an administrator permanently remove deleted
+leads older than ninety days.** It is the one switch in the list that
+enables a hard delete, against a standing rule that nothing is ever
+hard-deleted. "Every built feature on" almost certainly does not mean
+"and the purge", so `--except` exists: the alternative is switching
+everything on and then switching one back off, which leaves a window
+in which it was on.
+
+It is named and not withheld. A script that quietly held a release
+back would be worse than one that turns on more than was wanted, so
+`--all-on` still switches it on unless somebody says otherwise — and
+prints, every run, the flags it thinks are worth a second look.
+
+An unknown `--except` name stops the run. A typo silently dropped
+turns "everything except the purge" into "everything", and the output
+would not say so.
+
+### §2 — the sending address, where the failure is silence
+
+The [CRM] tag was already applied, once, in `mailer.send_detail`, so
+every path that sends through the outbox or the direct sender already
+carried it. What was wrong was underneath: with nothing configured,
+`mailer.sender()` fell through to `notifier.sender()`, which is the
+**ingest mailbox**. Nothing bounces and nothing errors — CRM
+notifications simply arrive from the address the poller reads, and a
+customer replying to one comes back in as a new enquiry.
+
+So `sender_problem()` names the three ways it can be wrong — the
+ingest mailbox, a crm@ address for a mailbox that was never created,
+and no subject tag — and `describe()` carries it onto the health
+line. The address itself is now an admin setting read before the
+environment, because the person who needs it corrected is rarely the
+person who can edit .env and restart gunicorn.
+
+**Nothing was sitting in a queue to release.** `outbox.enqueue`
+refused the clarifications *before* writing a row, so there is no
+held mail to flip to `queued`. What exists is the audit trail:
+`rfq.clarification_held`, one row per attempt, carrying the RFQ, the
+outcome and the address. The release script reads those and recomposes
+each question from the RFQ as it stands today — not replayed, because
+if somebody filled in the site address by hand since, the question has
+changed and sending the old one makes Procam look like it is not
+reading its own file.
+
+Four refusals, each because sending anyway reaches a customer: the
+step has stopped waiting (somebody got the answer by phone — asking
+again is worse than never asking), a clarification has since been
+sent, there is no customer address, or external mail is still off. The
+last one reports STILL HELD rather than claiming a send, which is the
+whole point of a check run. And it refuses to release anything at all
+while the sending address is wrong: these go to customers, and
+releasing a hundred from the wrong mailbox is not a thing to discover
+afterwards.
+
+### §3 — already done, and the untested writer behind it
+
+The invented handover fields were replaced on 2 November (QUESTIONS
+54). `scripts/handover_field_audit.py --tms <path>` reads the TMS
+source and reports **no invented fields** — the command is in the
+deploy block so the claim can be checked rather than believed.
+
+The FF account linking and the one-word aliases were also already
+built. But `ff_link_accounts.py` had fourteen tests, all of them about
+`_names_agree`, and **not one of them ran `--apply`**. A dry run
+cannot tell you whether the writer works: it reports the same plan
+either way. Four tests now cover the write, the audit row, the
+refusal of `--check --apply` together, and a name that disagrees not
+being written — before it is run against the production book.
+
+### §4 — "nothing should still say DRAFT", and Sea Freight
+
+Pointing quotes at the master was already done: `quote_build` calls
+`attach_to`, and `for_print` is read by the quote screen, the PDF, the
+emailed quotation and the job handover. The new script checks that
+from the database instead of asserting it in prose.
+
+The markers are the decision. QUESTIONS 53 deliberately left Sea
+Freight's DRAFT in place, because nobody had given me clauses and an
+unmarked placeholder is worse than a marked one. "Nothing should still
+say DRAFT" closes that — and the way to close it is **not** to write
+Sea Freight's contract language.
+
+So the placeholder annexure is retired, and quotes in that vertical
+print the Procam Standard T&C alone: validity, payment, taxes, scope,
+liability — real, approved wording. A quote carrying it and nothing
+else is a correct quote. One carrying it with a placeholder stapled
+underneath is not. The vertical is named in the output so the
+commercial team knows exactly which annexure they still owe.
+
+Retired is not deleted and not replaced: the row is superseded with
+`superseded_by_id` left null, so a quote printed under it can still
+say what it printed under. The master cannot be retired at all — a
+quote with no master prints no standard terms.
+
+**This found a bug in my own change.** `publish()` computed the next
+version as `current.version + 1`, and after a retirement there is no
+current row, so the next publish would start again at version 1 and
+collide with the retired row under the unique constraint on (vertical,
+version). The day the commercial team finally writes Sea Freight's
+clauses is the wrong day to discover that. Versions now count from the
+highest ever recorded for the vertical.
+
+### §5 — the dates, and which direction a bound points
+
+Six date columns on `leads` are filled by hand and most are empty, so
+every "days from first contact to quote" figure was computed from the
+minority of rows somebody typed into. That is a worse number than
+none, because it looks like a measurement.
+
+Four rungs, and every answer carries which one answered: the column,
+then the lead's own trail, then a bound, then "not known". An estimate
+is **always a timestamp from this lead's own history** read as "on or
+before" — never an average, never a typical gap. That line is the same
+one `stage_map` already draws, and the reason is that a date invented
+from a company-wide average is indistinguishable on a screen from one
+somebody typed, while a bound read off a later step is checkable by
+the person looking at it.
+
+The direction of the bound is the part that can be wrong, and it is
+easy to get wrong. The earliest dated thing on a lead is usually the
+first call. Reading that as the bound for the RFQ dates the RFQ
+*before* the call — a lower bound printed as an upper one. Only steps
+that sit after the milestone on the journey count, and the earliest of
+those is the answer.
+
+`firm_only()` is for anything that computes a deadline, an SLA, an
+ageing colour or an escalation. Being told you are late on an inferred
+date is the one outcome that makes people stop trusting the screen.
+
+### §6 — a lead has a team, not an owner
+
+`assigned_to` holds one code and every screen reads it as "the person
+responsible". The second owner covers leave, the vertical head answers
+for the number, the account's owner has the relationship, whoever was
+handed a task is doing the work this week, the RFQ coordinator
+registers the request. All five are in the database. None of them was
+on the lead, so "who do I talk to about this" was answered by asking
+in a group chat.
+
+No employee name or code appears in the module, and a test asserts it
+on the source — a code added later for one urgent case is exactly how
+that rule stops holding. Every member resolves through a record
+somebody maintains, so a leaver stops appearing because a record
+changed, not because this file was edited and deployed.
+
+It is a directory and it grants nothing; a test asserts no access
+module imports it. Where a member cannot actually open the lead it
+says so rather than dropping the row — a vertical head who cannot open
+their own vertical's lead is the sort of thing discovered when they
+are asked to approve something at six o'clock.
+
+### §7 — the quotation made in Excel
+
+Until the quote engine covers every vertical, quotations are made in
+Excel and mailed from Outlook, so the lead holds no copy of what the
+customer was actually sent. When the number is argued about three
+weeks later the only copy is in somebody's Sent items.
+
+Three things it will not do, each for a reason:
+
+* **it does not move the stage.** That starts the quote-ageing clock
+  and shows in the funnel. Inferring a stage change from a file
+  somebody attached would move leads on the strength of a draft. The
+  screen offers it; a person decides.
+* **it does not touch the value columns.** `quote_value_num` has
+  `value_gate` behind it with a margin floor and an approval limit;
+  writing a figure in from an upload form walks past both.
+* **it fills `quote_no` and `quote_date` only into a blank.**
+  Overwriting one is how the CRM comes to disagree with the quotation
+  register about what went out when.
+
+On any failure the file is removed again. A row pointing at no file is
+a broken download, and that is the one people report.
+
+### §8 — /CRM/ answered 404
+
+`SCRIPT_NAME` was forced from URL_PREFIX so `url_for()` emits the
+prefix, but Werkzeug routes on `PATH_INFO`. Where nginx passes its
+location through unstripped, PATH_INFO arrives as `/CRM/` and there is
+no rule for it — so the one URL printed on the hub tile, in the
+signature blocks and in every release note was the one URL that did
+not work. Deeper paths survived because people reach them from links
+the app rendered itself.
+
+Stripped in the application, not in nginx: the app is the half that
+knows its own routes, and a conf change is a separate deploy on a box
+that serves the TMS from the same file. Only an exact match or the
+prefix followed by "/" is taken off — `/crm2` is a real route that
+starts with the same four letters.
+
+### §9 — four task ids that no rule picks
+
+The ids came off a report, not out of `classify()`, so "included" has
+to mean included whatever the rules think. `--task` does that, and
+keeps a rule's reason where one already applied, because that is the
+truer answer and the one a person reading the audit row can check.
+
+A named id that is not an open task **stops the run**. Closing nine
+hundred rows while quietly dropping one of four asked for by name
+reports a job half done as a job finished.

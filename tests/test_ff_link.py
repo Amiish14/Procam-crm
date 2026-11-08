@@ -135,3 +135,99 @@ def test_export_review_actually_writes_a_sheet():
     assert 'correct account' in [str(h or '').lower() for h in header], \
         f'the column a person fills in is missing: {header}'
     os.remove(path[-1])
+
+
+# ── the apply path, which nothing exercised ──────────────────────────
+#
+# CRM-FINAL-CLOSEOUT-01 §3 asks for this to be run against production.
+# Every test above this line checks `_names_agree`, which is the
+# judgment — and none of them runs the writer. A dry run cannot tell
+# you whether `--apply` writes: it reports the same plan either way.
+import importlib                                          # noqa: E402
+
+from app import Company, Lead, db                          # noqa: E402
+from app.models.audit import AuditEvent                    # noqa: E402
+from app.services import lead_mode                         # noqa: E402
+
+FF_DOMAIN = 'zzfflink-client.example'
+
+
+@pytest.fixture
+def world():
+    with flask_app.app_context():
+        db.create_all()
+        _wipe()
+        account = Company(name='ZZFFLINK HEAVY LIFT LIMITED',
+                          email_domains=[FF_DOMAIN])
+        db.session.add(account)
+        db.session.commit()
+        lead = Lead(company='ZZFFLINK HEAVY LIFT LIMITED',
+                    stage='New', source='email',
+                    procam_vertical=lead_mode.VERTICAL,
+                    email=f'buyer@{FF_DOMAIN}',
+                    original_email_from=f'buyer@{FF_DOMAIN}')
+        db.session.add(lead)
+        db.session.commit()
+        yield {'account_id': account.id, 'lead_id': lead.id}
+        _wipe()
+
+
+def _wipe():
+    Lead.query.filter(Lead.company.like('ZZFFLINK%')).delete(
+        synchronize_session=False)
+    Company.query.filter(Company.name.like('ZZFFLINK%')).delete(
+        synchronize_session=False)
+    AuditEvent.query.filter(
+        AuditEvent.actor == 'FF-LINK-01').delete(
+            synchronize_session=False)
+    db.session.commit()
+
+
+def _run(*argv):
+    sys.argv = ['ff_link_accounts.py', *argv]
+    return link.main()
+
+
+def test_the_dry_run_links_nothing(world):
+    with flask_app.app_context():
+        _run('--check')
+        db.session.expire_all()
+        assert Lead.query.get(world['lead_id']).company_id is None
+
+
+def test_the_apply_links_the_matched_lead_and_says_why(world):
+    """The writer. It had no test, and it is about to be run against
+    the production book."""
+    with flask_app.app_context():
+        _run('--apply')
+        db.session.expire_all()
+        lead = Lead.query.get(world['lead_id'])
+        assert lead.company_id == world['account_id']
+
+        rows = AuditEvent.query.filter_by(
+            action='lead.account_linked',
+            entity_id=str(world['lead_id'])).all()
+        assert len(rows) == 1
+        assert rows[0].new_value['account'] == \
+            'ZZFFLINK HEAVY LIFT LIMITED'
+        assert rows[0].new_value['rule']
+
+
+def test_check_and_apply_together_are_refused():
+    """Two modes at once is an ambiguous instruction about writing."""
+    with pytest.raises(SystemExit):
+        _run('--check', '--apply')
+    with pytest.raises(SystemExit):
+        _run()
+
+
+def test_a_lead_whose_name_disagrees_is_not_written(world):
+    """The judgment above, carried through to the database rather
+    than only asserted on the helper."""
+    with flask_app.app_context():
+        lead = Lead.query.get(world['lead_id'])
+        lead.company = 'ZZFFLINK PHOTOVOLTAICS PRIVATE LIMITED'
+        db.session.commit()
+        _run('--apply')
+        db.session.expire_all()
+        assert Lead.query.get(world['lead_id']).company_id is None

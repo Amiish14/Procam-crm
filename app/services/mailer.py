@@ -70,28 +70,110 @@ def transport():
     return SMTP if smtp_configured() else GRAPH
 
 
+#: The admin setting a director can change without a deploy. Read
+#: before the environment, the same order `flags` uses, because the
+#: person who needs the sending address corrected is rarely the
+#: person who can edit .env and restart gunicorn.
+FROM_SETTING = 'crm_mail_from'
+
+
 def sender():
-    """(display name, address) CRM mail goes out as."""
-    raw = _env('CRM_MAIL_FROM') or _env('MAIL_DEFAULT_SENDER')
-    if raw:
-        name, addr = parseaddr(raw)
-        if addr:
-            return (name or DEFAULT_FROM_NAME), addr
+    """(display name, address) CRM mail goes out as.
+
+    The decision of 2 November: the CRM sends as the TMS mailbox with
+    the [CRM] subject tag, because there is no crm@ mailbox and there
+    is not going to be one. Both halves matter — one address with
+    nothing to tell the two systems apart is what the tag is for.
+
+    Order: the admin setting, then the environment, then the old
+    fallback. The address is configuration and not a literal here on
+    purpose: the mailbox can be changed by the people who own it.
+    """
+    for raw in (_setting(FROM_SETTING),
+                _env('CRM_MAIL_FROM'),
+                _env('MAIL_DEFAULT_SENDER')):
+        if raw:
+            name, addr = parseaddr(raw)
+            if addr:
+                return (name or DEFAULT_FROM_NAME), addr
     # Fall back to whatever the Graph path was using, so an install
-    # that has not set the new variables behaves as it did.
+    # that has not set the new variables behaves as it did. See
+    # `sender_problem` — that fallback is the ingest mailbox, which is
+    # the one address CRM mail must not come from.
     from email_ingest import notifier
     return DEFAULT_FROM_NAME, notifier.sender()
+
+
+def _setting(key):
+    try:
+        from app.services import admin_settings
+        return (admin_settings.get(key) or '').strip()
+    except Exception:                                     # noqa: BLE001
+        return ''
+
+
+def sender_problem():
+    """'' when the sending address is right, or a sentence saying why not.
+
+    Three ways it can be wrong, and all three have been true on this
+    installation at some point:
+
+      * it resolves to the ingest mailbox. Nothing bounces and
+        nothing errors — CRM notifications simply arrive from the
+        address the ingest reads, and a reply to one lands back in
+        the poller as a new enquiry;
+      * it is a crm@ address. The 12 October decision gave the CRM
+        its own mailbox, that decision was replaced twice, and the
+        mailbox was never created, so mail from it leaves no trace
+        and no bounce anybody reads;
+      * there is no subject tag. Then CRM mail and TMS mail arrive
+        from one address with nothing to tell them apart, which is
+        the half of the decision that is easy to forget.
+    """
+    _name, addr = sender()
+    addr = (addr or '').strip().lower()
+    if not addr:
+        return ('No sending address is configured — set the '
+                f'{FROM_SETTING} admin setting or CRM_MAIL_FROM.')
+    if addr.startswith('crm@'):
+        return (f'CRM mail is set to come from {addr}, and that mailbox '
+                f'does not exist — the 2 November decision is to send '
+                f'as the TMS mailbox with the subject tag.')
+    try:
+        from email_ingest import service as mail_service
+        inbox = (mail_service.crm_inbox_email() or '').strip().lower()
+    except Exception:                                     # noqa: BLE001
+        inbox = ''
+    if inbox and addr == inbox:
+        return (f'CRM mail is going out as {addr}, which is the mailbox '
+                f'the ingest reads. A customer replying to a '
+                f'notification would come back in as a new enquiry.')
+    if not subject_tag():
+        return ('No subject tag is set, so CRM mail and TMS mail arrive '
+                'from one address with nothing to tell them apart. Set '
+                'the mail_subject_prefix admin setting.')
+    return ''
+
+
+def subject_tag():
+    """The tag `with_prefix` puts in front of every subject."""
+    return _setting('mail_subject_prefix')
 
 
 def describe():
     """One line for the health screen and the runbook."""
     name, addr = sender()
     which = transport()
+    tag = subject_tag()
     if which == SMTP:
-        return (f'SMTP via {_env("MAIL_SERVER")}:{_env("MAIL_PORT", "587")} '
+        line = (f'SMTP via {_env("MAIL_SERVER")}:{_env("MAIL_PORT", "587")} '
                 f'as {formataddr((name, addr))}')
-    return (f'Microsoft Graph as {addr} — needs the Mail.Send grant; '
-            f'set MAIL_SERVER to use SMTP instead')
+    else:
+        line = (f'Microsoft Graph as {addr} — needs the Mail.Send grant; '
+                f'set MAIL_SERVER to use SMTP instead')
+    line += f', subject tagged {tag}' if tag else ', with NO subject tag'
+    problem = sender_problem()
+    return line + (f' — ! {problem}' if problem else '')
 
 
 def ready():
@@ -146,11 +228,7 @@ def with_prefix(subject):
     sender gets it, and never twice — a reply or a retry keeps one tag.
     """
     subject = subject or ''
-    try:
-        from app.services import admin_settings
-        tag = (admin_settings.get('mail_subject_prefix') or '').strip()
-    except Exception:
-        tag = ''
+    tag = subject_tag()
     if not tag or tag.lower() in subject.lower():
         return subject
     return f'{tag} {subject}'

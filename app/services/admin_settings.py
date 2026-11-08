@@ -66,6 +66,14 @@ DEFAULTS = {
         ['DIR12010'],
         'Who reviews the accounts created during the week, in the '
         'Thursday report before the Friday sales review.'),
+    'crm_mail_from': (
+        '', 'The address CRM email goes out as, e.g. '
+            '"Procam CRM <tms@procamgroup.in>". Decision of 2 November: '
+            'the CRM sends as the TMS mailbox, because there is no crm@ '
+            'mailbox. Empty falls back to CRM_MAIL_FROM in the '
+            'environment. It must not be the mailbox the ingest reads — '
+            'a reply to a notification would come back as a new '
+            'enquiry.'),
     'mail_subject_prefix': (
         '[CRM]', 'Put at the start of every CRM email subject, so CRM '
                  'mail can be told apart from TMS mail sent from the same '
@@ -162,7 +170,7 @@ def save(key, value, *, actor=None, commit=True):
 RULE_KEYS = ('tender_owner_email', 'new_accounts_reviewer',
              'director_approvers', 'margin_viewers_ff', 'margin_floors',
              'head_approval_limit_inr', 'quote_validity_days',
-             'mail_subject_prefix')
+             'mail_subject_prefix', 'crm_mail_from')
 
 
 def parse_rule(key, raw):

@@ -88,6 +88,25 @@ def history_for(vertical):
             .order_by(QuoteTermSet.version.desc()).all())
 
 
+def _next_version(vertical):
+    """One past the highest version this vertical has ever had.
+
+    Counted from every row, not from the current one. Those are the
+    same number while versions only ever supersede each other — but
+    `retire()` leaves a vertical with rows and no current row, and
+    `(current.version + 1)` would then start again at 1 and collide
+    with the retired row under the unique constraint on (vertical,
+    version). The day the commercial team writes the clauses for a
+    retired vertical is the wrong day to discover that.
+    """
+    from app.models.quote_terms import QuoteTermSet
+
+    highest = (db.session.query(db.func.max(QuoteTermSet.version))
+               .filter(QuoteTermSet.vertical == (vertical or ''))
+               .scalar())
+    return int(highest or 0) + 1
+
+
 def publish(vertical, body, *, title=None, actor=None,
             effective_from=None, kind=None):
     """A new current version. The old one is superseded, not deleted."""
@@ -115,7 +134,7 @@ def publish(vertical, body, *, title=None, actor=None,
         raise TermsError('Empty terms are not terms.')
 
     was = master_current() if kind == MASTER else current_for(vertical)
-    version = (was.version + 1) if was else 1
+    version = _next_version(vertical)
     row = QuoteTermSet(
         vertical=vertical, kind=kind, version=version,
         title=(title or ('Procam Standard Terms and Conditions'
@@ -154,6 +173,56 @@ def publish_master(body, *, title=None, actor=None,
 
     return publish(None, body, title=title, actor=actor,
                    effective_from=effective_from, kind=MASTER)
+
+
+def retire(vertical, *, actor=None, reason=''):
+    """Take a vertical's annexure out of use without replacing it.
+
+    CRM-FINAL-CLOSEOUT-01 §4: "nothing should still say DRAFT". Where
+    an annexure is a placeholder — a line saying what a clause is
+    *for* rather than what Procam's contract says — the choice is
+    between inventing contract language and printing the master
+    alone. The master is real, approved wording that covers validity,
+    payment, taxes, scope and liability for every vertical, so a
+    quote that prints it alone is a correct quote; one that prints a
+    placeholder under it is not.
+
+    Superseded, never deleted, and with no successor: a quote printed
+    under version 1 can still say what it printed under.
+    `superseded_by_id` stays null, which is what "retired rather than
+    replaced" looks like in the data.
+
+    The master cannot be retired. A quote with no master prints no
+    standard terms at all, which is worse than any annexure.
+    """
+    from app.models.quote_terms import MASTER
+    from app.services import audit
+
+    vertical = (vertical or '').strip()
+    if not vertical:
+        raise TermsError('Name the vertical whose annexure is being '
+                         'retired. The Procam Standard T&C cannot be '
+                         'retired — a quote with no master prints no '
+                         'terms at all.')
+    row = current_for(vertical)
+    if row is None:
+        raise TermsError(f'{vertical} has no current annexure.')
+    if (row.kind or '') == MASTER:
+        raise TermsError('That is the Procam Standard T&C, not an '
+                         'annexure. It cannot be retired.')
+
+    row.is_current = False
+    row.superseded_at = datetime.utcnow()
+    row.superseded_by_id = None
+    audit.record('quote_terms.retired', 'quote_term_set', str(row.id),
+                 old={'is_current': True, 'version': row.version},
+                 new={'is_current': False, 'superseded_by': None},
+                 actor=actor,
+                 reason=(reason or
+                         f'the {vertical} annexure is retired; quotes '
+                         f'in that vertical print the Procam Standard '
+                         f'T&C alone')[:400])
+    return row
 
 
 def attach_to(quote, *, actor=None):
