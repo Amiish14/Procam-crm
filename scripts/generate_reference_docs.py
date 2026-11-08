@@ -104,6 +104,13 @@ _GATES = (
     # which is junk_delete.may_delete imported rather than restated.
     (re.compile(r"@_archive\b"), 'signed in; archiving is owner, '
                                  'head-of-vertical or admin'),
+    # The lead's dates, team and quotation files (CRM-FINAL-CLOSEOUT-01
+    # §5 §6 §7). Its own decorator because the session check is only
+    # half of it: every route then calls `_require_lead_access`, which
+    # asks app.access.scope, so the gate is "signed in, and this lead
+    # is one the list would show you".
+    (re.compile(r"@_facts\b"), 'signed in; the lead by scope '
+                               '(_require_lead_access)'),
     (re.compile(r"@_junk\b"), 'FEATURE_JUNK_DELETE, then signed in; '
                               'deleting is owner, head-of-vertical '
                               'or admin'),

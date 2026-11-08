@@ -3298,6 +3298,44 @@ async function openLd(id){
       </div>
       <div id="lNoteList" style="margin-top:10px"></div>
     </div>
+    {# CRM-FINAL-CLOSEOUT-01 §5. Six date columns are filled by hand
+       and most are empty, so every "days from first contact to quote"
+       figure was computed from the minority of rows somebody typed
+       into. Each date now says how it is known, and an estimate is
+       always a bound read off a later step on this same lead — never
+       an average. #}
+    <div class="fmg">
+      <label class="fml">Dates <span style="font-weight:400;color:var(--text-3)">— and how each one is known</span></label>
+      <div id="lDates" style="font-size:12.5px;color:var(--text-3)">Loading…</div>
+    </div>
+    {# §6. `assigned_to` holds one code and every screen reads it as
+       "the person responsible". The second owner, the vertical head,
+       the account's owner and whoever holds a task are all in the
+       database and none of them was on the lead. #}
+    <div class="fmg">
+      <label class="fml">Lead team <span style="font-weight:400;color:var(--text-3)">— who is on it, and by what right</span></label>
+      <div id="lTeam" style="font-size:12.5px;color:var(--text-3)">Loading…</div>
+    </div>
+    {# §7. Until the quote engine covers every vertical, quotations
+       are made in Excel and mailed from Outlook, so the lead holds no
+       copy of what the customer was actually sent. #}
+    <div class="fmg">
+      <label class="fml">Quotation files <span style="font-weight:400;color:var(--text-3)">— the quotation as it went out</span></label>
+      <div id="lQFList" style="font-size:12.5px;color:var(--text-3)">Loading…</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;
+                  margin-top:8px">
+        <input type="file" id="lQF" accept=".pdf,.doc,.docx,.xls,.xlsx"
+               style="font-size:12px;max-width:230px">
+        <input class="fmc" id="lQFNo" placeholder="Quote no (optional)"
+               style="max-width:170px">
+        <input type="date" class="fmc" id="lQFDate" style="max-width:150px"
+               title="The date it went to the customer">
+        <button class="btn btn-ghost btn-xs" type="button"
+                onclick="uploadQuoteFile()">Attach</button>
+      </div>
+      <div id="lQFMsg" style="font-size:11.5px;color:var(--text-3);
+           margin-top:6px"></div>
+    </div>
     <div class="fmg">
       <label class="fml">Email trail <span style="font-weight:400;color:var(--text-3)">— the customer conversation</span></label>
       <div id="lMailTrail" style="font-size:12.5px;color:var(--text-3)">Loading…</div>
@@ -3312,6 +3350,9 @@ async function openLd(id){
   junkCheck(id);
   archiveCheck(id);
   laLoad(id);
+  loadLeadDates(id);
+  loadLeadTeam(id);
+  loadQuoteFiles(id);
   // The Copilot panel answers "this lead" questions about the lead on
   // screen; opening it from a list does not change the URL it reads.
   if(window.ProcamAI&&window.ProcamAI.setContext)
@@ -4653,6 +4694,159 @@ async function archiveCheck(id){
     btn.title = r.why_not || '';
     if (why){ why.textContent = r.why_not || ''; why.style.display = ''; }
   }
+}
+
+/* ── CRM-FINAL-CLOSEOUT-01 §5 — the dates, each with its rung ──────
+   The chip beside every date is the whole point. A date with no
+   label is indistinguishable from one somebody typed, which is how
+   an inferred figure ends up in a report as a measurement. */
+const DATE_CHIP = {
+  entered:   {bg:'rgba(34,160,90,.14)',  fg:'#1c7a46'},
+  audit:     {bg:'rgba(60,120,220,.14)', fg:'#2a5fae'},
+  estimated: {bg:'rgba(214,150,20,.16)', fg:'#8a6209'},
+  unknown:   {bg:'rgba(130,130,130,.14)',fg:'var(--text-3)'}
+};
+
+async function loadLeadDates(id){
+  const box = g('lDates');
+  if (!box) return;
+  box.textContent = 'Loading…';
+  const r = await api('/api/leads/' + id + '/dates');
+  if (!r || !r.ok){ box.textContent = 'Could not read the dates.'; return; }
+  const rows = (r.dates || []).map(d => {
+    const c = DATE_CHIP[d.source] || DATE_CHIP.unknown;
+    const shown = d.date
+      ? ((d.bound ? 'on or before ' : '') + d.date)
+      : '—';
+    return `<tr>
+      <td style="padding:3px 10px 3px 0;white-space:nowrap">${e(d.label)}</td>
+      <td style="padding:3px 10px 3px 0;white-space:nowrap;
+                 font-family:var(--font-num)">${e(shown)}</td>
+      <td style="padding:3px 10px 3px 0;white-space:nowrap">
+        <span style="background:${c.bg};color:${c.fg};border-radius:9px;
+                     padding:1px 7px;font-size:10.5px">${e(d.source_label)}</span>
+      </td>
+      <td style="padding:3px 0;color:var(--text-3)">${e(d.detail||'')}</td>
+    </tr>`;
+  }).join('');
+  box.innerHTML = `<table style="border-collapse:collapse;width:100%">
+      ${rows}</table>
+    <div style="margin-top:6px;color:var(--text-3)">
+      ${r.known} of ${r.total} known.
+      &ldquo;Estimated&rdquo; is a bound taken from a later step on this
+      lead, not an average — nothing that decides whether somebody is
+      late reads one.
+    </div>`;
+}
+
+/* ── §6 — who is on the lead ─────────────────────────────────────── */
+async function loadLeadTeam(id){
+  const box = g('lTeam');
+  if (!box) return;
+  box.textContent = 'Loading…';
+  const r = await api('/api/leads/' + id + '/team?with_access=1');
+  if (!r || !r.ok){ box.textContent = 'Could not read the team.'; return; }
+  if (!(r.team || []).length){
+    box.innerHTML = '<span style="color:var(--text-3)">Nobody is on '
+      + 'this lead — no owner, no account owner, no head.</span>';
+    return;
+  }
+  const rows = r.team.map(m => {
+    const extra = (m.roles || []).slice(1)
+      .map(x => e(x.label)).join(', ');
+    const flags = [];
+    if (!m.is_active) flags.push('not active');
+    if (!m.known) flags.push('no employee record');
+    if (m.can_open === false) flags.push('cannot open this lead');
+    return `<tr>
+      <td style="padding:3px 10px 3px 0;white-space:nowrap">
+        <strong>${e(m.role)}</strong>${extra ? ' <span style="color:var(--text-3)">+ ' + extra + '</span>' : ''}
+      </td>
+      <td style="padding:3px 10px 3px 0;white-space:nowrap">${e(m.name)}</td>
+      <td style="padding:3px 10px 3px 0;color:var(--text-3)">${e((m.roles[0]||{}).why||'')}</td>
+      <td style="padding:3px 0;color:#b0421a">${e(flags.join(' · '))}</td>
+    </tr>`;
+  }).join('');
+  box.innerHTML = `<table style="border-collapse:collapse;width:100%">
+      ${rows}</table>`
+    + (r.unowned
+       ? '<div style="margin-top:6px;color:#b0421a">Nobody is '
+         + 'accountable for this lead — it has no owner and no second '
+         + 'owner.</div>'
+       : '');
+}
+
+/* ── §7 — the quotation that was made in Excel ───────────────────── */
+async function loadQuoteFiles(id){
+  const box = g('lQFList');
+  if (!box) return;
+  box.textContent = 'Loading…';
+  const r = await api('/api/leads/' + id + '/quote-files');
+  if (!r || !r.ok){ box.textContent = 'Could not read the files.'; return; }
+  if (!(r.files || []).length){
+    box.innerHTML = '<span style="color:var(--text-3)">No quotation '
+      + 'attached yet.</span>';
+    return;
+  }
+  box.innerHTML = r.files.map(f => {
+    const href = crmUrl('/api/leads/' + id + '/attachments/' + f.id
+                        + '/download');
+    const gone = f.on_disk === false
+      ? ' <span style="color:#b0421a">— the file is missing on the '
+        + 'server</span>' : '';
+    return `<div style="padding:2px 0">
+      <a href="${e(href)}">${e(f.filename)}</a>
+      <span style="color:var(--text-3)">· ${e(f.uploaded_at||'')}
+      · ${Math.max(1, Math.round((f.size_bytes||0)/1024))} KB</span>${gone}
+    </div>`;
+  }).join('');
+}
+
+async function uploadQuoteFile(){
+  const id = activeId;
+  const input = g('lQF'), msg = g('lQFMsg');
+  if (!id || !input) return;
+  const file = (input.files || [])[0];
+  if (!file){ msg.textContent = 'Choose the quotation file first.'; return; }
+
+  const body = new FormData();
+  body.append('file', file);
+  const no = (g('lQFNo').value || '').trim();
+  const when = (g('lQFDate').value || '').trim();
+  if (no) body.append('quote_no', no);
+  if (when) body.append('quote_date', when);
+
+  msg.textContent = 'Attaching…';
+  /* Raw fetch, not api(): api() sets Content-Type: application/json,
+     which would break the multipart boundary. The CSRF header comes
+     from the window.fetch wrapper at the top of this template — a
+     write without it does nothing and says nothing. */
+  let out = {};
+  try {
+    const resp = await fetch(
+      crmUrl('/api/leads/' + id + '/quote-files'),
+      {method:'POST', body, credentials:'same-origin'});
+    out = await resp.json();
+  } catch (err) {
+    msg.textContent = 'The upload did not reach the server.';
+    return;
+  }
+  if (!out.ok){
+    msg.textContent = out.error || 'It was not attached.';
+    return;
+  }
+  input.value = '';
+  g('lQFNo').value = ''; g('lQFDate').value = '';
+  const said = [];
+  if (out.stamped && out.stamped.quote_no)
+    said.push('quote number ' + out.stamped.quote_no + ' put on the lead');
+  if (out.stamped && out.stamped.quote_date)
+    said.push('quote date ' + out.stamped.quote_date + ' put on the lead');
+  if (out.stage_hint) said.push(out.stage_hint);
+  msg.textContent = said.join(' · ') || 'Attached.';
+  toast('Quotation attached ✓', 'ok');
+  loadQuoteFiles(id);
+  loadLeadDates(id);
 }
 
 async function archiveLd(){

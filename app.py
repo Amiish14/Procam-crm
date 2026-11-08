@@ -78,11 +78,54 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 # force SCRIPT_NAME from the URL_PREFIX env var so url_for() always emits
 # the /CRM-prefixed URL. Without this, Flask redirects can end up bare-path
 # ("/login") and nginx 404s them.
+def _strip_url_prefix(path, prefix):
+    """PATH_INFO with the proxy's own location prefix taken off.
+
+    Only an exact match, or the prefix followed by "/", is stripped.
+    `/crm2` is a real route that starts with the same four letters as
+    `/CRM`, and taking a prefix off a path that merely begins with the
+    same characters would route it to nothing.
+
+    Case-sensitive, because the nginx `location /CRM/` that puts the
+    prefix there is case-sensitive: a request for `/crm/` never
+    reaches this application, so quietly accepting it here would
+    answer for a URL that does not exist.
+    """
+    prefix = (prefix or '').rstrip('/')
+    if not prefix or not path:
+        return path
+    if path == prefix:
+        return '/'
+    if path.startswith(prefix + '/'):
+        return path[len(prefix):]
+    return path
+
+
 _url_prefix = (os.environ.get('URL_PREFIX') or '').rstrip('/')
 if _url_prefix:
     _inner_app = app.wsgi_app
+
+    # CRM-FINAL-CLOSEOUT-01 §8 — /CRM/ answered 404.
+    #
+    # SCRIPT_NAME is forced below so url_for() emits /CRM-prefixed
+    # links, but Werkzeug routes on PATH_INFO. Where nginx passes the
+    # request through without stripping its location prefix, PATH_INFO
+    # arrives as "/CRM/" and there is no rule for it, so the one URL
+    # printed on the hub tile, in the signature blocks and in every
+    # release note was the one URL that did not work. Deeper paths
+    # survived because people reach them from a link the app itself
+    # rendered, which already carries the prefix twice over.
+    #
+    # Stripping here rather than in nginx because the app is the half
+    # that knows its own routes, and a conf change is a separate
+    # deploy on a box that serves the TMS from the same file.
+    #
     def _force_script_name(environ, start_response):
         environ['SCRIPT_NAME'] = _url_prefix
+        raw = environ.get('PATH_INFO') or ''
+        fixed = _strip_url_prefix(raw, _url_prefix)
+        if fixed != raw:
+            environ['PATH_INFO'] = fixed
         return _inner_app(environ, start_response)
     app.wsgi_app = _force_script_name
 # ── Logging ──────────────────────────────────────────────────────────
@@ -6678,6 +6721,12 @@ for _mod_path, _bp_name in [
     # this is the door onto them. Not behind a feature switch: the
     # issue reported is that there is no way in at all.
     ('app.lead_archive.routes',  'lead_archive_bp'),
+    # CRM-FINAL-CLOSEOUT-01 §5 §6 §7 — the three things the lead
+    # screen could not say: when each milestone happened and how we
+    # know, who is on the lead and by what right, and the quotation
+    # that was made in Excel. Not behind a feature switch: all three
+    # are reported absences.
+    ('app.lead_facts.routes',    'lead_facts_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])
