@@ -2374,3 +2374,152 @@ the remaining backlog stays honest rather than looking solved.
 1283 and 1536 specifically. `--task` on the backlog report is the
 general form of the same thing, which is what §9 asked for; either
 closes those four.
+
+## 74 — CRM-WA-01: what the PFM team asked for, and what was already there
+
+Five items. Two were already built and needed pointing at, one was
+built but not reachable by the people who needed it, and two were
+absent. Recorded that way because "it does not work" and "I cannot
+find it" need different answers.
+
+### §1 — archive existed; the four reasons did not
+
+Archive shipped on 2 November (CRM-USER-ISSUES-02NOV §1): the button,
+the audit row, the exclusion from every list and count, and the
+Archived filter. What changed here is the reason.
+
+It was free text, and QUESTIONS 53's reasoning still stands —
+"client went quiet" and "budget pulled" are real and neither is a
+code. The PFM team asked for four named reasons. **Both are right
+about something.** A category is what makes the archive countable:
+"how many were duplicates" has no answer when every row is a
+sentence. The sentence is what makes one row explicable: "duplicate"
+does not say duplicate of what.
+
+So the category is required, the note is optional, and the two live in
+the one `archive_reason` column as `category: note`. No migration —
+the rows archived before this read back as uncategorised, which is
+what they are. `split_reason` deliberately does **not** guess a
+category from the words: "duplicate of 10291" looks like the
+duplicate category and might have been written by somebody who meant
+something else by it.
+
+### §2 — the merge was built, auditable, and irreversible
+
+`lead_merge.merge()` already repointed every foreign key, archived the
+loser, and wrote audit rows on both sides. Two things were wrong.
+
+**It recorded counts.** `lead_activities.lead_id: 14`. Fourteen of
+what? After the merge the survivor holds thirty activities and nothing
+says which fourteen arrived with the loser. The merge was fully
+auditable and could never be undone. It now records the row ids, in a
+`lead_merges` ledger, with the loser's own pre-merge `stage`,
+`lost_reason`, `is_archived` and note beside them — because reversing
+also means putting those back, and the merge overwrote all four.
+
+**The audit row recorded the wrong "before".** `old={'stage':
+lead.stage}` was built *after* `lead.stage = 'Lost'`, so the trail
+said the lead had been Lost before it was merged. Every merge on file
+has that. Read before any write now, and a test asserts it.
+
+`unmerge` puts back only the rows in the ledger, and only those still
+on the survivor: a row somebody has since moved elsewhere is left
+alone, because their decision is newer than the merge. A merge
+recorded without ids is marked `partial` and refused — a reversal that
+put some rows back and left the rest would be worse than none.
+
+A Won lead still cannot be merged away. "It can be undone" is not a
+reason to loosen what may be done.
+
+**The warning at creation** is new, and the design is that the four
+signals are not equal. A shared GSTIN is one legal entity exactly; a
+shared email domain can be two — `renew.com` carries RENEW POWER and
+RENEW PHOTOVOLTAICS, and this CRM has an account called "Mail"
+created from `mail.oyaso.com`. So a domain match alone does not reach
+the threshold, free mail is never a domain match at all, and the
+screen shows what matched rather than a score. A warning that cries
+wolf is a warning people click through.
+
+`leads` has no GSTIN column — the GST master is on `companies` — so a
+lead's GSTIN is its account's, and a lead with no account has none.
+That is an absence, not a mismatch.
+
+The report is pairs, not clusters: "are #10291 and #10433 the same
+job" has an answer and "are these six leads one thing" usually does
+not. It suggests the most advanced live copy, then the newest, for
+the reason recorded in QUESTIONS 71.
+
+### §3 — "PIC" means two different people, and one line caused it
+
+    `leads.pic`          the **customer's** contact person. The lead
+                         screen labels it "Contact person".
+    `leads.assigned_to`  **our** employee. The lead screen labels it
+                         "Primary PIC", and the leads list filters on
+                         it under the name `pic`.
+
+One word, two people, opposite sides of the deal.
+
+The missing address was the owner's, and the cause was one line:
+`/api/employees` returned `emp_code, name, vertical, role` to anybody
+without `admin.employees`, and the lead screen reads that list.
+**Administrators saw the address and the sales team did not** — which
+is the shape of a bug nobody can reproduce. Withholding it was
+inconsistent rather than protective: `/people/<code>` already shows
+the same address to every signed-in user. The mobile number is still
+not in the bulk list; nothing in the CRM shows that in bulk.
+
+**There is nothing to backfill on the owner's side, and a backfill
+would make it worse.** The address lives on the employee record,
+which is where it should: copied onto a lead it goes stale the moment
+the person changes it or the lead is reassigned, and then the CRM
+holds two answers and mails the wrong one. It is joined, not stored.
+
+The instruction — "backfill PIC email from the assigned user's
+record" — is safe under one reading of PIC and corrupting under the
+other. Writing an employee's address into `leads.email` means the next
+person to press "Draft email" writes to us, the mail trail files our
+own message as the customer's reply, and the quotation goes to the
+wrong mailbox. So the script does the safe half: it fills a blank
+customer address from **that lead's own customer mail**, never from an
+employee record, never over a value somebody typed, and it reports the
+leads that already hold a Procam address in the customer field without
+changing them — somebody put it there and may have meant it.
+
+### §4 — already built, and the status was the missing part
+
+The ingest log, the Mail ingest screen, the re-process button and the
+"nothing is dropped silently" guarantee all shipped on 2–3 November
+(`78e5f48`, `2fe3ba9`): six paths that bypassed the log were closed,
+and `tests/test_unprocessed_mail_log.py` walks both intake files and
+fails if any branch returns without writing a row.
+
+What nobody could answer was §4's actual question — *when did this
+last work, and what went wrong last time*. That is now one read-only
+command. It also reports the Graph subscription, because in mailbox
+mode a lapsed subscription is the silent failure: Graph simply stops
+calling and nothing here errors.
+
+### §5 — the reset existed; knowing which half was wrong did not
+
+CRM login is **not** TMS login. The CRM reads its own `employees`
+table, with its own `password_hash`, in its own database. No SSO, no
+shared session, no password sync. The codes look the same because both
+systems use the same prefixes for the same people, which is exactly
+why "it works in the TMS" is not evidence about the CRM.
+
+An admin reset already exists: Admin → Employees → **Reset password**
+(`PUT /api/employees/<id>` with `reset_password`), which issues a
+temporary password, clears the lock and the failed-attempt count, and
+signs out the old sessions. It is not new and it is not changed.
+
+What was missing is the diagnosis, and one case makes it worth
+having: **a deactivated account is refused before the password is
+checked**, so it returns the identical message to a wrong password —
+and resetting the password will not help. An administrator had no way
+to tell those apart, and the obvious fix is the wrong one.
+
+`/login` still answers the same sentence to everybody, on purpose:
+telling an anonymous caller which half is wrong tells them which
+codes exist. The diagnosis is the other side of the desk — admin
+only, read-only, and it never reads, returns or logs a password or a
+hash.

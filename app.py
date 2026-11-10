@@ -2260,11 +2260,29 @@ def api_me():
 @require_auth
 def api_employees():
     if not _matrix_can('admin.employees'):
-        # Non-admins: only get list of names for assignment dropdowns
+        # Non-admins: the assignment dropdowns, and the PIC's own work
+        # address.
+        #
+        # CRM-WA-01 §3 — "leads show no PIC email". This is why. The
+        # projection was narrowed for the dropdowns, which need a code
+        # and a name, and that quietly removed the one field anybody
+        # needed in order to contact the person in charge of a lead.
+        # An admin saw it (the full to_dict below) and the sales team
+        # did not, which is exactly the shape of a bug nobody can
+        # reproduce.
+        #
+        # It is a colleague's work address, and withholding it here was
+        # inconsistent rather than protective: /people/<code> (the PIC
+        # 360 screen, app/pic360) already shows the same address to any
+        # signed-in user, and every notification the CRM sends carries
+        # it. The mobile number is deliberately still not included —
+        # nothing in the CRM shows that in bulk.
         emps = Employee.query.filter_by(is_active=True).with_entities(
-            Employee.emp_code, Employee.name, Employee.vertical, Employee.role).all()
+            Employee.emp_code, Employee.name, Employee.vertical,
+            Employee.role, Employee.email).all()
         return jsonify([{'emp_code': e.emp_code, 'name': e.name,
-                         'vertical': e.vertical, 'role': e.role} for e in emps])
+                         'vertical': e.vertical, 'role': e.role,
+                         'email': e.email or ''} for e in emps])
     emps = Employee.query.order_by(Employee.name).all()
     return jsonify([e.to_dict() for e in emps])
 
@@ -5772,6 +5790,11 @@ def init_db():
                    # CRM tried, including the ones that never reached
                    # the outbox, which is where §3's silence lived.
                    'app.models.notification_log',
+                   # CRM-WA-01 §2 — what a lead merge moved, by row id,
+                   # so the merge can be reversed. The old merge
+                   # recorded counts, which made it auditable and still
+                   # irreversible.
+                   'app.models.lead_merge',
                    'app.models.email_admin', 'app.models.assignment',
                    'app.models.escalation', 'app.models.intel',
                    # After rfq and quote: ff_rate_requests points at
@@ -6727,6 +6750,16 @@ for _mod_path, _bp_name in [
     # that was made in Excel. Not behind a feature switch: all three
     # are reported absences.
     ('app.lead_facts.routes',    'lead_facts_bp'),
+    # CRM-WA-01 §5 — why a named colleague cannot sign in. Read-only,
+    # admin only. The reset itself already exists on the employee
+    # screen; what was missing was being told which of the five
+    # conditions the sign-in tripped.
+    ('app.signin_admin.routes',  'signin_admin_bp'),
+    # CRM-WA-01 §2 — the possible-duplicate warning at creation, the
+    # admin lead-merge screen, and the reversal. Separate from
+    # /admin/account-duplicates: one customer with two account rows
+    # and one enquiry entered twice are different problems.
+    ('app.lead_dupes.routes',    'lead_dupes_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])

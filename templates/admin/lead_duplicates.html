@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{# _csrf_fetch wraps window.fetch so every write below carries the
+   token. Without it the Merge and Put back buttons would do nothing
+   and say nothing, which this CRM has shipped six times. #}
+{% include "_csrf_fetch.html" %}
+<title>Duplicate leads — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body class="rfq-page">
+{% include "_crm_topbar.html" %}
+<div class="rfq-ui">
+  <div class="rfq-hero">
+    <div>
+      <h1>Duplicate leads</h1>
+      <p>One enquiry entered more than once. Pairs are found on four
+        signals and each is worth something different: a shared GSTIN
+        is one legal entity exactly, a shared email domain can be two
+        — so what matched is shown rather than a score on its own.</p>
+      <p>Nothing is deleted. The lead you fold away keeps its number
+        and its history, is archived with "merged into #N", and
+        <strong>the merge can be put back</strong> — every activity,
+        mail and quote that moved is recorded by row id, so reversing
+        returns exactly those and leaves the survivor's own records
+        where they are.</p>
+      <p>This is not the account screen. One customer written twice is
+        <a href="{{ url_prefix }}/admin/account-duplicates">duplicate
+        accounts</a>; this is one job entered twice.</p>
+    </div>
+  </div>
+
+  <section class="rfq-card">
+    <div class="rfq-card-h">
+      <h2>Pairs</h2>
+      <div id="count" class="rfq-muted">Loading…</div>
+    </div>
+    <div id="pairs"></div>
+  </section>
+</div>
+
+<script>
+const PREFIX = {{ url_prefix | tojson }};
+const u = (p) => PREFIX + p;
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+async function load(){
+  const box = document.getElementById('pairs');
+  const count = document.getElementById('count');
+  box.innerHTML = '';
+  count.textContent = 'Loading…';
+  let body = {};
+  try {
+    const r = await fetch(u('/api/admin/lead-duplicates'),
+                          {credentials: 'same-origin'});
+    body = await r.json();
+  } catch (err) {
+    count.textContent = 'Could not load the pairs.';
+    return;
+  }
+  if (!body.ok){
+    count.textContent = body.error || 'Could not load the pairs.';
+    return;
+  }
+  const pairs = body.pairs || [];
+  count.textContent = pairs.length
+    ? pairs.length + ' pair(s) worth a look'
+    : 'No duplicate pairs on the live board.';
+  box.innerHTML = pairs.map(render).join('');
+}
+
+function side(row, role){
+  return `<td style="vertical-align:top;padding:6px 10px">
+    <div><strong>#${esc(row.lead_id)}</strong>
+      <span class="rfq-muted">${esc(role)}</span></div>
+    <div>${esc(row.company) || '<span class="rfq-muted">no company</span>'}</div>
+    <div class="rfq-muted">${esc(row.contact)}
+      ${row.email ? '· ' + esc(row.email) : ''}
+      ${row.phone ? '· ' + esc(row.phone) : ''}</div>
+    <div class="rfq-muted">${esc(row.stage)} ·
+      ${esc(row.owner) || 'unowned'} · ${esc(row.created)}</div>
+  </td>`;
+}
+
+function render(p){
+  return `<div class="rfq-card" style="margin:10px 0">
+    <div style="padding:4px 10px">
+      <strong>${esc(p.score)}</strong> —
+      ${esc(p.why)}
+    </div>
+    <table style="width:100%;border-collapse:collapse">
+      <tr>
+        ${side(p.keep, '— suggested survivor')}
+        ${side(p.drop, '— would be folded away')}
+        <td style="vertical-align:top;padding:6px 10px;white-space:nowrap">
+          <button class="btn btn-red btn-sm"
+            onclick="doMerge(${p.drop.lead_id}, ${p.keep.lead_id})">
+            Merge #${esc(p.drop.lead_id)} into #${esc(p.keep.lead_id)}</button>
+          <div class="rfq-muted" style="margin-top:4px">
+            The other way round if that is wrong:
+            <button class="btn btn-ghost btn-sm"
+              onclick="doMerge(${p.keep.lead_id}, ${p.drop.lead_id})">
+              swap</button>
+          </div>
+          <div id="m${p.drop.lead_id}_${p.keep.lead_id}"
+               class="rfq-muted" style="margin-top:6px"></div>
+        </td>
+      </tr>
+    </table>
+  </div>`;
+}
+
+async function doMerge(leadId, intoId){
+  const note = window.prompt(
+    'Fold #' + leadId + ' into #' + intoId + '.\n\n'
+    + 'Its activities, mail, contacts, attachments and quotes move to '
+    + '#' + intoId + '. It keeps its number, is archived, and this can '
+    + 'be put back.\n\nWhy are they the same enquiry?', '');
+  if (note === null) return;
+  const msg = document.getElementById('m' + leadId + '_' + intoId)
+              || document.getElementById('count');
+  msg.textContent = 'Merging…';
+  let body = {};
+  try {
+    const r = await fetch(u('/api/admin/lead-duplicates/merge'), {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({lead_id: leadId, into: intoId,
+                            reason: note.trim()})});
+    body = await r.json();
+  } catch (err) {
+    msg.textContent = 'The merge did not reach the server.';
+    return;
+  }
+  if (!body.ok){ msg.textContent = body.error || 'Not merged.'; return; }
+  const moved = Object.values(body.moved || {})
+    .reduce((a, b) => a + b, 0);
+  msg.innerHTML = esc(moved) + ' row(s) moved. '
+    + (body.reversible === false
+        ? '<strong>This one cannot be put back automatically.</strong>'
+        : `<button class="btn btn-ghost btn-sm"
+             onclick="doUnmerge(${leadId})">Put it back</button>`);
+  load();
+}
+
+async function doUnmerge(leadId){
+  if (!window.confirm('Put #' + leadId + ' back, with the rows that '
+                      + 'moved with it?')) return;
+  let body = {};
+  try {
+    const r = await fetch(u('/api/admin/lead-duplicates/unmerge'), {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({lead_id: leadId})});
+    body = await r.json();
+  } catch (err) {
+    window.alert('The reversal did not reach the server.');
+    return;
+  }
+  if (!body.ok){ window.alert(body.error || 'Not reversed.'); return; }
+  load();
+}
+
+load();
+</script>
+</body>
+</html>

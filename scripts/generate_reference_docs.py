@@ -109,6 +109,21 @@ _GATES = (
     # half of it: every route then calls `_require_lead_access`, which
     # asks app.access.scope, so the gate is "signed in, and this lead
     # is one the list would show you".
+    # Why somebody cannot sign in (CRM-WA-01 §5). Admin only through
+    # the Access Matrix rather than a role name, so it cannot
+    # disagree with the employee screens about who may administer
+    # people. Read-only — there is no POST.
+    # The duplicate warning (CRM-WA-01 §2). Signed in and nothing
+    # more: it is what somebody keying a lead in needs, it writes
+    # nothing, and it returns only the columns the leads list already
+    # shows them.
+    (re.compile(r"@_dupes\b"), 'signed in (read only)'),
+    # Merging and reversing. Admin only through the Access Matrix: a
+    # merge moves every activity, mail and quote off one lead.
+    (re.compile(r"@_dupe_admin\b"), 'permission admin.triage or '
+                                    'admin.master'),
+    (re.compile(r"@_signin_admin\b"), 'permission admin.employees '
+                                      '(read only)'),
     (re.compile(r"@_facts\b"), 'signed in; the lead by scope '
                                '(_require_lead_access)'),
     (re.compile(r"@_junk\b"), 'FEATURE_JUNK_DELETE, then signed in; '

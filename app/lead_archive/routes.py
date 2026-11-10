@@ -1,7 +1,8 @@
 """Archive one lead, and put it back.
 
-    GET  /api/leads/<id>/archive-state    may I, and is it archived
-    POST /api/leads/<id>/archive          {reason}
+    GET  /api/leads/<id>/archive-state    may I, is it archived, and
+                                          the four reasons to choose
+    POST /api/leads/<id>/archive          {category, note}
     POST /api/leads/<id>/archive-restore
 
 Not behind a feature switch. §1 is a reported absence — there is no way
@@ -72,7 +73,12 @@ def archive(lid):
     lead = _lead(lid)
     body = request.get_json(silent=True) or {}
     try:
-        out = la.archive(lead, reason=body.get('reason'), actor=code)
+        # CRM-WA-01 §1 — a category and an optional note. `reason` is
+        # still accepted so a caller written before this keeps working.
+        out = la.archive(lead, actor=code,
+                         category=body.get('category'),
+                         note=body.get('note') or '',
+                         reason=body.get('reason'))
     except la.Refused as refusal:
         # 403 when they may not, 400 when the reason was the problem.
         # The screen shows the same sentence either way; the code is

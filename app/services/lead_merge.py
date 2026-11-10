@@ -246,19 +246,60 @@ def blockers(lead, into):
     return ''
 
 
+def _pk_column(table):
+    """The table's single primary-key column, or None.
+
+    None means the rows this merge moves in that table cannot be
+    listed by id, only counted — and a merge recorded that way is
+    marked `partial` and cannot be reversed. See
+    `app.models.lead_merge`.
+    """
+    keys = list(table.primary_key.columns)
+    return keys[0] if len(keys) == 1 else None
+
+
 def merge(lead, into, *, actor, reason=''):
-    """Fold `lead` into `into`. Returns (ok, detail)."""
+    """Fold `lead` into `into`. Returns (ok, detail).
+
+    Records every repointed row **by id** in `lead_merges`, so the
+    merge can be reversed. The old version recorded counts, which
+    made it auditable and still irreversible: after the merge the
+    survivor holds thirty activities and nothing says which fourteen
+    arrived with the loser.
+    """
+    from sqlalchemy import text
+
     from app import db
+    from app.models.lead_merge import LeadMerge
     from app.services import audit
 
     why = blockers(lead, into)
     if why:
         return False, why
 
-    moved = {}
+    # The loser's own state, read BEFORE anything is written. The
+    # earlier version built its audit row after the assignments, so
+    # `old={'stage': lead.stage}` recorded the new stage as the old
+    # one and the trail could not say what the lead had been.
+    before = {
+        'stage': lead.stage,
+        'lost_reason': getattr(lead, 'lost_reason', None),
+        'is_archived': bool(getattr(lead, 'is_archived', False)),
+        'junk_reason_note': getattr(lead, 'junk_reason_note', None),
+    }
+
+    moved, counted, partial = {}, {}, False
     for table, column in _lead_fks():
+        pk = _pk_column(table)
         try:
-            from sqlalchemy import text
+            if pk is not None:
+                rows = db.session.execute(
+                    text(f'SELECT {pk.name} FROM {table.name} '
+                         f'WHERE {column.name} = :lead'),
+                    {'lead': lead.id}).fetchall()
+                ids = [r[0] for r in rows]
+            else:
+                ids = None
             count = db.session.execute(
                 text(f'UPDATE {table.name} SET {column.name} = :into '
                      f'WHERE {column.name} = :lead'),
@@ -269,8 +310,14 @@ def merge(lead, into, *, actor, reason=''):
                           column.name)
             return False, (f'Could not move the {table.name} rows. '
                            f'Nothing was changed.')
-        if count:
-            moved[f'{table.name}.{column.name}'] = count
+        if not count:
+            continue
+        key = f'{table.name}.{column.name}'
+        counted[key] = count
+        if ids is None:
+            partial = True
+        else:
+            moved[key] = ids
 
     note = reason or f'Duplicate of #{into.id}'
     lead.merged_into_id = into.id
@@ -280,16 +327,152 @@ def merge(lead, into, *, actor, reason=''):
         lead.junk_reason_note = note[:400]
     lead.is_archived = True
 
+    ledger = LeadMerge(lead_id=lead.id, into_id=into.id,
+                       moves_json=moved, before_json=before,
+                       partial=partial, reason=note[:400],
+                       merged_by=actor)
+    db.session.add(ledger)
+    db.session.flush()
+
     audit.record('lead.merged', 'lead', lead.id,
-                 old={'stage': lead.stage, 'merged_into_id': None},
-                 new={'merged_into_id': into.id, 'moved': moved},
+                 old=before,
+                 new={'merged_into_id': into.id, 'moved': counted,
+                      'ledger_id': ledger.id},
                  reason=note, actor=actor)
     audit.record('lead.absorbed', 'lead', into.id,
-                 new={'absorbed': lead.id, 'moved': moved},
+                 new={'absorbed': lead.id, 'moved': counted,
+                      'ledger_id': ledger.id},
                  reason=f'Absorbed #{lead.id}', actor=actor)
     db.session.commit()
-    return True, {'merged': lead.id, 'into': into.id, 'moved': moved,
-                  'reason': note}
+    return True, {'merged': lead.id, 'into': into.id, 'moved': counted,
+                  'reason': note, 'ledger_id': ledger.id,
+                  'reversible': not partial}
+
+
+def last_merge(lead):
+    """The live merge that folded this lead away, or None."""
+    from app.models.lead_merge import LeadMerge
+
+    if lead is None or not getattr(lead, 'id', None):
+        return None
+    return (LeadMerge.query
+            .filter(LeadMerge.lead_id == lead.id,
+                    LeadMerge.reversed_at.is_(None))
+            .order_by(LeadMerge.merged_at.desc())
+            .first())
+
+
+def unmerge_blockers(lead):
+    """Why this merge cannot be reversed, in words, or ''."""
+    if lead is None:
+        return 'That lead does not exist.'
+    if not getattr(lead, 'merged_into_id', None):
+        return f'Lead #{lead.id} was not merged into anything.'
+    ledger = last_merge(lead)
+    if ledger is None:
+        return (f'Lead #{lead.id} was merged before the CRM recorded '
+                f'what a merge moved, so there is no record of which '
+                f'rows to put back. It can be restored by hand from '
+                f'the archive, but not automatically.')
+    if ledger.partial:
+        return ('That merge moved rows the CRM could not record by '
+                'id, so reversing it would put some of them back and '
+                'leave the rest. Reversing by hand is the only safe '
+                'way.')
+    return ''
+
+
+def unmerge(lead, *, actor):
+    """Put a merged lead and its rows back. Returns (ok, detail).
+
+    The reverse of `merge`, exactly: the rows named in the ledger go
+    back to the lead they came from, and the four columns the merge
+    overwrote are restored from what was read before it wrote them.
+
+    Only the rows in the ledger move. The survivor's own activities
+    and mail — the ones it had all along, and anything added since —
+    stay where they are, which is the whole reason the ids are
+    recorded rather than the counts.
+    """
+    from sqlalchemy import text
+
+    from app import db
+    from app.services import audit
+
+    why = unmerge_blockers(lead)
+    if why:
+        return False, why
+
+    ledger = last_merge(lead)
+    into_id = ledger.into_id
+    moves = ledger.moves_json or {}
+    before = ledger.before_json or {}
+
+    put_back = {}
+    for key, ids in moves.items():
+        if not ids:
+            continue
+        table_name, _, column_name = key.partition('.')
+        table = db.metadata.tables.get(table_name)
+        if table is None:
+            db.session.rollback()
+            return False, (f'The table {table_name} no longer exists, '
+                           f'so this merge cannot be reversed '
+                           f'automatically. Nothing was changed.')
+        pk = _pk_column(table)
+        if pk is None:
+            db.session.rollback()
+            return False, (f'{table_name} has no single primary key, '
+                           f'so its rows cannot be put back by id. '
+                           f'Nothing was changed.')
+        try:
+            # Only rows that are still on the survivor. One that has
+            # since been moved somewhere else by a person is left
+            # alone: their decision is newer than this merge.
+            placeholders = ', '.join(f':i{n}' for n in range(len(ids)))
+            params = {f'i{n}': value for n, value in enumerate(ids)}
+            params['lead'] = lead.id
+            params['into'] = into_id
+            count = db.session.execute(
+                text(f'UPDATE {table_name} SET {column_name} = :lead '
+                     f'WHERE {column_name} = :into '
+                     f'AND {pk.name} IN ({placeholders})'),
+                params).rowcount
+        except Exception:                                 # noqa: BLE001
+            db.session.rollback()
+            log.exception('could not put back %s', key)
+            return False, (f'Could not put the {table_name} rows back. '
+                           f'Nothing was changed.')
+        if count:
+            put_back[key] = count
+
+    lead.merged_into_id = None
+    lead.stage = before.get('stage') or 'New'
+    lead.lost_reason = before.get('lost_reason')
+    lead.is_archived = bool(before.get('is_archived'))
+    if hasattr(lead, 'junk_reason_note'):
+        lead.junk_reason_note = before.get('junk_reason_note')
+
+    from datetime import datetime as _dt
+    ledger.reversed_at = _dt.utcnow()
+    ledger.reversed_by = actor
+
+    audit.record('lead.unmerged', 'lead', lead.id,
+                 old={'merged_into_id': into_id},
+                 new={'merged_into_id': None,
+                      'restored': before,
+                      'put_back': put_back,
+                      'ledger_id': ledger.id},
+                 reason=(f'Merge into #{into_id} reversed'),
+                 actor=actor)
+    audit.record('lead.unabsorbed', 'lead', into_id,
+                 new={'released': lead.id, 'put_back': put_back,
+                      'ledger_id': ledger.id},
+                 reason=f'Released #{lead.id}', actor=actor)
+    db.session.commit()
+    return True, {'unmerged': lead.id, 'from': into_id,
+                  'put_back': put_back, 'restored': before,
+                  'ledger_id': ledger.id}
 
 
 def groups(limit=500):
