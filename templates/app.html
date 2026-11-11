@@ -3293,6 +3293,13 @@ async function openLd(id){
          filled in and editable. -->
     <div id="ldDue" class="ld-due" style="display:none"></div>
     ${ldValueSection(l)}
+    {# CRM-WA-01b. The account-first rule used to refuse a stage move
+       and say only "no confirmed account". Two different facts wore
+       that sentence, and one of them — nobody named on the account
+       for this lead's vertical — is not the lead owner's to fix. The
+       rule no longer stops them; this says what is still open, and
+       offers Confirm account where a name disagrees. #}
+    <div id="lAcctQ"></div>
     <div class="fm-s">Activity dates</div>
     <div class="dtrow">
       <div class="dtc ${l.phone_call_date?'ok':''}"><div class="dtc-l">Phone call</div><input type="date" class="fmc" id="lPC" value="${l.phone_call_date||''}"></div>
@@ -3401,6 +3408,7 @@ async function openLd(id){
   loadLeadTeam(id);
   loadQuoteFiles(id);
   picMailShow();
+  loadAccountState(id);
   // The Copilot panel answers "this lead" questions about the lead on
   // screen; opening it from a list does not change the URL it reads.
   if(window.ProcamAI&&window.ProcamAI.setContext)
@@ -4778,6 +4786,46 @@ function picMailShow(){
   };
   sel.addEventListener('change', draw);
   draw();
+}
+
+/* CRM-WA-01b. One banner, three states: the move is refused and why,
+   the move is allowed because this lead is yours though the account's
+   staffing is still open, or the names disagree and somebody should
+   confirm the account. Silent when there is nothing to say, and
+   silent while FEATURE_ACCOUNT_FIRST is off. */
+async function loadAccountState(id){
+  const box = g('lAcctQ');
+  if (!box) return;
+  box.innerHTML = '';
+  const r = await api('/api/leads/' + id + '/account-state');
+  if (!r || !r.ok || !r.live) return;
+  const bits = [];
+  const link = `<a href="/accounts/check" style="font-weight:600">Confirm account</a>`;
+  if (r.blocked){
+    bits.push(`<div style="color:var(--red);font-weight:600;margin-bottom:4px">
+      This lead cannot move forward yet</div>
+      <div>${e(r.message)}</div>
+      <div style="margin-top:6px">${link}</div>`);
+  } else if (r.exempt){
+    bits.push(`<div style="font-weight:600;margin-bottom:4px">
+      Account owner still to be named for ${e(r.vertical || 'this vertical')}</div>
+      <div>You can work and quote this lead — you are ${e(r.claim)}.
+      Who owns ${e(r.account_name || 'the account')} for
+      ${e(r.vertical || 'this vertical')} is a separate question for
+      ${e(r.resolver)}.</div>`);
+  }
+  if (r.mismatch){
+    bits.push(`<div style="margin-top:${bits.length?'8px':'0'}">
+      This lead is filed under <b>${e(r.mismatch.account_name)}</b> but
+      names itself <b>${e(r.mismatch.lead_name)}</b>. If that is the
+      wrong account, nothing here is refused — ${link} and point it at
+      the right one.</div>`);
+  }
+  if (!bits.length) return;
+  box.innerHTML = `<div style="background:var(--surface-2);
+    border:1px solid var(--border);border-radius:var(--r);
+    padding:10px 14px;margin-bottom:14px;font-size:12.5px;
+    color:var(--text-2)">${bits.join('')}</div>`;
 }
 
 async function loadLeadDates(id){

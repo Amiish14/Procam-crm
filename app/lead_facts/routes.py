@@ -6,6 +6,8 @@ CRM-FINAL-CLOSEOUT-01 §5, §6, §7.
     GET  /api/leads/<id>/team           who is on it, and by what right
     GET  /api/leads/<id>/quote-files    quotations attached to the lead
     POST /api/leads/<id>/quote-files    attach one
+    GET  /api/leads/<id>/account-state  the account question, if any
+                                        (CRM-WA-01b)
 
 Not behind a feature switch. All three are reported absences — the
 dates are blank, the team is one name, and a quotation made in Excel
@@ -183,3 +185,53 @@ def upload_quote_file(lid):
                   f'({exc.__class__.__name__}). Nothing was '
                   f'attached.'), 500
     return jsonify(ok=True, **out)
+
+
+# ── CRM-WA-01b the account question, asked instead of refused ───────
+@bp.route('/api/leads/<int:lid>/account-state')
+@_facts
+def account_state(lid):
+    """What the account-first rule thinks of this lead, for this viewer.
+
+    One place for the three answers the lead screen needs and could
+    not get: whether a stage move would be refused and why, whether
+    *this* viewer is exempt because the lead is theirs, and whether
+    the lead's own company name disagrees with the account it is
+    linked to.
+
+    The last one is a prompt, never a refusal. CRM-WA-01b §3: "if the
+    block is a name mismatch, show Confirm account on the lead instead
+    of refusing the stage change". It never did refuse for a mismatch
+    — the gate only ever asked for an account and an owner — so what
+    was missing was the asking, which is this.
+    """
+    from app.services import account_gate
+
+    lead = _lead(lid)
+    if not account_gate.enabled():
+        return jsonify(ok=True, live=False, blocked=False, reason='',
+                       mismatch=None, claim='', message='',
+                       resolver='', confirm_url='')
+
+    code, why = account_gate.reason_for(lead)
+    claim = account_gate.worker_claim(lead, _me())
+    exempt = bool(code in account_gate.OWNERSHIP_REASONS and claim)
+    mismatch = account_gate.name_mismatch(lead)
+    account = account_gate.account_of(lead)
+    return jsonify(
+        ok=True,
+        live=True,
+        reason=code,
+        reason_words=why,
+        blocked=bool(code) and not exempt,
+        exempt=exempt,
+        claim=claim,
+        message=(account_gate.message_for(lead, code, why)
+                 if code and not exempt else ''),
+        resolver=account_gate.resolver_for(lead) if code else '',
+        vertical=account_gate.vertical_of(lead),
+        account_id=(account.id if account is not None else None),
+        account_name=(account.name if account is not None else ''),
+        mismatch=({'lead_name': mismatch[0], 'account_name': mismatch[1]}
+                  if mismatch else None),
+        confirm_url=('/accounts/check' if (code or mismatch) else ''))

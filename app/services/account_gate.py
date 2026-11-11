@@ -31,6 +31,22 @@ Where the line is not
     Nothing here reads or writes data when the flag is off. With
     `FEATURE_ACCOUNT_FIRST` off, `check()` returns None for
     everything and the CRM behaves exactly as it does today.
+
+Who the line is not drawn against (CRM-WA-01b)
+    Two very different facts wore the same refusal. "No account"
+    means nobody knows who the customer is, which has to be settled
+    before the lead is worked. "No owner for this vertical" means we
+    know the customer perfectly well and have not written down who
+    serves them *for this vertical* — a staffing question, usually
+    about a vertical the person being refused does not work in.
+
+    A Freight Forwarding lead whose account is owned by an Air
+    Freight colleague was refused on the second fact, which is the
+    one the lead's own owner cannot fix and should never have been
+    asked to. So account ownership no longer stops the people with a
+    claim on the lead — its owner (Primary PIC), its secondary PIC,
+    or anybody in the lead's own vertical. It still stops a passer-by,
+    and the refusal now names the rule and who can clear it.
 """
 from __future__ import annotations
 
@@ -49,6 +65,31 @@ STATE = 'Account to confirm'
 BLOCKED_STAGES = ('Call Done', 'Business Discussion', 'New Opportunity',
                   'RFQ Generated', 'Quoted', 'Under Negotiation', 'Won',
                   'Profile Sent', 'Appointment', 'Visit Done')
+
+#: The name this rule answers to, so a refusal can be traced to it
+#: without grepping. Shown in every message.
+RULE = 'Account first (FEATURE_ACCOUNT_FIRST)'
+
+#: Why a lead is waiting, as a code rather than a sentence. The
+#: sentences are for people; the code is so `check` can tell the
+#: matching question from the staffing one, which is the whole of
+#: CRM-WA-01b.
+WHY_NO_ACCOUNT = 'no_account'
+WHY_PLACEHOLDER = 'placeholder_account'
+WHY_NO_VERTICAL = 'no_vertical'
+WHY_NO_OWNER = 'no_owner'
+
+#: Reasons that describe who owns the account rather than whether we
+#: know who the customer is. These never refuse somebody with a claim
+#: on the lead: account ownership must not block lead work.
+OWNERSHIP_REASONS = (WHY_NO_OWNER,)
+
+#: What a person's claim on the lead is called. Roles, never names:
+#: the words go into a refusal somebody reads, and the codes are read
+#: from the lead at the time.
+CLAIM_OWNER = 'the lead owner (Primary PIC)'
+CLAIM_SECOND = 'the secondary PIC'
+CLAIM_VERTICAL = "in the lead's own vertical"
 
 MESSAGE = ('This lead has no confirmed account{why}. Confirm the '
            'customer on Accounts → Account check first — the owner, '
@@ -128,16 +169,17 @@ def owner_for(account, vertical):
         return ''
 
 
-def why_pending(lead):
-    """Why this lead is waiting, in words, or '' if it is not.
+def reason_for(lead):
+    """(code, words) for why this lead is waiting, or ('', '').
 
-    Two different problems wear the same badge and need different
-    fixes: no account at all is a matching question, an account with
-    nobody named for the vertical is a staffing one.
+    One pass, two answers: the code so the gate can reason about the
+    kind of problem, the words so a person is told which one it is.
+    `why_pending` is the words on their own, which is what the
+    Account check screen has always read.
     """
     account = account_of(lead)
     if account is None:
-        return 'no account'
+        return WHY_NO_ACCOUNT, 'no account'
     # An account named "Unknown", or one holding our own domain, is
     # not a customer. A lead filed under one *looks* placed, which
     # is worse than being unplaced: it never reaches this queue, and
@@ -146,16 +188,159 @@ def why_pending(lead):
     from app.services import account_match
     placeholder = account_match.not_a_customer(account)
     if placeholder:
-        return f'no account — {placeholder}'
+        return WHY_PLACEHOLDER, f'no account — {placeholder}'
     vertical = vertical_of(lead)
     if not vertical:
         # No vertical means no owner question can even be asked. The
         # lead still needs a person to look at it, and saying why is
         # more use than "no owner for ".
-        return 'no vertical on the lead'
+        return WHY_NO_VERTICAL, 'no vertical on the lead'
     if not owner_for(account, vertical):
-        return f'no owner for {vertical}'
+        return WHY_NO_OWNER, f'no owner for {vertical}'
+    return '', ''
+
+
+def why_pending(lead):
+    """Why this lead is waiting, in words, or '' if it is not.
+
+    Two different problems wear the same badge and need different
+    fixes: no account at all is a matching question, an account with
+    nobody named for the vertical is a staffing one.
+    """
+    return reason_for(lead)[1]
+
+
+def _master(vertical):
+    """A vertical's managed name, or the name as written.
+
+    Deliberately not `master_vertical` on its own: that collapses
+    every value nobody has told the CRM about onto Management, which
+    is right for routing a notification and wrong here — it would
+    make an Air Freight person and a Freight Forwarding person
+    "the same vertical" the moment either name was missing from the
+    master, and hand out the CRM-WA-01b exemption to both.
+    """
+    value = (vertical or '').strip()
+    if not value:
+        return ''
+    try:
+        from app.services import vertical_heads
+        if vertical_heads.is_mapped(value):
+            return (vertical_heads.master_vertical(value) or value).strip()
+    except Exception:                                     # noqa: BLE001
+        pass
+    return value
+
+
+def _same_vertical(lead, emp_code):
+    """Is this person in the lead's own vertical?
+
+    Both sides go through the vertical master, because the employee
+    row says "Project Freight" and the lead says "PFM" and they are
+    the same vertical. An employee with no vertical matches nothing
+    rather than everything.
+    """
+    from app import Employee
+
+    mine = ''
+    try:
+        emp = Employee.query.filter_by(emp_code=emp_code).first()
+        mine = _master(getattr(emp, 'vertical', '') or '')
+    except Exception:                                     # noqa: BLE001
+        return False
+    theirs = _master(getattr(lead, 'procam_vertical', '') or '')
+    if not theirs:
+        theirs = _master(vertical_of(lead))
+    return bool(mine) and bool(theirs) and mine.lower() == theirs.lower()
+
+
+def worker_claim(lead, emp_code=None):
+    """This person's claim on the lead, in words, or ''.
+
+    CRM-WA-01b §3: a user may work a lead they own, are secondary PIC
+    on, or that is in their vertical — whoever owns the linked
+    account. Deliberately *not* the Access Matrix: the matrix answers
+    "may you open this record", which an admin or a whole-company
+    viewer passes for every lead in the book. The question here is
+    narrower — is this lead yours to move — and an administrator
+    looking at somebody else's lead should see the staffing problem
+    rather than walk past it.
+    """
+    from flask import has_request_context, session
+
+    if lead is None:
+        return ''
+    code = emp_code
+    if code is None and has_request_context():
+        code = session.get('emp_code')
+    code = (code or '').strip().upper()
+    if not code:
+        return ''
+    if (getattr(lead, 'assigned_to', '') or '').strip().upper() == code:
+        return CLAIM_OWNER
+    if (getattr(lead, 'secondary_owner', '') or '').strip().upper() == code:
+        return CLAIM_SECOND
+    if _same_vertical(lead, code):
+        return CLAIM_VERTICAL
     return ''
+
+
+def resolver_for(lead):
+    """Who can clear this lead's account question, by role.
+
+    The same rule `account_check.may_clear` enforces (D6): the head of
+    the lead's vertical, or a CRM admin. Named by role and read from
+    the lead — no codes or names live in this file.
+    """
+    vertical = vertical_of(lead)
+    who = (f'the head of {vertical}' if vertical
+           else "the lead's vertical head")
+    return f'{who}, or a CRM admin, on Accounts → Account check'
+
+
+def name_mismatch(lead):
+    """The two names, when the lead's and its account's disagree.
+
+    Returns (lead_name, account_name) or (). Not a refusal — CRM-WA-01b
+    §3 is explicit that a name that does not match is a question to
+    ask on the lead ("Confirm account"), not a reason to stop work.
+    The loose normaliser from the data-quality checks, so the two
+    screens flag the same pairs: a false prompt costs a glance, and
+    collapsing real differences would cost the prompt its point.
+    """
+    account = account_of(lead)
+    if account is None:
+        return ()
+    try:
+        from app.data_quality import definitions as defs
+        norm = defs.norm_name
+    except Exception:                                     # noqa: BLE001
+        def norm(text):
+            return (text or '').strip().lower()
+    mine = norm(getattr(lead, 'company', '') or '')
+    theirs = norm(account.name or '')
+    if mine and theirs and mine != theirs:
+        return (getattr(lead, 'company', '') or '', account.name or '')
+    return ()
+
+
+def message_for(lead, code, why):
+    """The refusal, naming the rule and who can clear it."""
+    where = resolver_for(lead)
+    if code == WHY_NO_OWNER:
+        return (f'{RULE}: the account on this lead has {why}, so nobody '
+                f'is named to serve this customer for it. Account '
+                f'ownership does not stop the lead\'s own owner, its '
+                f'secondary PIC or anybody in its vertical — you are '
+                f'none of those on this lead, so ask {where}.')
+    if code == WHY_NO_VERTICAL:
+        return (f'{RULE}: this lead has no vertical, so there is no '
+                f'owner question to ask yet. Set the vertical on the '
+                f'lead, or ask {where}.')
+    return (f'{RULE}: this lead has no confirmed account ({why}). '
+            f'Confirm the customer on Accounts → Account check first '
+            f'— the owner, the history and the credit position all '
+            f'hang off it. {where[0].upper()}{where[1:]} can do it.')
 
 
 def pending(lead):
@@ -165,12 +350,17 @@ def pending(lead):
     return bool(why_pending(lead))
 
 
-def check(lead, new_stage=None, *, action='work on'):
+def check(lead, new_stage=None, *, action='work on', emp_code=None):
     """None if allowed, else the sentence to show.
 
     `new_stage` None means "not a stage move" — accepting, raising an
     RFQ, building a quote. Those are refused whatever the stage,
     because each of them starts work.
+
+    `emp_code` is who is asking; it defaults to the signed-in user.
+    It decides only the ownership half: a lead with no account at all
+    is refused for everybody, including its owner, because nobody can
+    work a customer we have not identified.
     """
     if not enabled() or lead is None:
         return None
@@ -182,10 +372,14 @@ def check(lead, new_stage=None, *, action='work on'):
         return None
     if new_stage is not None and new_stage not in BLOCKED_STAGES:
         return None
-    why = why_pending(lead)
-    if not why:
+    code, why = reason_for(lead)
+    if not code:
         return None
-    return MESSAGE.format(why=f' ({why})')
+    if code in OWNERSHIP_REASONS and worker_claim(lead, emp_code):
+        # CRM-WA-01b: the account's staffing is not this person's
+        # question, and the lead is theirs to move.
+        return None
+    return message_for(lead, code, why)
 
 
 def pending_leads(sc=None):

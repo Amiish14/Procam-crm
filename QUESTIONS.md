@@ -2523,3 +2523,77 @@ telling an anonymous caller which half is wrong tells them which
 codes exist. The diagnosis is the other side of the desk — admin
 only, read-only, and it never reads, returns or logs a password or a
 hash.
+
+## 75 — CRM-WA-01b: one sentence, two facts, and the wrong person asked
+
+A Freight Forwarding manager could not move a lead to **Quoted**. The
+screen said the lead had no confirmed account. The account was there,
+it was correct, and it had an owner — an Air Freight colleague.
+
+### The cause
+
+`account_gate.why_pending` returned four different problems and
+`check` refused all four with one sentence. Two of them say *we do
+not know who the customer is*: no account at all, or an account that
+is not a customer ("Unknown", our own domain). One says something
+completely different: **nobody is named on the account for this
+lead's vertical**. The account is known, the customer is known, and
+what is missing is a row saying who serves them for Freight
+Forwarding — a staffing question, usually about a vertical the person
+being refused does not work in and cannot write a row for.
+
+So the rule asked the lead's own owner to answer a question that was
+never hers, and the message named neither the rule nor anybody who
+could clear it. Hence a day spent on "account assignment".
+
+The two candidates in the report were both wrong, and worth recording
+as wrong:
+
+* **The editor is neither lead owner nor account owner.** The gate
+  never looked at who was asking. It took a lead and a stage, and
+  nothing else; account *ownership* was read only as "is there a row
+  at all".
+* **A name mismatch makes the match unconfirmed.** It does not. The
+  gate never compared the lead's company name with its account's —
+  `data_quality.check_lead_account_mismatch` reports those pairs and
+  refuses nothing. There was no mismatch refusal to remove, which is
+  why §3's second bullet became an addition rather than a change: the
+  lead screen now *asks*, with Confirm account, where it used to say
+  nothing at all.
+
+It surfaced on 11 November because `FEATURE_ACCOUNT_FIRST` was
+switched on for everybody in CRM-FINAL-CLOSEOUT-01 §1, the day
+before. The rule was written for a pilot in one vertical, where
+"somebody else's vertical owns this account" barely happens.
+
+### What changed
+
+`check` is now person-aware. Only the ownership reason is exempt, and
+only for somebody with a claim on the lead: its owner (Primary PIC),
+its secondary PIC, or anybody in the lead's own vertical. A lead with
+no account at all is still refused for everybody, including its
+owner, because nobody can quote a customer we have not identified —
+that is the line the rule was drawn for and it has not moved.
+
+The claim is deliberately **not** the Access Matrix. The matrix
+answers "may you open this record", which an administrator or a
+whole-company viewer passes for every lead in the book. The question
+here is narrower — is this lead yours to move — and an administrator
+looking at somebody else's lead should see the staffing gap rather
+than step over it.
+
+### Two things found on the way
+
+`vertical_heads.master_vertical` folds every unmapped or blank
+vertical onto **Management**, by an old and deliberate decision. Used
+for the exemption that would have been a hole: with either name
+missing from the master, an Air Freight person and a Freight
+Forwarding person read as the same vertical and both get the
+exemption. The comparison therefore uses the master name only where
+the value *is* in the master, and the name as written otherwise.
+
+The same fallback makes the gate's own `no vertical on the lead`
+reason unreachable — a lead with no vertical is asked the owner
+question about Management instead. That is pre-existing, it is not in
+CRM-WA-01b's scope, and it is recorded here rather than quietly
+changed.
