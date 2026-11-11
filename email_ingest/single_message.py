@@ -225,6 +225,35 @@ def _file_against_lead(db, decision, msg, extracted, log,
             log.exception('could not capture the reply on lead %s',
                           decision.lead_id)
 
+        # CRM-MAIL-2026-11-11 §3+§5 — "flag it customer chasing". The
+        # reminder that asked for the D&D estimate as of 15 Nov instead
+        # of 5 Nov is information about us, not about the enquiry: the
+        # customer has asked twice and is still waiting. On the trail
+        # it was one more row. Outbound mail clears it, because that is
+        # what answering a chase is.
+        try:
+            from app.services import mail_chase
+            _lead_row = db.session.get(Lead, decision.lead_id)
+            if _lead_row is not None:
+                if outbound:
+                    mail_chase.answered(_lead_row)
+                else:
+                    _phrase = mail_chase.is_a_chase(
+                        _lead_row,
+                        subject=(msg.get('subject') or ''),
+                        body=(_li.body_text(msg) or ''),
+                        from_addr=(_li.sender(msg) or ''))
+                    if _phrase and mail_chase.flag(
+                            _lead_row, phrase=_phrase,
+                            when=email_parser.received_datetime(msg),
+                            message_id=message_id):
+                        log.info('lead %s: the customer is chasing '
+                                 '(%r, %s so far)', _lead_row.id,
+                                 _phrase, _lead_row.chase_count)
+        except Exception:
+            log.exception('could not record the chase on lead %s',
+                          decision.lead_id)
+
         # A quotation going out moves the enquiry on. Nothing else here
         # changes a stage: an inbound reply is information, not progress,
         # and advancing a lead on one would corrupt the pipeline.
@@ -297,15 +326,32 @@ def auto_assign_owners(lead, sender_email, *, subject='', body=''):
         # Written only where linking needs no judgement — a learned
         # sender, or one exact rule with nothing disagreeing. The
         # rest go to Account check, which is the point of the queue.
+        #
+        # CRM-MAIL-2026-11-11 §7, two corrections. It only ran while
+        # FEATURE_ACCOUNT_FIRST was on, so every lead ingested before
+        # 10 November landed on no account however obvious the
+        # customer was — which is most of the 277 the stuck report
+        # counts. Linking a lead to its account is right whether or
+        # not a gate is reading the answer, so the flag no longer
+        # decides it.
+        #
+        # And an exact normalised-name match now links too, through
+        # `auto_link_by_name`: ANDRITZ HYDRO wrote in, the account
+        # existed under a name that normalises identically, and
+        # nothing linked because the account did not carry their
+        # domain.
         try:
-            from app.services import account_gate
-            if account_gate.enabled() and not getattr(lead, 'company_id',
-                                                      None):
+            if not getattr(lead, 'company_id', None):
                 from app.services import account_match as _am
                 linked, how = _am.auto_link(
                     sender_email,
                     company_name=getattr(lead, 'company', ''),
                     text=f'{subject}\n{body}')
+                if linked is None:
+                    linked, how = _am.auto_link_by_name(
+                        sender_email,
+                        company_name=getattr(lead, 'company', ''),
+                        text=f'{subject}\n{body}')
                 if linked is not None:
                     lead.company_id = linked.id
                     log.info('lead %s linked to account %s (%s)',

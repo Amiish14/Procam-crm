@@ -601,6 +601,13 @@ class Lead(db.Model):
     # job can also be Multimodal — something the old pair of verticals
     # could not say at all.
     mode             = db.Column(db.String(20))
+    # CRM-MAIL-2026-11-11 §3+§5. The customer has asked again and is
+    # still waiting. `chasing_since` is when they first asked and were
+    # not answered; `chase_count` is how many times. Both are written
+    # by app/services/mail_chase.py from inbound mail and cleared when
+    # we write back, which is what answering means.
+    chasing_since    = db.Column(db.DateTime, index=True)
+    chase_count      = db.Column(db.Integer, default=0)
     # Decision 21 Oct 2026 (B6). Where the cargo moves from and to, and
     # for warehousing and installation the site itself. Which of these
     # a manual entry must give depends on the vertical — see
@@ -896,6 +903,9 @@ class Lead(db.Model):
             'linkedin': self.linkedin or '',
             'stage': self.stage or 'New', 'procam_vertical': self.procam_vertical or '',
             'mode': self.mode or '',
+            'chasing_since': (str(self.chasing_since)[:19]
+                              if self.chasing_since else ''),
+            'chase_count': int(self.chase_count or 0),
             'origin': self.origin or '', 'destination': self.destination or '',
             'site_location': self.site_location or '',
             'crn': self.crn or '',
@@ -2581,7 +2591,7 @@ def api_leads():
     # real cost of the cap.
     if srch:
         like = f'%{srch.lower()}%'
-        q = q.filter(db.or_(
+        _clauses = [
             db.func.lower(db.func.coalesce(Lead.company, '')).like(like),
             db.func.lower(db.func.coalesce(Lead.project, '')).like(like),
             db.func.lower(db.func.coalesce(Lead.state, '')).like(like),
@@ -2589,7 +2599,16 @@ def api_leads():
             db.func.lower(db.func.coalesce(Lead.pic, '')).like(like),
             db.func.lower(db.func.coalesce(Lead.email, '')).like(like),
             db.func.lower(db.func.coalesce(Lead.city, '')).like(like),
-        ))
+        ]
+        # CRM-MAIL-2026-11-11 §4: "search by company or lead number".
+        # A number typed into this box meant the lead number to
+        # everybody who typed one, and matched nothing. One OR with
+        # the rest, not a second filter: ANDed, "10291" would have to
+        # appear in the company name as well.
+        _digits = srch.lstrip('#').strip()
+        if _digits.isdigit():
+            _clauses.append(Lead.id == int(_digits))
+        q = q.filter(db.or_(*_clauses))
 
     q = _order_leads(q, request.args.get('sort'), request.args.get('dir'))
 
@@ -2935,6 +2954,9 @@ def api_update_lead(lid):
         'website':'website', 'subsidiaries':'subsidiaries', 'relevance':'relevance',
         'next_action':'next_action',
     }
+    # Set when the account gate refuses the stage move in this save.
+    # The save still happens; the move does not. See the note below.
+    _stage_refused, _stage_help = None, None
     # CRM-VALUE-01, before any field is written. The form may be
     # submitting the value in the same save, which satisfies the gate.
     if 'stage' in d and (d.get('stage') or '') != (lead.stage or ''):
@@ -2950,13 +2972,27 @@ def api_update_lead(lid):
             return jsonify({'error': _refused,
                             'needs': 'estimated_value',
                             'stage': d.get('stage')}), 400
-        # CRM-ACCOUNT-FIRST-01, same place and the same shape.
+        # CRM-ACCOUNT-FIRST-01, same place — but NOT the same shape
+        # any more. CRM-MAIL-2026-11-11 §1: this refusal rolled the
+        # whole save back, so the RFQ details, the contact and the
+        # dates typed into the same form were discarded along with the
+        # stage move. An unidentified customer still may not be
+        # quoted; what the customer asked for still has to be
+        # recorded, or the rule loses the enquiry it was protecting.
+        #
+        # So the stage is dropped from this save and everything else
+        # is written. The response says the move was refused, with the
+        # candidates the account picker would offer, and the lead
+        # sheet opens the picker instead of showing a dead-end toast.
         from app.services import account_gate
-        _noacct = account_gate.check(lead, d.get('stage'))
-        if _noacct:
-            db.session.rollback()
-            return jsonify({'error': _noacct, 'needs': 'account',
-                            'stage': d.get('stage')}), 400
+        _stage_refused = account_gate.check(lead, d.get('stage'))
+        if _stage_refused:
+            _stage_help = account_gate.help_for(
+                lead, emp_code=session.get('emp_code'))
+            _stage_help.update({'wanted': d.get('stage') or '',
+                                'from': lead.stage or '',
+                                'error': _stage_refused})
+            d.pop('stage', None)
         # CRM-COCKPIT-02 §2.2 / §3.1 — the quote submission due date
         # from RFQ Generated, and a next follow-up on every move.
         # The payload may be filling either in this same save, which
@@ -2964,7 +3000,8 @@ def api_update_lead(lid):
         # date the mail suggests, so [Take me there] lands on a
         # filled box.
         from app.services import cockpit02_gate as _c2
-        _dates = _c2.refusal(lead, stage=d.get('stage'), payload=d)
+        _dates = (None if _stage_refused
+                  else _c2.refusal(lead, stage=d.get('stage'), payload=d))
         if _dates:
             db.session.rollback()
             _body, _status = _dates
@@ -3074,9 +3111,16 @@ def api_update_lead(lid):
     # The save succeeded; anything the guard refused is reported
     # rather than applied silently, so the user is not left believing
     # a change went through.
+    _body = {'ok': True}
     if _touch_warnings:
-        return jsonify({'ok': True, 'warnings': _touch_warnings})
-    return jsonify({'ok': True})
+        _body['warnings'] = _touch_warnings
+    if _stage_refused:
+        # 200, because the save happened. `needs` is what the lead
+        # sheet reads to open the account picker and then retry the
+        # one thing that did not go through.
+        _body.update({'needs': 'account', 'error': _stage_refused,
+                      'stage_refused': _stage_help})
+    return jsonify(_body)
 
 
 def _lead_value_now(lead):
@@ -3542,8 +3586,14 @@ def api_lead_advance(lid):
     _noacct = account_gate.check(lead, nxt)
     if _noacct:
         db.session.rollback()
+        # CRM-MAIL-2026-11-11 §6: the refusal carries the picker with
+        # it. A toast that names another screen is a dead end — the
+        # person is in the middle of moving a lead and has to start
+        # again somewhere else.
         return jsonify({'ok': False, 'error': _noacct,
-                        'needs': 'account', 'stage': nxt}), 400
+                        'needs': 'account', 'stage': nxt,
+                        'account_help': account_gate.help_for(
+                            lead, emp_code=session.get('emp_code'))}), 400
     _log_stage_change(lead, nxt, note=data.get('note'))
     lead.stage_entered_at = datetime.utcnow()
     # Stamp workflow-specific dates when the corresponding stage is reached
@@ -3629,7 +3679,9 @@ def api_lead_decision(lid):
     if _noacct:
         db.session.rollback()
         return jsonify({'ok': False, 'error': _noacct,
-                        'needs': 'account', 'stage': outcome}), 400
+                        'needs': 'account', 'stage': outcome,
+                        'account_help': account_gate.help_for(
+                            lead, emp_code=session.get('emp_code'))}), 400
     # The Won dialog's business value (₹). It was collected and never sent.
     if outcome == 'Won' and data.get('value') not in (None, ''):
         from app.services import lead_value
@@ -5295,14 +5347,29 @@ def api_lead_emails(lid):
     # own, ?kind=customer gives the conversation without it. Same rows,
     # separated by the class that filed them.
     kind = (request.args.get('kind') or '').strip()
-    if kind == 'rate_sourcing':
-        q = q.filter(LeadEmail.intake_class == 'G_rate_sourcing')
-    elif kind == 'customer':
-        q = q.filter(db.or_(LeadEmail.intake_class.is_(None),
-                            LeadEmail.intake_class != 'G_rate_sourcing'))
     rows = q.order_by(LeadEmail.sent_or_received_at.asc(),
                       LeadEmail.id.asc()).all()
+    # §11. The split is decided on the evidence rather than on the
+    # stored class alone: a message that arrived from this lead's own
+    # customer is customer mail whatever the classifier called it, and
+    # a company that both supplies us and buys from us is how it came
+    # to be called something else. `mail_filing` holds the one rule.
+    if kind in ('rate_sourcing', 'customer'):
+        from app.services import mail_filing
+        supplier = [r for r in rows if mail_filing.is_supplier_facing(lead, r)]
+        rows = (supplier if kind == 'rate_sourcing'
+                else [r for r in rows if r not in supplier])
     out = [r.to_dict() for r in rows]
+    # CRM-MAIL-2026-11-11 §11. The fallback below is for a lead whose
+    # trail has no rows yet; it synthesises the enquiry out of the
+    # original_email_* columns. It was running for EVERY kind, so on
+    # a lead with no trail rows the customer's own RFQ appeared under
+    # "Rate sourcing — what we asked suppliers, kept out of the
+    # customer thread" as well as under the Email trail. It is the
+    # customer's first message by definition: nothing we asked a
+    # supplier is in those columns.
+    if kind == 'rate_sourcing':
+        return jsonify(out)
     if not out and lead.original_email_body:
         out.append({
             'id': None, 'lead_id': lid, 'direction': 'inbound',
@@ -5344,6 +5411,16 @@ def api_lead_email_add(lid):
         source='sent_in_crm' if status == 'sent' else 'drafted_in_crm',
         status=status)
     db.session.add(row)
+    # CRM-MAIL-2026-11-11 §3+§5. Writing to the customer answers a
+    # chase; a draft does not. Same event, same transaction, so
+    # "we replied" and "the flag cleared" cannot drift apart.
+    if status == 'sent':
+        try:
+            from app.services import mail_chase
+            mail_chase.answered(Lead.query.get(lid),
+                                actor=session.get('emp_code') or 'system')
+        except Exception:
+            app.logger.exception('could not clear the chase on lead %s', lid)
     db.session.commit()
     return jsonify({'ok': True, 'email': row.to_dict()})
 
@@ -5871,6 +5948,9 @@ def init_db():
             ('leads',         'lost_reason',      'VARCHAR(60)'),
             # CRM-TIDY-01 — Sea / Air / Multimodal on forwarding leads
             ('leads',         'mode',             'VARCHAR(20)'),
+            # CRM-MAIL-2026-11-11 §3+§5 — the customer is chasing us
+            ('leads',         'chasing_since',    'TIMESTAMP'),
+            ('leads',         'chase_count',      'INTEGER DEFAULT 0'),
             # Escalation folded onto the task instead of a second row
             ('task_instances', 'escalated',    _bool_ddl),
             ('task_instances', 'escalated_to', 'VARCHAR(40)'),
@@ -6760,6 +6840,7 @@ for _mod_path, _bp_name in [
     # /admin/account-duplicates: one customer with two account rows
     # and one enquiry entered twice are different problems.
     ('app.lead_dupes.routes',    'lead_dupes_bp'),
+    ('app.account_link.routes',  'account_link_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])

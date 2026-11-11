@@ -124,6 +124,12 @@ _GATES = (
                                     'admin.master'),
     (re.compile(r"@_signin_admin\b"), 'permission admin.employees '
                                       '(read only)'),
+    # CRM-MAIL-2026-11-11 10. Accepting a proposal moves a lead onto
+    # somebody else's customer record and into their reports, so it
+    # is the same admin gate as the merge. The lead sheet's own
+    # account picker is the lead owner's way in.
+    (re.compile(r"@_link_admin\b"), 'permission admin.triage or '
+                                    'admin.master'),
     (re.compile(r"@_facts\b"), 'signed in; the lead by scope '
                                '(_require_lead_access)'),
     (re.compile(r"@_junk\b"), 'FEATURE_JUNK_DELETE, then signed in; '

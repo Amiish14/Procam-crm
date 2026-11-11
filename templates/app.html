@@ -1916,6 +1916,14 @@ catch (err) { console.error('Employee list could not start loading', err); }
            flag off never reveals the button at all. -->
       <button class="btn btn-ghost" id="ldJunk" style="display:none"
               onclick="junkLd()">Delete – not relevant</button>
+      <!-- CRM-MAIL-2026-11-11 §2. A vessel open-positions mailer had
+           Close as Lost or nothing, and closing a shipping line's
+           weekly circular as Lost files it in the win/loss ratio.
+           This is the same reversible path as Delete – not relevant,
+           under the name the mail actually deserves, with its reason
+           already chosen so nobody has to decide it is "spam". -->
+      <button class="btn btn-ghost" id="ldInfo" style="display:none"
+              onclick="junkInfoLd()">Informational — not a lead</button>
       <span id="ldJunkWhy" style="display:none;font-size:11.5px;
             color:var(--text-3);align-self:center;max-width:230px"></span>
       <!-- CRM-USER-ISSUES-02NOV §1. Archive is the ordinary way to
@@ -1929,6 +1937,82 @@ catch (err) { console.error('Employee list could not start loading', err); }
             color:var(--text-3);align-self:center;max-width:230px"></span>
       <button class="btn btn-ghost" onclick="closeLd()">Cancel</button>
       <button class="btn btn-red" onclick="saveLd()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ACCOUNT MODAL — CRM-MAIL-2026-11-11 §6 (and §1, §8, §9).
+     "Can the account be assigned while assigning the RFQ?" Yes. The
+     refusal used to be a toast naming another screen, which meant
+     abandoning whatever dialog you were in and starting again. The
+     server now sends its candidates with the refusal, and this picks
+     one and retries the action that was refused. -->
+<div class="mob" id="agMob" style="display:none"
+     onclick="if(event.target===this)agClose()">
+  <div class="mod mod-sm" onclick="event.stopPropagation()">
+    <div class="mhd">
+      <div class="m-ic">🏢</div>
+      <div>
+        <div class="m-ttl">Which customer is this?</div>
+        <div class="m-sub" id="agSub"></div>
+      </div>
+      <button class="mx" onclick="agClose()">✕</button>
+    </div>
+    <div class="mbdy">
+      <div class="fmg">
+        <label class="fml">Account
+          <span style="font-weight:400;color:var(--text-3)">
+            — pick the customer, and the action carries on</span></label>
+        <input class="fmc" id="agQ" autocomplete="off"
+               placeholder="Company name, domain or GSTIN…"
+               oninput="agType()">
+      </div>
+      <div id="agHits"></div>
+      <div id="agMsg" style="font-size:11.5px;color:#b0421a;margin-top:6px"></div>
+      <div id="agWho" style="font-size:11.5px;color:var(--text-3);
+           margin-top:8px"></div>
+    </div>
+    <div class="mft">
+      <button class="btn btn-ghost" onclick="agFullPicker()">
+        Create a new account…</button>
+      <button class="btn btn-ghost" style="margin-left:auto"
+              onclick="agClose()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- DUPLICATE MODAL — CRM-MAIL-2026-11-11 §4.
+     It was a browser prompt asking for a lead id, which means
+     knowing the number of the lead you are about to point at. The
+     likely originals are already scored by lead_duplicates; this
+     lists them, and search takes a company name or a lead number. -->
+<div class="mob" id="dpMob" style="display:none"
+     onclick="if(event.target===this)dpClose()">
+  <div class="mod mod-sm" onclick="event.stopPropagation()">
+    <div class="mhd">
+      <div class="m-ic">⧉</div>
+      <div>
+        <div class="m-ttl">Which lead is the one to keep?</div>
+        <div class="m-sub">This one is closed as a duplicate of it.
+          Both are kept, and an administrator can undo it.</div>
+      </div>
+      <button class="mx" onclick="dpClose()">✕</button>
+    </div>
+    <div class="mbdy">
+      <div class="fmg">
+        <label class="fml">Search
+          <span style="font-weight:400;color:var(--text-3)">
+            — a company name, or a lead number</span></label>
+        <input class="fmc" id="dpQ" autocomplete="off"
+               placeholder="e.g. Sinofreight, or 10291"
+               oninput="dpType()">
+      </div>
+      <div id="dpHits">Loading…</div>
+      <div id="dpMsg" style="font-size:11.5px;color:#b0421a;margin-top:6px"></div>
+    </div>
+    <div class="mft">
+      <button class="btn btn-ghost" style="margin-left:auto"
+              onclick="dpClose()">Cancel</button>
     </div>
   </div>
 </div>
@@ -2849,8 +2933,8 @@ async function rInbox(stage, prefix){
   const cnt=g(prefix+'Cnt'); if(cnt) cnt.textContent=arr.length+' leads';
 }
 
-async function advanceLead(id){
-  if(!confirm('Advance to next stage?'))return;
+async function advanceLead(id, skipConfirm){
+  if(!skipConfirm && !confirm('Advance to next stage?'))return;
   let r=await api(`/api/leads/${id}/advance`,{method:'POST',body:'{}'});
   // CRM-VALUE-01. This button has no dialog, so when the server
   // refuses for a missing value it is asked for here and the move
@@ -2865,6 +2949,11 @@ async function advanceLead(id){
     r = await api(`/api/leads/${id}/advance`,
                   {method:'POST',
                    body: JSON.stringify({estimated_value: v})});
+  }
+  // §6 — the same for a missing account: ask here, retry here.
+  if(r && !r.ok && r.needs === 'account'){
+    agOpen(id, r.account_help || {}, ()=>advanceLead(id, true));
+    return;
   }
   if(r.ok){toast('Advanced to '+r.stage,'ok');refreshCurrentInbox();rDash();
     if(r.stage==='Quoted'&&r.lead&&(!r.lead.quote_value_inr||!r.lead.quote_date)&&
@@ -3300,6 +3389,10 @@ async function openLd(id){
        rule no longer stops them; this says what is still open, and
        offers Confirm account where a name disagrees. #}
     <div id="lAcctQ"></div>
+    {# CRM-MAIL-2026-11-11 §3+§5. A chase is the one inbound message
+       that is not information about the enquiry — it is information
+       about us. On the trail it was one more row among forty. #}
+    ${ldChaseBlock(l)}
     <div class="fm-s">Activity dates</div>
     <div class="dtrow">
       <div class="dtc ${l.phone_call_date?'ok':''}"><div class="dtc-l">Phone call</div><input type="date" class="fmc" id="lPC" value="${l.phone_call_date||''}"></div>
@@ -4241,7 +4334,34 @@ async function saveLd(){
   if(!ldValuePrompts(pipeStage, values)) return;
   Object.assign(data, values);
   const r=await api(`/api/leads/${activeId}`,{method:'PUT',body:JSON.stringify(data)});
+  /* CRM-MAIL-2026-11-11 §1. The save now succeeds even when the
+     stage move in it is refused for want of an account: the RFQ
+     details, the contact and the dates are written, and only the
+     move is held back. So this is a success with one thing undone,
+     not a failure — and the picker opens on the one thing. */
+  if(r.ok && r.needs === 'account' && r.stage_refused){
+    const want = r.stage_refused.wanted || '';
+    const leadId = activeId;
+    toast('Saved — but the move to ' + (want||'the next stage')
+          + ' needs the customer named','err');
+    rLeads(); rAll(); rDash();
+    agOpen(leadId, r.stage_refused, async ()=>{
+      const again = await api(`/api/leads/${leadId}`,
+        {method:'PUT', body: JSON.stringify({stage: want})});
+      if (again && again.ok && !again.stage_refused){
+        toast('Moved to ' + want + ' ✓','ok');
+        closeLd(); rLeads(); rAll(); rDash();
+      } else {
+        toast((again && again.error) || 'The move was still refused','err');
+      }
+    }, 'Everything else was saved. The move to ' + (want||'the next stage')
+       + ' needs the customer named — ' + (r.stage_refused.reason_words||''));
+    return;
+  }
   if(r.ok){closeLd();rLeads();rAll();rDash();toast('Lead saved ✓','ok');}
+  else if(r.needs === 'account'){
+    agOpen(activeId, r.account_help || {}, ()=>saveLd());
+  }
   else toast(r.error||'Error saving','err');
 }
 
@@ -4788,6 +4908,198 @@ function picMailShow(){
   draw();
 }
 
+/* §3+§5 · "the customer is chasing". Written by the ingest from
+   inbound mail, cleared when we send the customer something. */
+function ldChaseBlock(l){
+  const n = Number((l && l.chase_count) || 0);
+  if (!n) return '';
+  const since = (l.chasing_since || '').slice(0,10);
+  let days = '';
+  if (since){
+    const d = Math.floor((Date.now() - new Date(since).getTime())
+                         / 86400000);
+    if (d >= 0) days = d + ' day' + (d === 1 ? '' : 's');
+  }
+  return `<div style="background:#FEF2F2;border:1px solid #FCA5A5;
+      border-radius:var(--r);padding:10px 14px;margin-bottom:14px;
+      font-size:12.5px;color:#991B1B">
+      <b>The customer is chasing${n > 1 ? ' — ' + n + ' times' : ''}.</b>
+      ${since?` First asked ${e(since)}${days?' · '+e(days)+' ago':''}.`:''}
+      Sending them a mail from this lead clears it.
+    </div>`;
+}
+
+/* ── CRM-MAIL-2026-11-11 §6 · the account, where the refusal happened
+   ─────────────────────────────────────────────────────────────────
+   AG.retry is the action that was refused. Picking an account links
+   it and then calls that function again, so the user ends up where
+   they were going rather than on another screen. */
+let AG = null, AG_Q = null;
+
+function agOpen(leadId, help, retry, headline){
+  AG = {leadId: leadId, retry: retry, help: help || {}};
+  const sub = g('agSub');
+  if (sub) sub.textContent = headline
+    || ((help && help.reason_words)
+        ? ('This lead has ' + help.reason_words + '. Name the customer '
+           + 'and the action carries on.')
+        : 'Name the customer and the action carries on.');
+  const who = g('agWho');
+  if (who) who.innerHTML = (help && help.resolver)
+    ? ('If none of these is right, ' + e(help.resolver) + ' can sort it out.')
+    : '';
+  g('agMsg').textContent = '';
+  const box = g('agQ');
+  if (box) box.value = '';
+  agHits((help && help.suggestions) || [], '');
+  g('agMob').style.display = 'flex';
+  if (box) setTimeout(()=>{ box.focus(); }, 60);
+}
+
+function agClose(){ g('agMob').style.display='none'; AG = null; }
+
+function agType(){
+  clearTimeout(AG_Q);
+  AG_Q = setTimeout(async ()=>{
+    if (!AG) return;
+    const q = (g('agQ')||{}).value || '';
+    let r = null;
+    try { r = await api('/api/leads/'+AG.leadId+'/account/suggest?q='
+                        + encodeURIComponent(q)); } catch(_){}
+    if (r && r.ok) agHits(r.rows || [], q);
+  }, 220);
+}
+
+function agHits(rows, q){
+  const host = g('agHits');
+  if (!host) return;
+  const list = (rows||[]).map(a=>`
+    <button type="button" class="la-opt"
+      ${a.blocked?'disabled':`onclick="agPick(${a.account_id})"`}
+      style="display:block;width:100%;text-align:left;border:1px solid
+      var(--border-2);border-radius:var(--r);padding:8px 11px;
+      margin-bottom:6px;font-size:13px;background:none;
+      cursor:${a.blocked?'not-allowed':'pointer'};opacity:${a.blocked?'.55':'1'}">
+      <b>${e(a.name)}</b>
+      <span style="color:var(--text-3)"> — ${e(a.rule||'')}</span>
+      ${a.owner_name?`<span style="color:var(--text-3)"> · owner ${
+        e(a.owner_name)}</span>`:''}
+      ${a.blocked?'<span style="color:#991B1B;font-weight:600"> · BLOCKED</span>':''}
+    </button>`).join('');
+  host.innerHTML = list || `<div style="font-size:12.5px;color:var(--text-3)">
+    ${(q||'').trim() ? 'No account matches that.'
+       : 'No suggestion — type a name to search.'}</div>`;
+}
+
+async function agPick(accountId){
+  if (!AG) return;
+  const retry = AG.retry;
+  const r = await api('/api/leads/'+AG.leadId+'/account/link',
+    {method:'POST', body: JSON.stringify({account_id: accountId})});
+  if (!r || !r.ok){
+    g('agMsg').textContent = (r && r.error) || 'Could not link that';
+    return;
+  }
+  toast('Linked to '+r.account+' ✓','ok');
+  agClose();
+  try { if (LA_ON && activeId) await laLoad(activeId); } catch(_){}
+  if (typeof retry === 'function') await retry();
+}
+
+/* Creating one needs the full form, which is already on the lead
+   sheet. Rather than a second copy of it, this hands over to it. */
+function agFullPicker(){
+  const typed = ((g('agQ')||{}).value || '').trim();
+  agClose();
+  if (!LA_ON){
+    toast('Creating an account from here is not switched on — '
+        + 'Accounts → Account check can do it','err');
+    return;
+  }
+  if (g('ldMob') && g('ldMob').style.display === 'flex'){
+    const box = g('laQ');
+    if (box){ box.value = typed; laFocus(); laType(); return; }
+  }
+  toast('Open the lead and use the Account box at the top','err');
+}
+
+/* §4 · which lead is the original. The scored candidates first,
+   then whatever the search finds. */
+let DP_Q = null;
+
+async function dpOpen(){
+  if (!activeId) return;
+  g('dpMsg').textContent = '';
+  const box = g('dpQ');
+  if (box) box.value = '';
+  g('dpMob').style.display = 'flex';
+  let r = null;
+  try { r = await api('/api/leads/'+activeId+'/duplicates'); } catch(_){}
+  const rows = (r && r.ok ? (r.rows || r.duplicates || []) : []).map(x=>({
+    lead_id: x.lead_id, company: x.company, stage: x.stage,
+    created: x.created, why: x.why || ''}));
+  dpHits(rows, '', true);
+}
+
+function dpClose(){ g('dpMob').style.display='none'; }
+
+function dpType(){
+  clearTimeout(DP_Q);
+  DP_Q = setTimeout(async ()=>{
+    const q = ((g('dpQ')||{}).value || '').trim();
+    if (!q){ dpOpen(); return; }
+    let rows = [];
+    try {
+      const r = await api('/api/leads?q=' + encodeURIComponent(q)
+                          + '&per_page=12');
+      const list = Array.isArray(r) ? r : (r.items || r.leads || r.rows || []);
+      rows = list.filter(x=>x.id !== activeId).slice(0,12).map(x=>({
+        lead_id: x.id, company: x.company, stage: x.stage,
+        created: (x.created_at||'').slice(0,10), why: ''}));
+    } catch(_){ rows = []; }
+    dpHits(rows, q, false);
+  }, 240);
+}
+
+function dpHits(rows, q, suggested){
+  const host = g('dpHits');
+  if (!host) return;
+  if (!rows.length){
+    host.innerHTML = `<div style="font-size:12.5px;color:var(--text-3)">`
+      + ((q||'').trim() ? 'Nothing matches that.'
+         : 'No likely original found — search for it by name or number.')
+      + `</div>`;
+    return;
+  }
+  host.innerHTML = (suggested
+    ? `<div style="font-size:11.5px;color:var(--text-3);margin-bottom:6px">
+         Likely originals, strongest first.</div>` : '')
+    + rows.map(x=>`
+    <button type="button" onclick="dpPick(${x.lead_id})"
+      style="display:block;width:100%;text-align:left;border:1px solid
+      var(--border-2);border-radius:var(--r);padding:8px 11px;
+      margin-bottom:6px;font-size:13px;background:none;cursor:pointer">
+      <b>#${x.lead_id}</b> ${e(x.company||'')}
+      <span style="color:var(--text-3)">
+        ${x.stage?' · '+e(x.stage):''}${x.created?' · '+e(x.created):''}</span>
+      ${x.why?`<div style="color:var(--text-3);font-size:11.5px">${e(x.why)}</div>`:''}
+    </button>`).join('');
+}
+
+async function dpPick(keptId){
+  if (!activeId) return;
+  const r = await api(`/api/leads/${activeId}/duplicate-of`,
+    {method:'POST', body: JSON.stringify({duplicate_of: Number(keptId)})});
+  if (r && r.ok){
+    dpClose();
+    toast(`Marked a duplicate of #${keptId} ✓`, 'ok');
+    closeLd();
+    refreshLeadViews();
+  } else {
+    g('dpMsg').textContent = (r && r.error) || 'Could not mark it';
+  }
+}
+
 /* CRM-WA-01b. One banner, three states: the move is refused and why,
    the move is allowed because this lead is yours though the account's
    staffing is still open, or the names disagree and somebody should
@@ -5039,8 +5351,9 @@ async function junkAvailable(){
 
 async function junkCheck(id){
   JUNK = null;
-  const btn = g('ldJunk'), why = g('ldJunkWhy');
+  const btn = g('ldJunk'), why = g('ldJunkWhy'), inf = g('ldInfo');
   if (btn) btn.style.display = 'none';
+  if (inf) inf.style.display = 'none';
   if (why) { why.style.display = 'none'; why.textContent = ''; }
   let r = null;
   try { r = await api('/api/leads/' + id + '/junk-check'); } catch(_){}
@@ -5048,6 +5361,16 @@ async function junkCheck(id){
      — the button simply is not there. */
   if (!r || !r.ok || !r.show) return;
   JUNK = r;
+  /* §2 — the same eligibility, a different sentence. Shown only
+     when the lead can actually be filed this way, so the button is
+     never there to be pressed in vain. */
+  if (inf){
+    inf.style.display = r.eligible ? '' : 'none';
+    inf.title = 'Takes it off the boards as what it is — a circular, '
+              + 'a vessel list, a schedule. Never counted as Lost, '
+              + 'never counted in win/loss, and an administrator can '
+              + 'put it back from Admin → Deleted leads.';
+  }
   if (!btn) return;
   btn.style.display = '';
   if (r.eligible){
@@ -5122,6 +5445,29 @@ async function junkLd(){
     refreshLeadViews();
   } else {
     toast((r && r.error) || 'Could not delete it', 'err');
+  }
+}
+
+/* §2. One reason, chosen for the user, and the sender is never
+   blocked: the address that sends a vessel list this week sends a
+   real quotation next week. */
+async function junkInfoLd(){
+  if (!activeId || !JUNK || !JUNK.eligible) return;
+  const co = (g('ldTtl')||{}).textContent || 'this lead';
+  if (!confirm('File "' + co + '" as informational — not a lead?\n\n'
+             + 'It leaves the boards and the reports. It is NOT counted '
+             + 'as Lost and NOT counted in win/loss. The sender is not '
+             + 'blocked. An administrator can put it back from '
+             + 'Admin → Deleted leads.')) return;
+  const r = await api(`/api/leads/${activeId}/junk-delete`,
+    {method:'POST', body: JSON.stringify(
+      {reason:'informational', note:'', block_sender:false})});
+  if (r && r.ok){
+    toast('Filed as informational — not a lead ✓','ok');
+    closeLd();
+    refreshLeadViews();
+  } else {
+    toast((r && r.error) || 'Could not file it','err');
   }
 }
 
@@ -5212,28 +5558,13 @@ async function junkBulk(){
 }
 
 async function dupLd(){
-  if (!activeId) return;
-  const kept = prompt(
-    'Which lead is the one to keep?\n\nGive its id — this one is '
-    + 'closed as a duplicate of it, and both are kept.', '');
-  if (kept === null) return;
-  if (!/^\d+$/.test((kept||'').trim())){
-    toast('Give the id of the lead to keep', 'err');
-    return;
-  }
-  const r = await api(`/api/leads/${activeId}/duplicate-of`,
-    {method:'POST',
-     body: JSON.stringify({duplicate_of: Number(kept)})});
-  if (r && r.ok){
-    toast(`Marked a duplicate of #${kept} ✓`, 'ok');
-    closeLd();
-    try { rLeads(); } catch(_){}
-    try { rAll();   } catch(_){}
-    try { rDash();  } catch(_){}
-  } else {
-    toast((r && r.error) || 'Could not mark it', 'err');
-  }
+  /* §4. It used to be a window.prompt asking for "its id", which
+     means knowing the number of a lead you have not opened. The
+     picker lists the likely originals — the same scoring the
+     duplicate warning uses — and searches by name or number. */
+  dpOpen();
 }
+
 async function newLead(){
   // v2026-08 — full-fidelity New Lead capture (was: create-stub-then-open).
   // Collects company, contact, project, location, financial + relevance in one
@@ -5928,6 +6259,10 @@ async function confirmAdvance(){
     toast(`Advanced to ${r.stage} ✓`, 'ok');
     closeAdv();
     if (document.getElementById('pg-pipeline').classList.contains('on')) pipRefresh();
+  } else if (r && r.needs === 'account') {
+    // §6 · §8 · §9. The dialog stays open behind the picker and the
+    // move is retried with everything already typed into it.
+    agOpen(_advLid, r.account_help || {}, ()=>confirmAdvance());
   } else {
     toast((r && r.error) || 'Advance failed', 'err');
   }

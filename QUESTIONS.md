@@ -2597,3 +2597,148 @@ reason unreachable — a lead with no vertical is asked the owner
 question about Management instead. That is pre-existing, it is not in
 CRM-WA-01b's scope, and it is recorded here rather than quietly
 changed.
+
+## 76 — CRM-MAIL-2026-11-11: eleven items, five causes
+
+The Outlook thread "CRM- Suggestions required" reads as eleven
+problems. Items 1, 6, 7, 8, 9 and 10 are one rule and one absence;
+3 and 5 are a single character class in a regex; 11 is two faults
+wearing the same symptom; 2 and 4 are features that exist with no way
+in.
+
+### 1 — the gate refused a save, and the save was rolled back
+
+`account_gate.check` was called in the lead PUT inside
+`if 'stage' in d and the stage changed`, and its refusal did
+`db.session.rollback()` and returned 400. The form posts the stage
+with everything else, so a person who typed the RFQ details **and**
+clicked the next stage lost the details as well as the move. "Nothing
+is saved" was exact.
+
+The rule it was enforcing is right and has not moved: a lead whose
+customer we cannot identify may not be quoted. What was wrong is that
+it treated *recording what the customer asked for* as work going out.
+So the doors are now named — `GATED_ACTIONS` and `RECORDING_ACTIONS`
+— registering an RFQ is a recording action, building a quote is still
+gated, and an action on neither list is refused, which keeps the old
+behaviour as the default for any new call site.
+
+In the PUT the stage is now dropped from the save and everything else
+is written. The response is a 200 carrying `needs: account` and the
+candidates the picker would show, so the screen asks the one question
+instead of losing the form.
+
+### 3 + 5 — "DSR // EXT: Re:" is not a reply
+
+`_REPLY_PREFIX` is anchored to the start of the subject. A mail
+gateway stamps `EXT:` on anything from outside, and a colleague
+relaying a daily status report prefixes `DSR //`. Both sit exactly
+where the `Re:` would be, so:
+
+* `subject_kind` answered 'fresh', and step 5 of the classifier —
+  the one that matches a reply by subject and counterparty — never
+  ran;
+* `strip_subject` left the tags in, so `thread_key` was a different
+  key and the duplicate rules could not fire either.
+
+A chase therefore arrived as a brand-new enquiry. `strip_lead_tags`
+takes the tags off in the same loop as the prefixes, because they
+interleave: `[EXT] Re: FW: [EXT] …`.
+
+The list is named words with a required separator, not a pattern.
+Procam's own subjects use `||` and `//` as separators — "RFQ for FTL
+Transportation || Dhar Railway Station to STS Infracon" — and a
+stripper that ate a leading `XXX //` would rewrite half the mailbox.
+"External affairs tender" is a subject, not a tag.
+
+### 11 — the fallback was the fault, not the classifier
+
+`/api/leads/<id>/emails` synthesises the enquiry out of the
+`original_email_*` columns when a lead has no trail rows yet. That
+fallback ran for every `kind`, so on any lead whose trail is still
+empty the customer's own RFQ appeared under "Rate sourcing — what we
+asked suppliers" as well as under the Email trail. That is all three
+reported leads, and it needed no data correction.
+
+There is a second, rarer fault: `intake_class` is written once from
+the classifier, and step 6 says "rate sourcing" for any sender domain
+in the Vendor Master. A company that supplies us *and* buys from us —
+a filter manufacturer, an infrastructure contractor, a forwarder — is
+both, and their enquiry was filed as our own rate request. So the
+panel no longer asks what a message was called; it asks who it is
+between. `mail_filing.from_the_customer` is the one rule: the address
+or the domain the lead itself holds, never free mail, never ours.
+
+### 7 — intake linked only while a flag was on
+
+`single_message` resolved the account and wrote `company_id` **only**
+`if account_gate.enabled()`. The gate went on for everybody on 10
+November, so every lead ingested before then landed on no account
+however obvious the customer was. That is most of the 277. Linking a
+lead to its account is right whether or not a gate is reading the
+answer, so the flag no longer decides it.
+
+And `auto_link` requires an *exact* rule — a domain, a GSTIN, a
+learned sender. ANDRITZ HYDRO's account did not carry their domain,
+so nothing fired, although `_by_name` had already found the one
+account whose normalised name is identical. `auto_link_by_name` links
+that case when it is the only candidate of any kind. A resemblance
+("60% alike") still never links.
+
+### The duplicate report that was Killed
+
+`lead_dupe_report.pairs` loaded every live lead as a full ORM row and
+compared all of them against all of them. Each row carries
+`original_email_body` — the customer's entire enquiry — and the GSTIN
+lookup did one `Company.query.get` per lead, so the identity map held
+every account too. The kernel killed it before it printed anything.
+
+Two changes and no change in what it finds: `live_prints` reads the
+eleven columns a fingerprint needs and the GSTINs in one query, and
+the pairs are found by *blocking* — four indexes keyed on the signal
+values, so only leads that share a value are ever compared. A value
+shared by more than 25 leads is skipped and said out loud: a
+switchboard number on fifty leads identifies nothing.
+
+### leads@ — why "nothing seen" was the wrong reading
+
+Nothing has created or attached since 3 November 16:39 and the
+subscription is valid. `mail_ingest_status.py` reported no messages
+at all in the window, which reads as "Graph is not calling us".
+
+It cannot tell. `MailIngestLog` starts when a message reaches the
+classifier; `EmailEvent` starts when a notification reaches the
+route. Between them a message can stop in four places — a
+`clientState` mismatch, a tenant mismatch, a resource naming another
+mailbox, a failed fetch — and every one of them writes an
+`EmailEvent` row and **no** `MailIngestLog` row. So the script was
+blind to exactly the failure it was built to find, and the silence it
+printed was not evidence of silence.
+
+It now reads both, names the last refusal and its reason, and says
+plainly when Graph is calling and nothing is being processed.
+`2026_11_11_mail_catchup.py` closes the gap from the other side: it
+asks Graph what the mailbox holds, lists what the CRM never
+processed, and `--apply` hands each one to `process_single_message` —
+the webhook's own function, idempotent, and it logs every outcome.
+Deliberately not `pipeline.run_ingest`, whose per-domain dedup skips
+a second enquiry from a customer who wrote within thirty days: right
+for a daily poll, and it would quietly drop exactly the leads a
+catch-up is for.
+
+### 2 and 4 — built, with no way in
+
+Archive-with-reason and the junk path already did everything item 2
+asks for; what was missing was the name. A vessel open-positions
+mailer had to be closed as Lost, which files a shipping line's weekly
+circular in the win/loss ratio. `informational` is its own reason
+code rather than `spam`, because the address that sends a vessel list
+this week sends a real quotation next week, and `spam` is the reason
+that blocks a sender.
+
+Item 4 was a `window.prompt` asking for "its id" — the number of a
+lead you have not opened. The scoring that finds likely originals was
+already there (CRM-WA-01 §2); it now backs a picker, and `/api/leads
+?q=` matches a lead number as well as a name. One OR with the other
+clauses, not a second filter: ANDed, "10291" would have had to appear
+in the company name too.

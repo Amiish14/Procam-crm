@@ -449,10 +449,17 @@ def api_create_quote():
     if _lead_id:
         from app import Lead, db as _db
         from app.services import account_gate
-        _noacct = account_gate.check(_db.session.get(Lead, _lead_id),
-                                     None, action='build a quote')
+        _lead_row = _db.session.get(Lead, _lead_id)
+        _noacct = account_gate.check(_lead_row, None,
+                                     action='build a quote')
         if _noacct:
-            return jsonify(ok=False, error=_noacct, needs='account'), 400
+            # Still refused, and deliberately: this is the one door
+            # CRM-MAIL-2026-11-11 §1 keeps shut. A price goes to a
+            # customer, and we have not established who that is.
+            return jsonify(ok=False, error=_noacct, needs='account',
+                           account_help=account_gate.help_for(
+                               _lead_row,
+                               emp_code=session.get('emp_code'))), 400
 
     quote = Quote(
         quote_number=_next_quote_number(),

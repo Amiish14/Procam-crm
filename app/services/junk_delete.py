@@ -44,6 +44,16 @@ from datetime import date, datetime
 #: end up with 2,312 rows saying "junk".
 REASONS = (
     ('spam', 'Spam / promotional / newsletter', True),
+    # CRM-MAIL-2026-11-11 §2. A vessel open-positions mailer, a market
+    # circular, a schedule update: real business mail, genuinely
+    # useful, and not an enquiry. It had to be closed as Lost, which
+    # files a shipping line's weekly circular in the win/loss ratio.
+    #
+    # Its own code rather than `spam`, because it is not spam and
+    # calling it that is how the sender ends up blocked — the same
+    # address often carries real quotes. Never blocks the sender.
+    ('informational', 'Informational — not a lead (circular, vessel '
+                      'positions, schedule, market update)', False),
     ('internal', 'Internal or personal mail (staff, family, own '
                  'address)', True),
     ('test', 'Test entry', False),

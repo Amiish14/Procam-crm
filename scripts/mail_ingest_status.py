@@ -37,6 +37,16 @@ FIVE QUESTIONS, ANSWERED FROM THE DATABASE AND THE CONFIGURATION
      one failure §4 is really about: a message the CRM saw and did
      not log looks identical to a message that never arrived.
 
+  6. **what the webhook itself recorded.** Added 11 Nov, and it is
+     the question the first five could not answer. Between "Graph
+     called us" and "a lead appeared" a message can stop in four
+     places — a clientState mismatch, a tenant mismatch, a resource
+     naming another mailbox, a failed fetch — and every one of them
+     writes an `EmailEvent` row and **no** `MailIngestLog` row. So
+     this script reported "nothing seen at all" while Graph was
+     calling every few minutes and being refused, and the natural
+     reading of that was the opposite of the truth.
+
 IT WRITES NOTHING
 
 No `--apply`. It reads the ingest log, the audit log, the
@@ -225,6 +235,63 @@ def report_silence():
           'Admin → Mail ingest, with a re-process button per row.')
 
 
+# ── 6. the webhook's own log ───────────────────────────────────
+def report_webhook(days):
+    """Did Graph call us, and what happened to the call?
+
+    `MailIngestLog` starts when a message reaches the classifier.
+    `EmailEvent` starts when a notification reaches the route. A
+    message refused in between is in the second and not the first,
+    which is exactly the state this script used to read as silence.
+    """
+    from datetime import timedelta
+
+    print('\n── the webhook itself ──')
+    try:
+        from app import EmailEvent
+        since = datetime.utcnow() - timedelta(days=days)
+        rows = (EmailEvent.query
+                .filter(EmailEvent.received_at >= since)
+                .order_by(EmailEvent.id.desc()).all())
+    except Exception as exc:                              # noqa: BLE001
+        print(f'  could not read EmailEvent ({type(exc).__name__}).')
+        return
+    if not rows:
+        print(f'  !! NOTHING in {days} day(s). Graph never called the '
+              f'webhook. Look at the subscription above and at the '
+              f'notificationUrl it carries — not at the classifier.')
+        return
+    print(f'  {len(rows)} notification(s) in {days} day(s):')
+    for status, n in Counter((r.status or '?') for r in rows).most_common():
+        print(f'    {n:>6}  {status}')
+    last = rows[0]
+    print(f'  most recent: {str(last.received_at)[:19]}  '
+          f'{last.status or "?"}  {(last.reason or "")[:60]}')
+    refused = [r for r in rows if (r.status or '') in ('rejected', 'failed')]
+    if refused:
+        print(f'\n  !! {len(refused)} refused or failed. These never '
+              f'reach the ingest log, so the counts above are blind to '
+              f'them:')
+        for reason, n in Counter(
+                (r.reason or '(none stored)')[:70] for r in refused
+        ).most_common(8):
+            print(f'    {n:>5}  {reason}')
+        print('  "clientState mismatch" means EMAIL_WEBHOOK_SECRET is '
+              'not the secret the live subscription was created with: '
+              'recreate the subscription, or put the old secret back.')
+        print('  "wrong mailbox" means the notification named a mailbox '
+              'other than the sanctioned one and the scoped fetch '
+              '404d — the lockdown doing its job.')
+    landed = [r for r in rows if (r.status or '') in ('processed',
+                                                     'lead_created')]
+    if rows and not landed:
+        print('\n  !! Graph is calling and NOTHING has been processed. '
+              'The break is between the route and the classifier, '
+              'which is where the reasons above point.')
+    print('  scripts/2026_11_11_mail_catchup.py --check asks Graph what '
+          'it holds and lists what the CRM never processed.')
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--check', action='store_true', required=True,
@@ -245,6 +312,7 @@ def main(argv=None):
         report_path()
         report_last()
         report_refusals(args.days, args.sender)
+        report_webhook(args.days)
         report_silence()
         print()
         db.session.rollback()

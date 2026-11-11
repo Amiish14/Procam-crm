@@ -237,7 +237,14 @@ def test_the_stage_stepper_refuses():
     assert r.get_json().get('needs') == 'account'
 
 
-def test_raising_an_rfq_refuses():
+def test_raising_an_rfq_is_recorded_not_refused():
+    """CRM-MAIL-2026-11-11 \u00a71 changed this deliberately.
+
+    It used to refuse, and the refusal rolled the whole save back, so
+    an RFQ typed against a lead with no account was lost rather than
+    held. Recording what the customer asked for is not work going
+    out; quoting is, and that door is still shut \u2014 the test below.
+    """
     with flask_app.app_context():
         _on()
         lead_id = _lead().id
@@ -246,8 +253,24 @@ def test_raising_an_rfq_refuses():
         s['emp_code'] = REP
     r = client.post('/api/rfqs', json={'subject': 'Test',
                                        'lead_id': lead_id})
-    assert r.status_code == 400
-    assert r.get_json().get('needs') == 'account'
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert (r.get_json() or {}).get('needs') != 'account'
+
+
+def test_the_doors_are_named_rather_than_inferred():
+    """A new call site has to say which kind of action it is, and an
+    unnamed one is refused \u2014 the old behaviour, as the default."""
+    assert 'register an RFQ' in account_gate.RECORDING_ACTIONS
+    assert 'build a quote' in account_gate.GATED_ACTIONS
+    with flask_app.app_context():
+        _on()
+        lead = _lead()
+        assert account_gate.check(
+            lead, None, action='register an RFQ') is None
+        assert account_gate.check(
+            lead, None, action='build a quote') is not None
+        assert account_gate.check(
+            lead, None, action='something new') is not None
 
 
 def test_building_a_quote_refuses():

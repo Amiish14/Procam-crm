@@ -70,14 +70,33 @@ def strip_subject(subject):
     A client's own RFQ reference is left in: it is the strongest
     thing in the line and dropping it would make two different
     enquiries from one customer look alike.
+
+    Gateway tags ("[EXT]", "EXT:") and relay prefixes ("DSR //") are
+    taken off: they say how the mail reached us, not which enquiry it
+    is about, and leaving them in gave a reminder its own thread key.
     """
     text = (subject or '').strip()
     for _ in range(6):
-        trimmed = SUBJECT_NOISE.sub('', text)
+        trimmed = _strip_tags(SUBJECT_NOISE.sub('', text))
         if trimmed == text:
             break
         text = trimmed
     return ' '.join(text.split()).lower()
+
+
+def _strip_tags(text):
+    """Gateway and relay tags off the front — "[EXT]", "DSR //".
+
+    `lead_intake.strip_lead_tags` rather than a second list here: the
+    classifier and the thread key must agree about what the subject
+    is, and CRM-MAIL-2026-11-11 §3+§5 is what happens when they do
+    not. A failure leaves the text alone rather than emptying it.
+    """
+    try:
+        from app.services import lead_intake as li
+        return li.strip_lead_tags(text)
+    except Exception:                                     # noqa: BLE001
+        return text
 
 
 def references(*texts):

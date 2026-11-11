@@ -15,12 +15,18 @@ Why
     record — silently skips those leads.
 
 Where the line is
-    Before work starts, not after. A lead with no account, or an
-    account with nobody named for the lead's vertical, cannot be
-    accepted, moved past New, registered as an RFQ or quoted. Those
-    are the four doors; a rule enforced at three of them is a rule
-    people route around, which is why `value_gate` exists in one
-    place and is called from five.
+    Before work starts, not after. A lead with no account cannot be
+    accepted, moved past New, or quoted. A rule enforced at some
+    doors and not others is a rule people route around, which is why
+    `value_gate` exists in one place and is called from five.
+
+    Registering an RFQ was a fourth door and is not any more
+    (CRM-MAIL-2026-11-11 §1). Writing down what the customer asked
+    for is not work going out: refusing it lost the enquiry instead
+    of protecting it, and because the refusal rolled the save back it
+    took the RFQ details typed in the same form with it. The doors
+    are now named in `GATED_ACTIONS` and `RECORDING_ACTIONS` rather
+    than being whatever a caller passed.
 
 Where the line is not
     Lost, On Hold and Not Interested stay open, exactly as in
@@ -90,6 +96,23 @@ OWNERSHIP_REASONS = (WHY_NO_OWNER,)
 CLAIM_OWNER = 'the lead owner (Primary PIC)'
 CLAIM_SECOND = 'the secondary PIC'
 CLAIM_VERTICAL = "in the lead's own vertical"
+
+#: Actions that are not a stage move, and which door each one is.
+#:
+#: CRM-MAIL-2026-11-11 §1: the gate was refusing a *save*. A lead with
+#: no confirmed account cannot be quoted — that is the line the rule
+#: exists for — but refusing to record what the customer asked for
+#: loses the enquiry instead of protecting it, and the refusal rolled
+#: the whole save back, so the RFQ details typed in the same form were
+#: discarded with it.
+#:
+#: So the actions are named rather than lumped under "work on". An
+#: action not in either list is refused, deliberately: a new call site
+#: has to say which kind it is, and the safe default for an unnamed
+#: one is the old behaviour.
+GATED_ACTIONS = ('build a quote', 'work on')
+RECORDING_ACTIONS = ('register an RFQ', 'save the lead', 'add a note',
+                     'attach a file', 'add a contact', 'log an activity')
 
 MESSAGE = ('This lead has no confirmed account{why}. Confirm the '
            'customer on Accounts → Account check first — the owner, '
@@ -372,6 +395,10 @@ def check(lead, new_stage=None, *, action='work on', emp_code=None):
         return None
     if new_stage is not None and new_stage not in BLOCKED_STAGES:
         return None
+    # Not a stage move: only the doors that start work outward are
+    # gated. Writing down what the customer asked for is not one.
+    if new_stage is None and action in RECORDING_ACTIONS:
+        return None
     code, why = reason_for(lead)
     if not code:
         return None
@@ -403,3 +430,44 @@ def pending_leads(sc=None):
     # a SQL filter without duplicating owner_for_vertical in SQL.
     # The population is small — hundreds, not millions.
     return [lead for lead in q.all() if why_pending(lead)]
+
+
+def help_for(lead, *, emp_code=None, limit=6):
+    """What the screen needs to offer the account picker instead of a
+    dead end.
+
+    CRM-MAIL-2026-11-11 §6: "can the account be assigned while
+    assigning the RFQ?" — yes, and the answer has to travel with the
+    refusal, or the user is sent to another screen and loses the
+    dialog they were in. So a refused write returns the candidates
+    the picker would have shown, the reason, and who can clear it.
+
+    Suggestions come from `lead_account.suggest`, which is the
+    matcher the intake itself uses. One matcher, three screens.
+    """
+    code, why = reason_for(lead)
+    out = {
+        'reason': code,
+        'reason_words': why,
+        'resolver': resolver_for(lead) if code else '',
+        'vertical': vertical_of(lead),
+        'claim': worker_claim(lead, emp_code),
+        'can_pick': False,
+        'suggestions': [],
+    }
+    if not code:
+        return out
+    try:
+        from app.services import lead_account
+        out['can_pick'] = bool(lead_account.enabled())
+        if out['can_pick'] and code in (WHY_NO_ACCOUNT, WHY_PLACEHOLDER):
+            rows = lead_account.suggest(lead, limit=limit) or []
+            out['suggestions'] = [
+                {'account_id': row.get('account_id'),
+                 'name': row.get('name') or '',
+                 'rule': row.get('rule') or '',
+                 'owner_name': row.get('owner_name') or ''}
+                for row in rows]
+    except Exception:                                     # noqa: BLE001
+        pass
+    return out

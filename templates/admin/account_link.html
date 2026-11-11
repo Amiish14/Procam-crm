@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{# Every Accept and Reject below is a POST. Without this include they
+   would do nothing and say nothing — the failure this CRM has
+   shipped six times. #}
+{% include "_csrf_fetch.html" %}
+<title>Leads on no account — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+</head>
+<body class="rfq-page">
+{% include "_crm_topbar.html" %}
+<div class="rfq-ui">
+  <div class="rfq-hero">
+    <div>
+      <h1>Leads on no account</h1>
+      <p>An open lead with no customer account, or one filed under a
+        placeholder name. Until it has an account it cannot be quoted,
+        and no account-level view — the history, the credit position,
+        the 24-month record — can see it.</p>
+      <p>The proposal is the same matcher the intake uses: a learned
+        sender, a contact on file, the account's own email or website
+        domain, a GSTIN, or a company name that normalises exactly to
+        an account's. <strong>certain</strong> means a domain, a GSTIN
+        or a sender somebody already mapped. <strong>likely</strong>
+        means the name matched exactly and nothing disagreed.
+        <strong>possible</strong> means choose.</p>
+      <p><strong>Reject</strong> changes nothing about the lead. It
+        records that this account is not the customer, so the same
+        wrong suggestion stops arriving every morning. A lead that is
+        not an enquiry at all — a circular, a vessel list — is
+        <em>Informational — not a lead</em> on the lead itself.</p>
+      <p>Hundreds at a time are better done on paper: the same
+        proposals come out as one CSV per vertical from
+        <code>scripts/2026_11_11_link_accounts.py --check --csv</code>,
+        and only ticked rows are applied.</p>
+    </div>
+  </div>
+
+  <section class="rfq-card">
+    <div class="rfq-card-h">
+      <h2>Proposals</h2>
+      <div id="count" class="rfq-muted">Loading…</div>
+    </div>
+    <div id="rows"></div>
+  </section>
+</div>
+
+<script>
+const PREFIX = {{ url_prefix | tojson }};
+const u = (p) => PREFIX + p;
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+async function load(){
+  const box = document.getElementById('rows');
+  const count = document.getElementById('count');
+  box.innerHTML = '';
+  count.textContent = 'Loading…';
+  let body = {};
+  try {
+    const r = await fetch(u('/api/admin/account-link?limit=60'),
+                          {credentials: 'same-origin'});
+    body = await r.json();
+  } catch (err) {
+    count.textContent = 'Could not load the proposals.';
+    return;
+  }
+  if (!body.ok){
+    count.textContent = body.error || 'Could not load the proposals.';
+    return;
+  }
+  const rows = body.rows || [];
+  count.textContent = rows.length
+    ? rows.length + ' lead(s) waiting — ' + body.note
+    : 'Nothing waiting: every open lead is on an account.';
+  box.innerHTML = rows.map(render).join('');
+}
+
+function chip(conf){
+  const colour = {certain:'#065F46', likely:'#1D4ED8',
+                  possible:'#92400E', none:'#6B7280'}[conf] || '#6B7280';
+  return `<span style="border:1px solid ${colour};color:${colour};
+    border-radius:9px;padding:1px 8px;font-size:11px">${esc(conf)}</span>`;
+}
+
+function render(r){
+  const alt = (r.others || []).map(o=>`
+    <button class="btn btn-ghost btn-sm" style="margin-right:4px"
+      onclick="accept(${r.lead_id}, ${o.account_id})">
+      ${esc(o.name)}</button>`).join('');
+  return `<div class="rfq-card" style="margin:10px 0">
+    <table style="width:100%;border-collapse:collapse"><tr>
+      <td style="vertical-align:top;padding:6px 10px">
+        <div><strong>#${esc(r.lead_id)}</strong> ${chip(r.confidence)}
+          ${r.placeholder
+            ? '<span class="rfq-muted">· placeholder name</span>' : ''}</div>
+        <div>${esc(r.company) || '<span class="rfq-muted">no company</span>'}</div>
+        <div class="rfq-muted">${esc(r.sender)}</div>
+        <div class="rfq-muted">${esc(r.subject)}</div>
+        <div class="rfq-muted">${esc(r.stage)} ·
+          ${esc(r.owner) || 'unowned'} · ${esc(r.vertical)} ·
+          ${esc(r.created)}</div>
+      </td>
+      <td style="vertical-align:top;padding:6px 10px">
+        ${r.account_id
+          ? `<div><strong>${esc(r.account_name)}</strong></div>
+             <div class="rfq-muted">${esc(r.rule)}</div>`
+          : '<div class="rfq-muted">Nothing matched. Open the lead and '
+            + 'use the account box, or file it as informational.</div>'}
+        ${alt ? `<div class="rfq-muted" style="margin-top:6px">
+             or: ${alt}</div>` : ''}
+      </td>
+      <td style="vertical-align:top;padding:6px 10px;white-space:nowrap">
+        ${r.account_id
+          ? `<button class="btn btn-red btn-sm"
+               onclick="accept(${r.lead_id}, ${r.account_id})">Accept</button>
+             <button class="btn btn-ghost btn-sm"
+               onclick="reject(${r.lead_id}, ${r.account_id})">Reject</button>`
+          : ''}
+        <div id="m${r.lead_id}" class="rfq-muted" style="margin-top:6px"></div>
+      </td>
+    </tr></table>
+  </div>`;
+}
+
+async function post(path, payload, leadId){
+  const note = document.getElementById('m' + leadId);
+  if (note) note.textContent = 'Working…';
+  let body = {};
+  try {
+    const r = await fetch(u(path), {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)});
+    body = await r.json();
+  } catch (err) {
+    if (note) note.textContent = 'That did not go through.';
+    return null;
+  }
+  if (!body.ok && note) note.textContent = body.error || 'Refused.';
+  return body;
+}
+
+async function accept(leadId, accountId){
+  const body = await post('/api/admin/account-link/accept',
+                          {lead_id: leadId, account_id: accountId}, leadId);
+  if (body && body.ok) load();
+}
+
+async function reject(leadId, accountId){
+  const why = window.prompt(
+    'Not this customer. Why? (optional — it goes on the audit row)', '');
+  if (why === null) return;
+  const body = await post('/api/admin/account-link/reject',
+                          {lead_id: leadId, account_id: accountId,
+                           why: why}, leadId);
+  if (body && body.ok) load();
+}
+
+load();
+</script>
+</body>
+</html>

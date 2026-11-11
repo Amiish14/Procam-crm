@@ -620,3 +620,33 @@ def auto_link(from_addr, *, company_name=None, text=None):
     if rivals:
         return None, UNMAPPED
     return exact[0]['account'], exact[0]['rule']
+
+
+def auto_link_by_name(from_addr, *, company_name=None, text=None):
+    """(account, rule) for the third safe case: one exact name, alone.
+
+    CRM-MAIL-2026-11-11 §7. "ANDRITZ HYDRO Private Limited" wrote in,
+    an Andritz account existed, and the lead landed on no account —
+    because the account did not carry the sender's domain, so no
+    *exact* rule fired, and `_by_name`'s hit is tagged 'name'.
+
+    A name is weaker evidence than a domain, so this is deliberately
+    narrower than `auto_link`: `_by_name` already requires the
+    normalised names to be equal, and this additionally requires that
+    it be the only candidate of any kind. One account, one name, no
+    disagreement, nothing else in the running — there is nothing left
+    for a person to decide.
+
+    A resemblance is still never enough: "60% alike" is not a name
+    match, and the queue is where those belong.
+    """
+    rows = candidates(from_addr, company_name=company_name, text=text)
+    if not rows:
+        return None, UNMAPPED
+    real = [r for r in rows if r['kind'] != 'resemblance']
+    if len(real) != 1:
+        return None, UNMAPPED
+    only = real[0]
+    if only['kind'] != 'name' or not_a_customer(only['account']):
+        return None, UNMAPPED
+    return only['account'], only['rule']

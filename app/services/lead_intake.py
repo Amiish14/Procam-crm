@@ -74,6 +74,53 @@ class Klass:
     }
 
 
+#: Tags that sit in FRONT of a real subject. A mail gateway stamps
+#: "[EXT]" or "EXT:" on anything from outside; a colleague relaying a
+#: daily status report prefixes "DSR //". None of them is part of the
+#: thread, and none of them is a reply prefix — but they occupy the
+#: place one would, so every anchored `^Re:` test fails and the
+#: normalised subject no longer matches the thread's.
+#:
+#: CRM-MAIL-2026-11-11 §3+§5: a GE Vernova reminder arrived as
+#: "DSR // EXT: Re: RFQ for Sea Freight …". The `Re:` was four
+#: characters too late to be seen, so the message was not a reply, the
+#: thread key was a different key, and the chase became a second lead.
+LEAD_TAGS = (
+    'ext', 'external', 'ext mail', 'extmail', 'external email',
+    'external sender', 'external mail', 'caution', 'spam',
+    'suspected spam', 'bulk', 'encrypt', 'encrypted', 'secure',
+    'dsr', 'daily status', 'internal',
+)
+
+#: Either bracketed — "[EXT]" — or a word with a separator after it —
+#: "EXT:", "DSR //", "EXT |". The separator is required for the bare
+#: form: a subject that simply starts with the word "External" is a
+#: subject, not a tag, and stripping it would change what the thread
+#: is called.
+_LEAD_TAG = re.compile(
+    r'^\s*(?:'
+    r'\[\s*(?:' + '|'.join(LEAD_TAGS) + r')\s*\]'
+    r'|(?:' + '|'.join(LEAD_TAGS) + r')\s*(?:::|//|:|\|)'
+    r')\s*', re.I)
+
+
+def strip_lead_tags(subject):
+    """"DSR // EXT: Re: Sea freight" → "Re: Sea freight".
+
+    Only the gateway and relay tags, and only from the front. The
+    reply prefix is left exactly where it is, because `subject_kind`
+    has to see it — removing both here is how a reply would stop
+    looking like one.
+    """
+    s = (subject or '').strip()
+    for _ in range(6):              # they stack: "[EXT] DSR // Re: …"
+        trimmed = _LEAD_TAG.sub('', s)
+        if trimmed == s:
+            break
+        s = trimmed
+    return s.strip()
+
+
 _REPLY_PREFIX = re.compile(
     r'^\s*(?:(?:re|aw|antw|sv|vs|res|odp)\s*(?:\[\d+\])?\s*:\s*)+', re.I)
 _FWD_PREFIX = re.compile(
@@ -425,10 +472,17 @@ def gstins(text):
 
 
 def strip_prefixes(subject):
-    """"RE: FW: RE: Transport requirement" → "Transport requirement"."""
+    """"RE: FW: RE: Transport requirement" → "Transport requirement".
+
+    Gateway tags are taken off in the same loop rather than before it:
+    they interleave with the prefixes — "[EXT] Re: FW: [EXT] …" — and
+    a single pass over the front of the string leaves the second one
+    behind.
+    """
     s = (subject or '').strip()
     for _ in range(6):          # people stack them
         before = s
+        s = strip_lead_tags(s)
         s = _REPLY_PREFIX.sub('', s)
         s = _FWD_PREFIX.sub('', s)
         if s == before:
@@ -497,8 +551,13 @@ def match_subject(subject):
 
 
 def subject_kind(subject):
-    """'reply' | 'forward' | 'fresh' — from the prefix alone."""
-    s = (subject or '').strip()
+    """'reply' | 'forward' | 'fresh' — from the prefix alone.
+
+    The gateway tags come off first. With them in place a reminder
+    stamped "DSR // EXT: Re: …" read as a fresh enquiry, which is
+    how one thread became two leads (CRM-MAIL-2026-11-11 §3+§5).
+    """
+    s = strip_lead_tags((subject or '').strip())
     if _REPLY_PREFIX.match(s):
         return 'reply'
     if _FWD_PREFIX.match(s):

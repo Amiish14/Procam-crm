@@ -196,20 +196,67 @@ def score(matched):
     return min(99, best + 5 * (len(matched) - 1))
 
 
-def _live_leads(exclude_id=None, limit_days=None):
+#: The only columns a fingerprint and a report row need. Loading
+#: whole Lead rows to compare four fields is what made the one-off
+#: report die: `original_email_body` holds the customer's entire
+#: enquiry, and several thousand of those at once is hundreds of
+#: megabytes. CRM-MAIL-2026-11-11.
+PRINT_COLUMNS = ('id', 'company', 'email', 'original_email_from',
+                 'phone', 'phone2', 'company_id', 'stage',
+                 'assigned_to', 'created_at', 'pic')
+
+
+def live_prints(exclude_id=None, limit_days=None):
+    """{lead_id: (row, fingerprint)} for every live lead, cheaply.
+
+    Three things make this affordable where loading whole Lead rows
+    was not:
+
+      * only the eleven columns a fingerprint or a report row reads,
+        so the bodies stay in the database;
+      * the GSTINs are read in one query keyed by account, instead of
+        one `Company.query.get` per lead — which was also keeping
+        every account in the identity map;
+      * the rows are plain tuples, so nothing is tracked by the
+        session.
+
+    The returned row quacks like a Lead for every attribute the
+    fingerprint and `_row` ask for, and for nothing else — which is
+    the point: anything that needs more than this should say so.
+    """
     from datetime import datetime, timedelta
 
-    from app import Lead
+    from app import Company, Lead, db
 
-    q = Lead.query.filter(Lead.is_archived.isnot(True),
-                          Lead.junk_deleted.isnot(True),
-                          Lead.merged_into_id.is_(None))
+    q = (db.session.query(*[getattr(Lead, c) for c in PRINT_COLUMNS])
+         .filter(Lead.is_archived.isnot(True),
+                 Lead.junk_deleted.isnot(True),
+                 Lead.merged_into_id.is_(None)))
     if exclude_id:
         q = q.filter(Lead.id != exclude_id)
     if limit_days:
         q = q.filter(Lead.created_at
                      >= datetime.utcnow() - timedelta(days=limit_days))
-    return q.all()
+    rows = q.all()
+
+    account_ids = {r.company_id for r in rows if r.company_id}
+    gstins = {}
+    if account_ids:
+        for account_id, gstin in (
+                db.session.query(Company.id, Company.gstin)
+                .filter(Company.id.in_(account_ids)).all()):
+            gstins[account_id] = norm_gstin(gstin)
+
+    out = {}
+    for row in rows:
+        mine = {
+            NAME: norm_name(row.company),
+            DOMAIN: domain_of(row.email or row.original_email_from),
+            PHONE: norm_phone(row.phone or row.phone2),
+            GSTIN: gstins.get(row.company_id, ''),
+        }
+        out[row.id] = (row, mine)
+    return out
 
 
 def check(*, company=None, email=None, phone=None, gstin=None,
@@ -226,9 +273,13 @@ def check(*, company=None, email=None, phone=None, gstin=None,
         return []
 
     found = []
-    for other in _live_leads(exclude_id=exclude_id,
-                             limit_days=within_days):
-        matched = compare(mine, fingerprint(lead=other))
+    # `live_prints` rather than whole Lead rows: this runs while
+    # somebody is typing a lead in, and loading every live enquiry's
+    # body to compare four fields is what killed the one-off report
+    # (CRM-MAIL-2026-11-11).
+    for other, theirs in live_prints(exclude_id=exclude_id,
+                                     limit_days=within_days).values():
+        matched = compare(mine, theirs)
         if not matched:
             continue
         points = score(matched)
