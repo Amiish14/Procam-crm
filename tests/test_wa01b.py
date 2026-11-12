@@ -390,19 +390,68 @@ def test_an_unknown_code_claims_nothing():
         assert account_gate.worker_claim(_the_case(), 'ZB_GHOST') == ''
 
 
-def test_the_claim_is_not_the_access_matrix():
-    """An admin who may open every lead does not thereby own this one.
+def test_seeing_every_lead_is_not_a_claim_on_one():
+    """Whole-company data scope is not a claim.
 
-    Deliberate: an administrator looking at somebody else's lead
-    should see the staffing problem, not step over it.
+    The Access Matrix answers "may you open this record", which a
+    whole-company viewer passes for every lead in the book. The
+    question here is narrower: is this lead yours to move.
+
+    A *CRM administrator* is a separate case and is deliberately
+    exempt — see the test below. CRM-MAIL-02 §2: the refusal names
+    who can clear the account question, and refusing that same
+    person for it is a loop.
     """
+    from app.models.access import AccessProfile, DataScope
+
     with flask_app.app_context():
-        db.session.add(Employee(emp_code='ZB_ADMIN', name='Adm',
-                                password_hash='x', role='admin',
+        db.session.add(Employee(emp_code='ZB_VIEWER', name='Viewer',
+                                password_hash='x', role='user',
                                 vertical=AIR, is_active=True))
+        db.session.add(AccessProfile(
+            emp_code='ZB_VIEWER', data_scope=DataScope.ALL,
+            perms=['reports.action']))
         db.session.commit()
         lead = _the_case()
-        assert account_gate.worker_claim(lead, 'ZB_ADMIN') == ''
+        assert account_gate.worker_claim(lead, 'ZB_VIEWER') == ''
+        assert account_gate.check(lead, 'Quoted',
+                                  emp_code='ZB_VIEWER') is not None
+
+
+def test_whoever_can_clear_the_question_is_not_refused_for_it():
+    """CRM-MAIL-02 §2, and it is the way out of an unowned lead.
+
+    The old rule read ownership, and an unowned lead has no owner to
+    read — so the people who could fix it were refused by the very
+    sentence telling them to fix it. An administrator, the head of
+    the lead's vertical and the RFQ desk can all settle who owns the
+    account, so none of them is held up by the question.
+    """
+    from app.models.access import AccessProfile, DataScope
+
+    with flask_app.app_context():
+        db.session.add(Employee(emp_code='ZB_TRIAGE', name='Triage',
+                                password_hash='x', role='user',
+                                vertical=AIR, is_active=True))
+        db.session.add(AccessProfile(
+            emp_code='ZB_TRIAGE', data_scope=DataScope.ALL,
+            perms=['admin.triage']))
+        db.session.commit()
+        lead = _the_case()
+        assert account_gate.worker_claim(lead, 'ZB_TRIAGE') == \
+            account_gate.CLAIM_RESOLVER
+        assert account_gate.check(lead, 'Quoted',
+                                  emp_code='ZB_TRIAGE') is None
+
+
+def test_the_head_of_another_vertical_is_still_refused():
+    with flask_app.app_context():
+        lead = _the_case()
+        # OWNER is the head of Freight Forwarding in this fixture, and
+        # is also the lead owner; the head of the *account's* other
+        # vertical is not.
+        assert account_gate.check(lead, 'Quoted',
+                                  emp_code=AIR_OWNER) is not None
 
 
 def test_the_code_is_matched_case_insensitively():
@@ -487,13 +536,15 @@ def test_the_lead_screen_is_told_the_move_is_allowed_and_why():
     assert body['message'] == ''
 
 
-def test_the_lead_screen_carries_the_refusal_for_somebody_else():
-    """An administrator may open anybody's lead; the banner must then
-    tell them the truth about it rather than nothing.
+def test_the_lead_screen_tells_an_admin_they_can_settle_it():
+    """An administrator may open anybody's lead, and after CRM-MAIL-02
+    is not refused for a question they can answer themselves. The
+    banner must then say that rather than nothing.
 
-    An administrator is used rather than an unrelated salesperson
-    because the Access Matrix refuses the salesperson the record
-    first, and a test that skipped on that would assert nothing.
+    This test asserted the refusal until 12 November. The refusal is
+    kept for somebody with no claim and no power to clear it —
+    `test_an_unrelated_user_is_still_refused` — and the message
+    itself is asserted directly above.
     """
     with flask_app.app_context():
         db.session.add(Employee(emp_code='ZB_ADM2', name='Adm2',
@@ -507,9 +558,11 @@ def test_the_lead_screen_carries_the_refusal_for_somebody_else():
     r = client.get(f'/api/leads/{lead_id}/account-state')
     assert r.status_code == 200, r.get_data(as_text=True)
     body = r.get_json()
-    assert body['blocked'] is True
-    assert account_gate.RULE in body['message']
-    assert body['confirm_url'] == '/accounts/check'
+    assert body['blocked'] is False
+    assert body['exempt'] is True
+    assert body['claim'] == account_gate.CLAIM_RESOLVER
+    assert body['reason'] == account_gate.WHY_NO_OWNER
+    assert 'Account check' in body['resolver']
 
 
 def test_the_lead_screen_offers_confirm_account_on_a_name_mismatch():

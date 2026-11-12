@@ -427,8 +427,61 @@ def may_view(record, sc=None):
             return True
     if (sc.lead_allowances and allowances_on()
             and sc.codes and _is_lead(record)):
-        return _lead_allowance(record, sc)
-    return False
+        if _lead_allowance(record, sc):
+            return True
+    return _nobody_accountable(record, sc)
+
+
+def _nobody_accountable(record, sc):
+    """An unowned lead, for the people who can give it an owner.
+
+    CRM-MAIL-02 §2. Ownership is what every rule here reads, and an
+    unowned lead has no ownership to read — so the lead in the worst
+    state the CRM has is the one nobody can open, including the head
+    of its vertical and the RFQ desk, who are the people who would
+    fix it. The desk reported exactly that: a lead saying "nobody is
+    accountable for this lead" and no way to make anybody
+    accountable.
+
+    Deliberately narrow, and it is not a new boundary:
+
+      * only a lead with NO primary and NO secondary owner. One that
+        has an owner keeps today's rule exactly, so nothing anybody
+        can see today changes.
+      * only for the three groups who may put a name on it — the
+        head of the lead's own vertical, the RFQ desk and the
+        administrators — which is the same rule
+        `lead_people.may_set_people` enforces on the write. Being
+        able to open a record you may not change would be no use;
+        being able to change one you cannot open is impossible.
+      * not behind FEATURE_LEAD_ALLOWANCES. That flag widens who sees
+        *other people's* leads, which is a decision about privacy.
+        This is a lead that is nobody's, and leaving it invisible is
+        not privacy, it is a lost enquiry.
+
+    And it is `may_view` only, not `leads()`. Opening an unowned lead
+    somebody sent you, or that a queue or a notification pointed at,
+    now works; every head's board does not grow by the unowned leads
+    in their vertical overnight. Finding them is a deliberate act with
+    its own screen — /admin/account-link and
+    scripts/2026_11_11_account_block.py --check --stuck — and widening
+    the boards is a decision for the director, not a side effect of
+    this fix.
+    """
+    if not _is_lead(record):
+        return False
+    if (getattr(record, 'assigned_to', '') or '').strip():
+        return False
+    if (getattr(record, 'secondary_owner', '') or '').strip():
+        return False
+    if not sc.emp_code:
+        return False
+    try:
+        from app.services import lead_people
+        allowed, _why = lead_people.may_set_people(record, sc.emp_code)
+        return bool(allowed)
+    except Exception:                                     # noqa: BLE001
+        return False
 
 
 def _is_lead(record):

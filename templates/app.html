@@ -5110,7 +5110,19 @@ async function loadAccountState(id){
   if (!box) return;
   box.innerHTML = '';
   const r = await api('/api/leads/' + id + '/account-state');
-  if (!r || !r.ok || !r.live) return;
+  if (!r || !r.ok) return;
+  /* CRM-MAIL-02 §2. These three were disabled for anybody who was
+     not an administrator, so the RFQ desk could not attempt the one
+     change that gets a lead out of "nobody is accountable" — and
+     the server dropped it in silence when they tried another way.
+     The server decides; the form follows its answer. */
+  ['lAsgn', 'lAsgn2', 'lReasgn', 'lVt'].forEach(function(fid){
+    const el = g(fid);
+    if (!el) return;
+    el.disabled = !r.can_set_people;
+    el.title = r.can_set_people ? '' : (r.why_set || '');
+  });
+  if (!r.live) return;
   const bits = [];
   const link = `<a href="/accounts/check" style="font-weight:600">Confirm account</a>`;
   if (r.blocked){

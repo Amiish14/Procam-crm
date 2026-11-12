@@ -96,6 +96,10 @@ OWNERSHIP_REASONS = (WHY_NO_OWNER,)
 CLAIM_OWNER = 'the lead owner (Primary PIC)'
 CLAIM_SECOND = 'the secondary PIC'
 CLAIM_VERTICAL = "in the lead's own vertical"
+#: CRM-MAIL-02 §2. The refusal names who can clear the question. If
+#: the person being refused IS that person, the sentence is a loop:
+#: "ask the head of Air Freight", told to the head of Air Freight.
+CLAIM_RESOLVER = 'able to settle the account question yourself'
 
 #: Actions that are not a stage move, and which door each one is.
 #:
@@ -152,21 +156,31 @@ def account_of(lead):
     return db.session.get(Company, cid) if cid else None
 
 
-def vertical_of(lead):
-    """The vertical this lead belongs to.
+def vertical_of(lead, override=None):
+    """The vertical THIS LEAD belongs to, or ''.
 
-    A lead carries `procam_vertical`, an account carries `vertical`,
-    and the names have aliases — "PFM" is Project Freight. All three
-    problems are already solved in `vertical_heads`, so this asks it
-    rather than reading one attribute and getting '' for every lead,
-    which is what the first draft of this module did.
+    CRM-MAIL-02 §3. It used to ask `vertical_heads.vertical_of`, which
+    reads the lead's own field and then **falls back to the account's**
+    — right for routing a notification, wrong for this question. The
+    Fox Brasil lead is an Air Freight enquiry on an account whose
+    default vertical is Heavy Transport, so the gate refused it for
+    having "no owner for Heavy Transport": a true sentence about a
+    vertical nobody had mentioned.
+
+    And `master_vertical` on its own folds every unmapped or blank
+    value onto Management, which made "no vertical on the lead"
+    unreachable and turned a missing vertical into an owner question
+    about a vertical the lead is not in. A lead with no vertical now
+    says so, which is a thing one person can fix in one field.
+
+    `override` is the vertical being set in the same save. The gate
+    has to judge the lead as it will be, not as it was: somebody
+    changing a lead to Air Freight and moving it on in one action was
+    refused on the Heavy Transport the lead was leaving.
     """
-    try:
-        from app.services import vertical_heads
-        return vertical_heads.master_vertical(
-            vertical_heads.vertical_of(lead)) or ''
-    except Exception:                                     # noqa: BLE001
-        return (getattr(lead, 'procam_vertical', '') or '').strip()
+    if override is not None:
+        return _master(override)
+    return _master(getattr(lead, 'procam_vertical', '') or '')
 
 
 def owner_for(account, vertical):
@@ -192,7 +206,7 @@ def owner_for(account, vertical):
         return ''
 
 
-def reason_for(lead):
+def reason_for(lead, *, vertical=None):
     """(code, words) for why this lead is waiting, or ('', '').
 
     One pass, two answers: the code so the gate can reason about the
@@ -212,7 +226,7 @@ def reason_for(lead):
     placeholder = account_match.not_a_customer(account)
     if placeholder:
         return WHY_PLACEHOLDER, f'no account — {placeholder}'
-    vertical = vertical_of(lead)
+    vertical = vertical_of(lead, override=vertical)
     if not vertical:
         # No vertical means no owner question can even be asked. The
         # lead still needs a person to look at it, and saying why is
@@ -223,14 +237,14 @@ def reason_for(lead):
     return '', ''
 
 
-def why_pending(lead):
+def why_pending(lead, *, vertical=None):
     """Why this lead is waiting, in words, or '' if it is not.
 
     Two different problems wear the same badge and need different
     fixes: no account at all is a matching question, an account with
     nobody named for the vertical is a staffing one.
     """
-    return reason_for(lead)[1]
+    return reason_for(lead, vertical=vertical)[1]
 
 
 def _master(vertical):
@@ -255,7 +269,7 @@ def _master(vertical):
     return value
 
 
-def _same_vertical(lead, emp_code):
+def _same_vertical(lead, emp_code, *, vertical=None):
     """Is this person in the lead's own vertical?
 
     Both sides go through the vertical master, because the employee
@@ -271,13 +285,11 @@ def _same_vertical(lead, emp_code):
         mine = _master(getattr(emp, 'vertical', '') or '')
     except Exception:                                     # noqa: BLE001
         return False
-    theirs = _master(getattr(lead, 'procam_vertical', '') or '')
-    if not theirs:
-        theirs = _master(vertical_of(lead))
+    theirs = vertical_of(lead, override=vertical)
     return bool(mine) and bool(theirs) and mine.lower() == theirs.lower()
 
 
-def worker_claim(lead, emp_code=None):
+def worker_claim(lead, emp_code=None, *, vertical=None):
     """This person's claim on the lead, in words, or ''.
 
     CRM-WA-01b §3: a user may work a lead they own, are secondary PIC
@@ -303,22 +315,35 @@ def worker_claim(lead, emp_code=None):
         return CLAIM_OWNER
     if (getattr(lead, 'secondary_owner', '') or '').strip().upper() == code:
         return CLAIM_SECOND
-    if _same_vertical(lead, code):
+    if _same_vertical(lead, code, vertical=vertical):
         return CLAIM_VERTICAL
+    # CRM-MAIL-02 §2: the vertical head, the RFQ desk and the
+    # administrators are the people the refusal tells you to ask.
+    # Refusing them for the same reason is circular — and on an
+    # unowned lead it is the state nobody can get out of, because
+    # ownership is what the exemption reads and there is no owner.
+    try:
+        from app.services import lead_people
+        if lead_people.may_clear_account_question(
+                lead, code, vertical=vertical):
+            return CLAIM_RESOLVER
+    except Exception:                                     # noqa: BLE001
+        pass
     return ''
 
 
-def resolver_for(lead):
+def resolver_for(lead, *, vertical=None):
     """Who can clear this lead's account question, by role.
 
     The same rule `account_check.may_clear` enforces (D6): the head of
     the lead's vertical, or a CRM admin. Named by role and read from
     the lead — no codes or names live in this file.
     """
-    vertical = vertical_of(lead)
+    vertical = vertical_of(lead, override=vertical)
     who = (f'the head of {vertical}' if vertical
            else "the lead's vertical head")
-    return f'{who}, or a CRM admin, on Accounts → Account check'
+    return (f'{who}, the RFQ desk, or a CRM admin, on '
+            f'Accounts → Account check')
 
 
 def name_mismatch(lead):
@@ -347,9 +372,9 @@ def name_mismatch(lead):
     return ()
 
 
-def message_for(lead, code, why):
+def message_for(lead, code, why, *, vertical=None):
     """The refusal, naming the rule and who can clear it."""
-    where = resolver_for(lead)
+    where = resolver_for(lead, vertical=vertical)
     if code == WHY_NO_OWNER:
         return (f'{RULE}: the account on this lead has {why}, so nobody '
                 f'is named to serve this customer for it. Account '
@@ -373,7 +398,8 @@ def pending(lead):
     return bool(why_pending(lead))
 
 
-def check(lead, new_stage=None, *, action='work on', emp_code=None):
+def check(lead, new_stage=None, *, action='work on', emp_code=None,
+          vertical=None):
     """None if allowed, else the sentence to show.
 
     `new_stage` None means "not a stage move" — accepting, raising an
@@ -399,14 +425,15 @@ def check(lead, new_stage=None, *, action='work on', emp_code=None):
     # gated. Writing down what the customer asked for is not one.
     if new_stage is None and action in RECORDING_ACTIONS:
         return None
-    code, why = reason_for(lead)
+    code, why = reason_for(lead, vertical=vertical)
     if not code:
         return None
-    if code in OWNERSHIP_REASONS and worker_claim(lead, emp_code):
+    if code in OWNERSHIP_REASONS and worker_claim(lead, emp_code,
+                                                  vertical=vertical):
         # CRM-WA-01b: the account's staffing is not this person's
         # question, and the lead is theirs to move.
         return None
-    return message_for(lead, code, why)
+    return message_for(lead, code, why, vertical=vertical)
 
 
 def pending_leads(sc=None):
@@ -432,7 +459,7 @@ def pending_leads(sc=None):
     return [lead for lead in q.all() if why_pending(lead)]
 
 
-def help_for(lead, *, emp_code=None, limit=6):
+def help_for(lead, *, emp_code=None, limit=6, vertical=None):
     """What the screen needs to offer the account picker instead of a
     dead end.
 
@@ -445,13 +472,13 @@ def help_for(lead, *, emp_code=None, limit=6):
     Suggestions come from `lead_account.suggest`, which is the
     matcher the intake itself uses. One matcher, three screens.
     """
-    code, why = reason_for(lead)
+    code, why = reason_for(lead, vertical=vertical)
     out = {
         'reason': code,
         'reason_words': why,
-        'resolver': resolver_for(lead) if code else '',
-        'vertical': vertical_of(lead),
-        'claim': worker_claim(lead, emp_code),
+        'resolver': (resolver_for(lead, vertical=vertical) if code else ''),
+        'vertical': vertical_of(lead, override=vertical),
+        'claim': worker_claim(lead, emp_code, vertical=vertical),
         'can_pick': False,
         'suggestions': [],
     }

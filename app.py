@@ -2957,9 +2957,35 @@ def api_update_lead(lid):
     # Set when the account gate refuses the stage move in this save.
     # The save still happens; the move does not. See the note below.
     _stage_refused, _stage_help = None, None
+    # The vertical being set in this same save, when one is. Every
+    # rule below has to judge the lead as it will be: CRM-MAIL-02 §3
+    # is a lead being moved to Air Freight and refused over the Heavy
+    # Transport it was leaving.
+    _pending_vertical = (d.get('procam_vertical')
+                         if 'procam_vertical' in d else None)
+    # CRM-MAIL-02 §1. "Did the stage change" was a string comparison,
+    # and the form posts whatever the pipeline widget was rendered
+    # with — so a lead stored under a retired stage name ("Profile
+    # Sent") posted back its canonical one ("Call Done") and an
+    # untouched stage read as a move. That pulled the value gate, the
+    # account gate and the date gate into a save nobody meant as a
+    # transition. Folded through `stage_map.canonical`, which is what
+    # the task engine and the reports already compare on.
+    _stage_moving = (
+        'stage' in d
+        and _stage_map.canonical(d.get('stage') or '')
+        != _stage_map.canonical(lead.stage or ''))
+    if 'stage' in d and not _stage_moving:
+        # The same stage, written differently — or written back
+        # unchanged, which is what the form does on every save. Drop
+        # it: rewriting a lead stored under a retired name onto its
+        # canonical one is a silent edit of somebody's record, and it
+        # fires the task engine's state change as though the lead had
+        # moved.
+        d.pop('stage', None)
     # CRM-VALUE-01, before any field is written. The form may be
     # submitting the value in the same save, which satisfies the gate.
-    if 'stage' in d and (d.get('stage') or '') != (lead.stage or ''):
+    if _stage_moving:
         _retired = _stage_map.retired(d.get('stage'))
         if _retired:
             db.session.rollback()
@@ -2985,10 +3011,12 @@ def api_update_lead(lid):
         # candidates the account picker would offer, and the lead
         # sheet opens the picker instead of showing a dead-end toast.
         from app.services import account_gate
-        _stage_refused = account_gate.check(lead, d.get('stage'))
+        _stage_refused = account_gate.check(
+            lead, d.get('stage'), vertical=_pending_vertical)
         if _stage_refused:
             _stage_help = account_gate.help_for(
-                lead, emp_code=session.get('emp_code'))
+                lead, emp_code=session.get('emp_code'),
+                vertical=_pending_vertical)
             _stage_help.update({'wanted': d.get('stage') or '',
                                 'from': lead.stage or '',
                                 'error': _stage_refused})
@@ -3071,11 +3099,26 @@ def api_update_lead(lid):
     # §2.3 — confirming a date the CRM read, without changing it.
     if d.get('quote_due_confirm'):
         lead.quote_due_confirmed = True
-    # Reassignment — admin only. Both PICs go through the one service so
-    # the validation, the history row and the notifications cannot be
+    # Reassignment. Both PICs go through the one service so the
+    # validation, the history row and the notifications cannot be
     # skipped by taking a different endpoint.
-    if ('assigned_to' in d or 'secondary_owner' in d) \
-            and _matrix_can('admin.triage'):
+    #
+    # CRM-MAIL-02 §2: this was `admin.triage` and nothing else, and a
+    # change by anybody else was **dropped in silence** — no refusal,
+    # no warning, the form simply came back with the old name. The RFQ
+    # desk changing the owner on an unowned lead is the one action
+    # that gets a lead out of "nobody is accountable", so the rule now
+    # names the three groups who may (app/services/lead_people.py) and
+    # a refusal is reported instead of swallowed.
+    if 'assigned_to' in d or 'secondary_owner' in d:
+        from app.services import lead_people
+        _may, _why_people = lead_people.may_set_people(
+            lead, vertical=_pending_vertical)
+        if not _may:
+            d.pop('assigned_to', None)
+            d.pop('secondary_owner', None)
+            _touch_warnings.append(_why_people)
+    if ('assigned_to' in d or 'secondary_owner' in d):
         from app.services import lead_assignment
         # §16 — the reason rides along with the change, into the same
         # history row, so the two can never drift apart.

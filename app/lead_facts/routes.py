@@ -205,13 +205,21 @@ def account_state(lid):
     — the gate only ever asked for an account and an owner — so what
     was missing was the asking, which is this.
     """
-    from app.services import account_gate
+    from app.services import account_gate, lead_people
 
     lead = _lead(lid)
+    # CRM-MAIL-02 §2. The lead sheet disabled the Primary PIC, the
+    # Secondary PIC and the vertical for anybody who was not an
+    # administrator, so the RFQ desk could not even attempt the one
+    # change that gets a lead out of "nobody is accountable". The
+    # server decides who may; the screen asks here and enables the
+    # three fields to match, so the form and the rule cannot differ.
+    may_set, why_set = lead_people.may_set_people(lead)
     if not account_gate.enabled():
         return jsonify(ok=True, live=False, blocked=False, reason='',
                        mismatch=None, claim='', message='',
-                       resolver='', confirm_url='')
+                       resolver='', confirm_url='',
+                       can_set_people=may_set, why_set=why_set)
 
     code, why = account_gate.reason_for(lead)
     claim = account_gate.worker_claim(lead, _me())
@@ -234,4 +242,6 @@ def account_state(lid):
         account_name=(account.name if account is not None else ''),
         mismatch=({'lead_name': mismatch[0], 'account_name': mismatch[1]}
                   if mismatch else None),
+        can_set_people=may_set,
+        why_set=why_set,
         confirm_url=('/accounts/check' if (code or mismatch) else ''))

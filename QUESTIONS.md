@@ -2742,3 +2742,101 @@ already there (CRM-WA-01 §2); it now backs a picker, and `/api/leads
 ?q=` matches a lead number as well as a name. One OR with the other
 clauses, not a second filter: ANDed, "10291" would have had to appear
 in the company name too.
+
+## 77 — CRM-MAIL-02: three faults, and each one hid the next
+
+An air-freight RFQ from Fox Brasil, on an account whose default
+vertical is Heavy Transport. The RFQ desk set the owner and a
+secondary PIC. The save was refused, the lead went on reading "Nobody
+is accountable for this lead", and the refusal named a vertical
+nobody had mentioned.
+
+### The save was never a stage move
+
+`api_update_lead` decided "is this a stage change" with
+`(d.get('stage') or '') != (lead.stage or '')`. The form posts the
+stage on every save, from whatever the pipeline widget was rendered
+with — so a lead stored under a retired name posts back its canonical
+one and an untouched stage reads as a move. Every gate then ran on a
+save that moved nothing, and the account gate's refusal rolled the
+whole thing back.
+
+Folded through `stage_map.canonical`, which is what the task engine
+and the reports already compare on. And when the stage is not moving
+the key is dropped rather than written: rewriting a lead stored as
+"Profile Sent" into "Call Done" is a silent edit of somebody's record
+that also fires the task engine's state change.
+
+CRM-MAIL-2026-11-11 §1 (528056e) had already made the account gate
+drop the stage and save the rest. It is on main. If the server had
+been running it the owner change would have stuck — which is the
+clearest evidence that the deploy had not happened.
+
+### The people were dropped in silence
+
+`assigned_to` and `secondary_owner` were read only
+`if _matrix_can('admin.triage')` and **silently discarded** otherwise.
+No refusal, no warning: the form came back with the old name and
+nothing said why. So the one action that gets a lead out of "nobody is
+accountable" worked for administrators and failed quietly for
+everybody else, including the desk that registers the enquiry and the
+head who answers for the number.
+
+`lead_people.may_set_people` now holds the rule — administrators, the
+head of the lead's vertical (including the vertical it is *moving to*,
+which on this lead was a different person), the RFQ desk from the
+Admin settings, and the lead's own owner handing it on. Not the
+secondary PIC: a monitor who can reassign the lead they are
+monitoring is not a monitor. A refusal is returned as a warning the
+screen shows, with what did save.
+
+And the lead sheet disabled those three fields for anybody who was not
+an administrator, so the desk could not even attempt it. The server
+decides; the form now asks it and follows the answer.
+
+### The gate asked about the account's vertical
+
+`account_gate.vertical_of` called `vertical_heads.vertical_of`, which
+reads the lead's own field **and then falls back to the account's**.
+Right for routing a notification, wrong for "who owns this customer
+for this lead's service": the Fox Brasil account's default is Heavy
+Transport, so an Air Freight enquiry was refused for having no owner
+in Heavy Transport. True, and about nothing anybody had asked.
+
+Two further consequences of that fallback, both now gone:
+`master_vertical` folds a blank onto Management, so a lead with no
+vertical of its own was asked an owner question about Management and
+`no vertical on the lead` was unreachable; and a vertical being set in
+the same save was not considered at all, so moving a lead to Air
+Freight and advancing it in one action was refused over the vertical
+it was leaving. `check`, `reason_for`, `help_for` and `resolver_for`
+all take the pending vertical now.
+
+### The exemption could not help an unowned lead
+
+CRM-WA-01b exempted the lead's owner, its secondary PIC and anybody in
+its vertical from the *ownership* half of the gate. An unowned lead has
+none of those, by definition — so the leads in the worst state the CRM
+has were the ones the exemption could never reach, and the refusal
+named a resolver while refusing that same resolver. "Ask the head of
+Air Freight", told to the head of Air Freight.
+
+So whoever can settle the question is no longer held up by it:
+administrators, the head of the lead's vertical, the RFQ desk. A lead
+with **no account at all** is still refused for every one of them,
+including the desk — that is the line the rule exists for, and the way
+through it is to name the customer, not to be senior.
+
+### And they could not open it either
+
+Found while testing, and it is the same shape as everything above:
+`scope.may_view` reads ownership, an unowned lead has no ownership to
+read, so the head of its vertical could not open the record they were
+being told to fix. `_nobody_accountable` admits a lead with no primary
+*and* no secondary owner to exactly the three groups who may put a
+name on it — the same rule the write enforces.
+
+Deliberately `may_view` and not `leads()`: opening an unowned lead
+somebody sent you now works, and no head's board grows overnight by
+the unowned leads in their vertical. Finding them stays a deliberate
+act with its own screen.
