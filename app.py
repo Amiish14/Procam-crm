@@ -830,6 +830,11 @@ class Lead(db.Model):
     # and a weak guess looked exactly like a strong one.
     vertical_confidence        = db.Column(db.Integer)
     vertical_reason            = db.Column(db.String(200))
+    # CRM-FINAL-13NOV item 11. `vertical_reason` says why in words and
+    # a sentence cannot be branched on. This is the same answer as one
+    # of `lead_vertical.STATED / ACCOUNT / GUESSED / ATTACHMENT`, and
+    # it is what stops a lead being routed to an owner on a guess.
+    vertical_source            = db.Column(db.String(16))
 
     # ── Thread identity ─────────────────────────────────────────────
     # Without these a reply can only be recognised from its subject
@@ -965,6 +970,7 @@ class Lead(db.Model):
             'classification': self.classification or '',
             'vertical_confidence': self.vertical_confidence,
             'vertical_reason': self.vertical_reason or '',
+            'vertical_source': self.vertical_source or '',
             'lead_confidence': self.lead_confidence,
             'duplicate_score': self.duplicate_score,
             'rejection_reason': self.rejection_reason or '',
@@ -2908,19 +2914,21 @@ def api_update_lead(lid):
     # field is written. See `_drop_untouched`.
     _touch_warnings = _drop_untouched(d, lead)
 
-    # CRM-LEAD-ACCOUNT-01 §2.4. A lead whose company is still a
-    # placeholder — "To review", a subject line, a colleague's name
-    # — and which is linked to no account cannot be saved: nobody
-    # can find it afterwards, and it never reaches Account check
-    # because it looks placed. Closing as Lost, marking a duplicate
-    # and Delete – not relevant are separate endpoints and stay
-    # open, which is the point: the lead can always be disposed of,
-    # only not left half-named.
+    # CRM-FINAL-13NOV A1. This refused the save on a lead whose
+    # company is still a placeholder — "To review", "Unknown", "New
+    # Lead" — and which is linked to no account, on the grounds that
+    # such a lead cannot be found afterwards. The trade was the wrong
+    # way round: it threw away the notes, the RFQ details, the contact
+    # and the dates somebody had just typed in order to keep a lead
+    # tidy, and the live report on 13 November was exactly that
+    # sentence on a "To review" lead.
+    #
+    # Saving is never gated. The customer is ASKED for on the way
+    # out instead: the save goes through, and the response carries
+    # what the lead sheet needs to open the account picker — the same
+    # shape the stage refusal carries, so one picker serves both.
     from app.services import lead_account as _la
-    _unnamed = _la.save_refusal(lead, d)
-    if _unnamed:
-        db.session.rollback()
-        return jsonify({'error': _unnamed, 'needs': 'account'}), 400
+    _unnamed = _la.unnamed_prompt(lead, d)
     # The picker links in the same save as the rest of the form.
     if d.get('company_id') and _la.enabled():
         from app import Company as _Company
@@ -3157,6 +3165,11 @@ def api_update_lead(lid):
     _body = {'ok': True}
     if _touch_warnings:
         _body['warnings'] = _touch_warnings
+    if _unnamed:
+        # Saved. The customer is still unnamed, and that is a question
+        # rather than a failure: `needs` opens the picker, `saved`
+        # tells the screen not to apologise for anything.
+        _body.update({'needs': 'account', 'account_unnamed': _unnamed})
     if _stage_refused:
         # 200, because the save happened. `needs` is what the lead
         # sheet reads to open the account picker and then retry the
@@ -5994,6 +6007,9 @@ def init_db():
             # CRM-MAIL-2026-11-11 §3+§5 — the customer is chasing us
             ('leads',         'chasing_since',    'TIMESTAMP'),
             ('leads',         'chase_count',      'INTEGER DEFAULT 0'),
+            # CRM-FINAL-13NOV item 11 — where the vertical came from,
+            # as a word, so a rule can refuse to route on a guess
+            ('leads',         'vertical_source',  'VARCHAR(16)'),
             # Escalation folded onto the task instead of a second row
             ('task_instances', 'escalated',    _bool_ddl),
             ('task_instances', 'escalated_to', 'VARCHAR(40)'),

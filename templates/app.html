@@ -4296,15 +4296,13 @@ function ldFollowupPropose(stage){
 }
 
 async function saveLd(){
-  // CRM-LEAD-ACCOUNT-01 §2.4. The server refuses this too; saying
-  // it here means the user is not made to wait for a round trip to
-  // be told the one thing the form already knows.
-  if(LA && LA.blocked){
-    laSay('Link or create the account before saving.', true);
-    laFocus();
-    toast('Link or create the account before saving','err');
-    return;
-  }
+  /* CRM-FINAL-13NOV A1. This returned before posting anything, so on
+     a "To review" lead the Save button did nothing at all and said
+     "Link or create the account before saving" — which is the toast
+     reported from live on 13 November. The rule is now the other way
+     round: the save goes through and the customer is asked for
+     afterwards, from the response. Nothing is lost while somebody
+     works out which account it is. */
   const pipeStage=g('ldPipe')?.dataset.stage||(g('ldPipe')?.querySelector('.active')?.textContent);
   const data={
     pic:g('lPic')?.value, designation:g('lDes')?.value,
@@ -4356,6 +4354,21 @@ async function saveLd(){
       }
     }, 'Everything else was saved. The move to ' + (want||'the next stage')
        + ' needs the customer named — ' + (r.stage_refused.reason_words||''));
+    return;
+  }
+  /* A1. Saved, and the customer is still unnamed. A question, not a
+     failure: the toast says it saved, and the picker opens on the one
+     thing left. Linking needs no retry — the save already happened. */
+  if(r.ok && r.needs === 'account' && r.account_unnamed){
+    const leadId = activeId;
+    toast('Lead saved ✓ — the customer is still to be named','ok');
+    rLeads(); rAll(); rDash();
+    agOpen(leadId, r.account_unnamed, async ()=>{
+      try { await laLoad(leadId); } catch(_){}
+      toast('Customer named ✓','ok');
+    }, 'Everything was saved. This lead still says "'
+       + (r.account_unnamed.company || 'To review')
+       + '" — name the customer and it becomes findable.');
     return;
   }
   if(r.ok){closeLd();rLeads();rAll();rDash();toast('Lead saved ✓','ok');}

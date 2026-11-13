@@ -151,6 +151,41 @@ def _reopen_if_closed(db, decision, msg, log):
     return None
 
 
+def _desk_for_a_guessed_vertical(lead):
+    """The RFQ desk's code, where this lead must not be routed on a guess.
+
+    CRM-FINAL-13NOV item 11. Two things have to hold: the lead is
+    already flagged for review, and its vertical is a guess rather
+    than something stated, taken from the customer's own record, or
+    read off an attachment. Both, because a confident guess on a lead
+    nobody has questioned is how most leads get their vertical and
+    routing those normally is right.
+
+    The desk is an Admin setting, read at the time, so naming the
+    person is a screen rather than a release. With nobody named it
+    returns '' and the lead goes to the ordinary rules -- a lead with
+    no owner at all would be worse than one with an owner to correct.
+    """
+    try:
+        from app.services import lead_vertical
+        if not getattr(lead, 'needs_review', False):
+            return ''
+        if lead_vertical.is_firm(getattr(lead, 'vertical_confidence', None),
+                                 getattr(lead, 'vertical_source', None)):
+            return ''
+        from app.services import admin_settings
+        code = (admin_settings.get('rfq_coordinator') or '').strip().upper()
+        if not code:
+            return ''
+        from app import Employee
+        person = Employee.query.filter_by(emp_code=code).first()
+        if person is None or not getattr(person, 'is_active', False):
+            return ''
+        return code
+    except Exception:                                     # noqa: BLE001
+        return ''
+
+
 def _file_against_lead(db, decision, msg, extracted, log,
                        graph=None, mailbox=None):
     """File an email that is not a new lead against the lead it belongs to.
@@ -378,6 +413,23 @@ def auto_assign_owners(lead, sender_email, *, subject='', body=''):
             # than the unmapped queue — where a lead sat with nobody
             # — the rules give it a real owner and ask the head to
             # confirm it in the morning.
+            #
+            # CRM-FINAL-13NOV item 11, FIRST. A heavy-transport tender
+            # was filed under Warehousing and then routed to the
+            # Warehousing owner, who is not the person who should have
+            # seen it. The vertical was a guess; the routing treated
+            # it as a fact. On a lead already flagged for review,
+            # whose vertical is a guess, the owner is the RFQ desk --
+            # the one seat whose job is to look at an enquiry nobody
+            # has placed yet. Anything else (stated, the account's
+            # own, or a confident call) routes exactly as before.
+            _desk = _desk_for_a_guessed_vertical(lead)
+            if _desk:
+                log.info('lead %s: the vertical is a guess on a review '
+                         'lead — routed to the RFQ desk rather than to '
+                         "%s's owner", lead.id,
+                         getattr(lead, 'procam_vertical', '') or '?')
+                return _desk, None
             try:
                 from app.services import auto_assign
                 decided = auto_assign.assign_for(
@@ -597,6 +649,34 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                          (_attached.get('messages') or [{}])[0].get('from'))
         except Exception:
             log.exception('could not read the attached message on %s', imid)
+
+        # CRM-FINAL-13NOV item 13. A circular is not an enquiry, and it
+        # was becoming a lead on somebody's board. Judged here, before
+        # anything is extracted or created: the headers say the mail
+        # was sent by a mailing system, and nothing in it reads as an
+        # enquiry. Both halves have to hold -- a shipping line's
+        # circular and its quotation come from the same address
+        # through the same marketing system, and only one is business.
+        #
+        # It goes to Mail ingest with the reason, where an
+        # administrator can turn it into a lead with one button. No
+        # sender is blocked: the address that sends a circular this
+        # week sends a real quotation next week.
+        try:
+            from app.services import bulk_mail as _bulk
+            _promo, _promo_why = _bulk.classify(msg, _li.body_text(msg))
+            if _promo:
+                _record_ingest('skipped', msg, None, reason=_promo_why)
+                db.session.commit()
+                log.info('%s is promotional: %s', imid, _promo_why)
+                return {'status': 'skipped', 'reason': _promo_why,
+                        'lead_id': None,
+                        'classification': 'promotional',
+                        'internet_message_id': imid}
+        except Exception:
+            db.session.rollback()
+            log.exception('could not judge whether %s is promotional; '
+                          'the lead still lands', imid)
 
         try:
             extracted = email_parser.extract_lead(msg)
@@ -842,6 +922,62 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
         if decision is not None and not decision.creates_lead \
                 and decision.klass == _li.Klass.INTERNAL \
                 and not decision.lead_id:
+            # CRM-FINAL-13NOV item 10, BEFORE the rescue. The rescue
+            # never returns "drop it" -- deliberately, because it
+            # exists for a colleague's forward of a customer's
+            # enquiry. Our own tender digest is not that: it has no
+            # external customer because there is no customer in it,
+            # and it became a lead called "To review" carrying
+            # "could not identify external customer", which is a true
+            # sentence about a mail that never had one.
+            #
+            # So a mail that is from us AND reads as a notice AND
+            # carries no customer in its body goes to the lead it is
+            # about, or to Mail ingest. Any one of those three
+            # failing leaves the rescue to run exactly as before.
+            try:
+                from app.services import internal_mail as _im
+                _what, _lead_id, _why = _im.decide(
+                    msg, _li.body_text(msg),
+                    internal_domains=email_parser._skip_domains())
+            except Exception:
+                log.exception('could not judge the internal mail %s', imid)
+                _what, _lead_id, _why = _im.NOTHING, None, ''
+
+            if _what == _im.ATTACH and _lead_id:
+                try:
+                    _notice = _li.Decision(
+                        _li.Klass.EXISTING, step=10, lead_id=_lead_id,
+                        reason=_why)
+                    _file_against_lead(db, _notice, msg, extracted, log,
+                                       graph=graph, mailbox=mailbox)
+                    db.session.commit()
+                    _record_ingest('attached', msg, _notice,
+                                   lead_id=_lead_id, reason=_why)
+                    log.info('%s is our own notice about lead %s', imid,
+                             _lead_id)
+                    return {'status': 'skipped', 'reason': _why,
+                            'lead_id': _lead_id,
+                            'classification': 'internal_notice',
+                            'internet_message_id': imid}
+                except Exception:
+                    db.session.rollback()
+                    log.exception('could not file the notice %s against '
+                                  'lead %s', imid, _lead_id)
+            elif _what == _im.LOG:
+                try:
+                    _record_ingest('skipped', msg, None, reason=_why)
+                    db.session.commit()
+                    log.info('%s is our own notice and names no lead: '
+                             'logged, not created', imid)
+                    return {'status': 'skipped', 'reason': _why,
+                            'lead_id': None,
+                            'classification': 'internal_notice',
+                            'internet_message_id': imid}
+                except Exception:
+                    db.session.rollback()
+                    log.exception('could not log the notice %s', imid)
+
             try:
                 from app.services import mail_ingest as _mi
                 _rescue = _mi.rescue_internal_forward(
@@ -990,6 +1126,10 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                     # a guess, and why.
                     lead_kwargs['vertical_confidence'] = int(_conf or 0)
                     lead_kwargs['vertical_reason'] = (_why or '')[:200]
+                    # item 11: the same answer as a word, so the owner
+                    # rule below can refuse to route on a guess.
+                    lead_kwargs['vertical_source'] = \
+                        lead_vertical.source_for(_why, _conf)
                     log.info('vertical %s (%s%%) for %s — %s',
                              _guess, _conf, imid, _why)
             except Exception:
@@ -1270,6 +1410,8 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                         lead.vertical_reason = (
                             f'from attachments — {why}' if why
                             else 'from attachments')[:200]
+                        lead.vertical_source = lead_vertical.source_for(
+                            why, conf, from_attachment=True)
                     if not (lead.original_email_body or '').strip():
                         # The body really was just "please find attached".
                         lead.original_email_body = inside[:8000]

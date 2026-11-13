@@ -2840,3 +2840,123 @@ Deliberately `may_view` and not `leads()`: opening an unowned lead
 somebody sent you now works, and no head's board grows overnight by
 the unowned leads in their vertical. Finding them stays a deliberate
 act with its own screen.
+
+## 78 — CRM-FINAL-13NOV: fifteen items, and the same mistake three times
+
+Three of these are one fault wearing three faces: **a rule that was
+right about one thing, applied to something else.**
+
+### A1 — the save that still refused
+
+CRM-MAIL item 1 took the account gate off the save. It did not touch
+the *other* refusal, in `lead_account.save_refusal`: a lead whose
+company is a placeholder — "To review", "Unknown", "New Lead" — and
+which is linked to no account could not be saved at all. Live reported
+exactly that sentence on 13 November.
+
+Worse, the client refused first. `saveLd` returned before posting
+anything, so the Save button did nothing and the server never heard
+about it — which is why fixing the server in CRM-MAIL changed nothing
+anybody could see.
+
+The reasoning written in both places was that such a lead "cannot be
+found afterwards". That is true and it is not worth what it cost: the
+notes, the RFQ details, the contact and the dates somebody had just
+typed. The enquiry is worth more than the tidiness. Both refusals are
+gone; the customer is **asked** for on the way out, and
+`unnamed_prompt` hands the lead sheet the same shape the stage refusal
+carries so one picker serves both.
+
+### 10 — our own mail, and a docstring that was right until now
+
+`mail_ingest.rescue_internal_forward` ends: *"It never returns 'drop
+it'. That is the whole point."* Correct: it exists because a
+colleague's forward of a customer enquiry has every visible address on
+our own domain, and dropping those loses the enquiries somebody cared
+enough to pass on.
+
+The tender digest is not that. It has no external customer **because
+there is no customer in it** — the customer is on the tender lead that
+already exists, and the mail is a notice about that lead. So "could
+not identify external customer" was a true sentence about a mail that
+never had one, and it became a lead called "To review".
+
+`internal_mail.decide` answers before the rescue: attach to the lead
+the notice is about (tender number, then the customer named in it,
+then the subject), or log it to Mail ingest as "internal, not a lead".
+Three things have to hold — from us, reads as a notice, and no
+customer **address** in the body — and any one failing leaves the
+rescue to run exactly as it did.
+
+That third test is narrower than it first looked. A digest *names*
+customers: that is its content, a table of tenders and whose they are.
+So a company name in the body says nothing, and only the customer's
+own address — which a forwarded enquiry carries in its quoted From and
+a digest never does — keeps the rescue.
+
+### 12 — four characters is the whole name
+
+The picker offered "Bhel — (read as 'BEML Limited')". BHEL and BEML
+are four characters each, both acronyms, both real customers, and
+three of the four characters are shared — so any ratio high enough to
+be useful on a long name matches them on a short one.
+
+A short name carries almost no information per character, which is
+exactly why an acronym IS the name rather than an approximation of it.
+So below eight normalised characters nothing is resembled at all —
+a refusal to offer a candidate, not a higher threshold, because on
+four characters there is no threshold that separates the two. Exact
+and alias matching are untouched, and so is resemblance on long
+names. Both sides are checked: the short name in the reported case was
+the *account's*.
+
+### 13 — the headers say what the mail is
+
+A circular declares itself: List-Unsubscribe, Precedence: bulk, a
+List-Id, Auto-Submitted, a campaign header. Those are facts about the
+message rather than a sender list somebody has to remember to
+maintain.
+
+And the half that matters more: a shipping line's circular and that
+same line's quotation arrive from the same address through the same
+marketing system. So a mail is promotional only if it **also** shows
+no sign of being an enquiry — no RFQ words, no route, no tonnage, no
+reference, no tender document attached. When the two halves disagree,
+business wins: one lost RFQ costs more than a hundred newsletters on a
+board.
+
+### 11 — a sentence cannot be branched on
+
+`vertical_reason` already recorded where a vertical came from, in
+words. The rule item 11 asks for is a branch — do not route a lead to
+an owner on the strength of a guess — and no branch can read a
+sentence. So the same answer is also stored as one of
+`stated / account / guessed / attachment`, and a lead that is both
+flagged for review and carrying a guess goes to the RFQ desk rather
+than to the owner of a vertical nobody has confirmed.
+
+Both halves, deliberately. Most leads get their vertical from a guess
+and routing those normally is right; it is the *unconfirmed* guess on
+a lead somebody has already flagged that was sending a heavy-transport
+tender to Warehousing.
+
+### 15 — the proposal is what is already happening
+
+An account with no owner for a vertical is not a question with no
+answer: somebody is already working those leads. The person who owns
+most of them is the person the work has been going to, and naming them
+records what is happening rather than deciding something new. It stays
+a proposal, because the busiest person on an account this month is not
+always the right owner — a lead reassigned during somebody's leave
+would otherwise make the stand-in the owner of the customer.
+
+### What the sweep taught about its own permission
+
+`lead_archive.archive` asks the same question the Archive button asks:
+the lead's owner, the head of its vertical, or an administrator. A
+script actor is none of those, so the first version of the sweep could
+not archive anything — and the fix is not to bypass the check but to
+make the sweep say whose rights it is acting under. `--apply` now
+requires `--actor`, refusals are named and left, and a batch that
+could archive with nobody's rights would have been a way round the one
+control on that path.

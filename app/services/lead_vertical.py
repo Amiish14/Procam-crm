@@ -53,6 +53,67 @@ VERTICAL_SIGNALS = {
 }
 
 
+#: Where a vertical came from, as a word rather than a sentence.
+#:
+#: CRM-FINAL-13NOV item 11. A heavy-transport tender was filed under
+#: Warehousing, and `vertical_reason` already said why in words -- but
+#: a sentence cannot be branched on, and the rule the item asks for is
+#: a branch: do not route a lead to an owner on the strength of a
+#: guess. So the same answer is also recorded as one of these.
+STATED = 'stated'          # the mail or the form said so
+ACCOUNT = 'account'        # the customer's own Account Master vertical
+GUESSED = 'guessed'        # read off the words in the text
+ATTACHMENT = 'attachment'  # read off a document attached to it
+NONE = 'none'
+
+SOURCE_LABELS = {
+    STATED: 'stated on the enquiry',
+    ACCOUNT: "the customer's own vertical",
+    GUESSED: 'guessed from the wording',
+    ATTACHMENT: 'read from an attachment',
+    NONE: 'not established',
+}
+
+#: At or above this, a guess is treated as a call. Below it the lead
+#: is a "needs review" one and nothing routes on it.
+FIRM_ENOUGH = 80
+
+
+def source_for(why, confidence=None, *, from_attachment=False):
+    """One of the codes above, from what `recommend` answered.
+
+    Read off the sentence rather than returned as a fourth value,
+    because `recommend` has callers and a changed signature is a
+    change to all of them for a fact they do not use.
+    """
+    text = (why or '').strip().lower()
+    if from_attachment:
+        return ATTACHMENT
+    if not text:
+        return NONE
+    if 'account master' in text or 'account' in text:
+        return ACCOUNT
+    if 'nothing in the text' in text:
+        return NONE
+    return GUESSED
+
+
+def is_firm(confidence, source=None):
+    """Whether a lead may be routed on this vertical.
+
+    A stated or account-derived vertical is firm at any confidence --
+    somebody said so. A guess is firm only at FIRM_ENOUGH, and that is
+    the number item 11 is about: the Warehousing call on a heavy
+    transport tender was a guess that nothing refused to act on.
+    """
+    if source in (STATED, ACCOUNT, ATTACHMENT):
+        return True
+    try:
+        return int(confidence or 0) >= FIRM_ENOUGH
+    except (TypeError, ValueError):
+        return False
+
+
 def recommend(text, *, account_vertical=None):
     """(vertical, confidence, why).
 

@@ -198,29 +198,71 @@ def state(lead):
 
 
 def save_refusal(lead, incoming=None):
-    """The sentence to refuse a save with, or ''.
+    """Always ''. Kept as the name the route calls.
 
-    `incoming` is the submitted payload: a save that links the
-    account in the same request satisfies the rule, which is what
-    the picker does.
+    CRM-FINAL-13NOV A1. This refused a save on a lead whose company is
+    still a placeholder -- "To review", "Unknown", "New Lead" -- and
+    which is linked to no account. The reasoning written here was that
+    such a lead "cannot be found afterwards", and the trade it made
+    was the wrong way round: it lost the notes, the RFQ details, the
+    contact and the dates somebody had just typed, in order to keep a
+    lead tidy. The enquiry is worth more than the tidiness.
+
+    So saving is never gated, on a placeholder lead or any other. The
+    account is now ASKED for instead: `unnamed_prompt` below gives the
+    route what the lead sheet needs to open the account picker once
+    the save has gone through, and `/api/leads/<id>/account` still
+    carries the banner that says the company is not identified.
+
+    The function stays because deleting it would silently remove the
+    only place that decision is written down, and because the route
+    reads it by name.
+    """
+    return ''
+
+
+def unnamed_prompt(lead, incoming=None):
+    """What to ask after saving a lead whose customer is unnamed.
+
+    None when there is nothing to ask. Otherwise the same shape the
+    account gate's refusal carries, so the lead sheet opens one picker
+    for both and does not need to know which rule spoke.
     """
     if not enabled():
-        return ''
+        return None
     incoming = incoming or {}
     if incoming.get('company_id'):
-        return ''
+        return None
     found = state(lead)
     if not found['blocked']:
-        return ''
+        return None
     name = (incoming.get('company') or lead.company or '').strip()
     if name and not is_placeholder(name):
-        # The user typed a real name in the same save. The picker
-        # is still how the link gets made, but refusing here would
-        # strand somebody who fixed the obvious thing first.
-        return ''
-    return ('Link or create the account before saving. Close as '
-            'Lost, Mark duplicate and Delete – not relevant are '
-            'still available.')
+        # Somebody typed a real name in this very save. The picker is
+        # still how the link gets made, but asking again on the way
+        # out would be asking about the thing they just did.
+        return None
+    out = {
+        'reason': 'placeholder_company',
+        'reason_words': found['why'] or 'the company is not identified',
+        'company': found['company'],
+        'resolver': ('the vertical head or a CRM admin, on '
+                     'Accounts \u2192 Account check'),
+        'can_pick': True,
+        'suggestions': [],
+        'saved': True,
+    }
+    try:
+        rows = suggest(lead, limit=6) or []
+        out['suggestions'] = [
+            {'account_id': row.get('account_id'),
+             'name': row.get('name') or '',
+             'rule': row.get('rule') or '',
+             'owner_name': row.get('owner_name') or ''}
+            for row in rows]
+    except Exception:                                     # noqa: BLE001
+        pass
+    return out
 
 
 # ── finding the account ──────────────────────────────────────────────

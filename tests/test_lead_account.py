@@ -214,8 +214,19 @@ def test_the_placeholder_list_is_configurable():
 
 
 # ── acceptance 1 — the banner, and Save disabled ─────────────────────
-def test_a_to_review_lead_shows_the_banner_and_blocks_save(beml):
-    """Acceptance 1."""
+def test_a_to_review_lead_shows_the_banner_and_still_saves(beml):
+    """Acceptance 1, as amended by CRM-FINAL-13NOV A1.
+
+    The banner stays: a lead whose customer is not identified has to
+    say so, and that half of acceptance 1 is untouched.
+
+    The refusal is gone. It threw away the notes, the RFQ details and
+    the contact somebody had just typed in order to keep a lead tidy,
+    and live reported exactly that on 13 November. The save goes
+    through and the customer is ASKED for on the way out -- `needs`
+    is still 'account', so the screen opens the same picker, but the
+    status is 200 and the typing is on the record.
+    """
     body = _get(f'/api/leads/{beml["lead_id"]}/account')
     assert body['placeholder'] is True
     assert body['linked'] is False
@@ -226,8 +237,13 @@ def test_a_to_review_lead_shows_the_banner_and_blocks_save(beml):
 
     r = _client().put(f'/api/leads/{beml["lead_id"]}',
                       json={'pic': 'Someone'})
-    assert r.status_code == 400
-    assert r.get_json()['needs'] == 'account'
+    assert r.status_code == 200, r.get_data(as_text=True)
+    answered = r.get_json()
+    assert answered['ok'] is True
+    assert answered['needs'] == 'account'
+    assert answered['account_unnamed']['saved'] is True
+    with flask_app.app_context():
+        assert db.session.get(Lead, beml['lead_id']).pic == 'Someone'
 
 
 def test_closing_as_lost_is_still_allowed_while_unnamed(beml):
@@ -992,10 +1008,19 @@ def test_the_lead_sheet_carries_the_account_block():
         assert piece in html, piece
 
 
-def test_save_is_refused_in_the_form_as_well_as_the_server():
+def test_the_form_no_longer_refuses_the_save_either():
+    """CRM-FINAL-13NOV A1, and this is the half that mattered.
+
+    The client guard returned before posting anything, so the Save
+    button did nothing at all and the server never heard about it --
+    which is why taking the refusal off the server on 11 November
+    changed nothing anybody could see. Both have to go, and this
+    test is the one that would have caught the second.
+    """
     html = open(os.path.join(_ROOT, 'templates', 'app.html')).read()
-    assert 'LA && LA.blocked' in html
-    assert 'Link or create the account before saving' in html
+    assert 'if(LA && LA.blocked){' not in html
+    # And the save asks for the customer afterwards instead.
+    assert 'account_unnamed' in html
 
 
 # ── the wider sweep: unlinked leads grouped by customer ──────────────

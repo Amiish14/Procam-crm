@@ -554,10 +554,84 @@ def candidates(from_addr, *, company_name=None, text=None):
     return out
 
 
+#: Below this many normalised characters a name is an acronym rather
+#: than a description of a company, and character resemblance stops
+#: meaning anything.
+#:
+#: CRM-FINAL-13NOV item 12. The picker offered
+#: "Bhel — (read as 'BEML Limited')". BEML and BHEL are four
+#: characters each, both acronyms, both real customers of ours, and
+#: three of the four characters are shared -- so any ratio high enough
+#: to be useful on a long name matches them on a short one.
+#:
+#: BUT A LENGTH FLOOR ALONE IS THE WRONG INSTRUMENT, and the first
+#: attempt at this proved it by breaking two things that were right:
+#:
+#:   * the BEML case this module was built for. The parser read
+#:     "Bharat Earth Movers Limited (BEML)", the acronym is tried on
+#:     its own, and the account is "LA BEML LIMITED" -- which matched
+#:     because 'beml' resembles 'la beml'. Refusing all short names
+#:     refused that too.
+#:   * the near-duplicate warning on "LA BEML Limited" against
+#:     "LA BEML LIMITED", whose normalised form is seven characters.
+#:
+#: So the rule is not about length on its own. For a short name,
+#: CONTAINMENT counts and RESEMBLANCE does not:
+#:
+#:     'beml'  inside 'la beml'   -> yes, it is the name, whole
+#:     'beml'  against 'bhel'     -> no, two different words that
+#:                                   happen to look alike
+#:
+#: Which is what item 12 asks for in its own words -- "an exact or
+#: alias match, never a fuzzy one" -- because an acronym appearing
+#: whole inside a name IS an exact match of that acronym.
+SHORT_NAME_CHARS = 8
+
+
+def _is_short(normalised):
+    return len(normalised or '') < SHORT_NAME_CHARS
+
+
+def _contains_as_a_word(needle, haystack):
+    """Whether `needle` appears in `haystack` whole, on word boundaries.
+
+    Normalised forms are space-separated words, so this is a
+    word-sequence test and not a substring one: 'beml' is in
+    'la beml limited' and is NOT in 'bemlington'.
+
+    The needle may itself be several words -- "LA BEML Limited"
+    against "LA BEML LIMITED" normalises to 'la beml' on both sides,
+    and the first version of this compared that against a list of
+    single words and answered no, which silently took away the
+    near-duplicate warning on exactly the pair it was written for.
+    Equal is the first case, and a contiguous run is the second.
+    """
+    needle = ' '.join(str(needle or '').split())
+    haystack = ' '.join(str(haystack or '').split())
+    if not needle or not haystack:
+        return False
+    if needle == haystack:
+        return True
+    want = needle.split()
+    have = haystack.split()
+    if len(want) > len(have):
+        return False
+    for start in range(len(have) - len(want) + 1):
+        if have[start:start + len(want)] == want:
+            return True
+    return False
+
+
 def _similar_names(company_name, *, floor=0.62, limit=5):
     """[(account, ratio)] for names close to this one.
 
     Only for a person to look at. Nothing auto-links on a ratio.
+
+    A short name is never resembled -- see RESEMBLE_MIN_CHARS. That is
+    a refusal to offer a candidate at all, not a higher threshold: on
+    four characters there is no threshold that separates BHEL from
+    BEML, and offering the wrong one with a plausible sentence beside
+    it is worse than offering nothing.
     """
     from difflib import SequenceMatcher
 
@@ -573,8 +647,23 @@ def _similar_names(company_name, *, floor=0.62, limit=5):
         return []
     scored = []
     for company in accounts:
-        ratio = SequenceMatcher(None, raw,
-                                strict_norm(company.name or '')).ratio()
+        theirs = strict_norm(company.name or '')
+        if not theirs:
+            continue
+        # Where either side is an acronym, containment decides and
+        # resemblance is refused. Asked of both sides because the
+        # reported case had the short name on the ACCOUNT's side:
+        # "Bhel" was the account and "BEML Limited" was what the
+        # parser read.
+        if _is_short(raw) or _is_short(theirs):
+            short, long_ = ((raw, theirs) if len(raw) <= len(theirs)
+                            else (theirs, raw))
+            if _contains_as_a_word(short, long_):
+                # Whole, inside the other. A 1.0 rather than a ratio:
+                # it is not a resemblance, it is the name.
+                scored.append((company, 1.0))
+            continue
+        ratio = SequenceMatcher(None, raw, theirs).ratio()
         if ratio >= floor:
             scored.append((company, ratio))
     scored.sort(key=lambda row: row[1], reverse=True)
