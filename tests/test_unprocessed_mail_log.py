@@ -159,11 +159,36 @@ def test_noreply_is_deliberately_not_blocked():
 
 def test_a_blocked_sender_is_logged_as_blocked_not_skipped():
     """Its own outcome, so the denylist's work is readable without
-    reading past every "already ingested"."""
-    source = open(SINGLE).read()
-    index = source.index('blocked = blocklist.check')
-    nearby = source[index:index + 1400]
-    assert "_record_ingest('blocked'" in nearby
+    reading past every "already ingested".
+
+    Asked of the BRANCH rather than of a slice of characters after the
+    denylist call. It was a 1400-character window, which is a proxy
+    for "nearby" and broke the day a comment was added between the
+    two -- reporting a silent drop that was not one, which is the one
+    failure mode a guard like this must not have. The AST finds the
+    `if blocked:` branch wherever it is and asks what it calls.
+    """
+    target = _functions(SINGLE).get('process_single_message')
+    assert target is not None
+
+    found = False
+    for node in ast.walk(target):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if getattr(test, 'id', None) != 'blocked':
+            continue
+        for call in ast.walk(ast.Module(body=node.body, type_ignores=[])):
+            if not isinstance(call, ast.Call):
+                continue
+            if getattr(call.func, 'id', None) != '_record_ingest':
+                continue
+            first = call.args[0] if call.args else None
+            if isinstance(first, ast.Constant) and first.value == 'blocked':
+                found = True
+    assert found, (
+        "the `if blocked:` branch does not call _record_ingest('blocked') "
+        "— the denylist's work would be unreadable among the skips")
 
 
 def test_the_row_carries_the_pattern_that_matched():

@@ -903,3 +903,257 @@ def test_the_sweep_reports_what_the_permission_refused():
         mod.apply(found, batch=mod.next_batch_id(), actor='ZF_NOBODY')
         db.session.expire_all()
         assert db.session.get(Lead, lead_id).is_archived is not True
+
+
+# ═══════════════════════════════════════════════════════════════════
+# the live findings of 14 November — items 1 to 4
+# ═══════════════════════════════════════════════════════════════════
+#
+# These four came out of one run of mail_ingest_status on live, and
+# three of the four were faults in work this release shipped. The
+# fourth was a true statement nobody could act on.
+def test_a_procurement_portal_is_recognised():
+    """Item 1. 68 from procol.in and 4 from ansmtp.ariba.com were
+    dropped as "blocked sender domain"; both carry real RFQs."""
+    from app.services import portal_rfq
+
+    assert portal_rfq.is_portal('no-reply@procol.in') == 'procol.in'
+    assert portal_rfq.is_portal('s4system-prodeu+x@ansmtp.ariba.com') \
+        == 'ansmtp.ariba.com'
+    # Whole labels: a lookalike domain is not a portal.
+    assert portal_rfq.is_portal('rfq@notprocol.in') == ''
+    # And a subdomain of one is.
+    assert portal_rfq.is_portal('x@eu.ansmtp.ariba.com') == \
+        'ansmtp.ariba.com'
+
+
+def test_the_portal_beats_the_denylist():
+    """Both domains are still on `blocked_senders.txt` -- the list is
+    data and other releases read it -- so the rule that matters is
+    which one wins."""
+    from email_ingest import blocklist
+    from app.services import portal_rfq
+
+    assert blocklist.check('no-reply@procol.in')
+    assert portal_rfq.is_portal('no-reply@procol.in')
+    source = open(os.path.join(_ROOT, 'email_ingest',
+                               'single_message.py')).read()
+    marker = source.index('_portal and blocked')
+    assert 'blocked = None' in source[marker:marker + 400]
+
+
+@pytest.mark.parametrize('body,expected', [
+    ('Buyer organisation: Tata Steel Limited\nResponse due 20 Nov',
+     'Tata Steel Limited'),
+    ('RFX event owner: Hindalco Industries\nPlease respond',
+     'Hindalco Industries'),
+    ('Procol on behalf of JSW Cement has invited you to an event.',
+     'JSW Cement'),
+])
+def test_the_buyer_is_read_out_of_the_body(body, expected):
+    from app.services import portal_rfq
+
+    buyer, how = portal_rfq.buyer_from('An RFQ invitation', body)
+    assert buyer == expected, how
+
+
+def test_the_portal_itself_is_never_the_buyer():
+    """The one answer worse than none: it would file every portal RFQ
+    under one invented customer."""
+    from app.services import portal_rfq
+
+    buyer, _how = portal_rfq.buyer_from(
+        'Invitation', 'Company: Procol Technologies\nEvent owner: Ariba')
+    assert buyer == ''
+
+
+def test_an_unreadable_buyer_still_lands_as_a_flagged_lead():
+    from app.services import portal_rfq
+
+    found = portal_rfq.describe('no-reply@procol.in', 'RFX 4471', 'See portal.')
+    assert found['company'] == portal_rfq.UNKNOWN_BUYER
+    assert 'needs review' in found['reason']
+    assert found['portal'] == 'procol.in'
+
+
+def test_a_portal_lead_goes_to_the_desk_whatever_its_vertical():
+    """A buyer read out of a robot's mail is by definition unexamined,
+    so a confident vertical does not make it routable."""
+    from email_ingest.single_message import _desk_for_a_guessed_vertical
+
+    with flask_app.app_context():
+        from app.services import admin_settings
+        admin_settings.save('rfq_coordinator', DESK, actor='test')
+        lead = _lead(needs_review=True, vertical_confidence=95,
+                     vertical_source=lead_vertical.GUESSED,
+                     lead_platform='procol.in')
+        assert _desk_for_a_guessed_vertical(lead) == DESK
+
+
+def test_the_two_figures_cannot_contradict_each_other():
+    """Item 2. "the last message that became something: 2026-11-03"
+    against 47 created in the same fourteen days.
+
+    `mail_ingest.record` is keyed on the message id and UPDATES, so
+    `created_at` is when the message was first LOGGED and not when it
+    became anything -- and ordering by it answers with the wrong row.
+    Both figures now come from one pass over one row set.
+    """
+    import importlib.util
+    from datetime import timedelta
+
+    from app.models.ingest_log import MailIngestLog
+
+    path = os.path.join(_ROOT, 'scripts', 'mail_ingest_status.py')
+    spec = importlib.util.spec_from_file_location('zf_status', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    with flask_app.app_context():
+        old = datetime.utcnow() - timedelta(days=40)
+        recent = datetime.utcnow() - timedelta(days=2)
+        # The shape of the bug: a row first logged weeks ago whose
+        # outcome became 'created' recently, and a row logged today.
+        db.session.add(MailIngestLog(
+            internet_message_id='<zf-old@x>', outcome='created',
+            received_at=old, created_at=old, subject='The old one'))
+        db.session.add(MailIngestLog(
+            internet_message_id='<zf-new@x>', outcome='created',
+            received_at=recent, created_at=recent,
+            subject='The recent one'))
+        db.session.commit()
+
+        value, column = mod._when(
+            MailIngestLog.query.filter_by(
+                internet_message_id='<zf-new@x>').first())
+        assert column == 'received_at'
+        assert value == recent
+        mod.report_last(14)              # must not raise
+        MailIngestLog.query.filter(
+            MailIngestLog.internet_message_id.in_(
+                ('<zf-old@x>', '<zf-new@x>'))).delete(
+                    synchronize_session=False)
+        db.session.commit()
+
+
+def test_a_row_with_no_date_at_all_is_counted_nowhere_and_said():
+    """`_when` has to answer for a row carrying none of the three.
+
+    Asserted against a stand-in rather than a saved row: the ORM
+    default fills `created_at` at INSERT whatever the attribute was
+    set to, so an undated row cannot be made this way at all. It can
+    exist on live -- a column added by the ALTER-on-boot table, or a
+    row written by raw SQL -- which is why the fallback is there and
+    why the script counts those rows nowhere and says how many.
+    """
+    import importlib.util
+
+    path = os.path.join(_ROOT, 'scripts', 'mail_ingest_status.py')
+    spec = importlib.util.spec_from_file_location('zf_status2', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    undated = type('Row', (), {'received_at': None, 'created_at': None,
+                               'updated_at': None, 'outcome': 'created'})()
+    assert mod._when(undated) == (None, '')
+    # And the first column that does answer is the one reported.
+    partly = type('Row', (), {'received_at': None,
+                              'created_at': datetime(2026, 11, 1),
+                              'updated_at': datetime(2026, 11, 9),
+                              'outcome': 'created'})()
+    assert mod._when(partly) == (datetime(2026, 11, 1), 'created_at')
+
+
+def test_the_unique_clash_is_explained_by_column():
+    """Item 3. The reported message stops at "leads." and the column
+    is what decides whether anything was lost."""
+    import importlib.util
+
+    path = os.path.join(_ROOT, 'scripts', '2026_11_14_reprocess_mail.py')
+    spec = importlib.util.spec_from_file_location('zf_reproc', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    assert mod.explain_unique(
+        'lead insert: UNIQUE constraint failed: leads.crn') == 'crn'
+    assert mod.explain_unique(
+        'UNIQUE constraint failed: leads.email_message_id') == \
+        'email_message_id'
+    # The truncated form: known to be a leads clash, column unknown.
+    assert mod.explain_unique(
+        'lead insert: (sqlite3.IntegrityError) UNIQUE constraint '
+        'failed: leads.') == ''
+    assert mod.explain_unique('something else') is None
+
+
+def test_what_was_lost_distinguishes_the_two_cases():
+    import importlib.util
+
+    path = os.path.join(_ROOT, 'scripts', '2026_11_14_reprocess_mail.py')
+    spec = importlib.util.spec_from_file_location('zf_reproc2', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with flask_app.app_context():
+        held = _lead(company='ZF Already Landed',
+                     email_message_id='<zf-held@x>')
+        assert 'nothing' in mod._what_was_lost('<zf-held@x>')
+        assert 'THE ENQUIRY' in mod._what_was_lost('<zf-never-seen@x>')
+
+
+def test_a_reference_clash_is_retried_and_a_duplicate_is_not():
+    """The retry exists for the CRN case, where nothing landed. A
+    clash on the message id means a lead EXISTS and retrying would be
+    a second attempt at the thing that just said so."""
+    from email_ingest.single_message import _retry_once_after_a_clash
+
+    with flask_app.app_context():
+        held = _lead(company='ZF Raced', email_message_id='<zf-raced@x>')
+        duplicate = _retry_once_after_a_clash(
+            db, Exception('UNIQUE constraint failed: leads.email_message_id'),
+            {}, '<zf-raced@x>', None, None, _Log())
+        assert duplicate is None
+        # And something that is not a clash at all is never retried.
+        assert _retry_once_after_a_clash(
+            db, Exception('database is locked'), {}, '<zf-x@x>', None,
+            None, _Log()) is None
+
+
+class _Log:
+    """A logger that records nothing, for the two calls above."""
+
+    def info(self, *a, **kw):
+        pass
+
+    def exception(self, *a, **kw):
+        pass
+
+
+def test_the_subscription_cleanup_never_deletes_what_it_cannot_judge():
+    """Item 4. "I could not tell" is not grounds for deleting
+    somebody's subscription: it may belong to another application on
+    the same tenant."""
+    import importlib.util
+
+    path = os.path.join(_ROOT, 'scripts',
+                        '2026_11_14_graph_subscriptions.py')
+    source = open(path).read()
+    spec = importlib.util.spec_from_file_location('zf_subs', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    # Three buckets, and only one of them is ever deleted.
+    assert 'unknown' in source and 'LEFT:' in source
+    marker = source.index('def apply(')
+    body = source[marker:marker + 900]
+    assert 'strangers' in body
+    assert 'mine' not in body.split('def ')[0]
+
+
+def test_the_subscription_cleanup_asks_the_webhook_who_we_are():
+    """A second comparison here would be a second answer, and then the
+    route and the cleanup would disagree about which subscription is
+    ours."""
+    path = os.path.join(_ROOT, 'scripts',
+                        '2026_11_14_graph_subscriptions.py')
+    source = open(path).read()
+    assert '_resource_user_segment' in source
+    assert '_mailbox_identifiers' in source

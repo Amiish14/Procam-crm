@@ -2960,3 +2960,109 @@ make the sweep say whose rights it is acting under. `--apply` now
 requires `--actor`, refusals are named and left, and a batch that
 could archive with nobody's rights would have been a way round the one
 control on that path.
+
+## 79 — the four live findings of 14 November, three of them mine
+
+One run of `mail_ingest_status --check --days 14` on live produced
+four items. Three were faults in work this release had just shipped;
+the fourth was a true statement nobody could act on.
+
+### 1 — the portals were blocked on purpose, by an argument the module
+### had already rejected
+
+`email_ingest/blocklist.py` says in its own docstring that `no-reply@`
+is deliberately NOT treated as bulk, "which tender and procurement
+portals use for genuine RFQs". Then on 30 October `procol.in` and
+`ansmtp.ariba.com` were added to the DOMAIN list — "Procol RFX
+notifications (15+)" — and a domain entry overrides all of that
+reasoning. In the following fortnight 72 messages were dropped at the
+door.
+
+Both readings have something in them, which is why it is worth
+writing down rather than simply reversing. The stream really is mostly
+notification noise — "your response is due", "an event has been
+updated" — and the enquiries are buried in it. Blocking the domain
+loses the second to be rid of the first.
+
+So neither block nor plain lead. `data/portal_senders.txt` wins over
+the denylist, because it is the more specific statement, and a portal
+message becomes a lead flagged for review, owned by the RFQ desk, with
+the buyer read out of the body. `no-reply@procol.in` is not the
+customer: the buying company is named in the body as the event owner,
+the buyer organisation or who invited us, and the portal's own name is
+explicitly refused as an answer — "Procol" as the customer would file
+every portal RFQ under one invented company, which is the one answer
+worse than none.
+
+### 2 — two queries over one table, disagreeing about one fact
+
+"The last message that became something: 2026-11-03" against 47
+created and 22 attached in the same fourteen days.
+
+`mail_ingest.record` is keyed on the message id and UPDATES, so
+`created_at` is when the CRM first logged the MESSAGE and not when it
+became anything. A mail first skipped weeks ago and turned into a lead
+today still carries the old date, and ordering by it answers with
+whatever was logged most recently rather than with what landed most
+recently. Sparse values make it worse: SQLite sorts NULLs last on
+DESC, so a row with no `created_at` can never win that query at all.
+
+Both figures now come from one pass over one row set, ordered on the
+first of `received_at / created_at / updated_at` the row actually has,
+and the output names which column answered. Undated rows are counted
+nowhere and the count of them is printed, because a row that cannot be
+placed in time is worth knowing about rather than quietly dropping
+from both figures.
+
+### 3 — which unique column collided is the whole answer
+
+One notification died with "lead insert: UNIQUE constraint failed:
+leads." The truncated sentence does not say which column, and `leads`
+has two that mean opposite things:
+
+    email_message_id   the webhook and the poll saw the same mail at
+                       once. The other one won, a lead EXISTS, and
+                       there is nothing to recover.
+    crn                two leads took the same customer reference in
+                       the same moment. Nothing exists, and the
+                       enquiry is gone until the message is
+                       re-processed.
+
+The intake now retries ONCE on a reference clash, with the same lead
+object and a fresh reference — not a lead rebuilt from `lead_kwargs`,
+which was the first attempt and would have landed a near-empty lead
+that looked like a successful recovery, because the real insert adds a
+dozen fields of its own beside those kwargs. A message-id clash is
+never retried: the lead is already there, and a retry would be a
+second attempt at the thing that just said so.
+
+### 4 — nothing was lost, and that is why it lasted
+
+67 notifications rejected as "wrong mailbox". The lockdown worked:
+every one was refused and the scoped fetch behind it would have 404'd
+anyway, so no other mailbox's mail has ever reached this CRM. What it
+costs is that the real failures are hard to see among them.
+
+The cleanup asks `webhook._resource_user_segment` and
+`_mailbox_identifiers` rather than comparing strings itself — a second
+comparison would be a second answer, and then the route and the
+cleanup would disagree about which subscription is ours. It has three
+buckets and deletes only one: ours, strangers, and **undecidable,
+which it reports and leaves**, because a resource it cannot resolve
+may belong to another application on the same tenant.
+
+### What the two no-silent-drop guards did, in opposite directions
+
+The branch scanner in `test_unprocessed_mail_log` was right: the retry
+returned a dict built inside a helper and reached through a variable,
+and that test verifies the helper a branch delegates to rather than
+assuming it — which it cannot do through a variable. The logging moved
+to the return site rather than the guard being loosened.
+
+The blocked-sender test in the same file was wrong, in the one way a
+guard like that must never be. It asserted `_record_ingest('blocked'`
+appeared within 1400 characters of the denylist call; a comment pushed
+it past the window and it reported a silent drop that did not exist.
+A false alarm from a guard against false silence is worse than no
+guard, because the next one is read as noise. It now finds the
+`if blocked:` branch by AST and asks what it calls, wherever it sits.

@@ -151,6 +151,77 @@ def _reopen_if_closed(db, decision, msg, log):
     return None
 
 
+def _retry_once_after_a_clash(db, error, msg, imid, lead, decision, log):
+    """One retry where the clash was a reference, not a duplicate.
+
+    Returns the LEAD when the retry landed one, else None.
+
+    The lead rather than a finished result dict, and the ingest row is
+    written by the caller: `tests/test_unprocessed_mail_log.py` walks
+    this file and fails any branch that returns without logging, and
+    it verifies the helper a branch delegates to rather than assuming
+    it -- which it cannot do through a variable. Logging at the return
+    site keeps that guard able to check this path instead of having to
+    trust it.
+
+    Deliberately once: a second collision on a fresh number is not a
+    race any more, it is a broken sequence, and retrying a broken
+    sequence in a loop is how an intake stops answering.
+    """
+    from app import Lead
+
+    text = str(error or '')
+    if 'UNIQUE constraint failed' not in text \
+            and 'duplicate key value' not in text.lower():
+        return None
+    # An already-ingested message is not a loss and not a retry.
+    if imid and Lead.query.filter_by(email_message_id=imid).first():
+        log.info('%s already has a lead; the clash was the webhook and '
+                 'the poll racing, not a lost enquiry', imid)
+        return None
+    if 'crn' not in text and 'email_message_id' in text:
+        return None
+    if lead is None:
+        return None
+    try:
+        # The SAME object, with the clashing reference cleared, rather
+        # than a lead rebuilt from `lead_kwargs`: the real insert adds
+        # a dozen fields of its own beside those kwargs -- the company,
+        # the sender, the thread key, the classification -- and a
+        # rebuild from the kwargs alone would land a near-empty lead
+        # that looked like a successful recovery.
+        #
+        # Its INSERT never completed, so after the caller's rollback it
+        # is transient again and `add` makes it pending with a fresh
+        # reference taken on flush.
+        lead.crn = None
+        db.session.add(lead)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        log.exception('the retry after the reference clash failed too '
+                      'for %s', imid)
+        return None
+    log.info('lead %s landed on the retry after a reference clash (%s)',
+             lead.id, imid)
+    return lead
+
+
+def _is_placeholder_company(name):
+    """Whether this company name identifies nobody.
+
+    `lead_account.is_placeholder` is the one list of these -- "To
+    review", "Unknown", a subject line -- read from Master Data on top
+    of its seeded defaults, so a portal lead and the lead sheet agree
+    about what counts as unnamed.
+    """
+    try:
+        from app.services import lead_account
+        return bool(lead_account.is_placeholder(name or ''))
+    except Exception:                                     # noqa: BLE001
+        return not (name or '').strip()
+
+
 def _desk_for_a_guessed_vertical(lead):
     """The RFQ desk's code, where this lead must not be routed on a guess.
 
@@ -170,9 +241,15 @@ def _desk_for_a_guessed_vertical(lead):
         from app.services import lead_vertical
         if not getattr(lead, 'needs_review', False):
             return ''
-        if lead_vertical.is_firm(getattr(lead, 'vertical_confidence', None),
-                                 getattr(lead, 'vertical_source', None)):
-            return ''
+        # CRM-FINAL-13NOV follow-up item 1. A portal RFQ goes to the
+        # desk whatever its vertical reads as: the buyer was read out
+        # of a robot's mail, so the one thing certain about it is that
+        # nobody has looked at it yet. That is the desk's job.
+        if not (getattr(lead, 'lead_platform', '') or '').strip():
+            if lead_vertical.is_firm(
+                    getattr(lead, 'vertical_confidence', None),
+                    getattr(lead, 'vertical_source', None)):
+                return ''
         from app.services import admin_settings
         code = (admin_settings.get('rfq_coordinator') or '').strip().upper()
         if not code:
@@ -720,6 +797,25 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
         # be read and never acted on — the "re-process one" button
         # would come straight back here and skip again.
         blocked = blocklist.check(sender_email) if not force else None
+        # CRM-FINAL-13NOV follow-up item 1. A procurement portal wins
+        # over the denylist. `procol.in` and `ansmtp.ariba.com` were
+        # added to it on 30 October as notification noise, and in the
+        # next fortnight 72 messages were dropped at the door --
+        # including the RFQs and tender invitations among them, which
+        # is what those portals exist to deliver. `portal_senders.txt`
+        # is the more specific statement, so it is read first.
+        _portal = None
+        try:
+            from app.services import portal_rfq as _pr
+            _portal = _pr.describe(sender_email,
+                                   msg.get('subject') or '',
+                                   _li.body_text(msg) or '')
+        except Exception:
+            log.exception('could not judge whether %s is a portal', imid)
+        if _portal and blocked:
+            log.info('%s is from the %s portal, not blocked: %s', imid,
+                     _portal['portal'], blocked)
+            blocked = None
         if blocked:
             log.info('Blocked %s [%s]', imid, blocked)
             # §4, and the one that matters most. This is the sender
@@ -1135,6 +1231,25 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
             except Exception:
                 log.exception('vertical recommendation failed for %s', imid)
 
+            # item 1. The From is a robot, so the buyer is whatever
+            # the body says, and the lead announces itself as unread:
+            # flagged for review, and carrying the portal in
+            # `lead_platform` -- which is the column's own purpose
+            # ("which platform it came through — superprocure,
+            # ariba") and what the owner rule below reads to route it
+            # to the RFQ desk.
+            if _portal:
+                lead_kwargs['needs_review'] = True
+                lead_kwargs['lead_platform'] = _portal['portal'][:40]
+                _named = (lead_kwargs.get('company') or '').strip()
+                if not _named or _is_placeholder_company(_named):
+                    # The parser read nothing usable, or read the
+                    # portal's own name. The buyer out of the body, or
+                    # "To review" and flagged -- an enquiry on a
+                    # review screen is recoverable and one that was
+                    # never recorded is not.
+                    lead_kwargs['company'] = _portal['company']
+
             _keys = _thread_keys(msg)
             # The client's own date, when it can be read. Different
             # from `received` for a forward, and that difference is
@@ -1447,6 +1562,41 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
         except Exception as e:
             db.session.rollback()
             log.exception('lead insert failed for %s', imid)
+            # CRM-FINAL-13NOV follow-up item 3. One notification died
+            # here with "UNIQUE constraint failed: leads." and the
+            # enquiry was lost: the insert rolled back, no lead
+            # existed, and the only trace was an EmailEvent row.
+            #
+            # `leads` has two unique columns and they mean opposite
+            # things:
+            #
+            #   email_message_id  the webhook and the poll saw the
+            #                     same mail at once. The other one
+            #                     won, a lead EXISTS, and there is
+            #                     nothing to recover.
+            #   crn               two leads allocated the same
+            #                     customer reference in the same
+            #                     moment. Nothing exists, and the
+            #                     enquiry is gone until somebody
+            #                     re-processes the message.
+            #
+            # The second is worth one retry: the CRN is taken from a
+            # sequence, so asking again gives a different number and
+            # the lead lands. The first is not retried -- the lead is
+            # already there, and a retry would be a second attempt at
+            # the thing that just told us so.
+            _landed = _retry_once_after_a_clash(
+                db, e, msg, imid, locals().get('lead'), decision, log)
+            if _landed is not None:
+                _record_ingest(
+                    'created', msg, decision, lead_id=_landed.id,
+                    reason='new enquiry; the first insert clashed on a '
+                           'reference and the retry took a fresh one')
+                return {'status': 'created', 'lead_id': _landed.id,
+                        'internet_message_id': imid,
+                        'reason': 'retried after a reference clash'}
+            _record_ingest('error', msg, decision,
+                           reason=f'lead insert: {e}'[:500])
             return {'status': 'failed', 'reason': f'lead insert: {e}',
                     'lead_id': None, 'internet_message_id': imid}
 

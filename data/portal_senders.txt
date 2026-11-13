@@ -1,0 +1,20 @@
+# Customer procurement portals. A message from one of these is an RFQ
+# or a tender invitation FROM A BUYER, delivered by a robot.
+#
+# They are NOT blocked. `email_ingest/blocklist.py` says so in its own
+# docstring -- "no-reply@ ... tender and procurement portals use those
+# for genuine RFQs" -- and then on 30 October 2026 two portals were
+# added to the denylist as "Procol RFX notifications (15+)", which
+# dropped 72 messages in the following fortnight including the
+# enquiries among them.
+#
+# A domain listed here wins over the denylist: this file is the more
+# specific statement. What arrives becomes a lead flagged for review,
+# owned by the RFQ desk, with the buyer read out of the body --
+# app/services/portal_rfq.py.
+#
+# One domain per line. Whole labels, so a subdomain matches and
+# notprocol.in does not. Re-read when the file changes; no deploy.
+
+procol.in
+ansmtp.ariba.com

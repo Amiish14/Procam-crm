@@ -129,40 +129,109 @@ def report_path():
 
 
 # ── 2 and 3. what happened last ──────────────────────────────────────
-def report_last():
+#: The columns that can answer "when". `received_at` is when the mail
+#: reached the mailbox, which is the one a person means; `created_at`
+#: is when the CRM first logged the message, and `updated_at` when the
+#: row last changed.
+WHEN_COLUMNS = ('received_at', 'created_at', 'updated_at')
+
+
+def _when(row):
+    """(value, which column answered) for one log row."""
+    for name in WHEN_COLUMNS:
+        value = getattr(row, name, None)
+        if value:
+            return value, name
+    return None, ''
+
+
+def report_last(days=14):
+    """The last message that became something, and the count beside it.
+
+    CRM-FINAL-13NOV follow-up item 2. This said "2026-11-03" while the
+    window below counted 47 created and 22 attached in the same
+    fourteen days -- two queries over one table disagreeing about the
+    same fact.
+
+    The cause is that `mail_ingest.record` is keyed on the message id
+    and UPDATES the row when a message is seen again, so `created_at`
+    is when the CRM first logged the MESSAGE and not when it became
+    anything. A message first skipped weeks ago and turned into a lead
+    today still carries the old `created_at`, and ordering by it
+    answers with whatever was logged most recently rather than with
+    what landed most recently. Sparse or back-filled values make it
+    worse: SQLite sorts NULLs last on DESC, so a row with no
+    `created_at` can never win that query at all.
+
+    So: both figures now come from ONE pass over ONE row set, ordered
+    on the first of `received_at / created_at / updated_at` that the
+    row actually has, and the output names which column answered.
+    Two numbers that cannot contradict each other is the point; being
+    able to see why is the rest of it.
+    """
+    from datetime import timedelta
+
     from app.models.ingest_log import MailIngestLog
 
+    rows = MailIngestLog.query.all()
+    dated = []
+    undated = []
+    for row in rows:
+        value, column = _when(row)
+        if value is None:
+            undated.append(row)
+        else:
+            dated.append((value, column, row))
+    dated.sort(key=lambda item: item[0], reverse=True)
+
     print('\n── the last message that became something ──')
-    last = (MailIngestLog.query
-            .filter(MailIngestLog.outcome.in_(LANDED))
-            .order_by(MailIngestLog.created_at.desc())
-            .first())
-    if last is None:
+    landed = [item for item in dated if item[2].outcome in LANDED]
+    if not landed:
         print('  !! NEVER. No message has ever been turned into a '
               'lead or attached to one.')
     else:
-        age = ''
-        if last.created_at:
-            days = (datetime.utcnow() - last.created_at).days
-            age = f'  ({days} day(s) ago)'
-        print(f'  {str(last.created_at)[:19]}{age}')
-        print(f'    outcome {last.outcome}'
-              + (f' on lead #{last.lead_id}' if last.lead_id else ''))
-        print(f'    from    {last.from_addr or "—"}')
-        print(f'    subject {(last.subject or "")[:70]!r}')
+        value, column, row = landed[0]
+        age = (datetime.utcnow() - value).days
+        print(f'  {str(value)[:19]}  ({age} day(s) ago, by {column})')
+        print(f'    outcome {row.outcome}'
+              + (f' on lead #{row.lead_id}' if row.lead_id else ''))
+        print(f'    from    {row.from_addr or "—"}')
+        print(f'    subject {(row.subject or "")[:70]!r}')
+
+    # The same row set, windowed, so the two cannot disagree.
+    since = datetime.utcnow() - timedelta(days=days)
+    window = [item for item in dated if item[0] >= since]
+    counts = Counter(item[2].outcome for item in window)
+    inside = sum(counts.get(name, 0) for name in LANDED)
+    print(f'\n  in the last {days} day(s): {inside} message(s) became '
+          f'something, out of {len(window)} seen')
+    for name in LANDED:
+        if counts.get(name):
+            print(f'    {counts[name]:>6}  {name}')
+    if inside and landed and landed[0][0] < since:
+        print('  !! these disagree, which should now be impossible: '
+              'the window has landings and the newest one is older '
+              'than the window. Report it with this output.')
+    if undated:
+        print(f'\n  {len(undated)} row(s) carry none of '
+              f'{", ".join(WHEN_COLUMNS)} and cannot be placed in '
+              f'time at all. They are counted nowhere above — which '
+              f'is the honest answer, and worth fixing at the writer '
+              f'if the number is not small.')
 
     print('\n── the last error ──')
-    worst = (MailIngestLog.query
-             .filter(MailIngestLog.outcome == 'error')
-             .order_by(MailIngestLog.created_at.desc())
-             .first())
-    if worst is None:
+    errors = [item for item in dated if item[2].outcome == 'error']
+    if not errors:
         print('  none on record.')
     else:
-        print(f'  {str(worst.created_at)[:19]}')
-        print(f'    from    {worst.from_addr or "—"}')
-        print(f'    subject {(worst.subject or "")[:70]!r}')
-        print(f'    reason  {worst.reason or "(none stored)"}')
+        value, column, row = errors[0]
+        print(f'  {str(value)[:19]}  (by {column})')
+        print(f'    from    {row.from_addr or "—"}')
+        print(f'    subject {(row.subject or "")[:70]!r}')
+        print(f'    reason  {row.reason or "(none stored)"}')
+        print(f'    message id {row.internet_message_id or "—"}')
+        print('    scripts/2026_11_14_failed_ingest.py --check reads '
+              'this one in full and can re-process it.')
 
 
 # ── 4. what is being refused ─────────────────────────────────────────
@@ -310,7 +379,7 @@ def main(argv=None):
         print('CRM-WA-01 §4 — is leads@ being read. READ ONLY.')
         _rule()
         report_path()
-        report_last()
+        report_last(args.days)
         report_refusals(args.days, args.sender)
         report_webhook(args.days)
         report_silence()
