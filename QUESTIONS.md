@@ -3242,3 +3242,112 @@ one. `scripts/2026_11_13_portal_keys.py` fills them in, dry run first,
 and refuses two cases on purpose: it never overwrites a key already
 there (mail has joined on it) and never gives two leads one key
 (choosing between them is a merge, not a backfill).
+
+## 82 — CRM-UAT-01: a portal is not a customer, and three smaller ones
+
+### the account "Procol"
+
+Three live leads — #12642, #12644 (RFX-56172, ArcelorMittal Nippon
+Steel India) and #12645 (RFQ-112165) — were filed under an account
+called **Procol**, which is not a company. The parser reads a company
+out of the sender's domain; on a procurement portal's mail the sender
+is the portal; so the buyer of each RFQ became the robot that
+delivered it, and three different buyers' enquiries pooled under one
+row. Every account-level view then reads them as one customer.
+
+13 November fixed half of it: the intake prefers the buyer read out of
+the body. The half that was missing is that **nothing stopped a lead
+being linked to a portal's account** — not the matcher, not the
+picker, not a sweep. `account_match.not_a_customer` now refuses one,
+which is the single gate every linking path goes through, and it also
+refuses an account that claims a portal's mail domain, because that
+row would collect every buyer the portal sends for.
+
+The name test is **whole-name**, not substring. `names_the_portal` is
+the loose reading and is right where it is used — deciding whether to
+prefer the body's buyer, where being wrong costs a lead the words "To
+review". This one decides whether an account may be linked to at all,
+where being wrong costs a real customer their leads: "SAP Ariba" is a
+portal and "SAP India Pvt Ltd" is not.
+
+`scripts/2026_11_14_portal_accounts.py` moves the leads already filed
+that way: to the buyer's existing account where a name matches
+(through `company_match.norm`, so "Arcelormittal Nippon Steel India
+Ltd." and "ArcelorMittal Nippon Steel India" are one customer), to a
+new account where the buyer is named and nobody has it on file, and to
+"To review" where the body names no buyer. Two things it refuses to
+do: a created account **never** gets the portal's mail domain, and the
+matcher is **never** taught the sender — `no-reply@procol.in` learned
+as one buyer's address would send every later portal RFQ, for any
+buyer, to that one account. The portal's own row is left alone:
+nothing is deleted or merged, and an empty account is harmless now
+that nothing can link to it.
+
+### the tender number, which was only in the subjects
+
+`portal_key` holds the number the whole conversation with that buyer
+is conducted in — it goes in the subject of our quotation, the buyer's
+own desk searches on it, and it is how three mails about one auction
+are known to be one auction. It was readable only by reading the mail
+trail. It is a field on the sheet now, read-only: it is the portal's
+number, and a box somebody can retype is a box in which one auction
+becomes two.
+
+### two buttons under one textarea, one of which threw the text away
+
+Text typed in the notes box and saved with **Save** was gone on
+reopening. The box stages a note for "Add note"; `notes` is
+deliberately never sent back with the lead (it is the field that once
+held the original email, and sending it back is what destroyed it);
+and Save simply ignored the box. Save posts it now, as its own note
+record, exactly as Add note does — and if that post fails the text
+**stays in the box and the save stops**, because the one outcome worse
+than a lost note is a lost note plus a success message.
+
+The toast also said "Lead saved ✓" on a lead still called "To review":
+true, and the one thing left undone is the thing nobody was reminded
+of. The response now carries `placeholder_company` on every save, not
+only when the account-first feature is switched on — `unnamed_prompt`
+returns nothing at all when that flag is off, which is how the bare
+message came about.
+
+### 20–30 seconds for a page of proposals
+
+Not one slow query. The screen asks the matcher about sixty leads, and
+each of those asks read the **whole account master four times over** —
+the accounts with a mail domain, the accounts with a website, every
+active account by name, every active account again for a resemblance —
+and normalised every name it read, every time. One page of 60 leads
+against 1,200 accounts: 436,000 calls to `company_match.norm`.
+
+Three changes, and **not one of them alters a proposal**:
+
+  * `account_match.snapshot()` reads the master once and normalises
+    each name once. Outside the block nothing is cached at all — the
+    intake, the lead sheet and the scripts are untouched, because a
+    cache nobody asked for is one that goes stale in a long-lived
+    worker and leaves somebody looking at an account that is not
+    there.
+  * `_similar_names` uses difflib's own `real_quick_ratio` /
+    `quick_ratio`, which are upper bounds on the real ratio: a
+    candidate they put below the floor cannot reach it.
+  * `stuck_leads(limit)` narrows in SQL to the rows that *could* be
+    stuck — a strict superset of what the gate refuses, including a
+    lead whose company text reads fine but whose linked account is a
+    placeholder or a portal — and stops walking once the page is full,
+    instead of asking the gate about every open lead and discarding
+    all but sixty.
+
+Measured on 1,200 accounts and 2,000 open leads: **13.2s → 0.57s**.
+
+### and two dead buttons found on the way
+
+The URL-prefix guard was failing on two things before any of this.
+One was real: the account gate's own "Confirm account" link was a bare
+`/accounts/check`, which 404s under `/CRM` — the one link offered to
+somebody whose lead has just been stopped. The other was a false
+alarm: Account link's Accept and Reject do prefix, through a local
+`u()` built from `url_prefix`, and the guard did not know the shape. A
+guard against silent failure that cries wolf is the worst kind, because
+the next alarm is read as noise; it now traces a local prefixer back to
+`url_prefix` and has a test of its own.

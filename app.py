@@ -3165,6 +3165,17 @@ def api_update_lead(lid):
     _body = {'ok': True}
     if _touch_warnings:
         _body['warnings'] = _touch_warnings
+    # CRM-UAT-01 item 3. Whether the customer is still a placeholder,
+    # said on every save and not only when the picker is switched on:
+    # the toast's words are the only reminder somebody gets, and
+    # `unnamed_prompt` returns nothing at all when the account-first
+    # feature is off, which is how "Lead saved ✓" came to be the whole
+    # message on a lead called "To review".
+    try:
+        if _la.is_placeholder(lead.company or '') or not lead.company_id:
+            _body['placeholder_company'] = (lead.company or '') or True
+    except Exception:                                     # noqa: BLE001
+        pass
     if _unnamed:
         # Saved. The customer is still unnamed, and that is a question
         # rather than a failure: `needs` opens the picker, `saved`

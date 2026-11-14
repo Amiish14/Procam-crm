@@ -189,6 +189,41 @@ def test_no_client_side_fetch_bypasses_the_prefix():
           'with {{ url_prefix }}.')
 
 
+def _local_prefixers(text):
+    """Names in this template that already add the prefix.
+
+    Two steps, because the prefix usually arrives through a constant:
+    `const PREFIX = {{ url_prefix | tojson }}` and then
+    `const u = (p) => PREFIX + p`. A name counts only if it can be
+    traced back to `url_prefix` in this same file — a helper called
+    `u` that adds something else is not a prefixer.
+    """
+    roots = set(re.findall(
+        r'(?:const|let|var)\s+(\w+)\s*=\s*\{\{\s*url_prefix', text))
+    if not roots:
+        return ()
+    found = set()
+    for name, expr in re.findall(
+            r'(?:const|let|var)\s+(\w+)\s*=\s*(?:\([^)]*\)|\w+)\s*=>\s*'
+            r'([^;\n]{0,120})', text):
+        if any(root in expr for root in roots):
+            found.add(name + '(')
+    for name, body in re.findall(
+            r'function\s+(\w+)\s*\([^)]*\)\s*\{([^}]{0,200})', text):
+        if any(root in body for root in roots):
+            found.add(name + '(')
+    return tuple(found)
+
+
+def test_a_local_prefixer_is_recognised_as_one():
+    """The guard above is only as useful as its ability to tell a
+    prefixed call from an unprefixed one."""
+    text = ('const PREFIX = {{ url_prefix | tojson }};\n'
+            'const u = (p) => PREFIX + p;\n'
+            'const v = (p) => "/other" + p;\n')
+    assert _local_prefixers(text) == ('u(',)
+
+
 def test_no_fetch_wrapper_bypasses_the_prefix():
     """The same bug, one level of indirection down.
 
@@ -212,11 +247,20 @@ def test_no_fetch_wrapper_bypasses_the_prefix():
                          recursive=True):
         rel = os.path.relpath(tpl, _ROOT)
         text = open(tpl).read()
+        # 14 Nov. A template may build its own prefixer -- Account
+        # link has `const PREFIX = {{ url_prefix | tojson }}` and
+        # `const u = (p) => PREFIX + p`, and calls `fetch(u(path))`.
+        # That is prefixed, and this guard was calling it a silent
+        # 404: a false alarm from a guard against silent failure is
+        # the one fault it must not have, because the next alarm is
+        # read as noise.
+        prefixers = _local_prefixers(text)
+        safe_words = ('url_prefix', 'crmUrl') + prefixers
         unsafe = set()
         for m in wrapper_pat.finditer(text):
             name, body, fetch_arg = m.group(1), m.group(2), m.group(3)
             # Prefixing may happen on the fetch line or earlier in the body.
-            if 'url_prefix' in fetch_arg or 'crmUrl' in fetch_arg \
+            if any(word in fetch_arg for word in safe_words) \
                or 'url_prefix' in body or 'crmUrl' in body:
                 continue
             unsafe.add(name)

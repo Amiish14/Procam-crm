@@ -102,27 +102,62 @@ def _rule(n=70):
 
 
 # ── the population ────────────────────────────────────────
-def stuck_leads():
+def stuck_leads(limit=None):
     """Open leads the account rule refuses: no account, or a placeholder.
 
     The same two reasons `account_gate.reason_for` names, asked of the
-    whole open book rather than one lead.
+    whole open book rather than one lead -- `reason_for` stays the
+    authority, because a second opinion about what "stuck" means is
+    how a screen and a script come to disagree.
+
+    What changed on 14 Nov (CRM-UAT-01 item 4) is how many leads it is
+    asked about. It was every open lead, which on live is thousands,
+    and the screen then threw all but the first sixty away. The SQL
+    below narrows to the rows that COULD be stuck -- no account, or a
+    company nobody has named -- which is a strict superset of what
+    `reason_for` refuses, so nothing can be hidden by it; and `limit`
+    stops the walk once the caller has enough.
     """
-    from app.services import account_gate, sales_rules
+    from sqlalchemy import or_
+
+    from app.services import account_gate, lead_account, sales_rules
+
+    could_be = [Lead.company_id.is_(None), Lead.company.is_(None),
+                Lead.company == '']
+    try:
+        names = [n for n in (lead_account.placeholders() or []) if n]
+    except Exception:                                     # noqa: BLE001
+        names = []
+    if names:
+        could_be.append(db.func.lower(db.func.trim(Lead.company)).in_(
+            [str(n).strip().lower() for n in names]))
+    # And a lead linked to an account that is itself a placeholder or
+    # a procurement portal: the company TEXT reads fine there, so the
+    # clauses above cannot see it.
+    try:
+        from app.services import account_match
+        bad = [a.id for a in Company.query.all()
+               if account_match.not_a_customer(a)]
+        if bad:
+            could_be.append(Lead.company_id.in_(bad))
+    except Exception:                                     # noqa: BLE001
+        pass
 
     rows = (Lead.query
             .filter(Lead.is_archived.isnot(True),
                     Lead.junk_deleted.isnot(True),
                     Lead.merged_into_id.is_(None),
-                    Lead.stage.in_(sales_rules.open_stages()))
-            .order_by(Lead.id.asc())
-            .all())
+                    Lead.stage.in_(sales_rules.open_stages()),
+                    or_(*could_be))
+            .order_by(Lead.id.asc()))
     out = []
-    for lead in rows:
+    for lead in rows.yield_per(200):
         code, why = account_gate.reason_for(lead)
         if code in (account_gate.WHY_NO_ACCOUNT,
                     account_gate.WHY_PLACEHOLDER):
             out.append((lead, code, why))
+            if limit and len(out) >= limit:
+                break
     return out
 
 

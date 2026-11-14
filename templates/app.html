@@ -3381,6 +3381,14 @@ async function openLd(id){
          first two are here; everything else on this screen is
          filled in and editable. -->
     <div id="ldDue" class="ld-due" style="display:none"></div>
+    {# CRM-UAT-01 item 2. The portal's tender number was readable only
+       in the mail subjects on the trail, and it is the number the
+       whole conversation with that buyer is conducted in: it goes in
+       the subject of our quotation, it is what the buyer's own desk
+       searches on, and it is how three mails about one auction are
+       known to be one auction. On the sheet, where it can be read and
+       copied. #}
+    ${ldPortalRow(l)}
     ${ldValueSection(l)}
     {# CRM-WA-01b. The account-first rule used to refuse a stage move
        and say only "no confirmed account". Two different facts wore
@@ -3527,6 +3535,31 @@ async function openLd(id){
    how many times it has moved, and what to do when it has passed. */
 const DUE_TONE = {red:'ld-due-red', orange:'ld-due-orange',
                   green:'ld-due-green', grey:'ld-due-grey'};
+
+/* CRM-UAT-01 item 2 — the portal tender number, read-only.
+   Read-only deliberately: it is the portal's number, not ours, and
+   the intake reads it out of every mail of the set. A box somebody
+   can retype is a box in which one auction becomes two. */
+function ldPortalRow(l){
+  const key = (l && l.portal_key) || '';
+  const via = (l && l.lead_platform) || '';
+  if(!key && !via) return '';
+  const label = key ? 'Tender / RFX number' : 'Came in through';
+  return '<div class="fmr"><div class="fmg">'
+    + '<label class="fml">' + label + '</label>'
+    + '<input class="fmc" id="lPortalKey" value="' + e(key || via)
+    + '" disabled style="background:var(--surface-2);color:var(--text-2);'
+    + 'font-family:ui-monospace,SFMono-Regular,Menlo,monospace">'
+    + '<div style="font-size:11.5px;color:var(--text-3);margin-top:4px">'
+    + (key
+        ? ('The buyer\'s own number for this event'
+           + (via ? ', through ' + e(via) : '')
+           + '. Every mail about it carries this, which is how they '
+           + 'stay on one lead.')
+        : 'A procurement portal. No tender number could be read from '
+          + 'the mail — the mail trail has the subjects.')
+    + '</div></div><div class="fmg"></div></div>';
+}
 
 async function ldDueCard(id){
   const host = g('ldDue');
@@ -4331,6 +4364,32 @@ async function saveLd(){
   const values=ldValuePayload();
   if(!ldValuePrompts(pipeStage, values)) return;
   Object.assign(data, values);
+  /* CRM-UAT-01 item 3. Text typed in the notes box and then saved
+     with Save was lost without a word: the box stages a note for
+     "Add note", `notes` is deliberately never sent to the lead (it
+     is the field that held the original email, and sending it back
+     is what destroyed it), and Save simply ignored the box. Two
+     buttons under one textarea, one of which silently discards it.
+
+     So Save posts it, as its own note record, the same way Add note
+     does — and if that post fails the text STAYS in the box and the
+     save stops, because the one outcome worse than a lost note is a
+     lost note plus a success message. */
+  const staged = (g('lNotes')?.value || '').trim();
+  if(staged){
+    const kept = await api('/api/leads/'+activeId+'/notes',
+      {method:'POST', body: JSON.stringify(
+        {note_text: staged, note_type: g('lNoteType')?.value || 'general'})});
+    if(kept && kept.ok){
+      g('lNotes').value = '';
+      try { loadLeadNotes(activeId); } catch(_){}
+    } else {
+      toast((kept && kept.error)
+            || 'The note could not be saved — nothing else was saved '
+             + 'either. Your text is still in the box.','err');
+      return;
+    }
+  }
   const r=await api(`/api/leads/${activeId}`,{method:'PUT',body:JSON.stringify(data)});
   /* CRM-MAIL-2026-11-11 §1. The save now succeeds even when the
      stage move in it is refused for want of an account: the RFQ
@@ -4371,7 +4430,18 @@ async function saveLd(){
        + '" — name the customer and it becomes findable.');
     return;
   }
-  if(r.ok){closeLd();rLeads();rAll();rDash();toast('Lead saved ✓','ok');}
+  if(r.ok){
+    closeLd();rLeads();rAll();rDash();
+    /* CRM-UAT-01 item 3. "Lead saved ✓" on a lead still called "To
+       review" is true and unhelpful: the one thing left undone is
+       the thing nobody is reminded of. The server says whether the
+       customer is still a placeholder, so the words are the same
+       ones the picker uses. */
+    toast('Lead saved ✓'
+          + (r.placeholder_company
+             ? ' — the customer is still to be named' : '')
+          + (staged ? ' · note added' : ''),'ok');
+  }
   else if(r.needs === 'account'){
     agOpen(activeId, r.account_help || {}, ()=>saveLd());
   }
@@ -5137,7 +5207,10 @@ async function loadAccountState(id){
   });
   if (!r.live) return;
   const bits = [];
-  const link = `<a href="/accounts/check" style="font-weight:600">Confirm account</a>`;
+  /* CRM-UAT-01. `crmUrl` and nothing else: live runs under /CRM, and
+     a bare "/accounts/check" is a 404 — on the one link the account
+     gate offers somebody whose lead it has just stopped. */
+  const link = `<a href="${crmUrl('/accounts/check')}" style="font-weight:600">Confirm account</a>`;
   if (r.blocked){
     bits.push(`<div style="color:var(--red);font-weight:600;margin-bottom:4px">
       This lead cannot move forward yet</div>

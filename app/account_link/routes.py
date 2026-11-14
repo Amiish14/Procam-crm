@@ -121,53 +121,75 @@ def _rejected_pairs():
 
 
 def proposals(limit=PAGE):
-    """[{lead, account, confidence, rule}] for the screen."""
+    """[{lead, account, confidence, rule}] for the screen.
+
+    CRM-UAT-01 item 4. This took 20–30 seconds on live. The work is
+    `script.propose(lead)`, once per lead, and each of those read the
+    whole account master four times over and normalised every name it
+    read. Two changes, neither of which alters a single proposal:
+
+      * `account_match.snapshot()` holds the master still for the
+        page, so it is read and normalised once instead of sixty
+        times;
+      * `stuck_leads(limit)` narrows in SQL and stops walking once
+        the page is full, instead of asking the gate about every open
+        lead and discarding all but sixty.
+
+    A person who links an account in another tab sees it on the next
+    load, which is what they saw before: the page was always a
+    snapshot, it just took half a minute to take.
+    """
     from app.access import scope as sc_mod
+    from app.services import account_match
 
     script = _script()
     sc = sc_mod.current()
     refused = _rejected_pairs()
     rows = []
-    for lead, code, why in script.stuck_leads():
-        if not sc_mod.may_view(lead):
-            continue
-        confidence, best, others = script.propose(lead)
-        account_id = best['account'].id if best else 0
-        if best and (lead.id, account_id) in refused:
-            # Offer the next candidate instead of the refused one.
-            others = [r for r in others
-                      if (lead.id, r['account_id']) not in refused]
-            if others:
-                from app import Company, db
-                account = db.session.get(Company, others[0]['account_id'])
-                best = ({'account': account,
-                         'rule': others[0].get('rule') or 'suggested'}
-                        if account is not None else None)
-                others = others[1:]
-            else:
-                best, confidence = None, script.NONE
-        rows.append({
-            'lead_id': lead.id,
-            'company': (lead.company or '')[:70],
-            'placeholder': code == 'placeholder_account',
-            'why': why,
-            'sender': (lead.email or lead.original_email_from or '')[:70],
-            'subject': (lead.original_email_subject
-                        or lead.forwarded_subject or '')[:90],
-            'stage': lead.stage or '',
-            'owner': lead.assigned_to or '',
-            'vertical': script._vertical_of(lead),
-            'created': str(lead.created_at or '')[:10],
-            'confidence': confidence,
-            'account_id': account_id or None,
-            'account_name': (best['account'].name if best else ''),
-            'rule': (best['rule'] if best else ''),
-            'others': [{'account_id': r['account_id'],
-                        'name': r.get('name') or '',
-                        'rule': r.get('rule') or ''} for r in others[:4]],
-        })
-        if len(rows) >= limit:
-            break
+    # `limit` leads are kept, so asking for more than that many stuck
+    # leads is work nobody reads. A margin, because `may_view` can
+    # drop some of them.
+    with account_match.snapshot():
+        for lead, code, why in script.stuck_leads(limit=max(limit * 3, 60)):
+            if not sc_mod.may_view(lead):
+                continue
+            confidence, best, others = script.propose(lead)
+            account_id = best['account'].id if best else 0
+            if best and (lead.id, account_id) in refused:
+                # Offer the next candidate instead of the refused one.
+                others = [r for r in others
+                          if (lead.id, r['account_id']) not in refused]
+                if others:
+                    from app import Company, db
+                    account = db.session.get(Company, others[0]['account_id'])
+                    best = ({'account': account,
+                             'rule': others[0].get('rule') or 'suggested'}
+                            if account is not None else None)
+                    others = others[1:]
+                else:
+                    best, confidence = None, script.NONE
+            rows.append({
+                'lead_id': lead.id,
+                'company': (lead.company or '')[:70],
+                'placeholder': code == 'placeholder_account',
+                'why': why,
+                'sender': (lead.email or lead.original_email_from or '')[:70],
+                'subject': (lead.original_email_subject
+                            or lead.forwarded_subject or '')[:90],
+                'stage': lead.stage or '',
+                'owner': lead.assigned_to or '',
+                'vertical': script._vertical_of(lead),
+                'created': str(lead.created_at or '')[:10],
+                'confidence': confidence,
+                'account_id': account_id or None,
+                'account_name': (best['account'].name if best else ''),
+                'rule': (best['rule'] if best else ''),
+                'others': [{'account_id': r['account_id'],
+                            'name': r.get('name') or '',
+                            'rule': r.get('rule') or ''} for r in others[:4]],
+            })
+            if len(rows) >= limit:
+                break
     order = {script.CERTAIN: 0, script.LIKELY: 1,
              script.POSSIBLE: 2, script.NONE: 3}
     rows.sort(key=lambda r: (order.get(r['confidence'], 9), r['lead_id']))

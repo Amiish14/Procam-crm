@@ -425,3 +425,51 @@ def notice_kind(subject='', body=''):
 def is_notice(kind):
     """Anything that is not the invitation itself."""
     return kind in (REMINDER, TECHNICAL, ENDING, WITHDRAWN)
+
+
+# ── a portal is not a customer ───────────────────────────────────────
+#: Portal brands, for the one question `portal_domains()` cannot
+#: answer: is this ACCOUNT NAME a procurement portal? The domain list
+#: gives most of it (`procol.in` → "procol"), and a portal whose mail
+#: comes from a hosting domain -- `ansmtp.ariba.com` -- is named here
+#: as well. Lower case, and matched WHOLE, never as a substring: "SAP
+#: Ariba" is a portal and "SAP India" is a customer, and a rule that
+#: cannot tell them apart would refuse to file a real account's leads.
+PORTAL_BRANDS = frozenset((
+    'procol', 'procol.in', 'ariba', 'sap ariba', 'ariba network',
+    'ansmtp', 'coupa', 'jaggaer', 'gem', 'gem portal', 'superprocure',
+    'procurengine', 'tenderwizard', 'tender wizard', 'eprocurement',
+    'e-procurement', 'bidassist',
+))
+
+
+def is_portal_name(name):
+    """Is this the name of a procurement portal rather than a buyer?
+
+    14 Nov, from the UAT. Three live leads -- #12642, #12644 and
+    #12645 -- carry the account "Procol": the parser reads a company
+    out of the sender's domain, and on a portal's mail the sender is
+    the portal. So the buyer of an RFQ became the robot that
+    delivered it, and three different buyers' enquiries pooled under
+    one row that is not a company at all.
+
+    WHOLE NAME, not a substring. `names_the_portal` is the loose
+    reading and is right where it is used -- deciding whether to
+    prefer the body's buyer, where being wrong costs a lead the word
+    "To review". This one decides whether an ACCOUNT may be linked
+    to, where being wrong costs a real customer their leads.
+    """
+    text = ' '.join(str(name or '').split()).strip().lower()
+    if not text:
+        return False
+    if text in PORTAL_BRANDS:
+        return True
+    # Every listed domain, and its own first label: `procol.in` is a
+    # portal and so is an account called "Procol".
+    for listed in portal_domains():
+        if text == listed:
+            return True
+        label = listed.split('.')[0]
+        if label and len(label) > 3 and text == label:
+            return True
+    return False

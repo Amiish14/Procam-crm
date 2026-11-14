@@ -42,11 +42,115 @@ know exactly, then what we infer. See `resolve`.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
+import threading
 from datetime import datetime
 
 log = logging.getLogger(__name__)
+
+
+# ── holding the account master still for one page ───────────────────
+#
+# CRM-UAT-01 item 4. Admin → Account link took 20–30 seconds to show
+# its first page. Not one slow query: the screen asks the matcher
+# about sixty leads, and each of those asks reads the WHOLE account
+# master four times over -- the accounts with a mail domain, the
+# accounts with a website, every active account by name, and every
+# active account again for a resemblance -- and normalises every name
+# it reads, every time. Measured on a book of 1,200 accounts and 2,000
+# open leads: 0.22s per lead, 13s for the page, growing with both.
+#
+# None of that changes within one page. `snapshot()` reads the master
+# once and normalises each name once, and every reader below takes its
+# rows from there while the block is open. Outside the block nothing
+# is cached at all and every reader queries as it always did -- the
+# intake, the lead sheet and the scripts are untouched, because a
+# cache nobody asked for is a cache that goes stale in a long-lived
+# worker and leaves a person looking at an account that is not there.
+_local = threading.local()
+
+
+@contextlib.contextmanager
+def snapshot():
+    '''Read the account master once for everything inside this block.
+
+    Nests safely: an inner block does not re-read and the outermost
+    one clears. Anything that WRITES an account inside a snapshot is
+    not seen by the rest of the block, which is why this wraps a
+    report and never a sweep.
+    '''
+    depth = getattr(_local, 'depth', 0) + 1
+    _local.depth = depth
+    try:
+        yield
+    finally:
+        _local.depth = depth - 1
+        if _local.depth <= 0:
+            _local.depth = 0
+            _local.rows = None
+            _local.index = None
+
+
+def _held():
+    return getattr(_local, 'depth', 0) > 0
+
+
+def all_accounts():
+    '''Every account row, id ascending. Once per snapshot.'''
+    from app import Company, db
+
+    if _held():
+        rows = getattr(_local, 'rows', None)
+        if rows is not None:
+            return rows
+    try:
+        rows = Company.query.order_by(Company.id.asc()).all()
+    except Exception:                                     # noqa: BLE001
+        db.session.rollback()
+        return []
+    if _held():
+        _local.rows = rows
+    return rows
+
+
+def active_index():
+    '''[(account, norm, strict, names)] for the active accounts.
+
+    The normalisation is the expensive half -- `company_match.norm`
+    and `strict_norm` over every name and every alias -- and it was
+    being redone for each of the sixty leads on the page.
+    '''
+    from app.services import company_match
+
+    if _held():
+        index = getattr(_local, 'index', None)
+        if index is not None:
+            return index
+    built = []
+    for account in all_accounts():
+        if getattr(account, 'is_active', True) is False:
+            continue
+        names = [account.name or '']
+        for alias in (getattr(account, 'aliases', None) or []):
+            text = str(alias or '').strip()
+            if text:
+                names.append(text)
+        # Both normalisations of every name, as sets: the readers ask
+        # "is this name one of theirs", which is a membership test
+        # once the sets exist. They were normalising 1,200 accounts'
+        # names on every one of the sixty leads -- 436,000 calls to
+        # `company_match.norm` for one page of the screen.
+        built.append((
+            account,
+            frozenset(n for n in (company_match.norm(x) for x in names)
+                      if n),
+            frozenset(n for n in (strict_norm(x) for x in names) if n),
+            strict_norm(account.name or '')))
+    if _held():
+        _local.index = built
+    return built
 
 #: A domain that belongs to everybody belongs to no account. Matching
 #: on one would put every Gmail customer on whichever account listed
@@ -241,8 +345,9 @@ def resolve(from_addr, *, company_name=None, text=None, count_hit=True):
                 return found, 'learned domain'
 
         try:
-            for company in Company.query.filter(
-                    Company.email_domains.isnot(None)).limit(5000).all():
+            for company in all_accounts():
+                if not (company.email_domains or None):
+                    continue
                 listed = [str(d).lower().lstrip('@').strip()
                           for d in (company.email_domains or [])]
                 if domain in listed:
@@ -297,13 +402,12 @@ def _by_website(domain):
     `adani.com`, `adaniports.com` and `notadani.com` alike, which is
     why this rule could never be trusted and so was never reached.
     """
-    from app import Company
-
     want = (domain or '').lower().lstrip('.')
     if not want or is_free_mail(want):
         return None
-    for company in Company.query.filter(
-            Company.website.isnot(None)).limit(5000).all():
+    for company in all_accounts():
+        if not company.website:
+            continue
         theirs = _website_domain(company.website)
         if not theirs or is_free_mail(theirs):
             continue
@@ -353,40 +457,22 @@ def _by_name(company_name):
     and that is doubly true of the looser pass, which is tried only
     when the strict one finds nothing.
     """
-    from app import Company
     from app.services import company_match
 
     raw = (company_name or '').strip()
     if len(company_match.norm(raw)) < 3:
         return None
-    try:
-        accounts = Company.query.filter(Company.is_active.is_(True)).all()
-    except Exception:
-        from app import db
-        db.session.rollback()
-        return None
+    # The account's own name AND every name it has absorbed: a merge
+    # keeps the loser's spelling as an alias of the survivor, so mail
+    # that still says the old name reaches the right customer.
+    # `active_index` carries both, normalised once.
+    index = active_index()
 
-    def names_of(account):
-        """The account's own name and every name it has absorbed.
-
-        A merge keeps the loser's spelling as an alias of the
-        survivor, so mail that still says the old name reaches the
-        right customer. Without this, merging an account makes its
-        name unmatchable — the opposite of the point.
-        """
-        out = [account.name or '']
-        for alias in (getattr(account, 'aliases', None) or []):
-            text_alias = str(alias or '').strip()
-            if text_alias:
-                out.append(text_alias)
-        return out
-
-    for normalise in (company_match.norm, strict_norm):
+    for which, normalise in ((1, company_match.norm), (2, strict_norm)):
         want = normalise(raw)
         if not want or len(want) < 3:
             continue
-        found = [c for c in accounts
-                 if any(normalise(n) == want for n in names_of(c))]
+        found = [row[0] for row in index if want in row[which]]
         if len(found) == 1:
             return found[0]
         if len(found) > 1:
@@ -432,6 +518,26 @@ def not_a_customer(account):
     name = (getattr(account, 'name', '') or '').strip().lower()
     if name in PLACEHOLDER_NAMES:
         return f'"{account.name}" is a placeholder, not a company'
+    # CRM-UAT-01 item 1. A procurement portal is not a customer. Three
+    # live leads were filed under the account "Procol" -- the robot
+    # that delivered three different buyers' RFQs -- because the
+    # parser reads a company out of the sender's domain and on portal
+    # mail the sender is the portal. Linking to one of these pools
+    # unrelated buyers under a row that is not a company, and every
+    # report built on the account then reads as one customer.
+    try:
+        from app.services import portal_rfq
+        if portal_rfq.is_portal_name(account.name):
+            return (f'"{account.name}" is a procurement portal, not a '
+                    f'customer — the buyer is named in the body of '
+                    f'its mail')
+        for raw in (getattr(account, 'email_domains', None) or []):
+            if portal_rfq.is_portal('x@' + str(raw).strip().lstrip('@')):
+                return (f'"{account.name}" claims a procurement '
+                        f'portal\'s domain ({raw}) — it would collect '
+                        f'every buyer that portal sends for')
+    except Exception:                                     # noqa: BLE001
+        pass
     try:
         from app.services.mail_signals import OUR_DOMAINS
         for raw in (getattr(account, 'email_domains', None) or []):
@@ -525,8 +631,7 @@ def candidates(from_addr, *, company_name=None, text=None):
             if link is not None:
                 offer(account(link.account_id), 'learned domain',
                       f'somebody mapped {domain} before')
-            for company in Company.query.filter(
-                    Company.is_active.is_(True)).all():
+            for company, _n, _st, _own in active_index():
                 domains = [str(x).lower().strip()
                            for x in (company.email_domains or [])]
                 if domain in domains:
@@ -635,19 +740,21 @@ def _similar_names(company_name, *, floor=0.62, limit=5):
     """
     from difflib import SequenceMatcher
 
-    from app import Company, db
-
     raw = strict_norm(company_name or '')
     if len(raw) < 3:
         return []
-    try:
-        accounts = Company.query.filter(Company.is_active.is_(True)).all()
-    except Exception:
-        db.session.rollback()
-        return []
     scored = []
-    for company in accounts:
-        theirs = strict_norm(company.name or '')
+    # One matcher, with `raw` as the cached side. difflib analyses
+    # seq2 once and reuses it, and `real_quick_ratio` /
+    # `quick_ratio` are its own UPPER BOUNDS on the real ratio -- so
+    # a candidate they put below the floor cannot reach it, and
+    # skipping it changes no answer. On a book of 1,200 accounts this
+    # is the difference between 1,200 full comparisons per lead and a
+    # couple of dozen. (`ratio` is symmetric, so which side is which
+    # does not matter.)
+    matcher = SequenceMatcher(None)
+    matcher.set_seq2(raw)
+    for company, _norms, _stricts, theirs in active_index():
         if not theirs:
             continue
         # Where either side is an acronym, containment decides and
@@ -663,7 +770,11 @@ def _similar_names(company_name, *, floor=0.62, limit=5):
                 # it is not a resemblance, it is the name.
                 scored.append((company, 1.0))
             continue
-        ratio = SequenceMatcher(None, raw, theirs).ratio()
+        matcher.set_seq1(theirs)
+        if matcher.real_quick_ratio() < floor or \
+                matcher.quick_ratio() < floor:
+            continue
+        ratio = matcher.ratio()
         if ratio >= floor:
             scored.append((company, ratio))
     scored.sort(key=lambda row: row[1], reverse=True)
