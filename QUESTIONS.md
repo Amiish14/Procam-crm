@@ -3578,3 +3578,83 @@ second, and the screen offered to keep the copy with **no customer on
 it** and fold the named one into it. Between two leads at the same
 stage, the one that knows whose enquiry it is wins; a portal's name
 does not count as knowing.
+
+## 86 — the matcher was taught a robot's address
+
+Three things found by using the CRM in Chrome. The first is the
+dangerous one.
+
+### learned: no-reply@procol.in → Amns
+
+Linking the ArcelorMittal leads to "Amns" from the lead sheet taught
+the matcher an **email** rule and a **domain** rule for a procurement
+portal. Those are the two strongest rules it has — "learned email" and
+"learned domain" outrank a GSTIN, a website and every name reading —
+so every later RFQ that portal delivered, for any buyer, would have
+gone straight to Amns. Silently, and with a confident reason printed
+on the lead.
+
+`not_a_customer` has refused to **link** a lead to a portal's account
+since 14 Nov. Nothing refused to **learn** a portal's address as a
+customer's, and `lead_account.link` teaches on every correction —
+which is right, and is exactly how a correction about one buyer became
+a rule about a robot.
+
+The refusal is in `account_match.learn`, the one function all four
+teaching paths go through (the lead sheet, Account check, the
+assignment service, a recovery script), rather than in the four
+callers — the fifth would not have it.
+
+**And the never-learn rule is deliberately wider than the intake's
+list.** `data/portal_senders.txt` decides how live mail is *treated*;
+adding a domain there is a decision somebody makes on purpose. This
+decides only whether a sender may be learned, where being wrong costs
+one unlearned sender that the next correction fixes — against sending
+another buyer's RFQ to the wrong account by the strongest rule there
+is. So `is_portal_sender` also recognises the portal brands by their
+domain label, and `superprocure.in` and `procurengine.com` count
+whether or not the intake has been told about them.
+
+`scripts/2026_11_15_portal_learned_links.py` removes the rows already
+written. It **deletes** them, which is the exception to "never
+hard-delete" and worth saying why: a learned link is not a record of
+anything that happened, it is a rule applied to future mail, and a
+wrong rule left in place marked inactive either keeps applying or
+obliges every reader to know about the flag. The audit row carries
+the kind, the value, the account, who taught it, from which lead and
+its hit count — everything the row held — and `--undo --batch` writes
+it back from there.
+
+One more place the same reasoning applies: a shared portal domain was
+a duplicate signal. Two leads both sent by `procol.in` are two
+different buyers as often as one, so a portal domain no longer counts
+as an email-domain match. The number does, and it has its own signal.
+
+### a dialog nobody answered moved the lead
+
+"Lead PIC is X, account owner is Y" was a browser `confirm()`: OK
+kept, Cancel switched. Escape, a click outside, a dismissed dialog and
+a mis-click all return false — and false meant **switch**. The owner
+is the one field on a lead that decides whose work it is, and it was
+changing because a window was closed.
+
+It is an in-app window now. Keep is the default, it has focus, and it
+is what the ✕, a click outside and Escape all do; the switch is a
+button somebody presses. The window says "Closing this window keeps
+things as they are", because a dialog that quietly does the safe thing
+is only half the fix if nobody can tell which thing is safe.
+
+### the pairs nobody could reach
+
+The duplicates screen showed the first hundred pairs and called that
+the count. The same-tender-number pairs — #11971/#11970, #12124/#12123,
+#12247/#12212 — sat past 700, behind hundreds of GSTIN pairs.
+
+Two changes. A pair sharing a portal number is ranked **above its
+score**, not by inflating the score: a GSTIN really is a stronger
+statement about identity than an auction number, but a pair of records
+of one auction is the kind a person can act on in a second, with
+nothing to judge. And the list pages — fifty at a time, with the total
+beside it and a way back as well as a way on. A row out of score order
+says why it is there, because a list that is not in score order and
+does not explain itself reads as a bug.

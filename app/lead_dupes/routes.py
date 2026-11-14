@@ -124,13 +124,24 @@ def page():
 @bp.route('/api/admin/lead-duplicates')
 @_dupe_admin
 def api_pairs():
-    """Every live pair worth a person's attention, strongest first."""
+    """A page of the live pairs, strongest first.
+
+    CRM-UAT-02 item 3. This returned the first hundred and called
+    that the count, so a pair ranked 700th could not be reached from
+    the screen at all -- and on live that is where the
+    same-tender-number pairs were. The total comes back with the page
+    now, and `offset` walks the rest.
+    """
     from app.services import lead_dupe_report as report
 
-    limit = request.args.get('limit', type=int) or 100
+    limit = max(min(request.args.get('limit', type=int) or 100, 200), 1)
+    offset = max(request.args.get('offset', type=int) or 0, 0)
     within = request.args.get('within_days', type=int)
-    pairs = report.pairs(limit=limit, within_days=within)
-    return jsonify(ok=True, pairs=pairs, count=len(pairs))
+    everything, total = report.pairs(within_days=within, count=True)
+    page = everything[offset:offset + limit]
+    return jsonify(ok=True, pairs=page, count=len(page),
+                   total=total, offset=offset, limit=limit,
+                   has_more=(offset + len(page)) < total)
 
 
 @bp.route('/api/admin/lead-duplicates/merge', methods=['POST'])

@@ -479,3 +479,42 @@ def is_portal_name(name):
         if label and len(label) > 3 and text == label:
             return True
     return False
+
+
+def is_portal_sender(address):
+    """The portal this ADDRESS belongs to, for the never-learn rule.
+
+    Wider than `is_portal`, deliberately, and the two are not
+    interchangeable:
+
+      * `is_portal` reads `data/portal_senders.txt` and decides how
+        the INTAKE treats a message -- whether it beats the denylist
+        and becomes a review lead owned by the RFQ desk. Adding a
+        domain there changes what happens to live mail, so it is a
+        decision somebody makes on purpose.
+
+      * this one decides only whether the matcher may LEARN a sender
+        as a customer's address. Being wrong here costs one unlearned
+        sender, which the next correction fixes. Being wrong the
+        other way sends another buyer's RFQ to the wrong account, by
+        the strongest rule the matcher has, silently.
+
+    So it also recognises the portal brands by their domain label:
+    `superprocure.in` and `procurengine.com` are procurement portals
+    whether or not the intake has been told about them.
+    """
+    listed = is_portal(address)
+    if listed:
+        return listed
+    text = (address or '').strip().lower()
+    domain = text.rsplit('@', 1)[-1].strip(' <>,;') if text else ''
+    if not domain:
+        return ''
+    labels = [l for l in domain.split('.') if l]
+    for label in labels:
+        if len(label) > 3 and label in PORTAL_BRANDS:
+            return domain
+    # And the domain as a whole, for a brand written with its suffix.
+    if domain in PORTAL_BRANDS:
+        return domain
+    return ''

@@ -238,6 +238,37 @@ def learn(sender_email, account_id, *, lead_id=None, actor=None,
     if not addr or '@' not in addr or not account_id:
         return []
 
+    # ── A PORTAL IS NEVER LEARNT, FOR ANY ACCOUNT ──────────────────
+    #
+    # 15 Nov, from the Chrome clean-up. Linking the ArcelorMittal
+    # leads to "Amns" from the lead sheet taught the matcher
+    # `no-reply@procol.in` → Amns as a learned EMAIL and `procol.in`
+    # → Amns as a learned DOMAIN. Both are the strongest rules the
+    # matcher has, so every later RFQ that portal delivered -- for
+    # any buyer -- would have gone straight to Amns, silently and
+    # with "learned domain" as the reason.
+    #
+    # The same rule as `not_a_customer`, and here rather than in the
+    # four callers: the lead sheet, Account check, the assignment
+    # service and a recovery script all teach through this function,
+    # and the fifth one will too.
+    #
+    # `is_portal_sender`, not `is_portal`: the never-learn rule is
+    # wider than the intake's list on purpose. Being wrong here costs
+    # one unlearned sender, which the next correction fixes; being
+    # wrong the other way sends another buyer's RFQ to this account
+    # by the strongest rule the matcher has.
+    try:
+        from app.services import portal_rfq
+        portal = portal_rfq.is_portal_sender(addr)
+    except Exception:                                     # noqa: BLE001
+        portal = ''
+    if portal:
+        log.info('not learning %s for account %s: %s is a procurement '
+                 'portal, and its next RFQ is a different buyer',
+                 addr, account_id, portal)
+        return []
+
     pairs = [(BY_EMAIL, addr)]
     domain = domain_of(addr)
     if domain and not is_free_mail(domain):

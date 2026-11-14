@@ -1981,6 +1981,39 @@ catch (err) { console.error('Employee list could not start loading', err); }
   </div>
 </div>
 
+<!-- OWNER CHOICE — CRM-UAT-02 item 2.
+     This was a browser confirm(): "OK keep / Cancel switch". Escape,
+     a click outside, a dismissed dialog and a mis-click all return
+     false, and false meant SWITCH — so a dialog nobody answered
+     moved the lead to somebody else. The dangerous answer must not
+     be the one a dismissal gives. Keep is the default here, it is
+     what Escape and the ✕ do, and the switch is a button somebody
+     presses on purpose. -->
+<div class="mob" id="ocMob" style="display:none"
+     onclick="if(event.target===this)ocKeep()">
+  <div class="mod mod-sm" onclick="event.stopPropagation()">
+    <div class="mhd">
+      <div class="m-ic">👤</div>
+      <div>
+        <div class="m-ttl" id="ocTtl">Who owns this lead?</div>
+        <div class="m-sub" id="ocSub"></div>
+      </div>
+      <button class="mx" onclick="ocKeep()">✕</button>
+    </div>
+    <div class="mbdy">
+      <div id="ocBody" style="font-size:12.5px;line-height:1.7"></div>
+      <div id="ocNote" style="font-size:11.5px;color:var(--text-3);
+           margin-top:10px"></div>
+    </div>
+    <div class="mft">
+      <button class="btn btn-ghost" id="ocSwitch"
+              onclick="ocSwitch()"></button>
+      <button class="btn" id="ocKeep" style="margin-left:auto"
+              onclick="ocKeep()"></button>
+    </div>
+  </div>
+</div>
+
 <!-- DUPLICATE MODAL — CRM-MAIL-2026-11-11 §4.
      It was a browser prompt asking for a lead id, which means
      knowing the number of the lead you are about to point at. The
@@ -4834,33 +4867,87 @@ function laChangeAccount(){
 }
 
 /* "Lead PIC is X, account owner is Y — keep X / switch to Y",
-   asked once per lead, as §2.4 says. */
+   asked once per lead, as §2.4 says.
+
+   CRM-UAT-02 item 2. This was a confirm(): OK kept, Cancel switched.
+   Escape, a click outside and a dismissed dialog all return false,
+   so a question nobody answered moved the lead to somebody else —
+   and the owner is the one field on a lead that decides whose work
+   it is. The choice is in the app now, KEEP is the default, and
+   dismissing changes nothing at all: no owner written, no decision
+   recorded, so it can be asked again. */
+let OC = null;
+let LA_ASKED = {};
+
 function laAskOwner(q){
   if(!q || LA_ASKED[activeId]) return;
   LA_ASKED[activeId] = true;
-  let keep, want;
+  OC = {leadId: activeId, q: q};
+  const owner = q.account_owner_name || q.account_owner || 'nobody';
+  const pic = q.lead_pic_name || q.lead_pic || 'nobody';
+  g('ocSub').textContent = q.account || '';
   if (q.unowned){
-    // Nobody holds this lead. "Keep nobody" is not a choice, so
-    // this is an offer rather than a question.
-    if (!confirm('This lead has no owner.\n\nThe owner of '
-        + q.account + ' is ' + q.account_owner_name
-        + '.\n\nOK — give them this lead.\nCancel — leave it '
-        + 'unowned.')) return;
-    keep = false; want = q.account_owner;
+    /* Nobody holds this lead, so "keep" means "leave it unowned" —
+       still the safe answer, and still what a dismissal gives. */
+    g('ocTtl').textContent = 'This lead has no owner';
+    g('ocBody').innerHTML =
+      'The owner of <b>' + e(q.account) + '</b> is <b>' + e(owner)
+      + '</b>.<br>Give them this lead, or leave it unowned for now.';
+    g('ocKeep').textContent = 'Leave it unowned';
+    g('ocSwitch').textContent = 'Give it to ' + owner;
   } else {
-    keep = confirm(
-      'Lead PIC is ' + q.lead_pic_name + ', account owner is '
-      + q.account_owner_name + '.\n\nOK — keep ' + q.lead_pic_name
-      + ' on this lead.\nCancel — switch the lead to '
-      + q.account_owner_name + '.');
-    want = keep ? q.lead_pic : q.account_owner;
+    g('ocTtl').textContent = 'Two names on this lead';
+    g('ocBody').innerHTML =
+      'The lead\'s PIC is <b>' + e(pic) + '</b>.<br>'
+      + 'The owner of <b>' + e(q.account) + '</b> is <b>'
+      + e(owner) + '</b>.';
+    g('ocKeep').textContent = 'Keep ' + pic;
+    g('ocSwitch').textContent = 'Switch to ' + owner;
   }
+  g('ocNote').textContent =
+    'Closing this window keeps things as they are. Nothing changes '
+    + 'until you choose.';
+  g('ocMob').style.display = 'flex';
+  setTimeout(()=>{ const b = g('ocKeep'); if(b) b.focus(); }, 60);
+}
+
+function ocClose(){ g('ocMob').style.display = 'none'; OC = null; }
+
+/* Escape is a dismissal, and a dismissal keeps. Bound here rather
+   than relying on the browser, because the whole fault was a
+   keystroke meaning "switch". */
+document.addEventListener('keydown', function(ev){
+  if (ev.key !== 'Escape') return;
+  const host = g('ocMob');
+  if (host && host.style.display === 'flex') ocKeep();
+});
+
+/* The default, and what every dismissal gives — the ✕, a click
+   outside, Escape. The PIC stays exactly where it was; the choice is
+   recorded as "keep" so §2.4's "asked once per lead" still holds. On
+   an unowned lead there is nothing to keep and nothing to record. */
+function ocKeep(){
+  const q = OC && OC.q;
+  ocClose();
+  if (!q) return;
+  if (q.unowned) return;
+  ocChose(q.lead_pic, true);
+}
+
+function ocSwitch(){
+  const q = OC && OC.q;
+  ocClose();
+  if (!q) return;
+  ocChose(q.account_owner, false);
+}
+
+function ocChose(want, keep){
+  const leadId = (OC && OC.leadId) || activeId;
   const sel = g('lAsgn');
-  if(sel) sel.value = want;
-  api('/api/leads/'+activeId+'/account/owner-choice', {method:'POST',
+  if (sel && want) sel.value = want;
+  api('/api/leads/'+leadId+'/account/owner-choice', {method:'POST',
     body: JSON.stringify({chose: want, keep: keep})}).catch(()=>{});
 }
-let LA_ASKED = {};
 
 async function laChangeOwner(){
   const r = LA && LA.ownerRow;

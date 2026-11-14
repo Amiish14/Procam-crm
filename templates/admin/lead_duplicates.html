@@ -39,6 +39,18 @@
       <div id="count" class="rfq-muted">Loading…</div>
     </div>
     <div id="pairs"></div>
+    <!-- CRM-UAT-02 item 3. The screen showed the first hundred and
+         called that the count, so a pair ranked 700th could not be
+         reached at all — and on live that is where the
+         same-tender-number pairs were. -->
+    <div id="pager" style="display:none;align-items:center;gap:10px;
+         padding:10px">
+      <button class="btn btn-ghost" id="prev" onclick="step(-1)">
+        ← Previous</button>
+      <span id="where" class="rfq-muted"></span>
+      <button class="btn btn-ghost" id="next" onclick="step(1)">
+        Next →</button>
+    </div>
   </section>
 </div>
 
@@ -49,14 +61,29 @@ const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;')
   .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+const PAGE = 50;
+let OFFSET = 0;
+let TOTAL = 0;
+
+function step(by){
+  const next = OFFSET + by * PAGE;
+  if (next < 0 || (TOTAL && next >= TOTAL)) return;
+  OFFSET = next;
+  load();
+  window.scrollTo(0, 0);
+}
+
 async function load(){
   const box = document.getElementById('pairs');
   const count = document.getElementById('count');
+  const pager = document.getElementById('pager');
   box.innerHTML = '';
   count.textContent = 'Loading…';
+  pager.style.display = 'none';
   let body = {};
   try {
-    const r = await fetch(u('/api/admin/lead-duplicates'),
+    const r = await fetch(u('/api/admin/lead-duplicates?limit=' + PAGE
+                            + '&offset=' + OFFSET),
                           {credentials: 'same-origin'});
     body = await r.json();
   } catch (err) {
@@ -68,10 +95,26 @@ async function load(){
     return;
   }
   const pairs = body.pairs || [];
-  count.textContent = pairs.length
-    ? pairs.length + ' pair(s) worth a look'
-    : 'No duplicate pairs on the live board.';
+  TOTAL = body.total != null ? body.total : pairs.length;
+  if (!TOTAL){
+    count.textContent = 'No duplicate pairs on the live board.';
+    return;
+  }
+  const first = OFFSET + 1;
+  const last = OFFSET + pairs.length;
+  count.textContent = TOTAL + ' pair(s) worth a look — showing '
+    + first + '–' + last;
   box.innerHTML = pairs.map(render).join('');
+  /* The pager is shown whenever there is more than one page, not
+     only when there is a next one: a person on page 14 needs the way
+     back as much as the way on. */
+  if (TOTAL > PAGE){
+    pager.style.display = 'flex';
+    document.getElementById('where').textContent =
+      first + '–' + last + ' of ' + TOTAL;
+    document.getElementById('prev').disabled = OFFSET <= 0;
+    document.getElementById('next').disabled = last >= TOTAL;
+  }
 }
 
 function side(row, role){
@@ -88,10 +131,16 @@ function side(row, role){
 }
 
 function render(p){
+  /* A pair sharing a tender number is at the top of the list on
+     purpose, so the list says so — a row out of score order with no
+     explanation reads as a bug. */
+  const top = p.top
+    ? `<span class="pill" style="margin-left:6px">one auction,
+         entered twice</span>` : '';
   return `<div class="rfq-card" style="margin:10px 0">
     <div style="padding:4px 10px">
       <strong>${esc(p.score)}</strong> —
-      ${esc(p.why)}
+      ${esc(p.why)}${top}
     </div>
     <table style="width:100%;border-collapse:collapse">
       <tr>

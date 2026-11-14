@@ -132,12 +132,22 @@ def norm_gstin(value):
 
 
 def domain_of(address):
-    """The domain of an address, unless it is free mail."""
+    """The domain of an address, unless it says nothing about identity.
+
+    Free mail says nothing: gmail.com carries the country. And a
+    procurement PORTAL says nothing either, for the same reason the
+    matcher may no longer learn one (15 Nov) -- `procol.in` is the
+    robot that delivered the enquiry, so two leads sharing it are two
+    different buyers as often as they are one. The portal number is
+    the signal on those leads, and it has its own.
+    """
     try:
-        from app.services import account_match
+        from app.services import account_match, portal_rfq
         domain = account_match.domain_of(
             account_match.normalise_address(address or ''))
         if not domain or account_match.is_free_mail(domain):
+            return ''
+        if portal_rfq.is_portal_sender('x@' + domain):
             return ''
         return domain
     except Exception:                                     # noqa: BLE001
