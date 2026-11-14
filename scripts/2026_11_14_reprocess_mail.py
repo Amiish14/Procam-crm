@@ -429,6 +429,196 @@ def _what_was_lost(imid):
             're-processing it is the only way it reaches the CRM')
 
 
+# ── item 2: the mail that names the buyer, and never reached the lead ─
+def _trail_holds(lead_id, imid):
+    """Is this message already on that lead's trail?"""
+    from app import Lead, LeadEmail, db
+
+    if not imid:
+        return False
+    if LeadEmail.query.filter(LeadEmail.lead_id == lead_id,
+                              LeadEmail.message_id == imid).first():
+        return True
+    lead = db.session.get(Lead, lead_id)
+    return bool(lead is not None and lead.email_message_id == imid)
+
+
+def stranded_portal_mail(days=None):
+    """Portal mail whose event HAS a lead, and which is not on it.
+
+    14 Nov, third review: the "Project Invitation from ArcelorMittal
+    Nippon Steel ..." mails for RFX-56172 and RFX-55831 never reached
+    the trail of #12644 / #12642, so the buyer could not be read off
+    them however carefully that trail was searched.
+
+    AND THE REASON THEY DID NOT JOIN IS IN THEIR SUBJECT LINE
+
+    "Project Invitation from ArcelorMittal Nippon Steel India
+    Limited" carries no number at all. The number is in the body --
+    "You have been invited to RFX-56172" -- and the ingest log keeps
+    the subject, not the body. So the log alone cannot say which
+    event one of these belongs to, and two different repairs are
+    needed:
+
+      * a message that DID land, on the wrong lead, is a `lead_emails`
+        row: it has the body, the number can be read, and the row is
+        moved;
+      * a message that never landed is in the log with no lead. Its
+        number cannot be read from here at all, so it is re-processed
+        and the INTAKE reads the body -- which is the one reader that
+        has it. `--apply --missing` does the same thing; this says
+        which of them look like invitations, because those are the
+        ones that name a buyer.
+    """
+    from app import Lead, LeadEmail
+    from app.models.ingest_log import MailIngestLog
+    from app.services import portal_rfq
+
+    out = []
+    seen_ids = set()
+
+    # ── the ones that landed on the wrong lead ──────────────────────
+    rows = (LeadEmail.query
+            .order_by(LeadEmail.id.desc()).limit(4000).all())
+    for row in rows:
+        if not portal_rfq.is_portal(row.from_addr or ''):
+            continue
+        key = portal_rfq.event_key(row.from_addr or '',
+                                   row.subject or '', row.body or '')
+        if not key:
+            continue
+        held = (Lead.query
+                .filter(Lead.portal_key == key,
+                        Lead.is_archived.isnot(True),
+                        Lead.merged_into_id.is_(None))
+                .order_by(Lead.id.asc()).first())
+        if held is None or held.id == row.lead_id:
+            continue
+        buyer, how = portal_rfq.buyer_from(row.subject or '',
+                                           row.body or '')
+        out.append({
+            'row': row, 'kind': 'move', 'key': key, 'lead': held,
+            'imid': row.message_id or '', 'elsewhere': row,
+            'subject': row.subject or '',
+            'when': str(row.sent_or_received_at or '')[:16],
+            'buyer': buyer, 'how': how,
+            'where': f'on lead #{row.lead_id}',
+        })
+        seen_ids.add(row.message_id or '')
+
+    # ── and the ones that never landed ──────────────────────────────
+    for row, portal in blocked_portal_rows(days, outcomes=SEEN):
+        if row.lead_id or (row.internet_message_id or '') in seen_ids:
+            continue
+        subject = row.subject or ''
+        buyer, how = portal_rfq.buyer_from(subject, '')
+        if not buyer:
+            continue          # it names nobody; --missing covers it
+        out.append({
+            'row': row, 'kind': 'reprocess', 'key': '',
+            'lead': None, 'imid': row.internet_message_id or '',
+            'elsewhere': None, 'subject': subject,
+            'when': str(row.received_at or row.created_at or '')[:16],
+            'buyer': buyer, 'how': how,
+            'where': f'only in the ingest log ({row.outcome})',
+        })
+    return out
+
+
+def report_stranded(found):
+    print(f'\n══ {len(found)} portal message(s) that name a buyer and '
+          f'are not on the lead that holds their event ══')
+    if not found:
+        print('  none.')
+        return
+    moves = [i for i in found if i['kind'] == 'move']
+    again = [i for i in found if i['kind'] == 'reprocess']
+
+    if moves:
+        print(f'\n  ── {len(moves)} on the wrong lead: the number is in '
+              f'the body, so it can be read and the row moved ──')
+        for item in moves:
+            print(f'  {item["key"]:<26} → lead #{item["lead"].id} '
+                  f'({(item["lead"].company or "")[:22]})')
+            print(f'  {"":<26}   {item["subject"][:62]!r}')
+            print(f'  {"":<26}   now {item["where"]}; {item["when"]}')
+            if item['buyer']:
+                print(f'  {"":<26}   it names {item["buyer"]!r} '
+                      f'({item["how"]}) — which that lead cannot see')
+
+    if again:
+        print(f'\n  ── {len(again)} never landed. The subject carries '
+              f'no number, so only the intake can place them ──')
+        for item in again:
+            print(f'  {item["when"]}  {item["subject"][:58]!r}')
+            print(f'  {"":<16}  {item["where"]}'
+                  + (f'; refused: {item["row"].reason[:60]}'
+                     if getattr(item['row'], 'reason', '') else ''))
+            print(f'  {"":<16}  it names {item["buyer"]!r}')
+
+    print(f'\n  --apply --stranded --actor <EMP_CODE> moves the '
+          f'{len(moves)} and re-processes the {len(again)}.')
+    print('  A move is one row changing lead, audited and reversible; '
+          'nothing is copied,')
+    print('  because the same mail on two leads is the state this '
+          'week has been spent undoing.')
+
+
+def attach_stranded(found, *, actor):
+    """Move or re-process each one onto the lead that holds its number.
+
+    Moving a trail row rather than copying it: the same message on two
+    leads is the state this whole week has been spent undoing, and the
+    audit row carries the lead it came from so the move reverses.
+    """
+    from app import LeadEmail, db
+    from app.services import audit
+
+    moved, queued = 0, []
+    for item in found:
+        row = item['elsewhere']
+        lead = item['lead']
+        if row is None:
+            queued.append(item['imid'])
+            continue
+        was = row.lead_id
+        if was == lead.id:
+            continue
+        row.lead_id = lead.id
+        audit.record('lead.mail_moved', 'lead', lead.id,
+                     old={'lead_id': was},
+                     new={'lead_id': lead.id,
+                          'message_id': item['imid'],
+                          'portal_key': item['key']},
+                     actor=actor,
+                     reason=(f'CRM-UAT-01: the mail naming the buyer of '
+                             f'{item["key"]} was on lead #{was}, not on '
+                             f'the lead that holds that number'),
+                     commit=False)
+        moved += 1
+    db.session.commit()
+    print(f'\n  {moved} trail row(s) moved onto the lead holding the '
+          f'number.')
+    if queued:
+        print(f'  {len(queued)} message(s) are only in the ingest log. '
+              f'Re-processing them now: the intake joins by event '
+              f'number, so each lands on the lead that holds it.')
+        try:
+            reprocess(queued, include_purged=True)
+        except Exception as exc:                          # noqa: BLE001
+            # The moves above are committed and stay committed. Said
+            # plainly rather than raised: a traceback after a
+            # successful write reads as "nothing happened", and the
+            # usual cause is simply no Graph credentials in this
+            # environment.
+            print(f'\n  !! the re-processing could not run: '
+                  f'{type(exc).__name__}: {str(exc)[:120]}')
+            print(f'  The {moved} move(s) above are done. Re-run with '
+                  f'--apply --stranded where Graph is configured, or '
+                  f'use --apply --missing.')
+    return moved
+
+
 # ── re-processing ───────────────────────────────────────────────────
 def apply_order(planned):
     """The message ids to re-process, in the order that matters.
@@ -538,6 +728,13 @@ def write_csv(portals, failures, path):
     print(f'\nCSV: {path}')
 
 
+def stranded_portal_rows_or_none(args):
+    """The stranded set when asked for, else None."""
+    if not args.stranded:
+        return None
+    return stranded_portal_mail(args.days)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--check', action='store_true',
@@ -554,6 +751,13 @@ def main(argv=None):
     ap.add_argument('--missing', action='store_true',
                     help='only the portal messages that still have no '
                          'lead — after a run that left some behind')
+    ap.add_argument('--stranded', action='store_true',
+                    help='portal mail whose event already has a lead '
+                         'and which is not on it — the mail that '
+                         'names the buyer, filed anywhere else')
+    ap.add_argument('--actor', default=None, metavar='EMP_CODE',
+                    help='who is running it — required to move a '
+                         'trail row')
     ap.add_argument('--include-purged', action='store_true',
                     help='also re-process messages somebody purged as '
                          'irrelevant. Each override is audited.')
@@ -563,7 +767,8 @@ def main(argv=None):
                     metavar='PATH')
     args = ap.parse_args(argv)
 
-    both = not (args.portals or args.failed or args.why)
+    both = not (args.portals or args.failed or args.why
+                or args.stranded)
     wants_portals = both or args.portals or args.why or args.missing
 
     with app.app_context():
@@ -585,6 +790,22 @@ def main(argv=None):
                   f'message(s) still carry no lead.')
         failures = (failed_rows(args.days)
                     if (both or args.failed) else [])
+        stranded = stranded_portal_rows_or_none(args)
+        if stranded is not None:
+            report_stranded(stranded)
+            if not args.apply:
+                print('\nDRY RUN — nothing moved and nothing '
+                      're-processed.')
+                db.session.rollback()
+                return 0
+            if not args.actor:
+                print('\n--apply --stranded needs --actor <EMP_CODE>: '
+                      'moving a mail off one lead onto another is a '
+                      'change somebody owns.')
+                return 2
+            attach_stranded(stranded, actor=args.actor.strip().upper())
+            return 0
+
         planned = []
         if args.why:
             report_outcomes(portals)

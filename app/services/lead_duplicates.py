@@ -51,9 +51,25 @@ GSTIN = 'gstin'
 PHONE = 'phone'
 NAME = 'company_name'
 DOMAIN = 'email_domain'
+#: 14 Nov. The portal's own number for one auction: RFX-56172,
+#: ARIBA-EVENT-RFQ_CHA_..., RA-57103. Two leads carrying it are two
+#: records of ONE event -- the buyer's own primary key for it, and a
+#: stronger statement than a company name, which on portal leads is
+#: "To review" on both sides and matches nothing.
+#:
+#: It is scored below the GSTIN and above the phone: a GSTIN is a
+#: legal entity and this is one enquiry, which is the thing a merge
+#: is actually about. The pairs it finds are the ones the portal
+#: sweep refused to touch -- #11971 beside #11970 -- and refusing to
+#: touch them was right: a merge moves every mail, note and quote off
+#: one record, and that is a person's decision on a screen built for
+#: it, not a sweep's.
+PORTAL = 'portal_key'
 
 SIGNALS = (
     (GSTIN, 95, 'the same GSTIN — one legal entity, exactly'),
+    (PORTAL, 90, 'the same portal tender number — one auction, '
+                 'entered twice'),
     (PHONE, 80, 'the same phone number'),
     (NAME, 70, 'the same company name, once the legal form is stripped'),
     (DOMAIN, 35, 'the same email domain, which can be two entities'),
@@ -146,8 +162,19 @@ def _gstin_of(lead):
     return norm_gstin(getattr(account, 'gstin', '') if account else '')
 
 
+def norm_portal(value):
+    """The portal number, comparable. '' when there is none.
+
+    Upper case and stripped of the spacing the portals vary: the key
+    is written by `portal_rfq.event_key`, so this is a safety net
+    rather than a parser.
+    """
+    text = ' '.join(str(value or '').split()).upper()
+    return text if len(text) >= 4 else ''
+
+
 def fingerprint(*, company=None, email=None, phone=None, gstin=None,
-                lead=None):
+                portal_key=None, lead=None):
     """The four comparable values, from a lead or from loose fields.
 
     One function for both so the warning shown while typing and the
@@ -163,11 +190,14 @@ def fingerprint(*, company=None, email=None, phone=None, gstin=None,
         phone = phone if phone is not None else (
             getattr(lead, 'phone', '') or getattr(lead, 'phone2', ''))
         gstin = gstin if gstin is not None else _gstin_of(lead)
+        portal_key = (portal_key if portal_key is not None
+                      else getattr(lead, 'portal_key', ''))
     return {
         NAME: norm_name(company),
         DOMAIN: domain_of(email),
         PHONE: norm_phone(phone),
         GSTIN: norm_gstin(gstin),
+        PORTAL: norm_portal(portal_key),
     }
 
 
@@ -203,7 +233,7 @@ def score(matched):
 #: megabytes. CRM-MAIL-2026-11-11.
 PRINT_COLUMNS = ('id', 'company', 'email', 'original_email_from',
                  'phone', 'phone2', 'company_id', 'stage',
-                 'assigned_to', 'created_at', 'pic')
+                 'assigned_to', 'created_at', 'pic', 'portal_key')
 
 
 def live_prints(exclude_id=None, limit_days=None):
@@ -254,6 +284,7 @@ def live_prints(exclude_id=None, limit_days=None):
             DOMAIN: domain_of(row.email or row.original_email_from),
             PHONE: norm_phone(row.phone or row.phone2),
             GSTIN: gstins.get(row.company_id, ''),
+            PORTAL: norm_portal(getattr(row, 'portal_key', '')),
         }
         out[row.id] = (row, mine)
     return out

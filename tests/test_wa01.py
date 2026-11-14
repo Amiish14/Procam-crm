@@ -254,8 +254,19 @@ def test_the_route_takes_a_category():
 # §2 — duplicates: the four signals
 # ═══════════════════════════════════════════════════════════════════
 def test_the_four_signals_are_the_ones_asked_for():
+    """§2's four, all of them, still there and still meaning what
+    they meant.
+
+    Plus one, approved 14 Nov (CRM-UAT-01 item 3): the portal tender
+    number. Two leads carrying RFX-56172 are one auction entered
+    twice, and on a portal lead the company is "To review" on both
+    sides -- so the name signal matched nothing and those pairs were
+    invisible to the merge screen. The guard stays exact: a sixth
+    signal has to be argued for here before it can be added.
+    """
     assert {k for k, _s, _w in ld.SIGNALS} == {
-        'company_name', 'email_domain', 'phone', 'gstin'}
+        'company_name', 'email_domain', 'phone', 'gstin',
+        'portal_key'}
 
 
 def test_a_gstin_outranks_a_domain():

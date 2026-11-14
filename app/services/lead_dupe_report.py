@@ -47,7 +47,28 @@ def _rank(lead):
                        'On Hold').index(stage)
     else:
         advancement = 3
-    return (advancement, lead.created_at or datetime.min, lead.id)
+    # 14 Nov. Between two leads at the same stage, keep the one that
+    # knows whose enquiry it is. The portal pairs are the case:
+    # #11970 carries ArcelorMittal and #11971 says "To review", both
+    # at New Opportunity, and on the older rule the tie went to
+    # whichever was created second -- so the screen offered to keep
+    # the copy with no customer on it and fold the named one into it.
+    # Below advancement, not above: work already done on a record
+    # still decides, and that was the earlier decision here.
+    named = 0
+    try:
+        from app.services import lead_account, portal_rfq
+        company = (getattr(lead, 'company', '') or '').strip()
+        # A placeholder is not a customer, and neither is the
+        # procurement portal that delivered the enquiry: "Procol" on
+        # a lead is the robot, not the buyer.
+        if (company and not lead_account.is_placeholder(company)
+                and not portal_rfq.is_portal_name(company)):
+            named = 1
+    except Exception:                                     # noqa: BLE001
+        named = 0
+    return (advancement, named, lead.created_at or datetime.min,
+            lead.id)
 
 
 #: A signal value shared by more than this many leads identifies

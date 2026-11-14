@@ -849,7 +849,10 @@ def test_the_report_reads_columns_not_whole_leads():
         assert prints
         row, mine = next(iter(prints.values()))
         assert not hasattr(row, 'original_email_body')
-        assert set(mine) == {ld.NAME, ld.DOMAIN, ld.PHONE, ld.GSTIN}
+        # `portal_key` joined the four on 14 Nov. It is a column on
+        # the lead, not a body, which is what this test is about.
+        assert set(mine) == {ld.NAME, ld.DOMAIN, ld.PHONE, ld.GSTIN,
+                             ld.PORTAL}
 
 
 def test_the_report_still_finds_a_real_pair():

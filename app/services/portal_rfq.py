@@ -140,6 +140,12 @@ BUYER_PATTERNS = (
     (r'(?:^|[\n;:>\-–—])[ \t]*' + _NAME +
      r'[ \t]+(?:has\s+invited|invites)\s+you\b',
      '"X has invited you"'),
+    # "Project Invitation from ArcelorMittal Nippon Steel India
+    # Limited" -- the subject line Procol sends, and the one that
+    # names the buyer when nothing else on the lead does. Neither
+    # reading below could see it: both want "invited ... to/by", and
+    # this says "invitation from".
+    (r'invitation\s+from[ \t]+' + _NAME, '"invitation from X"'),
     # "You have been invited to RFX-56172 by ArcelorMittal Nippon
     # Steel India." The looser invitation line below reads this as
     # "RFX-56172 by ArcelorMittal…" — the number and then the name —

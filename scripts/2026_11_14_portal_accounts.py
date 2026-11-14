@@ -184,20 +184,41 @@ def trail_of(lead):
     return out
 
 
-def buyer_of(lead):
-    """(name, how) read from anywhere on this lead's mail trail.
+def buyers_of(lead):
+    """Every name the trail offers as the buyer, in order.
 
-    The first mail that names one wins, oldest first: an invitation
-    states whose event it is, and a later notice quoting it says the
-    same thing less clearly.
+    More than one, because the readings disagree in a way that
+    matters: "Project Invitation from ArcelorMittal" in a subject
+    and "invited to RFX-56174 by ArcelorMittal Nippon Steel India
+    Limited" in the body of the same mail are the same customer
+    written to two different lengths, and only the longer one
+    resolves to the account "Amns".
+
+    So the trail is read for candidates and the CALLER chooses --
+    `plan` takes the first that an account answers to, and the first
+    of all of them when none does. Picking here, before anything
+    knows what the master holds, is what made a second account for a
+    customer that had one.
     """
     from app.services import portal_rfq
 
+    out, seen = [], set()
     for what, subject, body in trail_of(lead):
-        buyer, how = portal_rfq.buyer_from(subject, body)
-        if buyer:
-            return buyer, f'{how}, in {what}'
-    return '', ''
+        for text in (subject, body):
+            buyer, how = portal_rfq.buyer_from(
+                text if text is subject else '',
+                text if text is body else '')
+            key = ' '.join((buyer or '').split()).lower()
+            if buyer and key not in seen:
+                seen.add(key)
+                out.append((buyer, f'{how}, in {what}'))
+    return out
+
+
+def buyer_of(lead):
+    """(name, how) — the first name the trail offers, or ('', '')."""
+    found = buyers_of(lead)
+    return found[0] if found else ('', '')
 
 
 def _words(name):
@@ -421,54 +442,190 @@ ARCHIVE_REASON = 'portal notice — no buyer'
 UNTOUCHED_STAGES = ('', 'New Opportunity', 'New', 'New Lead')
 
 
-def work_on(lead):
-    """What has been done on this lead. [] means nothing has.
+def _people():
+    """The employee codes on file, as a set. Read once.
 
-    Asked of the things a person does, not of the fields the intake
-    fills: a quote, an RFQ, a call, a note, a mail we sent, or a stage
-    somebody moved. Any one of them means a human has handled this
-    enquiry, and a sweep does not archive what somebody is working on
-    -- whatever the mail it came from failed to say.
+    This is how "did a person do this" is answered, and it is
+    deliberately not a list of system actor names: `audit.record`
+    defaults its actor to 'system', the portal rule signs itself
+    'portal', the sweeps sign themselves 'CRM-...', and tomorrow
+    there will be another one. An actor that is not somebody's
+    employee code is not a person, whatever it is called.
+    """
+    global _PEOPLE
+    if _PEOPLE is None:
+        from app import Employee
+
+        try:
+            _PEOPLE = {code for (code,) in db.session.query(
+                Employee.emp_code).all() if code}
+        except Exception:                                 # noqa: BLE001
+            _PEOPLE = set()
+    return _PEOPLE
+
+
+_PEOPLE = None
+
+
+def _is_a_person(actor):
+    text = (str(actor or '')).strip().upper()
+    return bool(text) and text in {c.upper() for c in _people()}
+
+
+def _auto_fields(lead):
+    """The fields the CRM filled in and marked "auto — confirm"."""
+    import json as _json
+
+    raw = getattr(lead, 'auto_filled_json', None)
+    if not raw:
+        return set()
+    try:
+        found = _json.loads(raw)
+    except Exception:                                     # noqa: BLE001
+        return set()
+    if isinstance(found, dict):
+        return {str(k) for k in found}
+    if isinstance(found, (list, tuple)):
+        return {str(k) for k in found}
+    return set()
+
+
+def _who_moved_the_stage(lead):
+    """[(actor, stage)] for every stage change on this lead.
+
+    The session listener writes `lead.stage_change` for every change
+    to `Lead.stage`, whoever made it, so this is the record of who
+    moved it rather than a guess from the stage it is on now.
+    """
+    from app.models.audit import AuditEvent
+
+    out = []
+    try:
+        rows = (AuditEvent.query
+                .filter(AuditEvent.entity_type == 'lead',
+                        AuditEvent.entity_id == str(lead.id),
+                        AuditEvent.action.in_(STAGE_ACTIONS))
+                .order_by(AuditEvent.id.asc()).all())
+    except Exception:                                     # noqa: BLE001
+        return out
+    for row in rows:
+        new = row.new_value if isinstance(row.new_value, dict) else {}
+        out.append((row.actor or '', str(new.get('stage') or '')))
+    return out
+
+
+#: Every action that records a stage moving.
+STAGE_ACTIONS = ('lead.stage_change', 'lead.closed_lost',
+                 'lead.closed_won', 'lead.decision')
+
+
+def work_on(lead):
+    """What a PERSON has done on this lead. [] means nothing.
+
+    14 Nov, third review, and the fault it names is a real one: a
+    lead the portal rule itself closed as Lost ("withdrawn by buyer")
+    was being counted as worked on, because the only question asked
+    was whether the stage had moved. A system close is not human
+    work, and nor is an auto-assignment, a task the engine raised, a
+    summary the AI wrote or a notification the CRM sent itself.
+
+    So every signal here now carries WHO, and the answer has to be a
+    person -- an actor that matches somebody's employee code. The
+    CRM's own actors ('system', 'portal', 'CRM-...') are not people,
+    and they are recognised by not being in the employee list rather
+    than by being on a list of their own, because the next one will
+    not be on that list either.
+
+    Each entry is a sentence naming the evidence and the person, so a
+    TO REVIEW row can say why it is not in the archive.
     """
     done = []
-    if getattr(lead, 'quote_date', None) or \
-            getattr(lead, 'quoted_amount_inr', None):
-        done.append('quoted')
-    if getattr(lead, 'rfq_date', None):
-        done.append('RFQ')
-    if getattr(lead, 'phone_call_date', None):
-        done.append('called')
-    if getattr(lead, 'meeting_date', None):
-        done.append('met')
+    auto = _auto_fields(lead)
+
+    # ── the stage ───────────────────────────────────────────────────
+    moves = _who_moved_the_stage(lead)
+    human_moves = [(actor, stage) for actor, stage in moves
+                   if _is_a_person(actor)]
+    stage = (getattr(lead, 'stage', '') or '').strip()
+    if stage not in UNTOUCHED_STAGES:
+        if human_moves:
+            actor, _s = human_moves[-1]
+            done.append(f'moved to {stage} by {actor}')
+        elif moves:
+            pass          # the CRM moved it: not work
+        elif (getattr(lead, 'lost_reason', '') or '') == \
+                portal_rfq_lost_reason():
+            pass          # the portal rule closed it
+        else:
+            # No audit row either way. Said as what it is rather than
+            # counted as work or dismissed as not: an archive is
+            # reversible and a wrong one is visible, but a lead a
+            # person moved before the audit existed should not be
+            # swept by silence.
+            done.append(f'stage {stage}, nobody recorded as moving it')
+
+    # ── what somebody typed on the form ─────────────────────────────
+    for field, word in (('quoted_amount_inr', 'a quoted amount'),
+                        ('rfq_date', 'an RFQ date'),
+                        ('phone_call_date', 'a call date'),
+                        ('meeting_date', 'a meeting date')):
+        if getattr(lead, field, None) and field not in auto:
+            done.append(word)
+
+    # ── the records a screen makes ──────────────────────────────────
     for module, table, label in (
             ('app.models.quote', 'Quote', 'a quote record'),
             ('app.models.rfq', 'RFQ', 'an RFQ record')):
         try:
             mod = __import__(module, fromlist=[table])
             model = getattr(mod, table)
-            if model.query.filter(model.lead_id == lead.id).count():
-                done.append(label)
+            rows = model.query.filter(model.lead_id == lead.id).all()
         except Exception:                                 # noqa: BLE001
-            pass
+            continue
+        for row in rows:
+            who = (getattr(row, 'created_by', None)
+                   or getattr(row, 'raised_by', None) or '')
+            if _is_a_person(who):
+                done.append(f'{label} by {who}')
+                break
+            if not who:
+                done.append(f'{label} (nobody recorded)')
+                break
+
+    # ── notes, and who wrote them ───────────────────────────────────
     try:
         from app import LeadNote
-        if LeadNote.query.filter(LeadNote.lead_id == lead.id).count():
-            done.append('a note')
+
+        for row in (LeadNote.query
+                    .filter(LeadNote.lead_id == lead.id,
+                            LeadNote.is_deleted.isnot(True)).all()):
+            who = getattr(row, 'author', '') or ''
+            if _is_a_person(who):
+                done.append(f'a note by {who}')
+                break
     except Exception:                                     # noqa: BLE001
         pass
+
+    # ── mail a person sent, not mail the CRM sent ───────────────────
     try:
         from app import LeadEmail
-        sent = (LeadEmail.query
-                .filter(LeadEmail.lead_id == lead.id,
-                        LeadEmail.direction != 'inbound').count())
-        if sent:
-            done.append('mail sent')
+
+        for row in (LeadEmail.query
+                    .filter(LeadEmail.lead_id == lead.id,
+                            LeadEmail.direction != 'inbound').all()):
+            who = getattr(row, 'created_by', '') or ''
+            if _is_a_person(who):
+                done.append(f'mail sent by {who}')
+                break
     except Exception:                                     # noqa: BLE001
         pass
-    stage = (getattr(lead, 'stage', '') or '').strip()
-    if stage not in UNTOUCHED_STAGES:
-        done.append(f'stage {stage}')
     return done
+
+
+def portal_rfq_lost_reason():
+    from app.services import portal_rfq
+
+    return portal_rfq.LOST_REASON
 
 
 def age_days(lead, now=None):
@@ -494,15 +651,25 @@ def plan(found, *, now=None):
     """
     out = []
     for lead, what in found:
-        buyer, how = buyer_of(lead)
+        candidates = buyers_of(lead)
+        buyer, how = candidates[0] if candidates else ('', '')
         done = work_on(lead)
         age = age_days(lead, now)
         row = {'lead': lead, 'now': what, 'buyer': buyer, 'how': how,
                'account': None, 'alias': '', 'work': done, 'age': age,
                'portal': portal_of(lead), 'verdict': 'to review',
-               'why': ''}
+               'twin': None, 'why': ''}
         if buyer:
-            account, alias = account_for(buyer)
+            # The first candidate an account answers to. A trail that
+            # offers "ArcelorMittal" and "ArcelorMittal Nippon Steel
+            # India Limited" is offering one customer at two lengths,
+            # and only one of them finds account "Amns".
+            account, alias = None, ''
+            for name, how_found in candidates:
+                account, alias = account_for(name)
+                if account is not None:
+                    buyer, how = name, how_found
+                    break
             if account is None:
                 # Before creating anything: does this name already
                 # exist on a row we skipped -- merged away, or
@@ -516,10 +683,32 @@ def plan(found, *, now=None):
                     out.append(row)
                     continue
             if account is not None:
+                # The row carries the name that MATCHED, not the
+                # first name the trail happened to offer: it is the
+                # name written on as an alias, and the name a person
+                # reads in the report.
                 row.update({'verdict': 'link', 'account': account,
-                            'alias': alias})
+                            'alias': alias, 'buyer': buyer,
+                            'how': how})
             else:
                 row['verdict'] = 'create'
+            out.append(row)
+            continue
+        twin, buyer_of_twin = twin_with_a_buyer(lead)
+        if twin is not None:
+            # 14 Nov, third review. The same tender number on two
+            # leads, one of which knows whose event it is: #11971
+            # beside #11970, #12163 beside #12162. That is one
+            # enquiry entered twice, and the answer is a merge -- on
+            # the screen built for it, by a person. Not an archive
+            # (it is live work), not the review queue (its customer
+            # is known), and not something a sweep should do: a merge
+            # moves every mail, note and quote off one record.
+            row.update({'verdict': 'duplicate', 'twin': twin,
+                        'why': (f'the same tender number as lead '
+                                f'#{twin.id}, which is '
+                                f'{buyer_of_twin} — offer it as a '
+                                f'merge on Admin → Lead duplicates')})
             out.append(row)
             continue
         if done:
@@ -536,6 +725,39 @@ def plan(found, *, now=None):
     return out
 
 
+def twin_with_a_buyer(lead):
+    """(lead, its customer) — another live lead on this same tender.
+
+    Only where the other one has a REAL customer: two leads both
+    saying "To review" are two unnamed records of one event and
+    merging them names nothing. One that carries a buyer is the
+    record to keep, and that makes the pair actionable.
+    """
+    from app import Lead
+    from app.services import lead_account, portal_rfq
+
+    key = (getattr(lead, 'portal_key', '') or '').strip()
+    if not key:
+        return None, ''
+    try:
+        others = (Lead.query
+                  .filter(Lead.portal_key == key,
+                          Lead.id != lead.id,
+                          Lead.is_archived.isnot(True),
+                          Lead.merged_into_id.is_(None))
+                  .order_by(Lead.id.asc()).all())
+    except Exception:                                     # noqa: BLE001
+        return None, ''
+    for other in others:
+        name = (other.company or '').strip()
+        if not name or lead_account.is_placeholder(name):
+            continue
+        if portal_rfq.is_portal_name(name):
+            continue
+        return other, name
+    return None, ''
+
+
 def portal_of(lead):
     """Which portal this lead came in through."""
     from app.services import portal_rfq
@@ -544,7 +766,17 @@ def portal_of(lead):
     if found:
         return found
     platform = (lead.lead_platform or '').strip().lower()
-    return platform or 'not stated'
+    if platform:
+        return platform
+    # Not a LISTED portal, and no platform recorded -- which is the
+    # state of every lead whose account somebody set to a portal's
+    # name by hand. The sender's own domain is still the useful
+    # answer: "228 of these are superprocure.in" is the sentence the
+    # per-portal count exists to produce, and "not stated" is not.
+    sender = (lead.original_email_from or '').strip().lower()
+    if '@' in sender:
+        return sender.rsplit('@', 1)[-1].strip(' <>,;') or 'not stated'
+    return 'not stated'
 
 
 def report(planned, portal_accounts):
@@ -563,7 +795,8 @@ def report(planned, portal_accounts):
     print('\n  ── by bucket ──')
     new_names = {row['buyer'].strip().lower()
                  for row in buckets['create'] if row['buyer']}
-    for verdict in ('link', 'create', 'held', 'to review', 'archive'):
+    for verdict in ('link', 'create', 'duplicate', 'held', 'to review',
+                    'archive'):
         rows = buckets.get(verdict) or []
         if not rows:
             continue
@@ -585,6 +818,8 @@ def report(planned, portal_accounts):
             ('create', 'onto a new account for the buyer'),
             ('held', 'nothing written: the buyer\'s name is already on '
                      'an account somebody deactivated'),
+            ('duplicate', 'nothing written: one enquiry entered twice, '
+                          'for a person to merge'),
             ('to review', 'to "To review" — somebody is working these, '
                           'or they are too young to give up on'),
             ('archive', f'archived, "{ARCHIVE_REASON}" — nothing done '
@@ -601,6 +836,8 @@ def report(planned, portal_accounts):
                 becomes = f'NEW "{row["buyer"]}"'
             elif verdict == 'held':
                 becomes = 'held for a person'
+            elif verdict == 'duplicate':
+                becomes = f'merge with #{row["twin"].id}?'
             elif verdict == 'archive':
                 becomes = 'archived'
             else:
@@ -638,7 +875,8 @@ def write_csv(planned, path):
     out = csv.writer(buf)
     out.writerow(['lead_id', 'portal', 'now', 'verdict', 'buyer',
                   'account_id', 'account', 'read_from', 'alias_note',
-                  'work', 'age_days', 'tender', 'subject'])
+                  'merge_with', 'work', 'why', 'age_days', 'tender',
+                  'subject'])
     for row in planned:
         lead = row['lead']
         account = row['account']
@@ -646,7 +884,9 @@ def write_csv(planned, path):
             lead.id, row['portal'], row['now'], row['verdict'],
             row['buyer'], account.id if account is not None else '',
             account.name if account is not None else '',
-            row['how'], row['alias'], '; '.join(row['work']),
+            row['how'], row['alias'],
+            row['twin'].id if row['twin'] is not None else '',
+            '; '.join(row['work']), row['why'],
             row['age'] if row['age'] is not None else '',
             lead.portal_key or '',
             (lead.original_email_subject or '')[:120]])
@@ -795,13 +1035,13 @@ def apply(planned, *, batch, actor, only_link=False):
         for row in planned:
             lead = row['lead']
             verdict = row['verdict']
-            if verdict == 'held':
+            if verdict in ('held', 'duplicate'):
                 # Named, but the name is on a row somebody put aside.
                 # Nothing is written -- not a link, not a new account,
                 # not even "To review": the lead stays exactly as it
                 # is until a person has looked at that row.
-                print(f'  #{lead.id}: held — {row["why"]}')
-                done['held for a person'] += 1
+                print(f'  #{lead.id}: {verdict} — {row["why"]}')
+                done[f'{verdict}: left for a person'] += 1
                 continue
             if only_link and verdict not in ('link', 'create'):
                 done['left for the second pass'] += 1

@@ -3486,3 +3486,95 @@ company the sweep has just changed to the buyer's. All three now purge
 on the SENDER as well, and take the mail trail and the notes with
 them: SQLite reuses row ids, and a lead deleted without its trail
 hands that trail to whatever is created next.
+
+## 85 — a system close is not work, and the buyer was on another lead
+
+Three findings from the review before the second pass. The first is
+the one that mattered most, and it was mine twice over.
+
+### "worked on: stage Lost"
+
+`work_on` asked one question about the stage: has it moved? The portal
+rule itself moves it — a withdrawal closes the lead as Lost,
+"withdrawn by buyer" — so **the sweep was reading its own work as
+somebody else's** and holding 228 Superprocure leads in the review
+queue on the strength of it. The same blindness covered an
+auto-assignment, a task the engine raised, a summary the AI wrote and
+a notification the CRM sent itself.
+
+So every signal now carries **who**, and the answer has to be a
+person. Not by keeping a list of system actor names — `audit.record`
+defaults to 'system', the portal rule signs itself 'portal', the
+sweeps sign themselves 'CRM-…', and the next one will not be on that
+list either — but by asking whether the actor is somebody's employee
+code. The stage is judged from `lead.stage_change` audit rows, notes
+from `LeadNote.author`, outbound mail from `LeadEmail.created_by`, and
+a date field is ignored when `auto_filled_json` says the CRM filled
+it.
+
+One case gets neither answer: a stage that moved with **no audit row
+at all**. It is reported as exactly that ("stage Quoted, nobody
+recorded as moving it") and kept out of the archive. An archive is
+reversible and a wrong one is visible, but a lead a person moved
+before the audit existed should not be swept by silence.
+
+Every TO REVIEW row now prints why it is there, which is what makes
+the count readable: "worked on: moved to Lost by DIR12010" and "6
+day(s) old — the invitation that names the buyer may still arrive" are
+different situations and they were both just "to review".
+
+### the mail that names the buyer was on another lead
+
+The "Project Invitation from ArcelorMittal Nippon Steel …" mails for
+RFX-56172 and RFX-55831 never reached #12644 / #12642. Reading the
+whole trail (§83) could not help: the mail was not on that trail.
+
+Two things were wrong, and the second explains the first:
+
+* **"Project Invitation from X" did not read as a buyer at all.** Both
+  earlier readings want "invited … to/by"; this says "invitation
+  from". So even where the mail was on the right lead, the name in it
+  was invisible.
+* **its subject carries no number.** The number is in the body — "You
+  have been invited to RFX-56172" — and the ingest log keeps the
+  subject, not the body. So nothing keyed on the log could ever place
+  one of these.
+
+`--stranded` therefore has two halves. A message that DID land, on the
+wrong lead, is a `lead_emails` row: it has the body, the number can be
+read, and the row is **moved** (audited, reversible, never copied —
+the same mail on two leads is the state this week has been spent
+undoing). A message that never landed is in the log with no lead and
+no readable number, so it is **re-processed** and the intake reads the
+body, which is the one reader that has it.
+
+### and the trail can name one customer at two lengths
+
+"Project Invitation from ArcelorMittal" in a subject and "… by
+ArcelorMittal Nippon Steel India Limited" in the body of the same
+mail. Only the second resolves to "Amns". `buyers_of` now returns
+every candidate and `plan` takes the first that an account answers to
+— choosing in the reader, before anything knows what the master
+holds, is what created a second account for a customer that had one.
+
+### one enquiry entered twice
+
+#11971 beside #11970, #12163 beside #12162: the same tender number,
+one of them knowing the buyer. Not an archive (it is live work), not
+the review queue (its customer is known), and **not a sweep's
+decision** — a merge moves every mail, note and quote off one record.
+
+It is a `duplicate` bucket that writes nothing, and the pair now
+reaches the screen built for merging: `portal_key` is a duplicate
+signal, scored 90 — below a GSTIN, which is a legal entity, and above
+a phone number. A portal lead's company is "To review" on both sides,
+so the name signal matched nothing and these pairs were invisible to
+that screen.
+
+One more thing had to change for the offer to be worth acting on. The
+report's keep/drop suggestion ranked by stage, then by date — so on
+two leads at New Opportunity the tie went to whichever was created
+second, and the screen offered to keep the copy with **no customer on
+it** and fold the named one into it. Between two leads at the same
+stage, the one that knows whose enquiry it is wins; a portal's name
+does not count as knowing.

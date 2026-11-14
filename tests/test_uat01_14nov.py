@@ -789,15 +789,16 @@ def test_a_lead_somebody_is_working_on_is_never_archived():
         _purge()
         from app import LeadNote
 
+        _person()
+        _fresh_people_cache(mod)
         worked = _portal_lead('Invitation to quote', days=90,
                               body='Log in.', stage='RFQ Generated')
-        db.session.add(LeadNote(lead_id=worked.id,
+        db.session.add(LeadNote(lead_id=worked.id, author='ZV_HUMAN',
                                 note_text='Called the desk',
                                 note_type='call'))
         db.session.commit()
         done = mod.work_on(worked)
-        assert 'a note' in done
-        assert any(d.startswith('stage') for d in done)
+        assert 'a note by ZV_HUMAN' in done, done
 
         row = [r for r in mod.plan(mod.leads_on_a_portal()[0])
                if r['lead'].id == worked.id][0]
@@ -815,20 +816,27 @@ def test_each_kind_of_work_counts():
     with flask_app.app_context():
         db.create_all()
         _purge()
+        _person()
+        _fresh_people_cache(mod)
         for field, value, word in (
-                ('quote_date', date(2026, 11, 1), 'quoted'),
-                ('rfq_date', date(2026, 11, 1), 'RFQ'),
-                ('phone_call_date', date(2026, 11, 1), 'called'),
-                ('meeting_date', date(2026, 11, 1), 'met')):
-            lead = _portal_lead(f'ZV {word} notice', days=90)
+                ('quoted_amount_inr', 125000, 'a quoted amount'),
+                ('rfq_date', date(2026, 11, 1), 'an RFQ date'),
+                ('phone_call_date', date(2026, 11, 1), 'a call date'),
+                ('meeting_date', date(2026, 11, 1), 'a meeting date')):
+            lead = _portal_lead(f'ZV {field} notice', days=90)
             setattr(lead, field, value)
             db.session.commit()
-            assert word in mod.work_on(lead), word
+            assert word in mod.work_on(lead), (field, mod.work_on(lead))
+
+        from app import LeadEmail
 
         sent = _portal_lead('ZV outgoing notice', days=90)
-        _trail(sent, 'Our quotation', 'Please find attached.',
-               direction='outbound')
-        assert 'mail sent' in mod.work_on(sent)
+        db.session.add(LeadEmail(
+            lead_id=sent.id, direction='outbound',
+            created_by='ZV_HUMAN', subject='Our quotation',
+            body='Please find attached.', source='sent_in_crm'))
+        db.session.commit()
+        assert 'mail sent by ZV_HUMAN' in mod.work_on(sent)
         _purge()
 
 
@@ -1164,7 +1172,7 @@ def test_a_deactivated_namesake_holds_the_lead_and_writes_nothing():
         assert 'deactivated' in row['why']
 
         done = mod.apply(rows, batch=mod.next_batch_id(), actor='PCM001')
-        assert done['held for a person'] == 1
+        assert done['held: left for a person'] == 1
         held = db.session.get(Lead, lead_id)
         # Exactly as it was: not linked, not renamed, not archived.
         assert held.company == was
@@ -1189,3 +1197,537 @@ def test_the_held_bucket_is_counted_and_explained(capsys):
         _purge()
     assert 'held' in out
     assert 'already exists' in out
+
+
+# ═══ the third review: system work is not work ═════════════════════
+def _person(code='ZV_HUMAN'):
+    row = Employee.query.filter_by(emp_code=code).first()
+    if row is None:
+        row = Employee(emp_code=code, name='A Person',
+                       password_hash='x', role='user', is_active=True,
+                       email=f'{code.lower()}@procamlogistics.com')
+        db.session.add(row)
+        db.session.commit()
+    return row
+
+
+def _moved(lead, to, *, actor):
+    from app.services import audit
+
+    lead.stage = to
+    db.session.commit()
+    audit.record('lead.stage_change', 'lead', lead.id,
+                 old={'stage': 'New Opportunity'}, new={'stage': to},
+                 actor=actor, reason='test', commit=True)
+
+
+def _fresh_people_cache(mod):
+    mod._PEOPLE = None
+
+
+# ── 1 · the portal's own close ─────────────────────────────────────
+def test_a_close_the_portal_rule_made_is_not_work():
+    """"worked on: stage Lost" was being counted for leads the portal
+    rule closed itself. A system close is not human work, and 228
+    Superprocure leads were sitting in the review queue because of
+    it."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        _person()
+        _fresh_people_cache(mod)
+        lead = _portal_lead('', key='SP-1', days=73, body='')
+        _moved(lead, 'Lost', actor='portal')
+        lead.lost_reason = portal_rfq.LOST_REASON
+        db.session.commit()
+
+        assert mod.work_on(lead) == []
+        row = [r for r in mod.plan(mod.leads_on_a_portal()[0])
+               if r['lead'].id == lead.id][0]
+        assert row['verdict'] == 'archive'
+        assert 'nothing done on it' in row['why']
+        _purge()
+
+
+def test_a_close_a_person_made_is_work():
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        _person()
+        _fresh_people_cache(mod)
+        lead = _portal_lead('RFX-70001 | live', key='RFX-70001',
+                            days=80)
+        _moved(lead, 'Lost', actor='ZV_HUMAN')
+        lead.lost_reason = 'Price too high'
+        db.session.commit()
+
+        done = mod.work_on(lead)
+        assert done == ['moved to Lost by ZV_HUMAN'], done
+        row = [r for r in mod.plan(mod.leads_on_a_portal()[0])
+               if r['lead'].id == lead.id][0]
+        assert row['verdict'] == 'to review'
+        assert 'ZV_HUMAN' in row['why']
+        _purge()
+
+
+def test_the_system_actors_are_not_a_list_to_maintain():
+    """`audit.record` defaults to 'system', the portal rule signs
+    itself 'portal', the sweeps sign themselves 'CRM-...', and
+    tomorrow there will be another. An actor that is not somebody's
+    employee code is not a person."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        _person()
+        _fresh_people_cache(mod)
+        assert mod._is_a_person('ZV_HUMAN')
+        for actor in ('system', 'portal', 'CRM-UAT-01', 'ai', '',
+                      None, 'CRM-PORTAL-KEYS'):
+            assert not mod._is_a_person(actor), actor
+        _purge()
+
+
+def test_a_note_the_ai_wrote_is_not_a_note_somebody_wrote():
+    mod = _sweep()
+    with flask_app.app_context():
+        from app import LeadNote
+
+        db.create_all()
+        _purge()
+        _person()
+        _fresh_people_cache(mod)
+        lead = _portal_lead('RFX-70002 | live', key='RFX-70002',
+                            days=80)
+        db.session.add(LeadNote(lead_id=lead.id, author='system',
+                                note_text='AI summary', note_type='general'))
+        db.session.commit()
+        assert mod.work_on(lead) == []
+
+        db.session.add(LeadNote(lead_id=lead.id, author='ZV_HUMAN',
+                                note_text='Called the desk',
+                                note_type='call'))
+        db.session.commit()
+        assert 'a note by ZV_HUMAN' in mod.work_on(lead)
+        _purge()
+
+
+def test_a_notification_the_crm_sent_is_not_mail_somebody_sent():
+    mod = _sweep()
+    with flask_app.app_context():
+        from app import LeadEmail
+
+        db.create_all()
+        _purge()
+        _person()
+        _fresh_people_cache(mod)
+        lead = _portal_lead('RFX-70003 | live', key='RFX-70003',
+                            days=80)
+        db.session.add(LeadEmail(
+            lead_id=lead.id, direction='outbound', created_by='system',
+            subject='Your lead was created', body='x',
+            source='sent_in_crm'))
+        db.session.commit()
+        assert mod.work_on(lead) == []
+
+        db.session.add(LeadEmail(
+            lead_id=lead.id, direction='outbound',
+            created_by='ZV_HUMAN', subject='Our quotation', body='x',
+            source='sent_in_crm'))
+        db.session.commit()
+        assert 'mail sent by ZV_HUMAN' in mod.work_on(lead)
+        _purge()
+
+
+def test_a_field_the_crm_filled_and_marked_auto_is_not_work():
+    import json
+
+    from datetime import date
+
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        _person()
+        _fresh_people_cache(mod)
+        lead = _portal_lead('RFX-70004 | live', key='RFX-70004',
+                            days=80)
+        lead.rfq_date = date(2026, 11, 1)
+        lead.auto_filled_json = json.dumps(['rfq_date'])
+        db.session.commit()
+        assert mod.work_on(lead) == []
+
+        lead.auto_filled_json = None
+        db.session.commit()
+        assert 'an RFQ date' in mod.work_on(lead)
+        _purge()
+
+
+def test_an_unexplained_stage_is_said_rather_than_decided():
+    """No audit row either way. Not counted as work and not dismissed
+    as none: a lead a person moved before the audit existed must not
+    be swept by silence."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        _person()
+        _fresh_people_cache(mod)
+        lead = _portal_lead('RFX-70005 | live', key='RFX-70005',
+                            days=80, stage='Quoted')
+        db.session.commit()
+        done = mod.work_on(lead)
+        assert done == ['stage Quoted, nobody recorded as moving it']
+        row = [r for r in mod.plan(mod.leads_on_a_portal()[0])
+               if r['lead'].id == lead.id][0]
+        assert row['verdict'] == 'to review'
+        _purge()
+
+
+def test_every_to_review_row_prints_why():
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        _person()
+        _fresh_people_cache(mod)
+        worked = _portal_lead('RFX-70006 | live', key='RFX-70006',
+                              days=80)
+        _moved(worked, 'Quoted', actor='ZV_HUMAN')
+        young = _portal_lead('RFX-70007 | live', key='RFX-70007',
+                             days=3)
+        rows = mod.plan(mod.leads_on_a_portal()[0])
+        for row in rows:
+            if row['verdict'] == 'to review':
+                assert row['why'], row['lead'].id
+        _purge()
+
+
+# ── 3 · one enquiry entered twice ──────────────────────────────────
+def test_a_tender_already_held_by_a_named_lead_is_a_merge():
+    """#11971 beside #11970. Not an archive -- it is live work; not
+    the review queue -- its customer is known; and not a sweep's
+    decision, because a merge moves every mail, note and quote off
+    one record."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        _person()
+        _fresh_people_cache(mod)
+        amns = _amns()
+        named = _portal_lead('RFX-49168 invitation', key='RFX-49168',
+                             days=48, company_id=amns.id)
+        named.company = 'Amns'
+        db.session.commit()
+        twin = _portal_lead('RFX-49168 | Your response is due',
+                            key='RFX-49168', days=48)
+
+        other, buyer = mod.twin_with_a_buyer(twin)
+        assert other is not None and other.id == named.id
+        assert buyer == 'Amns'
+
+        row = [r for r in mod.plan(mod.leads_on_a_portal()[0])
+               if r['lead'].id == twin.id][0]
+        assert row['verdict'] == 'duplicate'
+        assert f'#{named.id}' in row['why']
+        assert 'merge' in row['why']
+
+        # And nothing is written for it.
+        was = (twin.company, twin.company_id, bool(twin.is_archived))
+        done = mod.apply(mod.plan(mod.leads_on_a_portal()[0]),
+                         batch=mod.next_batch_id(), actor='PCM001')
+        assert done['duplicate: left for a person'] == 1
+        again = db.session.get(Lead, twin.id)
+        assert (again.company, again.company_id,
+                bool(again.is_archived)) == was
+        _purge()
+
+
+def test_two_unnamed_leads_on_one_tender_are_not_a_merge_offer():
+    """Merging two records that both say "To review" names nothing."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        _person()
+        _fresh_people_cache(mod)
+        one = _portal_lead('RFX-49169 a', key='RFX-49169', days=48)
+        two = _portal_lead('RFX-49169 b', key='RFX-49169', days=48)
+        assert mod.twin_with_a_buyer(two)[0] is None
+        _purge()
+
+
+def test_the_portal_number_is_a_duplicate_signal():
+    """So the pair reaches the screen built for merging, with a
+    sentence rather than a percentage."""
+    from app.services import lead_duplicates as ld
+
+    assert ld.PORTAL in dict((k, s) for k, s, _w in ld.SIGNALS)
+    strength = {k: s for k, s, _w in ld.SIGNALS}
+    assert strength[ld.PORTAL] == 90
+    assert strength[ld.GSTIN] > strength[ld.PORTAL] > strength[ld.PHONE]
+    why = {k: w for k, _s, w in ld.SIGNALS}[ld.PORTAL]
+    assert 'one auction' in why
+    assert 'portal_key' in ld.PRINT_COLUMNS
+
+
+def test_the_duplicate_report_finds_the_pair():
+    from app.services import lead_dupe_report as report
+
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        amns = _amns()
+        named = _portal_lead('RFX-49170 invitation', key='RFX-49170',
+                             days=48, company_id=amns.id)
+        named.company = 'Amns'
+        db.session.commit()
+        twin = _portal_lead('RFX-49170 | Your response is due',
+                            key='RFX-49170', days=48)
+        pairs = report.pairs(limit=200)
+        mine = [p for p in pairs
+                if {p['keep']['lead_id'], p['drop']['lead_id']}
+                == {named.id, twin.id}]
+        assert mine, 'the pair is not offered on the merge screen'
+        # And it says what matched, in words.
+        assert 'auction' in (mine[0].get('why') or ''), mine[0]['why']
+        # The one with the customer on it is the one to keep.
+        assert mine[0]['keep']['lead_id'] == named.id
+        _purge()
+
+
+def test_the_named_copy_is_the_one_offered_to_keep():
+    """Between two leads at the same stage, the one that knows whose
+    enquiry it is. On the older rule the tie went to whichever was
+    created second, so the screen offered to keep the copy with no
+    customer on it and fold the named one into it."""
+    from app.services import lead_dupe_report as report
+
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        amns = _amns()
+        twin = _portal_lead('RFX-49171 | Your response is due',
+                            key='RFX-49171', days=48)
+        named = _portal_lead('RFX-49171 invitation', key='RFX-49171',
+                             days=48, company_id=amns.id)
+        named.company = 'Amns'
+        db.session.commit()
+        # The named one is created SECOND, which is what used to
+        # decide it.
+        assert named.id > twin.id
+        pairs = [p for p in report.pairs(limit=200)
+                 if {p['keep']['lead_id'], p['drop']['lead_id']}
+                 == {named.id, twin.id}]
+        assert pairs
+        assert pairs[0]['keep']['lead_id'] == named.id
+        _purge()
+
+
+def test_a_portal_name_does_not_count_as_knowing_the_customer():
+    """Both leads say "Procol". Neither knows the customer, so the
+    tie falls back to the older rule rather than to a coin toss."""
+    from app.services import lead_dupe_report as report
+
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        one = _portal_lead('RFX-49172 a', key='RFX-49172', days=48)
+        two = _portal_lead('RFX-49172 b', key='RFX-49172', days=48)
+        assert report._rank(one)[1] == 0
+        assert report._rank(two)[1] == 0
+        _purge()
+
+
+# ── 2 · the mail that never reached the lead ───────────────────────
+def _reproc():
+    return _load(os.path.join(_ROOT, 'scripts',
+                              '2026_11_14_reprocess_mail.py'),
+                 'zv_reproc_' + str(time.time_ns()))
+
+
+def test_an_invitation_on_the_wrong_lead_is_found_and_moved():
+    """The "Project Invitation from ArcelorMittal Nippon Steel …"
+    mails for RFX-56172 and RFX-55831 never reached #12644 / #12642,
+    so no amount of reading that trail could find the buyer."""
+    mod = _reproc()
+    with flask_app.app_context():
+        from app import LeadEmail
+
+        db.create_all()
+        _purge()
+        _person()
+        holder = _portal_lead('RFX-56172 | Technical is now live',
+                              key='RFX-56172', days=6)
+        elsewhere = _portal_lead('Something else', days=6)
+        db.session.add(LeadEmail(
+            lead_id=elsewhere.id, direction='inbound',
+            from_addr=PROCOL, message_id='<zv-inv@procol>',
+            subject='Project Invitation from ArcelorMittal Nippon '
+                    'Steel India Limited',
+            body='You have been invited to RFX-56172.',
+            source='ingested'))
+        db.session.commit()
+        holder_id, elsewhere_id = holder.id, elsewhere.id
+
+        found = mod.stranded_portal_mail()
+        mine = [f for f in found if f['imid'] == '<zv-inv@procol>']
+        assert mine, 'the stranded invitation was not found'
+        item = mine[0]
+        assert item['kind'] == 'move'
+        assert item['key'] == 'RFX-56172'
+        assert item['lead'].id == holder_id
+        assert item['buyer'] == 'ArcelorMittal Nippon Steel India Limited'
+        assert f'#{elsewhere_id}' in item['where']
+
+        mod.attach_stranded(mine, actor='ZV_HUMAN')
+        row = LeadEmail.query.filter_by(
+            message_id='<zv-inv@procol>').first()
+        assert row.lead_id == holder_id
+
+        # And the sweep can now read the buyer off the right lead.
+        sweep = _sweep()
+        _fresh_people_cache(sweep)
+        plan = {r['lead'].id: r for r in
+                sweep.plan(sweep.leads_on_a_portal()[0])}
+        assert plan[holder_id]['buyer'] == \
+            'ArcelorMittal Nippon Steel India Limited'
+        _purge()
+
+
+def test_the_move_is_audited_and_names_the_lead_it_came_from():
+    mod = _reproc()
+    with flask_app.app_context():
+        from app import LeadEmail
+
+        db.create_all()
+        _purge()
+        _person()
+        holder = _portal_lead('RFX-55831 | live', key='RFX-55831',
+                              days=9)
+        elsewhere = _portal_lead('Another lead', days=9)
+        db.session.add(LeadEmail(
+            lead_id=elsewhere.id, direction='inbound',
+            from_addr=PROCOL, message_id='<zv-inv2@procol>',
+            subject='Project Invitation from ZV Buyer Works',
+            body='You have been invited to RFX-55831.',
+            source='ingested'))
+        db.session.commit()
+        holder_id, from_id = holder.id, elsewhere.id
+
+        found = [f for f in mod.stranded_portal_mail()
+                 if f['imid'] == '<zv-inv2@procol>']
+        mod.attach_stranded(found, actor='ZV_HUMAN')
+        row = (AuditEvent.query
+               .filter(AuditEvent.action == 'lead.mail_moved',
+                       AuditEvent.entity_id == str(holder_id))
+               .order_by(AuditEvent.id.desc()).first())
+        assert row is not None
+        assert (row.old_value or {}).get('lead_id') == from_id
+        assert (row.new_value or {}).get('portal_key') == 'RFX-55831'
+        assert row.actor == 'ZV_HUMAN'
+        _purge()
+
+
+def test_a_mail_already_on_the_right_lead_is_not_moved():
+    mod = _reproc()
+    with flask_app.app_context():
+        from app import LeadEmail
+
+        db.create_all()
+        _purge()
+        holder = _portal_lead('RFX-55832 | live', key='RFX-55832',
+                              days=9)
+        db.session.add(LeadEmail(
+            lead_id=holder.id, direction='inbound', from_addr=PROCOL,
+            message_id='<zv-ok@procol>',
+            subject='Project Invitation from ZV Buyer Works',
+            body='You have been invited to RFX-55832.',
+            source='ingested'))
+        db.session.commit()
+        assert not [f for f in mod.stranded_portal_mail()
+                    if f['imid'] == '<zv-ok@procol>']
+        _purge()
+
+
+def test_a_log_only_invitation_is_offered_for_reprocessing():
+    """Its subject carries no number — only the intake can place it,
+    because only the intake reads the body."""
+    mod = _reproc()
+    with flask_app.app_context():
+        from app.models.ingest_log import MailIngestLog
+
+        db.create_all()
+        _purge()
+        MailIngestLog.query.filter(
+            MailIngestLog.internet_message_id == '<zv-log@procol>'
+        ).delete(synchronize_session=False)
+        db.session.add(MailIngestLog(
+            internet_message_id='<zv-log@procol>', outcome='skipped',
+            subject='Project Invitation from ZV Buyer Works',
+            from_addr=PROCOL,
+            reason='I_non_business: no cargo, RFQ, route or contact '
+                   'signal'))
+        db.session.commit()
+
+        found = [f for f in mod.stranded_portal_mail()
+                 if f['imid'] == '<zv-log@procol>']
+        assert found
+        assert found[0]['kind'] == 'reprocess'
+        assert found[0]['buyer'] == 'ZV Buyer Works'
+        assert 'ingest log' in found[0]['where']
+        MailIngestLog.query.filter(
+            MailIngestLog.internet_message_id == '<zv-log@procol>'
+        ).delete(synchronize_session=False)
+        db.session.commit()
+        _purge()
+
+
+def test_moving_a_mail_needs_an_actor():
+    source = open(os.path.join(_ROOT, 'scripts',
+                               '2026_11_14_reprocess_mail.py')).read()
+    assert '--apply --stranded needs --actor' in source
+    assert 'lead.mail_moved' in source
+
+
+def test_the_invitation_subject_reads_as_a_buyer_at_all():
+    """It could not, before. "Project Invitation from X" says "from",
+    and both earlier readings wanted "invited … to/by"."""
+    buyer, how = portal_rfq.buyer_from(
+        'Project Invitation from ArcelorMittal Nippon Steel India '
+        'Limited', '')
+    assert buyer == 'ArcelorMittal Nippon Steel India Limited'
+    assert 'invitation from' in how
+    # And the portal itself is still not a buyer.
+    assert portal_rfq.buyer_from('Invitation from Procol', '')[0] == ''
+
+
+def test_the_longest_name_the_trail_offers_is_the_one_that_matches():
+    """A subject that says "Project Invitation from ArcelorMittal" and
+    a body that says "… by ArcelorMittal Nippon Steel India Limited"
+    are one customer at two lengths, and only one of them finds
+    "Amns"."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        amns = _amns()
+        lead = _portal_lead('RFX-56175 | live', key='RFX-56175')
+        _trail(lead, 'Project Invitation from ArcelorMittal',
+               'invited to RFX-56175 by ArcelorMittal Nippon Steel '
+               'India Limited.')
+        names = [n for n, _how in mod.buyers_of(lead)]
+        assert 'ArcelorMittal' in names
+        assert 'ArcelorMittal Nippon Steel India Limited' in names
+
+        row = [r for r in mod.plan(mod.leads_on_a_portal()[0])
+               if r['lead'].id == lead.id][0]
+        assert row['verdict'] == 'link'
+        assert row['account'].id == amns.id
+        # The row carries the name that matched, which is the name
+        # written on as an alias.
+        assert row['buyer'] == 'ArcelorMittal Nippon Steel India Limited'
+        _purge()
