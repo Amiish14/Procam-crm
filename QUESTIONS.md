@@ -3351,3 +3351,72 @@ alarm: Account link's Accept and Reject do prefix, through a local
 guard against silent failure that cries wolf is the worst kind, because
 the next alarm is read as noise; it now traces a local prefixer back to
 `url_prefix` and has a test of its own.
+
+## 83 — the dry run, read back: four things it got wrong
+
+"Don't apply as is." Each of the four is a case of the sweep knowing
+less than the data it was reading.
+
+### the buyer was one mail away
+
+`buyer_of` read the lead's **first** mail. Five of these leads —
+#12644 (RFX-56172), #12642 (RFX-55831), #12643 (RFX-56168), #11971
+and #12163 — were created by a bare "Technical is now live" notice,
+and the mail that names the buyer arrived after it: "Project
+Invitation from ArcelorMittal Nippon Steel …". The event number was
+already holding the set together on one lead; the name was sitting on
+the trail and nothing was reading it. It now reads the lead's own mail
+and every `lead_emails` row, oldest first, and the report says which
+mail answered — a buyer read off the fourth mail down is something
+somebody may want to check.
+
+### "Amns" is ArcelorMittal Nippon Steel
+
+Account #652. The first dry run would have created a fifth row for a
+customer who already has one, which is the same fault as filing them
+under "Procol" wearing different clothes. `account_for` now reads four
+ways: the normalised name or an alias; the account's name as the
+**acronym** of the buyer's (camel case split, so "ArcelorMittal" gives
+A and M and "Amns" resolves); and containment either way round, only
+on names long enough for containment to mean something — on four
+characters there is no reading that separates BHEL from BEML.
+
+Where the match was not on the name, `--apply` writes the buyer's
+spelling onto that account as an **alias**, so the next RFQ matches on
+the name and a person reading the account can see what its mail
+arrives under. `--add-alias 652="ArcelorMittal Nippon Steel"` states
+it outright, which beats every reading above and outlives this
+backlog. The account keeps the name somebody gave it.
+
+### "to review" was two different things
+
+A lead somebody has quoted, raised an RFQ on, called about, written a
+note on, sent mail from, or moved past New belongs in the
+account-check queue. A portal notice nobody can ever name a buyer for
+is **noise** in that queue, and a queue with noise in it stops being
+read — which is how 74 messages came to be sitting behind a denylist
+in the first place.
+
+So: any work → "To review". No work, no buyer anywhere on the trail,
+and more than 30 days old → archived, reason "portal notice — no
+buyer", through `lead_archive` so the actor's permission is asked for
+and the restore is as audited as the archive. Younger than 30 days →
+the review queue, because `trail_of` reads the whole trail and only
+time can say that the invitation naming the buyer is never coming.
+
+The 30 days is the one number here that is a judgement rather than a
+fact, and it is a constant with its reason beside it.
+
+### and the link rows should not wait for the argument
+
+`--only-link` applies the link and create rows and leaves the
+review-or-archive split for a second pass. The links were read and
+agreed; the split was not, and holding the agreed part hostage to the
+unagreed one is how a backlog stays a backlog.
+
+### what the counts are for
+
+Per bucket, and per bucket **and portal**. Two portals behaving
+differently is the thing a single total hides, and the whole reason
+the first version of this work went wrong was that nobody could see
+the shape of what they were about to apply.

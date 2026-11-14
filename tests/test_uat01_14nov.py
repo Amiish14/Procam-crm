@@ -72,9 +72,21 @@ def _load(path, name):
 
 
 def _purge():
+    """Everything these tests made, however it ended up named.
+
+    Keyed on the SENDER as well as the company: a swept lead's company
+    becomes the buyer's name, so purging by company alone left leads
+    called "Amns" behind — and another suite counts open leads with no
+    owner, which is how a leak here shows up as a failure three files
+    away.
+    """
     with flask_app.app_context():
         ids = [l.id for l in Lead.query.filter(
+            Lead.original_email_from == PROCOL).all()]
+        ids += [l.id for l in Lead.query.filter(
             Lead.company.like('ZV%')).all()]
+        ids += [l.id for l in Lead.query.filter(
+            Lead.company.in_(('Amns', 'ZU Cement Works'))).all()]
         # '' as well as the named ones: the stuck-lead test makes a
         # lead with an empty company, and a leftover open lead with
         # no owner is counted by other suites.
@@ -86,13 +98,25 @@ def _purge():
                 AuditEvent.entity_type == 'lead',
                 AuditEvent.entity_id.in_([str(i) for i in ids])).delete(
                     synchronize_session=False)
+            # The children too. SQLite reuses row ids, so a lead
+            # deleted without its mail trail hands that trail to the
+            # next lead created — and the buyer then reads off a mail
+            # belonging to a lead that no longer exists.
+            from app import LeadEmail, LeadNote
+            for model in (LeadEmail, LeadNote):
+                model.query.filter(model.lead_id.in_(ids)).delete(
+                    synchronize_session=False)
             Lead.query.filter(Lead.id.in_(ids)).delete(
                 synchronize_session=False)
         Company.query.filter(Company.name.like('ZV%')).delete(
             synchronize_session=False)
         Company.query.filter(Company.name.in_((
             'Procol', 'Arcelormittal Nippon Steel India Ltd.',
-            'Unknown'))).delete(synchronize_session=False)
+            'Amns', 'Unknown'))).delete(synchronize_session=False)
+        Company.query.filter(Company.name.like(
+            '%ArcelorMittal%')).delete(synchronize_session=False)
+        Company.query.filter(Company.name == 'ZU Cement Works').delete(
+            synchronize_session=False)
         db.session.commit()
 
 
@@ -197,17 +221,16 @@ def test_the_sweep_sorts_the_three_live_cases_three_ways():
         ids = {lead.id for lead, _w in found}
         assert ids == {l.id for l in made}, 'the real customer was swept'
 
-        planned = {lead.id: (verdict, name, account)
-                   for lead, _w, verdict, name, account, _h
-                   in mod.plan(found)}
+        planned = {row['lead'].id: row for row in mod.plan(found)}
         # the buyer already has an account, under a different spelling
-        assert planned[made[0].id][0] == 'link'
-        assert planned[made[0].id][2].id == buyer.id
+        assert planned[made[0].id]['verdict'] == 'link'
+        assert planned[made[0].id]['account'].id == buyer.id
         # a buyer nobody has on file
-        assert planned[made[1].id][0] == 'create'
-        assert planned[made[1].id][1] == 'ZV Cement Works'
-        # and no buyer in the body at all
-        assert planned[made[2].id][0] == 'to review'
+        assert planned[made[1].id]['verdict'] == 'create'
+        assert planned[made[1].id]['buyer'] == 'ZV Cement Works'
+        # and no buyer anywhere on the trail. Young and untouched, so
+        # the review queue rather than the archive.
+        assert planned[made[2].id]['verdict'] == 'to review'
         _purge()
 
 
@@ -548,3 +571,427 @@ def test_a_page_of_proposals_is_quick_on_a_book_of_this_size():
     assert rows
     assert took < 4.0, f'a page of proposals took {took:.1f}s'
     _purge()
+
+
+# ═══ the second review of the dry run, 14 Nov ══════════════════════
+#
+# "Don't apply as is." Four things the dry run showed:
+#
+#  1. the buyer was read from the lead's FIRST mail only, and on five
+#     of these leads the mail that names it is further down the trail;
+#  2. ArcelorMittal Nippon Steel India is the existing account "Amns"
+#     (#652), and a fifth account for that customer is what the sweep
+#     would have created;
+#  3. "to review" was collecting two different things -- leads
+#     somebody is working on, and portal notices nobody can ever name
+#     a buyer for. The second are noise in a queue, and a queue with
+#     noise in it stops being read;
+#  4. the link and create rows were agreed; the split was not. They
+#     should be appliable on their own.
+def _sweep():
+    return _load(SCRIPT, 'zv_sweep_' + str(time.time_ns()))
+
+
+def _portal_lead(subject, *, key=None, days=5, body='', stage=None,
+                 company_id=None):
+    from datetime import datetime, timedelta
+
+    when = datetime.utcnow() - timedelta(days=days)
+    lead = Lead(company='Procol', company_id=company_id,
+                portal_key=key, stage=stage or 'New Opportunity',
+                procam_vertical='Heavy Transport',
+                original_email_from=PROCOL,
+                original_email_subject=subject,
+                original_email_body=body,
+                created_at=when, original_email_received_at=when)
+    db.session.add(lead)
+    db.session.commit()
+    return lead
+
+
+def _trail(lead, subject, body, *, direction='inbound'):
+    from datetime import datetime
+
+    from app import LeadEmail
+
+    db.session.add(LeadEmail(
+        lead_id=lead.id, direction=direction, from_addr=PROCOL,
+        subject=subject, body=body, source='ingested',
+        sent_or_received_at=datetime.utcnow()))
+    db.session.commit()
+
+
+# ── 1 · the whole trail ────────────────────────────────────────────
+def test_the_buyer_is_read_from_anywhere_on_the_trail():
+    """#12644 and four others: the lead was made by a bare "Technical
+    is now live" notice and the invitation that names the buyer
+    arrived after it."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        lead = _portal_lead('RFX-56172 | Technical is now live',
+                            key='RFX-56172',
+                            body='Log in to the portal to respond.')
+        assert mod.buyer_of(lead) == ('', '')
+        _trail(lead, 'Project Invitation from ArcelorMittal Nippon '
+                     'Steel India Limited',
+               'You have been invited to RFX-56172 by ArcelorMittal '
+               'Nippon Steel India Limited.')
+        buyer, how = mod.buyer_of(lead)
+        assert buyer == 'ArcelorMittal Nippon Steel India Limited'
+        # And it says WHICH mail answered, because a buyer read off a
+        # mail four down the trail is a thing somebody may want to
+        # check.
+        assert 'inbound' in how
+        _purge()
+
+
+def test_the_trail_is_read_oldest_first():
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        lead = _portal_lead('RFX-56173 notice', key='RFX-56173')
+        assert mod.trail_of(lead)[0][0] == "the lead's own mail"
+        _trail(lead, 'Buyer organisation: ZV First Works', 'x')
+        _trail(lead, 'Buyer organisation: ZV Second Works', 'x')
+        buyer, _how = mod.buyer_of(lead)
+        assert buyer == 'ZV First Works'
+        _purge()
+
+
+# ── 2 · one account for one customer ───────────────────────────────
+def test_amns_is_arcelormittal_nippon_steel():
+    """The whole of item 2: "Amns" (#652) is that customer, and the
+    sweep must find it rather than create a fifth row."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        amns = Company(name='Amns', is_active=True)
+        db.session.add(amns)
+        db.session.commit()
+        for spelling in ('ArcelorMittal Nippon Steel India Limited',
+                         'ArcelorMittal Nippon Steel India',
+                         'ArcelorMittal Nippon Steel'):
+            account, note = mod.account_for(spelling)
+            assert account is not None, spelling
+            assert account.id == amns.id, spelling
+            assert 'acronym' in note, spelling
+        _purge()
+
+
+def test_the_acronym_rule_needs_more_than_two_letters():
+    """"TS" for Tata Steel is a coincidence waiting to happen."""
+    mod = _sweep()
+    assert 'AMNS' in mod.acronyms_of('ArcelorMittal Nippon Steel India')
+    assert 'JSL' in mod.acronyms_of('Jindal Stainless Limited')
+    assert not any(len(a) < 3 for a in mod.acronyms_of('Tata Steel'))
+
+
+def test_a_longer_name_matches_the_account_it_extends():
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        held = Company(name='ZV Hindustan Cables', is_active=True)
+        db.session.add(held)
+        db.session.commit()
+        # "Limited" alone normalises away, so use a name that really
+        # is the account's plus more of it.
+        account, note = mod.account_for(
+            'ZV Hindustan Cables Projects Division')
+        assert account is not None and account.id == held.id
+        assert 'without the rest of it' in note
+        _purge()
+
+
+def test_a_short_name_is_never_matched_by_containment():
+    """On four characters there is no reading that separates BHEL
+    from BEML — `account_match` refuses to resemble a short name at
+    all, and so does this."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        db.session.add(Company(name='ZV Co', is_active=True))
+        db.session.commit()
+        account, _note = mod.account_for('ZV Completely Other Works')
+        assert account is None
+        _purge()
+
+
+def test_a_matched_account_is_given_the_buyers_spelling():
+    """So the NEXT RFQ matches on the name, and a person reading the
+    account can see what its mail arrives under. The account keeps
+    the name somebody gave it."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        amns = Company(name='Amns', is_active=True)
+        db.session.add(amns)
+        db.session.commit()
+        lead = _portal_lead('RFX-56174 | Technical is now live',
+                            key='RFX-56174')
+        _trail(lead, 'Project Invitation from ArcelorMittal',
+               'invited to RFX-56174 by ArcelorMittal Nippon Steel '
+               'India Limited.')
+        found, _accounts = mod.leads_on_a_portal()
+        planned = mod.plan(found)
+        batch = mod.next_batch_id()
+        mod.apply(planned, batch=batch, actor='PCM001')
+
+        again = db.session.get(Company, amns.id)
+        assert again.name == 'Amns'
+        assert 'ArcelorMittal Nippon Steel India Limited' in \
+            (again.aliases or [])
+        assert db.session.get(Lead, lead.id).company_id == amns.id
+        # And the alias now does the matching on its own.
+        account, note = mod.account_for(
+            'ArcelorMittal Nippon Steel India Limited')
+        assert account.id == amns.id
+        assert note == ''
+
+        mod.undo(batch)
+        assert (db.session.get(Company, amns.id).aliases or []) == []
+        _purge()
+
+
+def test_no_second_account_for_a_customer_that_has_one():
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        db.session.add(Company(name='Amns', is_active=True))
+        db.session.commit()
+        for n, key in enumerate(('RFX-1001', 'RFX-1002', 'RFX-1003')):
+            lead = _portal_lead(f'{key} | Technical is now live',
+                                key=key)
+            _trail(lead, 'Project Invitation',
+                   f'invited to {key} by ArcelorMittal Nippon Steel '
+                   f'India Limited.')
+        found, _a = mod.leads_on_a_portal()
+        mod.apply(mod.plan(found), batch=mod.next_batch_id(),
+                  actor='PCM001')
+        assert Company.query.filter(
+            Company.name.like('%ArcelorMittal%')).count() == 0
+        assert Company.query.filter(Company.name == 'Amns').count() == 1
+        _purge()
+
+
+# ── 3 · the review bucket, split ───────────────────────────────────
+def test_a_lead_somebody_is_working_on_is_never_archived():
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        from app import LeadNote
+
+        worked = _portal_lead('Invitation to quote', days=90,
+                              body='Log in.', stage='RFQ Generated')
+        db.session.add(LeadNote(lead_id=worked.id,
+                                note_text='Called the desk',
+                                note_type='call'))
+        db.session.commit()
+        done = mod.work_on(worked)
+        assert 'a note' in done
+        assert any(d.startswith('stage') for d in done)
+
+        row = [r for r in mod.plan(mod.leads_on_a_portal()[0])
+               if r['lead'].id == worked.id][0]
+        assert row['verdict'] == 'to review'
+        assert 'worked on' in row['why']
+        _purge()
+
+
+def test_each_kind_of_work_counts():
+    """Quote, RFQ, call, note, outgoing mail, stage — any one of them
+    means a person has handled this enquiry."""
+    mod = _sweep()
+    from datetime import date
+
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        for field, value, word in (
+                ('quote_date', date(2026, 11, 1), 'quoted'),
+                ('rfq_date', date(2026, 11, 1), 'RFQ'),
+                ('phone_call_date', date(2026, 11, 1), 'called'),
+                ('meeting_date', date(2026, 11, 1), 'met')):
+            lead = _portal_lead(f'ZV {word} notice', days=90)
+            setattr(lead, field, value)
+            db.session.commit()
+            assert word in mod.work_on(lead), word
+
+        sent = _portal_lead('ZV outgoing notice', days=90)
+        _trail(sent, 'Our quotation', 'Please find attached.',
+               direction='outbound')
+        assert 'mail sent' in mod.work_on(sent)
+        _purge()
+
+
+def test_an_untouched_notice_older_than_thirty_days_is_archived():
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        old = _portal_lead('RFX-40011 | Event withdrawn', days=55,
+                           key='RFX-40011', body='Withdrawn.')
+        row = [r for r in mod.plan(mod.leads_on_a_portal()[0])
+               if r['lead'].id == old.id][0]
+        assert row['verdict'] == 'archive'
+        assert mod.ARCHIVE_AFTER_DAYS == 30
+        assert mod.ARCHIVE_REASON == 'portal notice — no buyer'
+        _purge()
+
+
+def test_a_young_untouched_notice_waits_in_the_review_queue():
+    """The invitation that names the buyer may still arrive —
+    `trail_of` reads the whole trail, so only time can decide that
+    nothing more is coming."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        young = _portal_lead('RFX-57001 | Technical is now live',
+                             days=4, key='RFX-57001', body='No buyer.')
+        row = [r for r in mod.plan(mod.leads_on_a_portal()[0])
+               if r['lead'].id == young.id][0]
+        assert row['verdict'] == 'to review'
+        assert 'still arrive' in row['why']
+        _purge()
+
+
+def test_the_archive_goes_through_the_service_and_can_be_undone():
+    """Not a column the sweep writes itself: `lead_archive` asks
+    whether this actor may archive this lead, and that permission is
+    why the column can be trusted."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        old = _portal_lead('RFX-40012 | Technical is now live',
+                           days=71, key='RFX-40012', body='No buyer.')
+        lead_id = old.id
+        batch = mod.next_batch_id()
+        mod.apply(mod.plan(mod.leads_on_a_portal()[0]), batch=batch,
+                  actor='PCM001')
+        again = db.session.get(Lead, lead_id)
+        assert again.is_archived is True
+        assert again.archive_reason == 'portal notice — no buyer'
+
+        mod.undo(batch)
+        back = db.session.get(Lead, lead_id)
+        assert not back.is_archived
+        assert back.company == 'Procol'
+        _purge()
+    source = open(SCRIPT).read()
+    assert 'lead_archive.archive(' in source
+    assert 'lead_archive.restore(' in source
+
+
+def test_the_counts_are_printed_per_bucket_and_per_portal(capsys):
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        db.session.add(Company(name='Amns', is_active=True))
+        db.session.commit()
+        named = _portal_lead('RFX-2001 | live', key='RFX-2001')
+        _trail(named, 'Project Invitation',
+               'invited to RFX-2001 by ArcelorMittal Nippon Steel '
+               'India Limited.')
+        _portal_lead('RFX-2002 | live', key='RFX-2002', days=90,
+                     body='No buyer.')
+        found, accounts = mod.leads_on_a_portal()
+        mod.report(mod.plan(found), accounts)
+        out = capsys.readouterr().out
+        _purge()
+    assert '── by bucket ──' in out
+    assert '── by bucket and portal ──' in out
+    assert 'procol.in' in out
+    assert 'link' in out and 'archive' in out
+
+
+# ── 4 · the link rows on their own ─────────────────────────────────
+def test_only_link_writes_the_links_and_leaves_the_rest():
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        db.session.add(Company(name='Amns', is_active=True))
+        db.session.commit()
+        named = _portal_lead('RFX-3001 | live', key='RFX-3001')
+        _trail(named, 'Project Invitation',
+               'invited to RFX-3001 by ArcelorMittal Nippon Steel '
+               'India Limited.')
+        old = _portal_lead('RFX-3002 | live', key='RFX-3002', days=90,
+                           body='No buyer.')
+        named_id, old_id = named.id, old.id
+
+        found, _a = mod.leads_on_a_portal()
+        done = mod.apply(mod.plan(found), batch=mod.next_batch_id(),
+                         actor='PCM001', only_link=True)
+        assert done['linked'] == 1
+        assert done['left for the second pass'] == 1
+        assert db.session.get(Lead, named_id).company_id is not None
+        left = db.session.get(Lead, old_id)
+        assert left.company == 'Procol'
+        assert not left.is_archived
+
+        # The second pass finds exactly what the first left.
+        found, _a = mod.leads_on_a_portal()
+        rest = mod.plan(found)
+        assert [r['lead'].id for r in rest] == [old_id]
+        _purge()
+
+
+def test_the_dry_run_offers_only_link():
+    source = open(SCRIPT).read()
+    assert "--only-link" in source
+    assert 'only_link' in source
+    assert 'does the ' in source      # the dry run's closing line
+
+
+def test_an_alias_can_be_stated_outright():
+    """"These two names are one customer" is a statement about the
+    master that outlives this backlog, and it beats every reading the
+    sweep makes on its own."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        amns = Company(name='Amns', is_active=True)
+        db.session.add(amns)
+        db.session.commit()
+        assert mod.add_aliases([f'{amns.id}=ArcelorMittal Nippon Steel'],
+                               actor='PCM001')
+        again = db.session.get(Company, amns.id)
+        assert 'ArcelorMittal Nippon Steel' in (again.aliases or [])
+        assert again.name == 'Amns'
+        # Now matched on the name rather than on an acronym.
+        account, note = mod.account_for('ArcelorMittal Nippon Steel')
+        assert account.id == amns.id and note == ''
+        # Said again, it changes nothing.
+        mod.add_aliases([f'{amns.id}=ArcelorMittal Nippon Steel'],
+                        actor='PCM001')
+        assert len(db.session.get(Company, amns.id).aliases) == 1
+        _purge()
+
+
+def test_a_bad_alias_pair_is_refused_rather_than_guessed_at():
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        assert mod.add_aliases(['no-equals-sign'], actor='PCM001') == 0
+        assert mod.add_aliases(['abc=Name'], actor='PCM001') == 0
+        assert mod.add_aliases(['99999=Name'], actor='PCM001') == 0
+
+
+def test_the_alias_step_needs_an_actor_and_an_apply():
+    source = open(SCRIPT).read()
+    assert '--add-alias needs --actor' in source
+    marker = source.index("if args.add_alias:")
+    assert 'DRY RUN' in source[marker:marker + 900]
