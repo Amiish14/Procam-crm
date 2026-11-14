@@ -78,8 +78,14 @@ def _rank(lead):
 MAX_PER_VALUE = 25
 
 
-def pairs(*, limit=100, within_days=None):
+def pairs(*, limit=100, within_days=None, offset=0, count=False):
     """Live duplicate pairs, strongest signal first.
+
+    `offset` and `limit` page the list. 15 Nov: the screen showed the
+    first hundred and nothing else, so a pair ranked 700th was
+    unreachable -- which on live was where the same-tender-number
+    pairs sat. `count=True` returns (every pair, the total) for a
+    caller that needs to say how many there are.
 
     One row per pair rather than per lead, and each pair appears once
     — a list that showed #10291/#10433 and #10433/#10291 would be
@@ -144,14 +150,28 @@ def pairs(*, limit=100, within_days=None):
         keep = max((lead, other), key=_rank)
         drop = other if keep is lead else lead
         out.append({
+            # 15 Nov. A pair sharing a portal tender number goes to
+            # the top, above its score. Not by inflating the score --
+            # a GSTIN really is a stronger statement about identity
+            # than an auction number -- but because this kind of pair
+            # is the one a person can act on in a second: the number
+            # is the buyer's own primary key for one event, both
+            # records are of that event, and there is nothing to
+            # judge. Live had three of them ranked past 700, behind
+            # hundreds of GSTIN pairs, on a screen that showed 100.
+            'top': 1 if ld.PORTAL in matched else 0,
             'score': score,
             'matched': matched,
             'why': '; '.join(ld.MEANING[k] for k in matched),
             'keep': _row(keep),
             'drop': _row(drop),
         })
-    out.sort(key=lambda p: (-p['score'], p['keep']['lead_id']))
-    return out[:limit]
+    out.sort(key=lambda p: (-p['top'], -p['score'],
+                            p['keep']['lead_id']))
+    if count:
+        return out, len(out)
+    start = max(int(offset or 0), 0)
+    return out[start:start + limit]
 
 
 def _row(lead):
