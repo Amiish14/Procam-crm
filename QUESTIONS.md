@@ -3420,3 +3420,69 @@ Per bucket, and per bucket **and portal**. Two portals behaving
 differently is the thing a single total hides, and the whole reason
 the first version of this work went wrong was that nobody could see
 the shape of what they were about to apply.
+
+## 84 — the alias was written first and never read
+
+`--apply --only-link --actor DIR12010 --add-alias 652="ArcelorMittal
+Nippon Steel"` created a new "ArcelorMittal Nippon Steel India …"
+account anyway — #11970, with #12162 linked to it. Exactly what the
+`--add-alias` flag existed to prevent.
+
+The order was right. The alias was written and committed before the
+plan was built; that part of the design held. What failed is that
+**only the strictest of the four readings ever looked at an alias**.
+Readings 2, 3 and 4 — acronym, and containment either way round —
+compared `account.name` and nothing else. So:
+
+* reading 1 asked "is the buyer's name exactly this alias?" The buyer
+  was "Arcelormittal Nippon Steel India Limited" and the alias was
+  "ArcelorMittal Nippon Steel". Not equal.
+* reading 2 asked "is 'Amns' the acronym of the buyer's name?" With a
+  small m, "Arcelormittal" is one word and its initials are **ANS**.
+  Not AMNS.
+* readings 3 and 4 compared the buyer against "Amns" — eight
+  characters short of the containment floor.
+
+Four readings, and the one fact that would have settled it was
+sitting in a list none of them opened. An alias is somebody saying
+"this account answers to this name"; every reading has to hear it, not
+just the one that demands the name be spelled identically.
+
+So `names_of(account)` is now the account's own name **and** its
+aliases, and all four readings run over all of them. On the live
+shape — account "Amns", alias "ArcelorMittal Nippon Steel", buyer
+"Arcelormittal Nippon Steel India Limited" — the old code says
+`create` and the new one says `link #652, "ArcelorMittal Nippon Steel"
+is "Arcelormittal Nippon Steel India Limited" without the rest of it`.
+Both are in a test.
+
+### and a re-run must not do it again
+
+Two more things stand between this and a second #11970:
+
+**A name that exists on a row the sweep skipped.** An account merged
+away keeps its row — inactive, renamed "<name> (merged into #652)" —
+and a deactivated account keeps its name too. Neither is a candidate
+to link to, and both mean a row with that name already exists.
+`namesake_elsewhere` reads the number out of the merge marker and
+links to that survivor; where there is no marker, it creates nothing
+and guesses nothing. So once #11970 has been merged into #652 by
+hand, the name leads back to #652 by itself, whatever any alias says.
+
+**A new bucket, `held`.** A buyer whose name is on an account somebody
+deactivated, with no survivor named, writes **nothing at all** — not a
+link, not a new account, not even "To review". The lead stays exactly
+as it is and the row is reported. A sweep that cannot tell which of
+two rows is the customer should stop, not pick.
+
+### three test files that left leads behind
+
+Found while fixing the above: `test_unowned_open_leads` counts open
+leads with no owner, and three of this week's test files were leaving
+some behind — so a leak in one file failed a test three files away
+with a number nobody could trace back. Two of them had no teardown at
+all and the third purged by company name, which misses a lead whose
+company the sweep has just changed to the buyer's. All three now purge
+on the SENDER as well, and take the mail trail and the notes with
+them: SQLite reuses row ids, and a lead deleted without its trail
+hands that trail to whatever is created next.

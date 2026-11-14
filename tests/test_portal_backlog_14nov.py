@@ -45,6 +45,7 @@ body's buyer now wins.
 import ast
 import importlib
 import os
+import pytest
 import sys
 import tempfile
 import types
@@ -471,3 +472,48 @@ def test_the_backfill_refuses_to_write_without_an_actor():
     source = open(KEYS).read()
     assert '--apply needs --actor' in source
     assert 'commit=False' in source      # one transaction, not many
+
+
+SENDERS = (PROCOL, ARIBA)
+
+# ── and the suite is left as it was found ──────────────────────────
+@pytest.fixture(scope='module', autouse=True)
+def _leave_nothing_behind():
+    """Every lead these tests drive through the intake, removed.
+
+    The suites share one in-process database. An open lead with no
+    owner left behind here is counted by `test_unowned_open_leads`,
+    which then fails three files away with a number nobody can trace
+    -- and SQLite reuses row ids, so a lead deleted without its mail
+    trail hands that trail to whatever is created next.
+    """
+    yield
+    with flask_app.app_context():
+        from app import Company, Lead, LeadEmail, LeadNote
+        from app.models.audit import AuditEvent
+
+        ids = [l.id for l in Lead.query.filter(
+            Lead.original_email_from.in_(SENDERS)).all()]
+        ids += [l.id for l in Lead.query.filter(
+            db.or_(Lead.company.like('ZQ%'), Lead.company.like('ZP%'),
+                   Lead.company.like('ZK%'),
+                   Lead.company.in_(('To review', 'Procol', '')),
+                   Lead.company.is_(None))).all()]
+        ids = sorted(set(ids))
+        if ids:
+            for model in (LeadEmail, LeadNote):
+                model.query.filter(model.lead_id.in_(ids)).delete(
+                    synchronize_session=False)
+            AuditEvent.query.filter(
+                AuditEvent.entity_type == 'lead',
+                AuditEvent.entity_id.in_(
+                    [str(i) for i in ids])).delete(
+                        synchronize_session=False)
+            Lead.query.filter(Lead.id.in_(ids)).delete(
+                synchronize_session=False)
+        Company.query.filter(db.or_(
+            Company.name.like('ZQ%'), Company.name.like('ZP%'),
+            Company.name.like('ZK%'),
+            Company.name == 'Procol')).delete(
+                synchronize_session=False)
+        db.session.commit()

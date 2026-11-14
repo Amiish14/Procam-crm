@@ -995,3 +995,197 @@ def test_the_alias_step_needs_an_actor_and_an_apply():
     assert '--add-alias needs --actor' in source
     marker = source.index("if args.add_alias:")
     assert 'DRY RUN' in source[marker:marker + 900]
+
+
+# ═══ the live run of PACC-20261114-2 ═══════════════════════════════
+#
+# `--apply --only-link --add-alias 652=...` created a new
+# "ArcelorMittal Nippon Steel India ..." account anyway (#11970, with
+# #12162 on it). The alias WAS written first and committed first. Only
+# the strictest reading ever looked at it -- exact equality -- and the
+# buyer's name carried "India Limited" on top of the alias, so nothing
+# matched; and the acronym reading could not save it either, because
+# "Arcelormittal" with a small m is one word whose initials are ANS.
+#
+# An alias is somebody saying "this account answers to this name".
+# Every reading has to hear it.
+def _amns(alias=None, name='Amns'):
+    account = Company(name=name, is_active=True,
+                      aliases=[alias] if alias else [])
+    db.session.add(account)
+    db.session.commit()
+    return account
+
+
+def _invited_lead(key, buyer, *, days=6):
+    lead = _portal_lead(f'{key} | Technical is now live', key=key,
+                        days=days, body='Log in to respond.')
+    _trail(lead, f'Project Invitation from {buyer}',
+           f'You have been invited to {key} by {buyer}.')
+    return lead
+
+
+LIVE_SPELLING = 'Arcelormittal Nippon Steel India Limited'
+
+
+def test_the_live_failure_in_one_test():
+    """The alias is on the account; the buyer's name is the alias plus
+    two words; the account's own name is an acronym that this spelling
+    does not produce. It must link, and it must not create."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        amns = _amns(alias='ArcelorMittal Nippon Steel')
+        lead = _invited_lead('RFX-56172', LIVE_SPELLING)
+
+        account, note = mod.account_for(LIVE_SPELLING)
+        assert account is not None, 'this is PACC-20261114-2 again'
+        assert account.id == amns.id
+        assert 'without the rest of it' in note
+
+        row = [r for r in mod.plan(mod.leads_on_a_portal()[0])
+               if r['lead'].id == lead.id][0]
+        assert row['verdict'] == 'link'
+        assert row['account'].id == amns.id
+        _purge()
+
+
+def test_the_command_line_that_failed_on_live():
+    """End to end, through `main`, with the flags as they were typed:
+    the alias is written and then used in the same run."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        amns = _amns()                      # no alias yet
+        lead = _invited_lead('RFX-55831', LIVE_SPELLING)
+        amns_id, lead_id = amns.id, lead.id
+        before = Company.query.count()
+
+    rc = mod.main(['--apply', '--only-link', '--actor', 'PCM001',
+                   '--add-alias',
+                   f'{amns_id}=ArcelorMittal Nippon Steel'])
+    assert rc == 0
+
+    with flask_app.app_context():
+        assert Company.query.count() == before, 'an account was created'
+        assert db.session.get(Lead, lead_id).company_id == amns_id
+        _purge()
+
+
+def test_the_aliases_are_written_before_the_matching():
+    source = open(SCRIPT).read()
+    alias_step = source.index('if args.add_alias:')
+    matching = source.index('found, portal_accounts = leads_on_a_portal()')
+    assert alias_step < matching
+
+
+def test_every_reading_reads_the_aliases_too():
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        # the acronym, on an alias rather than on the name
+        one = _amns(alias='AMNS', name='ZV Holdings')
+        account, note = mod.account_for('ArcelorMittal Nippon Steel')
+        assert account is not None and account.id == one.id
+        assert 'acronym' in note
+        _purge()
+
+        # containment the other way round, also on an alias
+        two = _amns(alias='ZV Harbour Cranes Mumbai',
+                    name='ZV Cables')
+        account, note = mod.account_for('ZV Harbour Cranes')
+        assert account is not None and account.id == two.id
+        assert 'without the rest of it' in note, note
+        _purge()
+
+
+# ── and a re-run must not recreate what was merged away ────────────
+def test_a_merged_away_row_leads_to_its_survivor():
+    """The hand-merge keeps the loser's row, inactive and renamed
+    "<name> (merged into #652)". A buyer whose RFQs still arrive under
+    the old spelling has to reach the survivor, not a third row."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        amns = _amns()
+        db.session.add(Company(
+            name=f'ArcelorMittal Nippon Steel India Limited '
+                 f'(merged into #{amns.id})', is_active=False))
+        db.session.commit()
+        lead = _invited_lead('RFX-56168', LIVE_SPELLING)
+
+        survivor, why = mod.namesake_elsewhere(LIVE_SPELLING)
+        assert survivor is not None and survivor.id == amns.id
+        assert f'merged into #{amns.id}' in why
+
+        row = [r for r in mod.plan(mod.leads_on_a_portal()[0])
+               if r['lead'].id == lead.id][0]
+        assert row['verdict'] == 'link'
+        assert row['account'].id == amns.id
+        _purge()
+
+
+def test_names_of_sees_through_the_merge_marker():
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        account = Company(name='ZV Steel Works (merged into #652)',
+                          is_active=False, aliases=['ZV Steels'])
+        db.session.add(account)
+        db.session.commit()
+        names = mod.names_of(account)
+        assert 'ZV Steel Works' in names
+        assert 'ZV Steels' in names
+        _purge()
+
+
+def test_a_deactivated_namesake_holds_the_lead_and_writes_nothing():
+    """Not recreated, not linked to, and not quietly sent to the
+    review queue either: the lead stays as it is until a person has
+    looked at the row somebody deactivated."""
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        db.session.add(Company(name='ZV Orphan Works', is_active=False))
+        db.session.commit()
+        lead = _invited_lead('RFX-60001', 'ZV Orphan Works')
+        lead_id = lead.id
+        was = db.session.get(Lead, lead_id).company
+
+        rows = mod.plan(mod.leads_on_a_portal()[0])
+        row = [r for r in rows if r['lead'].id == lead_id][0]
+        assert row['verdict'] == 'held'
+        assert 'deactivated' in row['why']
+
+        done = mod.apply(rows, batch=mod.next_batch_id(), actor='PCM001')
+        assert done['held for a person'] == 1
+        held = db.session.get(Lead, lead_id)
+        # Exactly as it was: not linked, not renamed, not archived.
+        assert held.company == was
+        assert held.company_id is None
+        assert not held.is_archived
+        assert Company.query.filter(
+            Company.name == 'ZV Orphan Works').count() == 1
+        _purge()
+
+
+def test_the_held_bucket_is_counted_and_explained(capsys):
+    mod = _sweep()
+    with flask_app.app_context():
+        db.create_all()
+        _purge()
+        db.session.add(Company(name='ZV Orphan Works', is_active=False))
+        db.session.commit()
+        _invited_lead('RFX-60002', 'ZV Orphan Works')
+        found, accounts = mod.leads_on_a_portal()
+        mod.report(mod.plan(found), accounts)
+        out = capsys.readouterr().out
+        _purge()
+    assert 'held' in out
+    assert 'already exists' in out
