@@ -3066,3 +3066,105 @@ it past the window and it reported a silent drop that did not exist.
 A false alarm from a guard against false silence is worse than no
 guard, because the next one is read as noise. It now finds the
 `if blocked:` branch by AST and asks what it calls, wherever it sits.
+
+## 80 — the portal backlog: two features that shipped and did nothing
+
+The release before this one taught the intake that a procurement
+portal beats the sender denylist, and the release before that taught
+it to recognise promotional mail. Both were written, both were tested,
+and **neither ever ran**.
+
+`process_single_message` imports `lead_intake as _li` at the
+classifier, two thirds of the way down a 900-line function. A name a
+function imports anywhere is local to the whole of it, so the two
+rules written *above* that import — the promotional check and the
+portal check — raised `UnboundLocalError` on their first line. Both
+sit inside a `try` that logs and carries on, because neither is worth
+losing an email over. So live logged two exceptions every few minutes
+and went on blocking portal mail, while every test asserting on the
+rules themselves passed: they tested `portal_rfq.describe` and
+`bulk_mail.classify`, which are correct, and nothing ran the function
+that was supposed to call them.
+
+It was found by writing a test that drives `process_single_message`
+itself — `graph=None`, which the intake suites already do — rather
+than another test about the rule. Both faults appeared in the first
+run. There is now a guard that reads every function in `email_ingest`
+and `app/services` and fails if a name bound by an import inside a
+function is read above that import.
+
+### and then the classifier refused them anyway
+
+With `_li` bound, the portal mail reached the classifier and was
+skipped as `I_non_business` — "no cargo, RFQ, route or contact
+signal". Which is exactly what a portal RFQ looks like: a template
+with a number in it and the cargo behind a login. The denylist had
+been taught that a portal wins; the classifier had not. A portal
+message with no lead of its own now sets that refusal aside and falls
+through, the same way a colleague's internal forward does.
+
+### and then it had no owner
+
+With the lead created, the RFQ-desk routing of 13 Nov's item 11 ran,
+chose the desk — and wrote nothing. The branch `return _desk, None`s
+the code it decided on without calling `lead_assignment.assign`, and
+its caller ignores the return value. Every sibling path in that
+function assigns; this one only answered. So the routing was right and
+the lead arrived with no owner at all, which is the state the branch
+above it exists to prevent. A refusal now falls through to the
+ordinary rules rather than leaving the lead empty.
+
+Four layers, and the feature was only real once all four agreed.
+The first portal lead then arrived under the company **"Procol"** —
+the parser reads a company out of the sender domain, and "Procol" is
+neither empty nor one of the placeholders, so the buyer read out of
+the body was never used. `buyer_from` already refuses the portal's own
+name as an answer; `names_the_portal` now refuses it here too.
+
+Every one of the four was found by the same test: one that drives
+`process_single_message` and then looks at the database. Not one of
+them was visible from a test about a rule.
+
+### one lead per event, which is what was actually asked for
+
+74 messages, of which ~30 are withdrawals and most of the rest
+reminders. The unit of work is the **event**, not the message:
+`portal_rfq.event_key` reads the number every mail of a set carries
+(RFX-, RFQ-, an Ariba document or event id) and stores it in
+`Lead.portal_key`, which CRM-COCKPIT-02 §5.6 built for the Indo Tech
+reverse auctions. The wide patterns are asked **only** for a listed
+portal sender: "RFQ-001" in two customers' own mail is two customers,
+and keying on it would merge them.
+
+A withdrawal closes the lead as Lost, "withdrawn by buyer", with the
+stage it came from in the audit row, and never touches a lead
+somebody already closed. An "about to end" states the minute, which
+is the submission deadline, unconfirmed as §2.5 requires.
+
+**The one judgement call.** A withdrawal of an event with no lead
+creates nothing. ~30 of the 74 are that: a lead born Lost is not work
+anybody can do. It is written into the ingest log with its number
+instead, so it is a refusal with a record and not a silent drop. A
+*reminder* for an unseen event does become a lead — the opposite
+decision, deliberately: a reminder means the auction is still open and
+we can still bid.
+
+**What the dry run cannot know.** The ingest log keeps the subject and
+the sender, not the body, so the event number can only be read from
+the subject there. A message numbered only in its body is counted as
+an event of its own, and may still join another once the body is
+fetched at `--apply`. So the event count is an upper bound on the
+leads, never an under-count, and the print says so.
+
+### the figure that was still wrong
+
+"The last message that became something: 2026-11-03", beside 69
+landings in fourteen days. The first fix made both figures come from
+one pass over one row set, which was necessary and not sufficient: the
+pass was ordered on `received_at` first — the date the **customer**
+sent the mail. A message received on 3 November and turned into a lead
+on the 12th is dated the 3rd by that rule, and a backlog being
+re-processed is nothing but old mail landing now. The landing question
+is now answered on the CRM's own clock (`updated_at`, else
+`created_at`), and the mail's own date is printed beside it rather
+than instead of it.

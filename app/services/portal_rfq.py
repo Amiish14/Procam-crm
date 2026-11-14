@@ -180,18 +180,199 @@ def _tidy(raw):
     return text
 
 
+def names_the_portal(name, portal=''):
+    """Is this "company" the portal itself rather than a buyer?
+
+    14 Nov. The parser reads a company out of the sender domain, so a
+    portal RFQ arrived with the company "Procol" -- not empty and not
+    one of the placeholders, so the buyer read out of the body was
+    never used and every portal RFQ would have been filed under one
+    invented customer. That is the one answer `buyer_from` already
+    refuses, and it has to be refused here too.
+    """
+    low = ' '.join(str(name or '').split()).lower()
+    if not low:
+        return False
+    if any(bad in low for bad in _NOT_A_BUYER):
+        return True
+    for label in str(portal or '').lower().split('.'):
+        if len(label) > 3 and label in low:
+            return True
+    return False
+
+
 def describe(address, subject='', body=''):
     """What the intake records about a portal message."""
     portal = is_portal(address)
     if not portal:
         return None
     buyer, how = buyer_from(subject, body)
+    event = event_key(address, subject, body)
+    kind = notice_kind(subject, body)
     return {
         'portal': portal,
         'buyer': buyer,
         'how': how,
         'company': buyer or UNKNOWN_BUYER,
+        #: The event this message belongs to, so the set of mails
+        #: about one auction becomes one lead and not five.
+        'event': event,
+        'notice': kind,
         'reason': (f'{REASON} (via {portal}'
+                   + (f'; {event}' if event else '')
+                   + (f'; {kind}' if is_notice(kind) else '')
                    + (f'; buyer read from {how}' if buyer
                       else '; the buyer could not be read') + ')'),
     }
+
+
+# ── one lead per portal EVENT, not per message ───────────────────────
+#
+# 13 Nov. Of the 74 messages held back by the denylist, about 30 are
+# "withdrawn" notices and most of the rest are reminders. Re-processing
+# them one lead per message would have made 74 leads for perhaps a
+# dozen real auctions, which is a worse state than the block was.
+#
+# The event is the thing. A portal prints its number in every mail of
+# the set -- the invitation, the reminder, "technical live", the
+# corrigendum and the withdrawal all carry it -- so the number is what
+# holds them together. `Lead.portal_key` already exists for exactly
+# this (CRM-COCKPIT-02 §5.6, the Indo Tech reverse auctions) and this
+# is the same mechanism with a wider key: the numbers the two reported
+# portals use, which §5.6 did not know.
+#
+# THE WIDER KEY IS ONLY EVER APPLIED TO A PORTAL
+#
+# `quote_due.portal_key` is deliberately narrow because it runs on
+# every message in the mailbox, and "RFQ-001" in two customers' own
+# mail is two customers, not one event. So the broad patterns below
+# are asked **only** when the sender is a listed portal, where the
+# number is a machine's primary key and not a human's filing habit.
+
+#: How the two reported portals number an event.
+#: `no.`, `number`, `#` and `id` between the word and the digits are
+#: all shapes these mailboxes carry -- "RFx no. 44711" is how Procol
+#: writes it in a reminder and "RFX 44711" is how it writes the
+#: invitation, and the two have to read as one event.
+_SEP = r'[\s\-_#:]*(?:no\.?|number|id)?[\s\-_#:]*'
+
+EVENT_PATTERNS = (
+    (r'\bRFX' + _SEP + r'(\d{3,10})\b', 'RFX-{}'),
+    (r'\bRFQ' + _SEP + r'(\d{3,10})\b', 'RFQ-{}'),
+    (r'\bRFP' + _SEP + r'(\d{3,10})\b', 'RFP-{}'),
+    # Ariba: Doc1234567890 in the subject, "Event ID" in the body.
+    (r'\bDoc(?:ument)?[\s\-_#:]*(?:id[\s:#]*)?(\d{6,14})\b',
+     'ARIBA-DOC{}'),
+    (r'\bEvent[\s\-_#:]*id[\s:#\-]*([A-Za-z0-9\-]{3,24})\b',
+     'ARIBA-EVENT{}'),
+)
+
+_EVENT = tuple((re.compile(p, re.I), shape) for p, shape in EVENT_PATTERNS)
+
+
+def event_key(address='', subject='', body=''):
+    """The portal event this message belongs to, or ''.
+
+    `quote_due.portal_key` first and unchanged, so a lead already
+    keyed on RA-57103 keeps that key and nothing outside the portals
+    changes. The portal's own numbering is tried only for a listed
+    portal -- see above.
+
+    The subject is tried before the body for the same reason
+    `portal_key` does it: a notice that quotes the mail before it
+    carries that mail's number further down.
+    """
+    try:
+        from app.services import quote_due
+        found = quote_due.portal_key(subject or '', body or '')
+    except Exception:                                     # noqa: BLE001
+        found = ''
+    if found:
+        return found
+    if not is_portal(address):
+        return ''
+    for text in (subject or '', body or ''):
+        if not text:
+            continue
+        for pattern, shape in _EVENT:
+            m = pattern.search(text)
+            if m:
+                return shape.format(m.group(1).upper())[:60]
+    return ''
+
+
+# ── what KIND of mail about the event this is ────────────────────────
+#: The invitation itself: the one that is worth a lead of its own.
+INVITE = 'invite'
+#: "Your response is due", "you have not responded".
+REMINDER = 'reminder'
+#: "Technical bid live", a corrigendum, an updated event.
+TECHNICAL = 'technical'
+#: "About to end", "closes in two hours" — carries a deadline.
+ENDING = 'ending'
+#: "Withdrawn by the buyer". The event is over and we did not lose it
+#: on price.
+WITHDRAWN = 'withdrawn'
+
+KINDS = (INVITE, REMINDER, TECHNICAL, ENDING, WITHDRAWN)
+
+#: What the lead's `lost_reason` says when a buyer withdraws. Asked
+#: for in these words on 13 Nov. It is not one of the six offered in
+#: the Lost dialog, deliberately: an auction the buyer called off is
+#: not a deal we lost, and the Lost-Reason chart should not fold it
+#: into "Client dropped project".
+LOST_REASON = 'withdrawn by buyer'
+
+#: Ordered. A withdrawal of an event that was about to end is a
+#: withdrawal; a reminder is the weakest reading and comes last.
+NOTICE_PATTERNS = (
+    (WITHDRAWN, (r'\bwithdraw(?:n|al|s|ing)?\b',
+                 r'\bcancell?ed\b',
+                 r'\bretracted\b',
+                 r'\bevent\s+(?:has\s+been\s+)?(?:closed|discontinued|'
+                 r'abandoned)\b')),
+    (ENDING, (r'\babout\s+to\s+end\b',
+              r'\bending\s+soon\b',
+              r'\bends?\s+(?:on|at|in)\b',
+              r'\bclos(?:es|ing)\s+(?:soon|on|at|in)\b',
+              r'\blast\s+chance\b',
+              r'\bfinal\s+call\b')),
+    (TECHNICAL, (r'\btechnical(?:ly)?\s+(?:live|bid|stage|round|'
+                 r'evaluation)\b',
+                 r'\bcorrigendum\b',
+                 r'\bamend(?:ed|ment)\b',
+                 r'\b(?:event|rfx|rfq|auction)\s+(?:has\s+been\s+)?'
+                 r'(?:updated|revised|extended)\b',
+                 r'\bauction\s+is\s+(?:now\s+)?live\b',
+                 r'\bprice\s+bid\b')),
+    (REMINDER, (r'\breminder\b',
+                r'\bresponse\s+is\s+due\b',
+                r'\bawaiting\s+your\s+(?:response|quote|offer|bid)\b',
+                r'\b(?:have\s+)?not\s+(?:yet\s+)?(?:responded|'
+                r'submitted|quoted)\b',
+                r'\bpending\s+(?:your\s+)?(?:response|submission|bid)\b',
+                r'\bplease\s+submit\b')),
+)
+
+_NOTICE = tuple((kind, tuple(re.compile(p, re.I) for p in patterns))
+                for kind, patterns in NOTICE_PATTERNS)
+
+
+def notice_kind(subject='', body=''):
+    """INVITE | REMINDER | TECHNICAL | ENDING | WITHDRAWN.
+
+    The subject carries the kind on both reported portals, and the
+    head of the body is read as well because Ariba puts "This event
+    has been withdrawn" in the first paragraph and nothing in the
+    subject but the document number.
+    """
+    text = f"{subject or ''}\n{(body or '')[:_HEAD]}"
+    for kind, patterns in _NOTICE:
+        if any(p.search(text) for p in patterns):
+            return kind
+    return INVITE
+
+
+def is_notice(kind):
+    """Anything that is not the invitation itself."""
+    return kind in (REMINDER, TECHNICAL, ENDING, WITHDRAWN)

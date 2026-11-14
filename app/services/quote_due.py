@@ -229,6 +229,10 @@ BODY_PHRASES = (
     # are last in the list and still need a date immediately after
     # them, so "the window closes eventually" reads nothing.
     'now closes', 'closes', 'closing',
+    # 13 Nov. The portals' "about to end" notice, which is the one
+    # mail of the set that always states the minute it ends at.
+    'about to end', 'ends on', 'ends at', 'ending on',
+    'event end date', 'auction end date',
     'quotation required by', 'quote required by',
     'offers are to reach us by', 'deadline',
 )

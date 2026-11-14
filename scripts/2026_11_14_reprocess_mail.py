@@ -19,10 +19,22 @@ portals: what they send is an RFQ or a tender invitation, from a
 buyer. `--portals` lists all 72 with the subject and the real sender,
 and `--apply --portals` puts each one through the intake again.
 
-They come back differently now. `data/portal_senders.txt` wins over
-the denylist, so each becomes a lead flagged for review, owned by the
-RFQ desk, with the buyer read out of the body -- see
-`app/services/portal_rfq.py`.
+They come back differently now, and -- since 13 Nov -- grouped.
+`data/portal_senders.txt` wins over the denylist, and a lead is made
+per portal EVENT rather than per message: the number the portal prints
+in every mail of the set (RFX-, RFQ-, RA-, an Ariba document or event
+id) holds the invitation, the reminders, "technical live", "about to
+end" and the withdrawal together on one lead, flagged for review and
+owned by the RFQ desk, with the buyer read out of the body. A
+withdrawal closes that lead as Lost ("withdrawn by buyer"); an "about
+to end" sets its submission deadline, unconfirmed. See
+`app/services/portal_rfq.py` and `app/services/portal_event.py`.
+
+`--check --portals` prints EVENTS, with the messages counted under
+them, and says how many leads would be created. A withdrawal of an
+event that has no lead creates nothing -- a lead born Lost is not
+something anybody can act on -- and is recorded in the ingest log
+with its number instead.
 
 ITEM 3 — THE ONE THAT FAILED
 
@@ -89,23 +101,158 @@ def blocked_portal_rows(days=None):
     return out
 
 
+def group_events(rows):
+    """[(key, [(row, portal), ...]), ...] — the EVENTS, not the mails.
+
+    13 Nov, and the reason this script was rewritten. Of the 74
+    messages the denylist held back, about 30 are "withdrawn" notices
+    and most of the rest reminders: one lead per message would have
+    made 74 leads for perhaps a dozen auctions. The number the portal
+    prints in every mail of the set is the event
+    (`portal_rfq.event_key`), and that is what a lead is made per.
+
+    ONE HONEST LIMIT, SAID IN THE OUTPUT
+
+    The ingest log keeps the subject and the sender, NOT the body. So
+    the key here can only be read from the subject, and a message
+    whose number is in the body alone is counted as an event of its
+    own below. At `--apply` the message is fetched from Graph and the
+    body IS read, so such a message may still join another event's
+    lead. The event count here is therefore an upper bound on the
+    leads, never an under-count, and the print says so.
+    """
+    from app.services import portal_rfq
+
+    groups = {}
+    for row, portal in rows:
+        key = portal_rfq.event_key(row.from_addr or '',
+                                   row.subject or '', '')
+        if not key:
+            key = f'(no number in the subject) #{row.id}'
+        groups.setdefault(key, []).append((row, portal))
+    ordered = sorted(
+        groups.items(),
+        key=lambda item: min(
+            str(r.received_at or r.created_at or '') for r, _p in item[1]))
+    return ordered
+
+
+def _lead_for(key):
+    """The lead that already carries this event number, if any."""
+    from app import Lead
+
+    if key.startswith('('):
+        return None
+    try:
+        return (Lead.query
+                .filter(Lead.portal_key == key,
+                        Lead.is_archived.isnot(True))
+                .order_by(Lead.id.asc()).first())
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def _kinds(messages):
+    from app.services import portal_rfq
+
+    return Counter(portal_rfq.notice_kind(row.subject or '', '')
+                   for row, _portal in messages)
+
+
+def plan(groups):
+    """What each event would do. [(key, messages, verdict, note)]."""
+    from app.services import portal_rfq
+
+    out = []
+    for key, messages in groups:
+        kinds = _kinds(messages)
+        held = _lead_for(key)
+        unknown = key.startswith('(')
+        if held is not None:
+            verdict = 'attach'
+            note = (f'lead #{held.id} already carries {key} — all '
+                    f'{len(messages)} message(s) go on its trail')
+        elif (set(kinds) == {portal_rfq.WITHDRAWN}):
+            verdict = 'no lead'
+            note = ('every message about this event is a withdrawal '
+                    'and no lead exists — recorded in the ingest log, '
+                    'no lead created')
+        else:
+            verdict = 'create'
+            others = len(messages) - 1
+            note = (f'one lead, from the earliest message; the other '
+                    f'{others} '
+                    + ('message goes' if others == 1 else 'messages go')
+                    + ' on its trail'
+                    if others else 'one lead')
+            if kinds.get(portal_rfq.WITHDRAWN):
+                note += '; then closed as Lost (withdrawn by buyer)'
+            elif kinds.get(portal_rfq.ENDING):
+                note += '; the deadline read off the "about to end" notice'
+        if unknown:
+            note += (' — no number in the subject, so this may still '
+                     'join another event once the body is read')
+        out.append((key, messages, verdict, note))
+    return out
+
+
 def report_portals(rows):
+    """The events, with the messages counted under them."""
     from app.services import portal_rfq
 
     print(f'\n══ {len(rows)} blocked message(s) from a procurement '
           f'portal ══')
     if not rows:
         print('  none on record.')
-        return
+        return []
     by_portal = Counter(portal for _row, portal in rows)
     for portal, n in by_portal.most_common():
         print(f'  {n:>5}  {portal}')
-    print('\n  every one of them, by subject and real sender:')
-    print(f'  {"when":<17} {"sender":<34} subject')
-    for row, _portal in rows:
-        when = str(row.received_at or row.created_at or '')[:16]
-        print(f'  {when:<17} {(row.from_addr or "—")[:34]:<34} '
-              f'{(row.subject or "")[:60]}')
+
+    groups = group_events(rows)
+    planned = plan(groups)
+    print(f'\n══ {len(planned)} portal EVENT(S) in those '
+          f'{len(rows)} message(s) ══')
+    print('  One lead per event, not per message. The later notices '
+          '(reminder, technical live,')
+    print('  about to end, withdrawn) go on that lead\'s mail trail.\n')
+    print(f'  {"event":<26} {"msgs":>4}  {"does":<8} what, and the '
+          f'kinds in it')
+    for key, messages, verdict, note in planned:
+        kinds = _kinds(messages)
+        spread = '+'.join(f'{n} {kind}' for kind, n
+                          in kinds.most_common())
+        first = min(str(r.received_at or r.created_at or '')[:10]
+                    for r, _p in messages)
+        last = max(str(r.received_at or r.created_at or '')[:10]
+                   for r, _p in messages)
+        when = first if first == last else f'{first}→{last}'
+        print(f'  {key[:26]:<26} {len(messages):>4}  {verdict:<8} '
+              f'{when}  {spread}')
+        print(f'  {"":<26} {"":>4}  {note}')
+
+    creates = [p for p in planned if p[2] == 'create']
+    attaches = [p for p in planned if p[2] == 'attach']
+    refused = [p for p in planned if p[2] == 'no lead']
+    print(f'\n  ── what --apply --portals would do ──')
+    print(f'  {len(creates):>5}  lead(s) would be CREATED — one per '
+          f'event, flagged for review, owned by the RFQ desk')
+    print(f'  {sum(len(m) for _k, m, _v, _n in creates) - len(creates):>5}'
+          f'  further message(s) would go on those leads\' trails')
+    print(f'  {len(attaches):>5}  event(s) already have a lead; their '
+          f'{sum(len(m) for _k, m, _v, _n in attaches)} message(s) '
+          f'attach to it')
+    print(f'  {len(refused):>5}  event(s) are withdrawals of events '
+          f'with no lead: recorded, NO lead created')
+    closes = sum(1 for _k, m, v, _n in planned
+                 if v == 'create'
+                 and _kinds(m).get(portal_rfq.WITHDRAWN))
+    print(f'  {closes:>5}  of the created leads would then be closed '
+          f'as Lost ("{portal_rfq.LOST_REASON}")')
+    print(f'\n  So: {len(rows)} messages, {len(planned)} events, at '
+          f'most {len(creates)} new leads — and fewer if any of the '
+          f'subject-less ones join an event once its body is read.')
+
     with_buyer = 0
     for row, _portal in rows:
         buyer, _how = portal_rfq.buyer_from(row.subject or '', '')
@@ -115,6 +262,7 @@ def report_portals(rows):
           f'{with_buyer} of {len(rows)}. The rest will be read from the '
           f'body when the message is fetched again, and anything still '
           f'unnamed lands as "To review", flagged — not dropped.')
+    return planned
 
 
 # ── item 3: the ones that failed ────────────────────────────────────
@@ -226,6 +374,33 @@ def _what_was_lost(imid):
 
 
 # ── re-processing ───────────────────────────────────────────────────
+def apply_order(planned):
+    """The message ids to re-process, in the order that matters.
+
+    EVENT BY EVENT, and inside an event oldest first. The order is the
+    whole of "one lead per event": the first message makes the lead
+    and carries the number, and every later notice finds that lead and
+    joins it. Shuffle it and a reminder makes the lead while the
+    invitation -- the one message that describes the cargo -- becomes
+    a line on its trail.
+
+    A function of its own so the order can be asserted without a
+    Graph token, which is the half of an --apply that cannot be tested
+    any other way.
+    """
+    out = []
+    for _key, messages, _verdict, _note in planned:
+        for row, _portal in sorted(
+                messages,
+                key=lambda item: (str(item[0].received_at
+                                      or item[0].created_at or ''),
+                                  item[0].id)):
+            if row.internet_message_id:
+                out.append(row.internet_message_id)
+    return out
+
+
+
 def reprocess(imids):
     """Put each message id through the webhook's own function."""
     from email_ingest import service as mail_service
@@ -269,15 +444,21 @@ def reprocess(imids):
 def write_csv(portals, failures, path):
     buf = io.StringIO()
     out = csv.writer(buf)
-    out.writerow(['kind', 'when', 'sender', 'subject', 'message_id',
-                  'reason'])
+    from app.services import portal_rfq
+
+    out.writerow(['kind', 'event', 'notice', 'when', 'sender',
+                  'subject', 'message_id', 'reason'])
     for row, portal in portals:
+        subject = row.subject or ''
         out.writerow(['portal:' + portal,
+                      portal_rfq.event_key(row.from_addr or '', subject,
+                                           '') or '(not in the subject)',
+                      portal_rfq.notice_kind(subject, ''),
                       str(row.received_at or row.created_at or '')[:19],
-                      row.from_addr or '', (row.subject or '')[:120],
+                      row.from_addr or '', subject[:120],
                       row.internet_message_id or '', row.reason or ''])
     for where, _id, imid, when, sender, subject, reason in failures:
-        out.writerow(['failed:' + where, str(when or '')[:19],
+        out.writerow(['failed:' + where, '', '', str(when or '')[:19],
                       sender or '', (subject or '')[:120], imid or '',
                       reason[:160]])
     path = os.path.abspath(path)
@@ -314,31 +495,37 @@ def main(argv=None):
                    if (both or args.portals) else [])
         failures = (failed_rows(args.days)
                     if (both or args.failed) else [])
+        planned = []
         if both or args.portals:
-            report_portals(portals)
+            planned = report_portals(portals) or []
         if both or args.failed:
             report_failed(failures)
         if args.csv:
             write_csv(portals, failures, args.csv)
 
         if not args.apply:
+            _leads = sum(1 for _k, _m, v, _n in planned if v == 'create')
             print(f'\nDRY RUN — nothing re-processed. --apply '
                   f'--portals puts the {len(portals)} portal message(s) '
-                  f'through again; --apply --failed does the '
-                  f'{len(failures)} failure(s).')
+                  f'through again as {len(planned)} event(s) '
+                  f'({_leads} new lead(s) at most); --apply --failed '
+                  f'does the {len(failures)} failure(s).')
             db.session.rollback()
             return 0
 
         wanted = []
         if both or args.portals:
-            wanted += [row.internet_message_id for row, _p in portals]
+            for key, messages, verdict, _note in planned:
+                print(f'  {key}: {len(messages)} message(s), {verdict}')
+            wanted += apply_order(planned)
         if both or args.failed:
             wanted += [imid for _w, _i, imid, *_rest in failures]
         wanted = [x for x in dict.fromkeys(wanted) if x]
         if not wanted:
             print('\nNothing to re-process.')
             return 0
-        print(f'\nre-processing {len(wanted)} message(s):')
+        print(f'\nre-processing {len(wanted)} message(s), oldest '
+              f'first within each event:')
         reprocess(wanted)
         return 0
 

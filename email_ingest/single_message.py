@@ -502,11 +502,30 @@ def auto_assign_owners(lead, sender_email, *, subject='', body=''):
             # own, or a confident call) routes exactly as before.
             _desk = _desk_for_a_guessed_vertical(lead)
             if _desk:
-                log.info('lead %s: the vertical is a guess on a review '
-                         'lead — routed to the RFQ desk rather than to '
-                         "%s's owner", lead.id,
-                         getattr(lead, 'procam_vertical', '') or '?')
-                return _desk, None
+                # AND WRITTEN ONTO THE LEAD, which it was not. This
+                # branch returned the desk's code and never assigned
+                # it, and its caller ignores the return value -- so
+                # item 11's routing picked the right seat and the lead
+                # arrived with no owner at all, which is the state the
+                # branch above it exists to prevent. Every sibling
+                # path here goes through `lead_assignment.assign`;
+                # this one has to as well.
+                _ok, _err = lead_assignment.assign(
+                    lead, primary_code=_desk, actor=None,
+                    note='routed to the RFQ desk: the vertical is a '
+                         'guess on a lead flagged for review',
+                    _defer_commit=True)
+                if _ok:
+                    log.info('lead %s: the vertical is a guess on a '
+                             'review lead — routed to the RFQ desk '
+                             "rather than to %s's owner", lead.id,
+                             getattr(lead, 'procam_vertical', '') or '?')
+                    return _desk, None
+                # Refused: fall through to the ordinary rules rather
+                # than leave the lead with nobody.
+                log.warning('lead %s could not be routed to the RFQ '
+                            'desk (%s) — falling back to the rules',
+                            lead.id, _err)
             try:
                 from app.services import auto_assign
                 decided = auto_assign.assign_for(
@@ -615,6 +634,21 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
     # Local imports keep this module import-safe under all circumstances.
     from app import app, db, Lead, LeadAttachment, EmailEvent  # type: ignore
     from app import EmailClassification  # type: ignore
+    # BOUND HERE, ONCE, AND BEFORE ANYTHING READS IT.
+    #
+    # 14 Nov, and it had already cost two releases. `_li` was imported
+    # at the classifier, two-thirds of the way down this function, and
+    # read twice above it: by the promotional rule (13 Nov, item 13)
+    # and by the portal rule (14 Nov, item 1). A name a function
+    # imports anywhere is local to the whole of it, so both reads
+    # raised UnboundLocalError -- and both sit inside a `try` that
+    # logs and carries on, so neither feature did anything at all on
+    # live while every test that asserted on the rule itself passed.
+    # The rules were right; they were never reached.
+    from app.services import lead_intake as _li
+    # Same reason, and the same mistake twice over: `portal_rfq` was
+    # imported inside two separate `try` blocks and read outside both.
+    from app.services import portal_rfq as _prf
 
     imid = _internet_message_id(msg)
 
@@ -806,10 +840,9 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
         # is the more specific statement, so it is read first.
         _portal = None
         try:
-            from app.services import portal_rfq as _pr
-            _portal = _pr.describe(sender_email,
-                                   msg.get('subject') or '',
-                                   _li.body_text(msg) or '')
+            _portal = _prf.describe(sender_email,
+                                    msg.get('subject') or '',
+                                    _li.body_text(msg) or '')
         except Exception:
             log.exception('could not judge whether %s is a portal', imid)
         if _portal and blocked:
@@ -930,7 +963,6 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
         try:
             if _mode == 'off':
                 raise _IntakeDisabled
-            from app.services import lead_intake as _li
             from app.services import lead_intake_db as _lidb
             msg_for_class = dict(msg)
             msg_for_class['_forward_resolved'] = bool(
@@ -1087,6 +1119,36 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                               imid)
                 _rescue = None
 
+        # ── A PORTAL MESSAGE IS NOT DROPPED BY THE CLASSIFIER ───────
+        #
+        # 14 Nov. The second half of the same fault as `_li` above: the
+        # denylist was taught that a procurement portal wins, and the
+        # classifier was not. A portal RFQ reads as `I_non_business`
+        # -- "no cargo, RFQ, route or contact signal" -- because the
+        # mail is a template with a number in it and the cargo is
+        # behind a login, so every one of these was still being
+        # skipped after the denylist let it through.
+        #
+        # The whole decision of item 1 is that an enquiry on a review
+        # screen is recoverable and one that was never recorded is
+        # not. So the classifier's refusal is set aside for a portal
+        # message with no lead of its own, exactly as the internal
+        # forward's rescue does it, and the message falls through to
+        # the block below: it joins its event's lead if there is one,
+        # it is refused as a withdrawal of an event nobody has, or it
+        # becomes one lead, flagged for review.
+        if (_portal and decision is not None
+                and not decision.creates_lead and not decision.lead_id):
+            log.info('%s is from the %s portal; the classifier said %s '
+                     'and a portal RFQ is not dropped on that', imid,
+                     _portal['portal'], decision.klass)
+            try:
+                _lidb.record(decision, msg)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+            decision = None          # fall through and make the lead
+
         if decision is not None and not decision.creates_lead:
             try:
                 _lidb.record(decision, msg)
@@ -1119,14 +1181,29 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
         # set. So before a new lead is made, look for an open lead
         # already carrying this one — and if there is one, file the
         # message against it and let it update the deadline.
+        #
+        # ONE LEAD PER PORTAL EVENT, AND THE NOTICES ON IT
+        #
+        # Of 74 portal messages the denylist had held back, ~30 were
+        # "withdrawn" notices and most of the rest reminders. The key
+        # below is the §5.6 key widened to the numbers the two
+        # reported portals use (RFX-, RFQ-, an Ariba document or event
+        # id) -- only for a listed portal sender, so nothing outside
+        # them changes -- and the notice that arrives on an event
+        # already in the CRM now does what it says: a withdrawal
+        # closes the lead, an "about to end" sets the deadline.
         _pkey = None
+        _notice = None
         try:
-            from app.services import quote_due as _qd
-            _pkey = _qd.portal_key(msg.get('subject') or '',
-                                   _li.body_text(msg) or '')
+            _subject_text = msg.get('subject') or ''
+            _body_text = _li.body_text(msg) or ''
+            _pkey = _prf.event_key(sender_email, _subject_text,
+                                   _body_text)
+            _notice = _prf.notice_kind(_subject_text, _body_text)
         except Exception:
             log.exception('could not read a portal number on %s', imid)
         if _pkey:
+            _held = None
             try:
                 from app.services import sales_rules as _rules
                 _held = (Lead.query
@@ -1134,34 +1211,49 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                                  Lead.is_archived.isnot(True),
                                  Lead.stage.in_(_rules.open_stages()))
                          .order_by(Lead.id.asc()).first())
+                if _held is None and _portal:
+                    # A withdrawal or a reminder about an event whose
+                    # lead somebody has already closed belongs on that
+                    # lead's trail, not on a second lead. Attached
+                    # only: nothing here re-opens anything.
+                    _held = (Lead.query
+                             .filter(Lead.portal_key == _pkey,
+                                     Lead.is_archived.isnot(True))
+                             .order_by(Lead.id.desc()).first())
             except Exception:
                 log.exception('could not look up portal number %s', _pkey)
                 _held = None
             if _held is not None:
                 try:
-                    from app.services import quote_due_flow as _qdf
+                    from app.services import portal_event as _pev
                     _joined = _li.Decision(
                         _li.Klass.REPLY, step=5.6, lead_id=_held.id,
                         reason=f'the same portal number ({_pkey}) as '
                                f'lead #{_held.id}')
                     _file_against_lead(db, _joined, msg, extracted, log,
                                        graph=graph, mailbox=mailbox)
-                    # The reminder or corrigendum often carries a new
+                    # What the notice itself says: a withdrawal closes
+                    # the lead, an "about to end" carries the
                     # deadline. Proposed, never applied (§2.5).
-                    _qdf.read_from_message(
-                        _held, subject=msg.get('subject') or '',
+                    _did = _pev.apply_notice(
+                        _held, _notice,
+                        subject=msg.get('subject') or '',
                         body=_li.body_text(msg) or '',
                         email_message_id=imid,
                         received_at=email_parser.received_datetime(msg))
                     db.session.commit()
+                    _why = (f'portal number {_pkey}'
+                            + (f' ({_notice})'
+                               if _prf.is_notice(_notice) else '')
+                            + (f' — {_did}' if _did else ''))
                     _record_ingest('attached', msg, _joined,
-                                   lead_id=_held.id,
-                                   reason=f'portal number {_pkey}')
-                    log.info('%s joined lead %s on portal number %s',
-                             imid, _held.id, _pkey)
+                                   lead_id=_held.id, reason=_why)
+                    log.info('%s joined lead %s on portal number %s: %s',
+                             imid, _held.id, _pkey, _did or 'filed')
                     return {'status': 'skipped',
                             'reason': f'portal number {_pkey}: joined '
-                                      f'lead {_held.id}',
+                                      f'lead {_held.id}'
+                                      + (f' — {_did}' if _did else ''),
                             'lead_id': _held.id,
                             'classification': 'portal_same_number',
                             'internet_message_id': imid}
@@ -1169,6 +1261,28 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                     db.session.rollback()
                     log.exception('could not join %s to lead %s by '
                                   'portal number', imid, _held.id)
+            elif _portal and _notice == _prf.WITHDRAWN:
+                # The buyer withdrew an event we never saw -- its
+                # invitation was dropped by the denylist weeks ago, or
+                # never arrived. A lead created now would be born Lost
+                # and nobody can act on it, so the event is written
+                # down where the other refusals are and no lead is
+                # made. It is in the ingest log with its number: a
+                # person who wants it can still press re-process.
+                _record_ingest(
+                    'skipped', msg, None,
+                    reason=f'portal event {_pkey} was withdrawn by the '
+                           f'buyer and no lead exists for it — nothing '
+                           f'to close, so no lead was created')
+                db.session.commit()
+                log.info('%s is a withdrawal of %s, which has no lead',
+                         imid, _pkey)
+                return {'status': 'skipped',
+                        'reason': f'portal event {_pkey} withdrawn; no '
+                                  f'lead existed',
+                        'lead_id': None,
+                        'classification': 'portal_withdrawn_unknown',
+                        'internet_message_id': imid}
 
         # ── Build Lead payload — shared enricher, same summary card poll uses.
         try:
@@ -1242,7 +1356,9 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                 lead_kwargs['needs_review'] = True
                 lead_kwargs['lead_platform'] = _portal['portal'][:40]
                 _named = (lead_kwargs.get('company') or '').strip()
-                if not _named or _is_placeholder_company(_named):
+                if (not _named or _is_placeholder_company(_named)
+                        or _prf.names_the_portal(_named,
+                                                 _portal['portal'])):
                     # The parser read nothing usable, or read the
                     # portal's own name. The buyer out of the body, or
                     # "To review" and flagged -- an enquiry on a
@@ -1452,12 +1568,18 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
             # "auto — confirm"; none of it overwrites anything.
             try:
                 from app.services import autofill as _af
-                from app.services import quote_due as _qd
                 from app.services import quote_due_flow as _qdf
 
                 _af.apply(lead)
                 if not lead.portal_key:
-                    lead.portal_key = _qd.portal_key(
+                    # The SAME key the join above looked for. It was
+                    # `quote_due.portal_key` on its own here, so a
+                    # lead made from an RFX- or Ariba-numbered mail
+                    # was stored with no key at all and the next
+                    # notice about that event could only become a
+                    # second lead.
+                    lead.portal_key = _prf.event_key(
+                        sender_email,
                         lead.original_email_subject or '',
                         lead.original_email_body or '') or None
                 _qdf.read_from_message(

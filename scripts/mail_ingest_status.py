@@ -21,7 +21,9 @@ FIVE QUESTIONS, ANSWERED FROM THE DATABASE AND THE CONFIGURATION
      simply stops calling and nothing here errors.
 
   2. **the last message that became something.** Created, attached or
-     reopened, with its time. If that is weeks old on a mailbox that
+     reopened, with its time — **when the CRM decided it**, not when
+     the customer sent it, because a backlog being re-processed is
+     old mail landing now. If that is weeks old on a mailbox that
      receives mail daily, the way in is broken rather than the
      filtering.
 
@@ -137,12 +139,55 @@ WHEN_COLUMNS = ('received_at', 'created_at', 'updated_at')
 
 
 def _when(row):
-    """(value, which column answered) for one log row."""
+    """(value, which column answered) for one log row.
+
+    When the MESSAGE arrived — the customer's clock. Kept for the
+    lines that describe a message; it is NOT the basis for "the last
+    message that became something", which is `_decided`.
+    """
     for name in WHEN_COLUMNS:
         value = getattr(row, name, None)
         if value:
             return value, name
     return None, ''
+
+
+#: When the CRM last DECIDED something about the row. `record()`
+#: upserts on the message id, so `updated_at` (onupdate=utcnow) is the
+#: moment the row last said what it says now, and `created_at` is the
+#: moment it was first written. The later of the two is the decision.
+DECIDED_COLUMNS = ('updated_at', 'created_at')
+
+
+def _decided(row):
+    """(when the CRM decided this, which column answered).
+
+    13 Nov. This is the second half of item 2, and the half the first
+    fix missed. Ordering was made consistent, but on `received_at`
+    first -- the date the CUSTOMER sent the mail. A message received
+    on 3 November and turned into a lead on the 12th is dated the 3rd
+    by that rule, so a mailbox being read daily still reported "the
+    last message that became something: 2026-11-03": a true sentence
+    about the wrong clock, and the portal backlog is full of exactly
+    those -- old mail landing now.
+
+    So the landing question is answered on the CRM's own clock, and
+    the mail's own date is printed beside it rather than instead of
+    it. Both figures below come from this one basis, so they cannot
+    contradict each other.
+    """
+    best, which = None, ''
+    for name in DECIDED_COLUMNS:
+        value = getattr(row, name, None)
+        if value and (best is None or value > best):
+            best, which = value, name
+    if best is None:
+        # Neither timestamp: fall back to the mail's own date, and
+        # say so, rather than drop the row out of both counts.
+        value, name = _when(row)
+        if value is not None:
+            return value, name + ' (no decision time)'
+    return best, which
 
 
 def report_last(days=14):
@@ -168,6 +213,13 @@ def report_last(days=14):
     row actually has, and the output names which column answered.
     Two numbers that cannot contradict each other is the point; being
     able to see why is the rest of it.
+
+    13 Nov, and the half that was missing. One basis was not enough
+    while the basis was `received_at` -- the date the CUSTOMER sent
+    the mail. Live went on printing "2026-11-03" beside 69 landings
+    in the window, both true, because the mail landing now is old
+    mail. See `_decided`: the landing question is on the CRM's clock
+    now, and the mail's own date is printed beside it.
     """
     from datetime import timedelta
 
@@ -177,7 +229,7 @@ def report_last(days=14):
     dated = []
     undated = []
     for row in rows:
-        value, column = _when(row)
+        value, column = _decided(row)
         if value is None:
             undated.append(row)
         else:
@@ -185,6 +237,8 @@ def report_last(days=14):
     dated.sort(key=lambda item: item[0], reverse=True)
 
     print('\n── the last message that became something ──')
+    print('  Timed by when the CRM decided it, not by when the mail '
+          'was sent: old mail landing today is a landing today.')
     landed = [item for item in dated if item[2].outcome in LANDED]
     if not landed:
         print('  !! NEVER. No message has ever been turned into a '
@@ -197,6 +251,13 @@ def report_last(days=14):
               + (f' on lead #{row.lead_id}' if row.lead_id else ''))
         print(f'    from    {row.from_addr or "—"}')
         print(f'    subject {(row.subject or "")[:70]!r}')
+        _sent, _by = _when(row)
+        if _sent is not None and _by == 'received_at':
+            print(f'    the mail itself was received '
+                  f'{str(_sent)[:19]}'
+                  + (' — older than the decision, which is what a '
+                     'back-processed message looks like'
+                     if _sent < value - timedelta(days=1) else ''))
 
     # The same row set, windowed, so the two cannot disagree.
     since = datetime.utcnow() - timedelta(days=days)
@@ -204,7 +265,7 @@ def report_last(days=14):
     counts = Counter(item[2].outcome for item in window)
     inside = sum(counts.get(name, 0) for name in LANDED)
     print(f'\n  in the last {days} day(s): {inside} message(s) became '
-          f'something, out of {len(window)} seen')
+          f'something, out of {len(window)} decided')
     for name in LANDED:
         if counts.get(name):
             print(f'    {counts[name]:>6}  {name}')
@@ -214,7 +275,8 @@ def report_last(days=14):
               'than the window. Report it with this output.')
     if undated:
         print(f'\n  {len(undated)} row(s) carry none of '
-              f'{", ".join(WHEN_COLUMNS)} and cannot be placed in '
+              f'{", ".join(DECIDED_COLUMNS + WHEN_COLUMNS)} '
+              f'and cannot be placed in '
               f'time at all. They are counted nowhere above — which '
               f'is the honest answer, and worth fixing at the writer '
               f'if the number is not small.')
@@ -238,11 +300,16 @@ def report_last(days=14):
 def report_refusals(days, sender=None):
     from app.models.ingest_log import MailIngestLog
 
+    # The SAME basis as the figures above. This filtered on
+    # `created_at` alone, so a row first logged five weeks ago and
+    # decided yesterday was counted in one section and not the other
+    # -- two queries over one table disagreeing, which is the whole of
+    # item 2 and was only half fixed.
     since = datetime.utcnow() - timedelta(days=days)
-    rows = (MailIngestLog.query
-            .filter(MailIngestLog.created_at >= since)
-            .all())
-    print(f'\n── the last {days} day(s): {len(rows)} message(s) seen ──')
+    rows = [row for row in MailIngestLog.query.all()
+            if (_decided(row)[0] or datetime.min) >= since]
+    print(f'\n── the last {days} day(s): {len(rows)} message(s) '
+          f'decided ──')
     if not rows:
         print('  Nothing at all. Either no mail arrived, or nothing is '
               'delivering it — see the subscription above.')
