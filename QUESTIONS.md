@@ -3168,3 +3168,77 @@ re-processed is nothing but old mail landing now. The landing question
 is now answered on the CRM's own clock (`updated_at`, else
 `created_at`), and the mail's own date is printed beside it rather
 than instead of it.
+
+## 81 — "9 created, 65 skipped", and no reason for any of it
+
+The first `--apply --portals` ran against a dry run that said up to 19
+leads and made 9. The report was the two numbers and nothing else,
+because the loop printed the status and the lead id and **threw the
+reason away** — while writing it, in full, to the ingest log it had
+just updated. "Previously purged", "already classified", "joined lead
+12644" and "withdrawn, no lead" are four entirely different
+situations and all four print as `skipped`.
+
+That is the first fault and it is mine: a script whose whole job is to
+explain a backlog discarded the explanation. `--check --why` now reads
+the rows and prints the reason per message, grouped and then one by
+one for everything that carries no lead. It re-processes nothing.
+
+A second, smaller version of the same blindness: the row selector
+asked for `outcome == 'blocked'`, which was right before the first
+apply and wrong after it. A row's outcome moves to whatever happened
+the second time, so the selector lost sight of precisely the messages
+somebody then wants to ask about.
+
+### Ariba numbers its invitation differently from its notices
+
+`Doc2472440490` on the invitation; `RFQ_CHA_TPT_JSL_6500005154` on
+everything after it. The document id identifies the **mail**, the name
+identifies the **event**, and the key was reading whichever came first
+in the subject — so one auction became three leads, which is the thing
+the key exists to prevent. The name is read first now, from the
+subject or the body, and the document id only when there is no name
+anywhere. The name must contain a digit, or "The event starts on
+Monday" reads as an event called "starts".
+
+### `force` does not override a purge, and should not
+
+A message somebody deleted as irrelevant is refused whatever `force`
+says. That is right: a re-poll must never undo a person's decision.
+But an operator re-processing a backlog of procurement-portal mail has
+made the opposite decision, deliberately and about these messages, and
+with no way to say so the enquiries among them can never be recovered.
+
+`--include-purged` is how they say it — never the re-process button,
+which still means what it meant — and every override writes an audit
+row. Undoing somebody's deletion silently would be worse than refusing
+to undo it at all.
+
+### the buyer the parser was overruling
+
+Lead companies came out as **"participate in an event"** and
+**"quote"**: the parser guesses a company from the subject of a
+robot's mail, and `names_the_portal` only refused the portal's own
+name, not a sentence fragment. Meanwhile the body said "Jindal
+Stainless Limited has invited you" — a statement by the portal about
+whose event it is. The body's buyer wins now, and two more readings
+were added: the bare "X has invited you" (no preposition in front of
+the name, which is how Ariba writes a subject) and "invited to
+RFX-56172 **by** X", which the looser reading had been answering with
+"RFX-56172 by ArcelorMittal…".
+
+The bare hyphen in "Doc2472440490 - Jindal Stainless Limited has
+invited you" was its own small bug: the run of words before "has
+invited you" began at the document id.
+
+### why the keys have to be backfilled before anything is re-run
+
+The nine leads the first run made can be missing `portal_key` — either
+because their number is one only today's reader can see, or because
+they were made before the key was written with the same reader the
+join uses. A notice cannot find a lead with no key, so re-running the
+notices first would make second leads for events that already have
+one. `scripts/2026_11_13_portal_keys.py` fills them in, dry run first,
+and refuses two cases on purpose: it never overwrites a key already
+there (mail has joined on it) and never gives two leads one key
+(choosing between them is a merge, not a backfill).

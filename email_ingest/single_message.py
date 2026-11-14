@@ -619,7 +619,8 @@ def _attach_outbound(lead, msg, body, account, to_addr, imid):
 
 def process_single_message(graph, mailbox: str, msg: dict, *,
                            force: bool = False,
-                           override_classifier: bool = False) -> dict:
+                           override_classifier: bool = False,
+                           override_purge: bool = False) -> dict:
     """Process ONE Graph message into a Lead. Idempotent — safe to call
     multiple times for the same message; only the first call creates a
     Lead. Any subsequent call returns 'skipped' with reason='already ingested'.
@@ -679,6 +680,39 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
             purged = (db.session.query(EmailEvent.id)
                       .filter(EmailEvent.internet_message_id == imid,
                               EmailEvent.status == 'lead_deleted').first())
+            if purged and override_purge:
+                # 13 Nov. `force` overrides the denylist, the
+                # system-sender block and the classifier's memo, and
+                # not this -- rightly, because a purge is a person
+                # saying "this was not business", and a re-poll must
+                # not undo that. But an operator re-processing a
+                # backlog of procurement-portal mail HAS made the
+                # opposite decision, deliberately and about these
+                # messages, and without a way to say so the enquiries
+                # among them can never be recovered.
+                #
+                # So: only when asked for in those words, never by
+                # the re-process button, and written down twice --
+                # an audit row and the ingest reason -- because
+                # overriding somebody's deletion silently would be
+                # worse than refusing to do it at all.
+                log.warning('%s was purged as irrelevant; the purge is '
+                            'being overridden deliberately', imid)
+                try:
+                    from app.services import audit
+                    audit.record(
+                        'mail.purge_overridden', 'email', imid,
+                        old={'status': 'lead_deleted'},
+                        new={'status': 're-processed'},
+                        actor='portal backlog',
+                        reason='re-processed from the portal backlog: '
+                               'the message was purged as irrelevant '
+                               'and an operator asked for it back',
+                        commit=True)
+                except Exception:                         # noqa: BLE001
+                    log.exception('could not record the override of '
+                                  'the purge on %s', imid)
+                purged = None
             if purged:
                 # §4 — a permanent verdict, and until now a silent
                 # one. Worth a row precisely because it cannot be
@@ -1356,13 +1390,21 @@ def process_single_message(graph, mailbox: str, msg: dict, *,
                 lead_kwargs['needs_review'] = True
                 lead_kwargs['lead_platform'] = _portal['portal'][:40]
                 _named = (lead_kwargs.get('company') or '').strip()
-                if (not _named or _is_placeholder_company(_named)
+                if _portal['buyer']:
+                    # THE BODY'S BUYER WINS. The parser guesses a
+                    # company out of the subject of a robot's mail and
+                    # produced "participate in an event" and "quote"
+                    # as customer names; the buyer line is a statement
+                    # by the portal about whose event this is. Where
+                    # the body names one, it is the answer.
+                    lead_kwargs['company'] = _portal['company']
+                elif (not _named or _is_placeholder_company(_named)
                         or _prf.names_the_portal(_named,
                                                  _portal['portal'])):
-                    # The parser read nothing usable, or read the
-                    # portal's own name. The buyer out of the body, or
-                    # "To review" and flagged -- an enquiry on a
-                    # review screen is recoverable and one that was
+                    # Nothing readable in the body either, and what
+                    # the parser read is unusable or is the portal's
+                    # own name: "To review", flagged -- an enquiry on
+                    # a review screen is recoverable and one that was
                     # never recorded is not.
                     lead_kwargs['company'] = _portal['company']
 

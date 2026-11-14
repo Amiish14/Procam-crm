@@ -116,6 +116,13 @@ def is_portal(address):
 #: How a portal names the buyer. Ordered: the most explicit first, and
 #: each is a phrase a portal actually prints rather than a guess at
 #: one.
+#: A company name as a run of words: one to seven of them, no bare
+#: hyphen among them. The bare hyphen matters -- "Doc2472440490 -
+#: Jindal Stainless Limited has invited you" read as a company called
+#: "Doc2472440490" while the buyer stood two words away.
+_NAME = (r'([A-Z][A-Za-z0-9&.,\']*(?:[-\'][A-Za-z0-9&.,\']+)*'
+         r'(?:[ \t]+[A-Za-z0-9&.,\']+(?:[-\'][A-Za-z0-9&.,\']+)*){0,6})')
+
 BUYER_PATTERNS = (
     (r'(?:buyer|customer|client)\s+(?:organisation|organization|company|'
      r'name)\s*[:\-]\s*(.{3,80})', 'the buyer organisation line'),
@@ -123,6 +130,22 @@ BUYER_PATTERNS = (
      'the event owner line'),
     (r'on\s+behalf\s+of\s+(.{3,80}?)(?:\s+(?:has|invites|requests)|[.,\n])',
      '"on behalf of"'),
+    # "Jindal Stainless Limited has invited you to participate in an
+    # event" -- how Ariba writes the subject, with no preposition in
+    # front of the name at all, so neither of the two patterns below
+    # could read it and the buyer of every Ariba invitation was
+    # unreadable. The name has to start a line or follow the dash
+    # after the document id, which is what stops it swallowing the
+    # words before it.
+    (r'(?:^|[\n;:>\-–—])[ \t]*' + _NAME +
+     r'[ \t]+(?:has\s+invited|invites)\s+you\b',
+     '"X has invited you"'),
+    # "You have been invited to RFX-56172 by ArcelorMittal Nippon
+    # Steel India." The looser invitation line below reads this as
+    # "RFX-56172 by ArcelorMittal…" — the number and then the name —
+    # which is a company nobody has.
+    (r'(?:invited|invitation)\b[^\n]{0,60}?\bby[ \t]+' + _NAME,
+     '"invited … by X"'),
     (r'(?:invited|invitation)\s+(?:you\s+)?(?:to|by)\s+(.{3,80}?)'
      r'(?:\s+to\s+|[.,\n])', 'the invitation line'),
     (r'(?:from|by)\s+(.{3,60}?)\s+(?:has\s+invited|invites\s+you)',
@@ -131,12 +154,18 @@ BUYER_PATTERNS = (
      'the company line'),
 )
 
-_BUYER = tuple((re.compile(p, re.I), why) for p, why in BUYER_PATTERNS)
+_BUYER = tuple((re.compile(p, re.I | re.M), why)
+               for p, why in BUYER_PATTERNS)
 
 #: Words that mean the line found the portal rather than the buyer.
 _NOT_A_BUYER = ('procol', 'ariba', 'sap', 'coupa', 'jaggaer', 'gem',
                 'procam', 'no-reply', 'noreply', 'donotreply',
-                'notification', 'support', 'admin', 'portal')
+                'notification', 'support', 'admin', 'portal',
+                # Not names but sentence fragments, and each one
+                # became a company on a lead: "participate in an
+                # event", "quote", "the following event".
+                'participate', 'the following', 'an event',
+                'this event', 'quote')
 
 _HEAD = 3000
 
@@ -256,15 +285,31 @@ def describe(address, subject='', body=''):
 #: invitation, and the two have to read as one event.
 _SEP = r'[\s\-_#:]*(?:no\.?|number|id)?[\s\-_#:]*'
 
+#: An Ariba event NAME -- `RFQ_CHA_TPT_JSL_6500005154`. It must
+#: contain a digit, which is what keeps "The event starts on Monday"
+#: from reading as an event called "starts".
+_NAMED_EVENT = (r'\bevent\s*[:#\-]?\s*'
+                r'((?=[A-Za-z0-9_\-]*\d)[A-Za-z][A-Za-z0-9_\-]{5,40})\b')
+
+#: Ordered in two groups, and the order is the fix of 13 Nov.
+#:
+#: The NAME of the event comes first, because Ariba sends the
+#: invitation under its document id ("Doc2472440490 — … has invited
+#: you to participate in RFQ_CHA_TPT_JSL_6500005154") and every mail
+#: after it under the event's name. Keying the first on the document
+#: id and the rest on the name made one auction into three leads,
+#: which is the whole thing this key exists to prevent. The name is in
+#: all three; the document id is in one.
 EVENT_PATTERNS = (
     (r'\bRFX' + _SEP + r'(\d{3,10})\b', 'RFX-{}'),
     (r'\bRFQ' + _SEP + r'(\d{3,10})\b', 'RFQ-{}'),
     (r'\bRFP' + _SEP + r'(\d{3,10})\b', 'RFP-{}'),
-    # Ariba: Doc1234567890 in the subject, "Event ID" in the body.
+    (r'\bEvent[\s\-_#:]*id[\s:#\-]*([A-Za-z0-9\-]{3,24})\b',
+     'ARIBA-EVENT-{}'),
+    (_NAMED_EVENT, 'ARIBA-EVENT-{}'),
+    # Last: the document id identifies the MAIL, not the event.
     (r'\bDoc(?:ument)?[\s\-_#:]*(?:id[\s:#]*)?(\d{6,14})\b',
      'ARIBA-DOC{}'),
-    (r'\bEvent[\s\-_#:]*id[\s:#\-]*([A-Za-z0-9\-]{3,24})\b',
-     'ARIBA-EVENT{}'),
 )
 
 _EVENT = tuple((re.compile(p, re.I), shape) for p, shape in EVENT_PATTERNS)
@@ -291,10 +336,14 @@ def event_key(address='', subject='', body=''):
         return found
     if not is_portal(address):
         return ''
-    for text in (subject or '', body or ''):
-        if not text:
-            continue
-        for pattern, shape in _EVENT:
+    # Pattern by pattern, and the SUBJECT then the body within each --
+    # not the other way round. Scanning the subject across every
+    # pattern first is what keyed Ariba's invitation on its document
+    # id while the rest of the set keyed on the event's name.
+    for pattern, shape in _EVENT:
+        for text in (subject or '', body or ''):
+            if not text:
+                continue
             m = pattern.search(text)
             if m:
                 return shape.format(m.group(1).upper())[:60]

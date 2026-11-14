@@ -71,7 +71,7 @@ def test_the_key_the_portals_actually_print():
         'ARIBA-DOC1234567890'
     assert portal_rfq.event_key(
         ARIBA, 'An event you are invited to',
-        'Event ID: WS-7781 has been published') == 'ARIBA-EVENTWS-7781'
+        'Event ID: WS-7781 has been published') == 'ARIBA-EVENT-WS-7781'
 
 
 def test_the_existing_key_is_untouched_and_still_wins():

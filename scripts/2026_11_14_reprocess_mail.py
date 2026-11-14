@@ -83,12 +83,22 @@ def _rule(n=72):
 
 
 # ── item 1: the portals ─────────────────────────────────────────────
-def blocked_portal_rows(days=None):
-    """Ingest rows blocked whose sender is a procurement portal."""
+#: Outcomes a portal message can carry once it has been put through
+#: again. `blocked` alone was right before the first --apply and wrong
+#: after it: the row's outcome moves to whatever happened the second
+#: time, so asking only for `blocked` loses sight of every message the
+#: re-run touched -- which is precisely the set somebody then wants to
+#: ask about.
+SEEN = ('blocked', 'skipped', 'created', 'attached', 'reopened',
+        'error')
+
+
+def blocked_portal_rows(days=None, outcomes=('blocked',)):
+    """Ingest rows whose sender is a procurement portal."""
     from app.models.ingest_log import MailIngestLog
     from app.services import portal_rfq
 
-    q = MailIngestLog.query.filter(MailIngestLog.outcome == 'blocked')
+    q = MailIngestLog.query.filter(MailIngestLog.outcome.in_(outcomes))
     if days:
         since = datetime.utcnow() - timedelta(days=days)
         q = q.filter(db.or_(MailIngestLog.received_at >= since,
@@ -194,6 +204,52 @@ def plan(groups):
                      'join another event once the body is read')
         out.append((key, messages, verdict, note))
     return out
+
+
+def report_outcomes(rows):
+    """What the ingest log says happened to each of these messages.
+
+    13 Nov. The first --apply reported "9 created, 65 skipped" and
+    nothing else: the loop printed the status and the lead id and
+    threw the reason away, so sixty-five messages had a reason stored
+    in the ingest log that nobody could see. The reason is the whole
+    diagnosis -- "previously purged", "already classified", "joined
+    lead 12644" and "withdrawn, no lead" are four completely
+    different situations and they all print as `skipped`.
+
+    Read-only, and read from the log rather than from a re-run: the
+    rows already hold the answer.
+    """
+    from app.services import portal_rfq
+
+    print(f'\n══ what happened to each of the {len(rows)} message(s) '
+          f'══')
+    if not rows:
+        print('  none on record.')
+        return
+    by_reason = Counter(
+        (row.outcome, (row.reason or '(no reason stored)')[:72])
+        for row, _portal in rows)
+    print(f'\n  {"n":>4}  {"outcome":<9} reason')
+    for (outcome, reason), n in by_reason.most_common():
+        print(f'  {n:>4}  {outcome:<9} {reason}')
+
+    no_lead = [row for row, _p in rows
+               if not row.lead_id and row.outcome != 'created']
+    print(f'\n  {len(no_lead)} message(s) carry no lead. Each one, '
+          f'with its reason:')
+    for row in no_lead:
+        key = portal_rfq.event_key(row.from_addr or '',
+                                   row.subject or '', '')
+        print(f'    {str(row.received_at or row.created_at or "")[:16]}'
+              f'  {row.outcome:<9} {key or "(no number)":<26} '
+              f'{(row.subject or "")[:46]!r}')
+        print(f'      → {(row.reason or "(no reason stored)")[:150]}')
+    if no_lead:
+        print('\n  A reason of "previously purged as irrelevant" is '
+              'the one `force` does NOT override:')
+        print('  --apply --portals --include-purged re-processes '
+              'those, and records that the purge was overridden.')
 
 
 def report_portals(rows):
@@ -401,8 +457,14 @@ def apply_order(planned):
 
 
 
-def reprocess(imids):
-    """Put each message id through the webhook's own function."""
+def reprocess(imids, *, include_purged=False):
+    """Put each message id through the webhook's own function.
+
+    `include_purged` carries one decision and no others: a message a
+    person deleted as irrelevant is normally left alone whatever
+    `force` says, and this is how an operator says "not these --
+    these are RFQs". Every override writes an audit row.
+    """
     from email_ingest import service as mail_service
     from email_ingest.graph_client import GraphClient
     from email_ingest.single_message import process_single_message
@@ -424,14 +486,22 @@ def reprocess(imids):
                   f'the Inbox since')
             continue
         try:
-            out = process_single_message(graph, box, msg, force=True)
+            out = process_single_message(graph, box, msg, force=True,
+                                         override_purge=include_purged)
             status = (out or {}).get('status') or 'no status'
             lead_id = (out or {}).get('lead_id')
+            why = (out or {}).get('reason') or ''
         except Exception as exc:                          # noqa: BLE001
             status, lead_id = f'raised {type(exc).__name__}', None
-        counts[status] += 1
+            why = str(exc)[:120]
+        counts[f'{status}: {why[:50]}' if status == 'skipped' and why
+               else status] += 1
         print(f'  {status:<12} {"lead #" + str(lead_id) if lead_id else "":<10}'
-              f' {(msg.get("subject") or "")[:50]!r}')
+              f' {(msg.get("subject") or "")[:46]!r}')
+        # THE REASON, which the first run threw away. "9 created, 65
+        # skipped" with no reasons is not a report, it is a riddle.
+        if why:
+            print(f'      → {why[:140]}')
     print('\n── done ──')
     for status, n in counts.most_common():
         print(f'  {n:>5}  {status}')
@@ -477,13 +547,24 @@ def main(argv=None):
                     help='item 1: the blocked procurement portals')
     ap.add_argument('--failed', action='store_true',
                     help='item 3: the ones that failed outright')
+    ap.add_argument('--why', action='store_true',
+                    help='what the ingest log says happened to each '
+                         'portal message, with its reason. Read-only '
+                         'whatever else is passed.')
+    ap.add_argument('--missing', action='store_true',
+                    help='only the portal messages that still have no '
+                         'lead — after a run that left some behind')
+    ap.add_argument('--include-purged', action='store_true',
+                    help='also re-process messages somebody purged as '
+                         'irrelevant. Each override is audited.')
     ap.add_argument('--days', type=int, default=None,
                     help='limit to the last N days (default: all)')
     ap.add_argument('--csv', nargs='?', const=DEFAULT_CSV, default=None,
                     metavar='PATH')
     args = ap.parse_args(argv)
 
-    both = not (args.portals or args.failed)
+    both = not (args.portals or args.failed or args.why)
+    wants_portals = both or args.portals or args.why or args.missing
 
     with app.app_context():
         print(f'database: {db.engine.url}')
@@ -491,12 +572,23 @@ def main(argv=None):
               'refused.' + ('' if args.apply else ' REPORT ONLY.'))
         _rule()
 
-        portals = (blocked_portal_rows(args.days)
-                   if (both or args.portals) else [])
+        # Every outcome, not only `blocked`: after a run the rows say
+        # what happened the second time, and `blocked` alone would
+        # hide exactly the messages somebody is asking about.
+        portals = (blocked_portal_rows(args.days, outcomes=SEEN)
+                   if wants_portals else [])
+        if args.missing:
+            before = len(portals)
+            portals = [(row, portal) for row, portal in portals
+                       if not row.lead_id and row.outcome != 'created']
+            print(f'\n--missing: {len(portals)} of {before} portal '
+                  f'message(s) still carry no lead.')
         failures = (failed_rows(args.days)
                     if (both or args.failed) else [])
         planned = []
-        if both or args.portals:
+        if args.why:
+            report_outcomes(portals)
+        if both or args.portals or args.missing:
             planned = report_portals(portals) or []
         if both or args.failed:
             report_failed(failures)
@@ -513,8 +605,13 @@ def main(argv=None):
             db.session.rollback()
             return 0
 
+        if args.why and not (args.portals or args.missing or args.failed):
+            print('\n--why is a report. Nothing was re-processed.')
+            db.session.rollback()
+            return 0
+
         wanted = []
-        if both or args.portals:
+        if both or args.portals or args.missing:
             for key, messages, verdict, _note in planned:
                 print(f'  {key}: {len(messages)} message(s), {verdict}')
             wanted += apply_order(planned)
@@ -525,8 +622,10 @@ def main(argv=None):
             print('\nNothing to re-process.')
             return 0
         print(f'\nre-processing {len(wanted)} message(s), oldest '
-              f'first within each event:')
-        reprocess(wanted)
+              f'first within each event'
+              + (', INCLUDING the purged ones (each override is '
+                 'audited)' if args.include_purged else '') + ':')
+        reprocess(wanted, include_purged=args.include_purged)
         return 0
 
 
