@@ -21,7 +21,20 @@
     <div style="font-size:16px;font-weight:600;color:var(--ink);margin-bottom:8px">
       Tap to take a photo, or drop a card image here
     </div>
-    <div class="muted">Accepts JPG, PNG, HEIC, WEBP, PDF. Up to 8&nbsp;MB.</div>
+    <div class="muted">Accepts JPG, PNG, HEIC, WEBP, PDF. Up to 8&nbsp;MB.
+      Any way up — it is straightened and cropped before it is read.</div>
+  </label>
+
+  <!-- The back of the card is part of the SAME card. The address and
+       the second number are usually printed there, and scanning it
+       separately makes the duplicate this screen exists to avoid. -->
+  <label class="drop" id="drop-back" style="margin-top:10px;padding:14px">
+    <input type="file" id="file-back" name="file_back"
+           accept="image/*,application/pdf" capture="environment">
+    <div style="font-size:13px;font-weight:600;color:var(--ink)">
+      Add the back of the card <span class="muted">(optional)</span>
+    </div>
+    <div class="muted" id="back-chosen">Nothing added yet.</div>
   </label>
 
   <!-- Extraction from the image needs the Vision service. When it is
@@ -44,12 +57,29 @@
 </div>
 
 <div class="card" id="review-card" style="display:none">
-  <h2>Review Extracted Fields</h2>
+  <h2>Check what was read, then save</h2>
+  <p class="muted" style="margin:0 0 10px">
+    Every field below is editable, and <strong>nothing is saved until
+    you press Save</strong>. The highlighted ones are where the reader
+    was least sure.
+  </p>
   <div id="ocr-error" class="err" style="display:none"></div>
-  <img id="card-image" alt="The scanned business card" style="display:none;
-       max-width:100%;max-height:260px;border-radius:8px;margin-bottom:16px;
-       border:1px solid var(--border)">
+  <div id="conf-summary" class="muted" style="display:none;font-size:12.5px;
+       margin-bottom:6px"></div>
+  <div id="prep-notes" class="muted" style="display:none;font-size:11.5px;
+       margin-bottom:10px"></div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+    <img id="card-image" alt="The front of the scanned card" style="display:none;
+         max-width:100%;max-height:260px;border-radius:8px;
+         border:1px solid var(--border)">
+    <img id="card-image-back" alt="The back of the scanned card"
+         style="display:none;max-width:100%;max-height:260px;border-radius:8px;
+         border:1px solid var(--border)">
+  </div>
   <div class="grid" id="fields"></div>
+
+  <h2>Already on file</h2>
+  <div id="dup-people" class="muted" style="margin-bottom:12px"></div>
 
   <h2>Possible Duplicates</h2>
   <div>
@@ -74,14 +104,20 @@
   let linkAccountId = null;
   let linkContactId = null;
 
+  /* Part 2: everything the card carries, in the order a card is read.
+     Nothing here is saved until Save is pressed — every field is
+     editable, including the ones the reader was sure about. */
   const FIELDS = [
-    ['name','Name'], ['designation','Designation'],
+    ['name','Full name'], ['first_name','First name'],
+    ['last_name','Last name'], ['designation','Designation'],
     ['department','Department'], ['company','Company'],
+    ['industry','Industry'],
     ['email','Email'], ['mobile','Mobile'],
     ['telephone','Telephone'], ['website','Website'],
+    ['linkedin_url','LinkedIn'],
     ['address','Address'], ['city','City'],
     ['state','State'], ['country','Country'],
-    ['linkedin_url','LinkedIn'],
+    ['postal_code','Postal code'],
   ];
 
   // A card often carries three numbers and two addresses. The Contact
@@ -110,6 +146,19 @@
   file.addEventListener('change', ()=>{
     if (file.files[0]) uploadFile(file.files[0]);
   });
+  const backInput = $('file-back');
+  if (backInput){
+    backInput.addEventListener('change', ()=>{
+      const chosen = backInput.files && backInput.files[0];
+      $('back-chosen').textContent = chosen
+        ? ('Back added: ' + chosen.name + ' — now take the front.')
+        : 'Nothing added yet.';
+      // Only the back? It is still a card. Reading it beats waiting
+      // for a front that may never be taken.
+      if (chosen && !(file.files && file.files[0])) uploadFile(chosen);
+    });
+    backInput.addEventListener('click', ev => ev.stopPropagation());
+  }
 
   async function uploadFile(f){
     $('upload-msg').style.display='none';
@@ -119,6 +168,11 @@
     try{
       const fd = new FormData();
       fd.append('file', f);
+      const back = $('file-back');
+      // Not when the back IS the card being uploaded — one picture
+      // sent twice would be read as a two-sided card of one side.
+      if (back && back.files && back.files[0] && back.files[0] !== f)
+        fd.append('file_back', back.files[0]);
       const typed = ($('card-text').value || '').trim();
       if (typed) fd.append('card_text', typed);
       const r = await fetch('{{ url_prefix }}/api/business-cards/upload', {method:'POST', body:fd});
@@ -135,14 +189,39 @@
     }
   }
 
+  // Names come from other people's records — and contacts are created
+  // from inbound email senders — so they are text, never markup.
+  const escHtml = v => String(v == null ? '' : v).replace(/[&<>"']/g,
+    ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+
   function renderReview(card){
     $('review-card').style.display='block';
     const errBox = $('ocr-error');
     if (card.ocr_error) {
-      errBox.textContent = 'OCR service warning: ' + card.ocr_error +
-                           ' — you can still edit and save manually.';
+      errBox.textContent = 'The card could not be read automatically ('
+        + card.ocr_error + '). Type what it says — nothing is saved '
+        + 'until you press Save.';
       errBox.style.display = 'block';
     } else { errBox.style.display = 'none'; }
+
+    /* What the reader was sure of, and what it was not. The reason is
+       printed, not the number: "worked out, not read off the card" is
+       what sends somebody back to the card; "87%" is not. */
+    const conf = card.confidence || (card.extracted||{}).confidence || {};
+    const sum = $('conf-summary');
+    if (sum){
+      const ex0 = card.extracted || {};
+      sum.textContent = ex0.confidence_summary
+        || 'Check the fields below, then save.';
+      sum.style.display = 'block';
+    }
+    const prep = $('prep-notes');
+    if (prep){
+      const notes = card.prep_notes || [];
+      prep.textContent = notes.length
+        ? 'The picture was ' + notes.join('; ') + '.' : '';
+      prep.style.display = notes.length ? 'block' : 'none';
+    }
 
     const wrap = $('fields'); wrap.innerHTML = '';
     const ex = card.extracted || {};
@@ -154,14 +233,18 @@
       const div = document.createElement('div');
       div.className = 'field';
       const isTA = (k === 'address');
-      const flagged = conflicts.has(k);
+      const c = conf[k] || {};
+      const flagged = conflicts.has(k) || c.low === true;
+      const why = c.why && !c.empty ? c.why : '';
       div.innerHTML = `<label>${label}${flagged
-          ? ' <span style="color:var(--amber,#b45309);font-weight:600">· check this</span>'
+          ? ' <span style="color:var(--amber,#b45309);font-weight:600">· worth a look</span>'
           : ''}</label>`+
         (isTA
           ? `<textarea id="f_${k}" rows="2">${(ex[k]||'').replace(/</g,'&lt;')}</textarea>`
           : `<input id="f_${k}" value="${(ex[k]||'').replace(/"/g,'&quot;')}"${
-              flagged ? ' style="border-color:var(--amber,#b45309)"' : ''}>`)
+              flagged ? ' style="border-color:var(--amber,#b45309);background:#FFFBEB"' : ''}>`)
+        + (why ? `<div class="muted" style="font-size:11px;margin-top:3px">${
+              String(why).replace(/</g,'&lt;')}</div>` : '')
         + (EXTRA_OF[k] ? extras(ex, EXTRA_OF[k], 'f_'+k) : '');
       wrap.appendChild(div);
     });
@@ -179,11 +262,38 @@
       if (card.image_url) { img.src = card.image_url; img.style.display='block'; }
       else { img.style.display = 'none'; }
     }
+    const back = $('card-image-back');
+    if (back) {
+      if (card.back_image_url) {
+        back.src = card.back_image_url; back.style.display='block';
+      } else { back.style.display = 'none'; }
+    }
 
-    // Names come from other people's records — and contacts are created
-    // from inbound email senders — so they are text, never markup.
-    const escHtml = v => String(v == null ? '' : v).replace(/[&<>"']/g,
-      ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    /* The Part 1 search, which reads the LEADS as well as the
+       contacts: most people in this CRM are on a lead and nowhere
+       else, so a check that reads only `contacts` would call somebody
+       we quoted last week a new person. */
+    const peopleBox = $('dup-people');
+    if (peopleBox){
+      const people = card.people || [];
+      peopleBox.innerHTML = people.length
+        ? people.map(p => {
+            const where = p.lead_url || p.url || '';
+            const who = escHtml(p.person || '(no name)');
+            const link = where
+              ? `<a href="${escHtml('{{ url_prefix }}' + where)}" target="_blank">${who}</a>`
+              : who;
+            const bits = [p.company, (p.emails||[])[0], (p.phones||[])[0]]
+              .filter(Boolean).map(escHtml).join(' · ');
+            return `<div style="padding:5px 0;border-top:1px solid var(--border)">
+                ${link} <span class="muted">${escHtml(p.source_note || p.label || '')}</span>
+                <div class="muted">${bits}</div>
+                <div class="muted" style="font-size:11px">matched on ${escHtml(p.why||'')}</div>
+              </div>`;
+          }).join('')
+        : 'Nobody on file looks like this card.';
+    }
+
     const dup = card.dup_matches || {accounts:[], contacts:[]};
     const accBox = $('dup-accounts'); accBox.innerHTML='';
     (dup.accounts||[]).forEach(a=>{
@@ -228,9 +338,10 @@
     return out;
   }
 
-  async function save(choice){
+  async function save(choice, confirmDuplicate){
     if (!currentCard) return;
     const body = {fields: collectFields(), choice};
+    if (confirmDuplicate) body.confirm_duplicate = true;
     if (choice === 'link'){
       if (!linkAccountId && !linkContactId){
         $('save-msg').textContent='Pick at least one duplicate to link to.';
@@ -244,6 +355,21 @@
        body: JSON.stringify(body)});
     const j = await r.json();
     if (!j.ok){
+      /* 409: somebody on file looks like this card. The matches are
+         shown — above, where the reviewer is already looking — and
+         saving again confirms it on purpose. */
+      if (j.duplicate){
+        currentCard.people = j.people || [];
+        currentCard.dup_matches = j.matches || currentCard.dup_matches;
+        renderReview(currentCard);
+        $('save-msg').innerHTML = escHtml(j.error || 'Already on file.')
+          + ' <button class="btn" id="btn-anyway">Save anyway — this is '
+          + 'somebody else</button>';
+        $('save-msg').style.display = 'block';
+        const anyway = $('btn-anyway');
+        if (anyway) anyway.onclick = () => save(choice, true);
+        return;
+      }
       $('save-msg').textContent = j.error || 'Save failed';
       $('save-msg').style.display = 'block';
       return;

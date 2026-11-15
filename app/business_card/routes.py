@@ -77,47 +77,66 @@ def scan_page():
                           .order_by(Employee.name).all())
 
 
+def _store(fs):
+    """One uploaded picture on disk → (path, bytes, mime)."""
+    dest_path, _safe = save_upload(
+        fs, subdir='business_cards',
+        allowed_exts=_ALLOWED_EXTS,
+        max_bytes=8 * 1024 * 1024,
+    )
+    mime, _ = mimetypes.guess_type(dest_path)
+    with open(dest_path, 'rb') as fh:
+        return dest_path, fh.read(), (mime or 'image/jpeg')
+
+
 @bp.route('/api/business-cards/upload', methods=['POST'])
 @_require_auth
 def api_upload():
+    """A card — front, and the back if there is one — becomes a FORM.
+
+    Nothing is created here and nothing is saved: the upload produces
+    a review form and a row that remembers what was read, which is
+    the whole contract of this screen. CRM-SEARCH-SCAN-01 Part 2:
+    "ALWAYS an editable review form, never auto-save."
+    """
     fs = request.files.get('file') or request.files.get('image')
     if not fs or not fs.filename:
         return jsonify(error='No file uploaded'), 400
 
     try:
-        dest_path, safe_name = save_upload(
-            fs, subdir='business_cards',
-            allowed_exts=_ALLOWED_EXTS,
-            max_bytes=8 * 1024 * 1024,
-        )
+        dest_path, img_bytes, mime = _store(fs)
     except Exception as exc:
         current_app.logger.warning('business card upload failed: %s', exc)
         return jsonify(error=str(exc)), 400
 
-    mime, _ = mimetypes.guess_type(dest_path)
-    if not mime:
-        mime = 'image/jpeg'
+    # The back of the card, when there is one. The address and the
+    # second number live there, and two scans of one person is the
+    # duplicate this screen exists to avoid.
+    back_path, sides = '', []
+    back_fs = request.files.get('file_back') or request.files.get('back')
+    if back_fs and back_fs.filename:
+        try:
+            back_path, back_bytes, back_mime = _store(back_fs)
+            sides.append((back_bytes, back_mime))
+        except Exception as exc:                          # noqa: BLE001
+            current_app.logger.warning('card back rejected: %s', exc)
 
-    try:
-        with open(dest_path, 'rb') as fh:
-            img_bytes = fh.read()
-    except Exception as exc:
-        return jsonify(error=f'Could not re-read upload: {exc}'), 500
-
-    # Text read off the card by whatever means — pasted by the user, or
-    # from an OCR step if one is added later. With no Vision credit this
-    # is the only thing that makes the scanner work at all.
     card_text = (request.form.get('card_text') or '').strip() or None
-    result = extract_business_card(img_bytes, mime=mime, card_text=card_text)
+    result = extract_business_card(img_bytes, mime=mime,
+                                   card_text=card_text, sides=sides)
     extracted = result.get('extracted') or {}
+    _industry_from_account(extracted, result.get('confidence') or {})
     dup = find_duplicates(extracted, db)
 
     row = BusinessCardImport(
         uploaded_by_id=_emp(),
         uploaded_at=datetime.utcnow(),
         image_path=dest_path,
+        back_image_path=back_path or None,
         ocr_raw=result.get('raw') or '',
         extracted_json=extracted,
+        confidence_json=result.get('confidence') or {},
+        prep_notes='\n'.join(result.get('notes') or []),
         status='Extracted',
         dup_matches=dup,
         remarks=result.get('error') or '',
@@ -129,7 +148,62 @@ def api_upload():
     payload['ocr_error'] = result.get('error')
     payload['image_url'] = url_for('business_card.card_image',
                                    card_id=row.id)
+    if back_path:
+        payload['back_image_url'] = url_for('business_card.card_image',
+                                            card_id=row.id, side='back')
+    payload['people'] = _people_like(extracted)
     return jsonify(ok=True, card=payload)
+
+
+def _industry_from_account(fields, confidence):
+    """The industry, from the account the card matched.
+
+    A business card almost never prints what the company DOES, so
+    reading an industry off one would be inventing it. The account
+    knows, when the card matches an account — and the review screen
+    marks it as worked out rather than read, which is the difference
+    between a fact and a good guess.
+    """
+    if not fields or str(fields.get('industry') or '').strip():
+        return
+    try:
+        account = _account_for(fields.get('company') or '',
+                               fields.get('website') or '',
+                               fields.get('email') or '')
+    except Exception:                                     # noqa: BLE001
+        return
+    if account is None or not (account.industry or '').strip():
+        return
+    fields['industry'] = account.industry.strip()
+    fields['industry_from'] = f'the account "{account.name}"'
+    if isinstance(confidence, dict):
+        from app.services import card_confidence
+        confidence['industry'] = {
+            'score': card_confidence.DERIVED,
+            'why': f'taken from the account "{account.name}", not '
+                   f'printed on the card',
+            'low': True, 'empty': False}
+        fields['confidence'] = confidence
+
+
+def _people_like(fields):
+    """The people already on file who look like this card.
+
+    The Part 1 search, which reads the LEADS as well as the contacts —
+    most of the people in this CRM are on a lead and nowhere else, so
+    a duplicate check that reads only `contacts` says "new person"
+    about somebody we have been quoting for months.
+    """
+    try:
+        from app.services import people_search
+        return people_search.duplicates_of(
+            email=(fields or {}).get('email') or '',
+            phone=((fields or {}).get('mobile')
+                   or (fields or {}).get('telephone') or ''),
+            name=(fields or {}).get('name') or '',
+            company=(fields or {}).get('company') or '')
+    except Exception:                                     # noqa: BLE001
+        return []
 
 
 # ─── Review payload ──────────────────────────────────────────────────────
@@ -148,7 +222,8 @@ def card_image(card_id):
     from app.utils.uploads import _upload_root
 
     row = _card_or_404(card_id)
-    path = row.image_path or ''
+    side = (request.args.get('side') or 'front').strip().lower()
+    path = (row.back_image_path if side == 'back' else row.image_path) or ''
     if not path:
         abort(404)
     root = os.path.realpath(_upload_root())
@@ -173,6 +248,85 @@ def card_image(card_id):
 def api_get(card_id):
     row = _card_or_404(card_id)
     return jsonify(ok=True, card=row.to_dict())
+
+
+def _account_for(company_name, website='', email=''):
+    """The account this card belongs to, aliases and all.
+
+    Three readings, each the one the rest of the CRM already uses:
+
+      * the ALIAS index (`account_match`), so a card printed
+        "ArcelorMittal Nippon Steel India" finds the account called
+        "Amns" instead of making a second one — the fault of 14 Nov,
+        which cost a hand-merge on live;
+      * the website or email DOMAIN, which is the strongest signal a
+        card carries and the one a name match misses when the card
+        prints a trading name;
+      * `company_match`, the name matcher the imports use.
+
+    Returns an existing account or None. It never creates one: that
+    is the caller's decision, made after the reviewer has looked.
+    """
+    from app import Company
+
+    name = (company_name or '').strip()
+    if not name and not website and not email:
+        return None
+    domain = ''
+    for source in (website, email):
+        from app.services.card_parse import domain_of
+        domain = domain_of(source or '')
+        if domain:
+            break
+    if domain:
+        try:
+            found = (Company.query
+                     .filter(Company.website.ilike(f'%{domain}%'))
+                     .first())
+            if found:
+                return found
+        except Exception:                                 # noqa: BLE001
+            pass
+    if name:
+        try:
+            from app.services import account_match
+            for account, norms, stricts, _own in account_match.active_index():
+                flat = account_match.strict_norm(name)
+                if flat and (flat in stricts or flat in norms):
+                    return account
+        except Exception:                                 # noqa: BLE001
+            pass
+        try:
+            from app.services.company_match import build_index, match
+            index = build_index(
+                Company.query.filter(Company.is_active.is_(True)).all())
+            found, _reason, _cands = match(name, index)
+            if found:
+                return found
+        except Exception:                                 # noqa: BLE001
+            pass
+    return None
+
+
+def _card_extras(fields, row):
+    """The columns Part 2 added, filled only where the model has them.
+
+    Written this way so the same code runs on a database that has not
+    had the additive columns applied yet: a scanner that cannot save
+    because one column is missing is a scanner that is down.
+    """
+    from app import Contact
+
+    wanted = {
+        'department': (fields.get('department') or '').strip() or None,
+        'address': (fields.get('address')
+                    or fields.get('street') or '').strip() or None,
+        'postal_code': (fields.get('postal_code') or '').strip() or None,
+        'industry': (fields.get('industry') or '').strip() or None,
+        # The card itself stays with the person it names.
+        'card_image_path': row.image_path or None,
+    }
+    return {k: v for k, v in wanted.items() if hasattr(Contact, k)}
 
 
 # ─── Save (create new OR link existing) ──────────────────────────────────
@@ -213,11 +367,23 @@ def api_save(card_id):
         # a contact the original extraction never matched. Checked again
         # against what is actually about to be written.
         again = find_duplicates(fields, db)
+        # And against the LEADS, which is where most of the people in
+        # this CRM are (Part 1). A check that reads only `contacts`
+        # says "new person" about somebody we quoted last week.
+        people = _people_like(fields)
+        if people and not again.get('contacts'):
+            row.dup_matches = again
+            db.session.commit()
+            return jsonify(ok=False, duplicate=True, matches=again,
+                           people=people,
+                           error='This person may already be in the CRM. '
+                                 'Open one of them, or confirm to create '
+                                 'a new record.'), 409
         if again.get('contacts'):
             row.dup_matches = again
             db.session.commit()
             return jsonify(ok=False, duplicate=True,
-                           matches=again,
+                           matches=again, people=_people_like(fields),
                            error='This person may already be in the CRM.'
                                  ' Link to the existing record, or confirm'
                                  ' to create a new one.'), 409
@@ -242,10 +408,9 @@ def api_save(card_id):
             # Same matcher the imports and linking use, so a card for
             # "Siemens Ltd" attaches to "Siemens Limited" rather than
             # creating the duplicate de-duplication would have to merge.
-            from app.services.company_match import build_index, match
-            index = build_index(
-                Company.query.filter(Company.is_active.is_(True)).all())
-            acct, _reason, _cands = match(company_name, index)
+            acct = _account_for(company_name,
+                                (fields.get('website') or '').strip(),
+                                (fields.get('email') or '').strip())
             if not acct:
                 acct = Company(
                     name=company_name,
@@ -279,6 +444,7 @@ def api_save(card_id):
                 account_id=acct.id if acct else None,
                 company_id=acct.id if acct else None,
                 assigned_to=_emp(),
+                **_card_extras(fields, row),
             )
             db.session.add(cnt)
             db.session.flush()

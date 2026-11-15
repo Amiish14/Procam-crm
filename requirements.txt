@@ -36,3 +36,22 @@ pypdf==5.1.0
 # Terms annexures arrive as .docx; attachment_text reads their
 # tables as well as their paragraphs.
 python-docx==1.1.2
+
+# CRM-SEARCH-SCAN-01 Part 2 — business card scanning.
+# Phone numbers in E.164, validated for the region the card belongs
+# to. app/services/card_fields.py degrades to a narrow Indian-only
+# fallback without it and SAYS it has, so the CRM runs either way —
+# but a number turned into the wrong country's E.164 cannot be rung,
+# which is why this is pinned rather than left optional.
+phonenumbers>=9.0,<10
+# Pillow does the picture preparation (rotate, deskew, crop, contrast)
+# and the PDF rasterising fallback. Already present as a transitive
+# dependency; named here because card_image.py now depends on it.
+Pillow>=10.0
+# OPTIONAL, both behind switches and both absent on the CRM box today:
+#   PyMuPDF     renders a PDF card at 300dpi. Without it the PDF path
+#               takes the embedded picture, or the PDF's own text.
+#   pytesseract  the on-server text reader (CARD_TEXT_READER=on), which
+#               also needs the tesseract binary installed.
+# pymupdf>=1.24
+# pytesseract>=0.3.10

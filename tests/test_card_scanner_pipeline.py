@@ -78,7 +78,11 @@ def test_the_scanner_works_with_no_vision_service(client):
     assert ex['name'] == 'Customer Contact'
     assert ex['company'] == 'AMBUJA CEMENT LIMITED'
     assert ex['email'] == 'customer.contact@ambujacement.com'
-    assert ex['mobile'] == '+91 90000 20001'
+    # E.164 since CRM-SEARCH-SCAN-01 Part 2, which asks for it by name
+    # ("all phones E.164 via phonenumbers"). The card's own spelling is
+    # kept beside it in `phone_numbers`.
+    assert ex['mobile'] == '+919000020001'
+    assert ex['phone_numbers'][0]['printed'] == '+91 90000 20001'
 
 
 def test_an_upload_with_no_text_and_no_service_still_opens_a_review(client):

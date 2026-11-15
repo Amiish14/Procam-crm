@@ -17,6 +17,22 @@ form. app/services/card_parse.py is now layered underneath it as
     a validation   the model's shape is forced into the contract
 
 Both entry points remain safe to call without an API key.
+
+PART 2 (15 Nov) added, around that core and without replacing it:
+
+    card_image      the picture is straightened, cropped, evened out
+                    and scaled before anybody reads it, and a PDF is
+                    turned into pictures
+    card_read       a second pass on the server, behind a switch,
+                    which also decides which way up the card is
+    card_fields     phones in E.164, the name split, the address
+                    split into city / state / country / postal code
+    card_confidence a score and a REASON per field, so the reviewer
+                    knows which three of sixteen fields to look at
+
+Front and back are one card: `sides=` takes the second picture and
+everything read off it joins the first, because the address and the
+second number are usually printed on the back.
 """
 from __future__ import annotations
 
@@ -24,6 +40,37 @@ import base64
 import json
 import os
 import re
+
+from app.services import card_confidence
+
+
+def _on_the_card(value, raw_text):
+    """Whether this value is actually printed on the card.
+
+    A company read off the email domain is a suggestion; one printed
+    across the top is a fact. The review screen marks the first.
+    """
+    flat = re.sub(r'[^a-z0-9]', '', str(value or '').lower())
+    body = re.sub(r'[^a-z0-9]', '', str(raw_text or '').lower())
+    if not flat:
+        return True
+    if not body:
+        return True        # nothing to check against: claim nothing
+    return flat in body
+
+
+def _as_fields(parsed):
+    """One reading in the shape the confidence score compares."""
+    from app.services import card_fields, card_parse
+
+    if not parsed:
+        return {}
+    try:
+        flat = card_parse.to_contact_fields(parsed)
+        flat['raw_text'] = parsed.get('raw_text') or ''
+        return card_fields.enrich(flat, raw_text=flat['raw_text'])
+    except Exception:                                     # noqa: BLE001
+        return dict(parsed)
 
 
 _MODEL = os.environ.get('BUSINESS_CARD_MODEL', 'claude-haiku-4-5-20251001')
@@ -51,22 +98,51 @@ Do not add any commentary. Return only the JSON object. If a field is not visibl
 
 def extract_business_card(image_bytes: bytes,
                           mime: str = 'image/jpeg',
-                          card_text: str = None) -> dict:
+                          card_text: str = None,
+                          *, sides=None, preprocess: bool = True) -> dict:
     """Extract a card. Vision where available, deterministic always.
 
     `card_text` is any text already read off the card — pasted by the
-    user, or produced by an OCR step if one is ever added. When Vision
-    is unavailable this is the whole extraction; when both are present
-    the two are cross-checked.
+    user, read by the on-server pass, or produced by the PDF when it
+    holds text and no picture. When the image service is unavailable
+    this is the whole extraction; when both are present the two are
+    cross-checked and the disagreements are named.
 
-    Never raises — always returns
-    ``{'extracted': dict, 'raw': str, 'error': str | None}``.
+    `sides` is [(bytes, mime)] for the back of the card and any
+    further pictures of it. One card, one review form.
+
+    Never raises — always returns ``{'extracted', 'raw', 'error',
+    'confidence', 'notes'}``.
     """
-    from app.services import card_parse
+    from app.services import card_fields, card_image, card_parse, card_read
+
+    notes, pages = [], []
+    pictures = [(image_bytes, mime)] + list(sides or [])
+    if preprocess and image_bytes:
+        try:
+            ready = card_image.prepare(image_bytes, mime,
+                                       sides=list(sides or []))
+            notes.extend(ready.notes)
+            pages = list(ready.pages)
+            if ready.text and not card_text:
+                card_text = ready.text
+        except Exception as exc:                          # noqa: BLE001
+            notes.append(f'the picture could not be prepared ({exc})')
+    if pages:
+        pictures = [(png, 'image/png') for png in pages]
+
+    # The second pass, when the box has it and the switch is on. It
+    # also decides which way up each picture is.
+    if pages and not card_text:
+        read_text, read_notes = card_read.read_pages(pages)
+        notes.extend(read_notes)
+        if read_text.strip():
+            card_text = read_text
 
     fallback = card_parse.parse(card_text) if card_text else None
 
     def finish(model_out, raw, error):
+        readings = [r for r in (model_out, fallback) if r]
         if model_out and fallback:
             merged = card_parse.cross_check(model_out, fallback)
         elif model_out:
@@ -75,11 +151,36 @@ def extract_business_card(image_bytes: bytes,
             merged = fallback
             error = error or None
         else:
-            return {'extracted': {}, 'raw': raw, 'error': error}
+            return {'extracted': {}, 'raw': raw, 'error': error,
+                    'confidence': {}, 'notes': notes}
         out = card_parse.to_contact_fields(merged)
         out['conflicts'] = merged.get('conflicts') or []
         out['raw_text'] = merged.get('raw_text') or (card_text or '')
-        return {'extracted': out, 'raw': raw, 'error': error}
+        # Where a field was WORKED OUT rather than read, the review
+        # screen has to say so — it is the difference between a fact
+        # and a good guess, and the guesses are what get corrected.
+        derived = set()
+        if out.get('company') and not _on_the_card(out['company'],
+                                                   out['raw_text']):
+            derived.add('company')
+        before = dict(out)
+        out = card_fields.enrich(out, raw_text=out['raw_text'])
+        for key in ('city', 'state', 'country', 'postal_code'):
+            # Split out of the address block is still READ off the
+            # card. Marked only when the value is not printed anywhere
+            # on it — a state implied by a city, a country implied by
+            # a PIN code. Those are the ones worth a glance.
+            if out.get(key) and not before.get(key) \
+                    and not _on_the_card(out[key], out['raw_text']):
+                derived.add(key)
+        out['confidence'] = card_confidence.score(
+            out, readings=[_as_fields(r) for r in readings],
+            conflicts=out['conflicts'], derived=derived, notes=notes)
+        out['confidence_summary'] = card_confidence.summary(
+            out['confidence'])
+        out['notes'] = notes
+        return {'extracted': out, 'raw': raw, 'error': error,
+                'confidence': out['confidence'], 'notes': notes}
 
     api_key = os.environ.get('ANTHROPIC_API_KEY')
     if not api_key:

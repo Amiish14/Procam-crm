@@ -1070,6 +1070,14 @@ class Contact(db.Model):
                                       nullable=True, index=True)
     is_active             = db.Column(db.Boolean, default=True)
     relationship_strength = db.Column(db.String(20), nullable=True)   # Strong / Warm / Cold
+    # ── CRM-SEARCH-SCAN-01 Part 2 · what a business card carries ───
+    department            = db.Column(db.String(120), nullable=True)
+    address               = db.Column(db.Text, nullable=True)
+    postal_code           = db.Column(db.String(16), nullable=True)
+    #: The photograph the contact was read off, kept with the person:
+    #: the card says things the fields do not, and a scan nobody can
+    #: go back to is a transcription, not a record.
+    card_image_path       = db.Column(db.Text, nullable=True)
     decision_role         = db.Column(db.String(40), nullable=True)   # Decision Maker / Influencer / User / Procurement
 
     def to_dict(self):
@@ -1083,6 +1091,14 @@ class Contact(db.Model):
             'website': self.website or '', 'linkedin': self.linkedin or '',
             'agent_type': self.agent_type or '', 'assigned_to': self.assigned_to or '',
             'notes': self.notes or '',
+            'department': getattr(self, 'department', '') or '',
+            'address': getattr(self, 'address', '') or '',
+            'postal_code': getattr(self, 'postal_code', '') or '',
+            'state': self.state or '',
+            # The card this person was read off, if they came from one.
+            # The path is never sent to the browser — only whether
+            # there is one, and the route that serves it.
+            'has_card_image': bool(getattr(self, 'card_image_path', '')),
             'created_at': str(self.created_at)[:10] if self.created_at else ''
         }
 
@@ -4135,6 +4151,49 @@ def api_contact_by_id(cid):
     return jsonify(body)
 
 
+@app.route('/api/contacts/<int:cid>/card-image')
+@require_auth
+def api_contact_card_image(cid):
+    """The business card this contact was read off.
+
+    CRM-SEARCH-SCAN-01 Part 2 — "keep the card image on the contact".
+    A scan nobody can go back to is a transcription, not a record: the
+    card says things the fields do not, and a wrong reading is only
+    ever found by looking at it again.
+
+    Same visibility rule as the contact itself, the stored path
+    confined to the upload root, an image-only mimetype and the same
+    nosniff and sandbox headers the scan screen's own image route
+    uses — a stored path is a file read waiting to be aimed somewhere
+    else.
+    """
+    import mimetypes
+    import os as _os
+    from flask import send_file
+    from app.access import scope as _scope
+    from app.utils.uploads import _upload_root
+
+    contact = _scope.contacts(Contact.query).filter(Contact.id == cid).first()
+    if contact is None:
+        return jsonify({'error': 'Contact not found', 'id': cid}), 404
+    path = getattr(contact, 'card_image_path', '') or ''
+    if not path:
+        return jsonify({'error': 'No card on this contact'}), 404
+    root = _os.path.realpath(_upload_root())
+    real = _os.path.realpath(path)
+    if not real.startswith(root + _os.sep) or not _os.path.isfile(real):
+        return jsonify({'error': 'No card on this contact'}), 404
+    mime, _ = mimetypes.guess_type(real)
+    if mime not in ('image/jpeg', 'image/png', 'image/gif', 'image/webp',
+                    'image/tiff', 'image/bmp', 'application/pdf'):
+        return jsonify({'error': 'No card on this contact'}), 404
+    answer = send_file(real, mimetype=mime, as_attachment=False)
+    answer.headers['X-Content-Type-Options'] = 'nosniff'
+    answer.headers['Content-Security-Policy'] = "sandbox; default-src 'none'"
+    answer.headers['Cache-Control'] = 'private, max-age=300'
+    return answer
+
+
 @app.route('/api/contacts/<int:cid>', methods=['PUT'])
 @require_auth
 def api_update_contact(cid):
@@ -6032,6 +6091,17 @@ def init_db():
             ('leads',         'bid_outcome',      'VARCHAR(16)'),
             ('leads',         'bid_reason',       'VARCHAR(300)'),
             ('contacts',      'state',            'VARCHAR(80)'),
+            # CRM-SEARCH-SCAN-01 Part 2 — what a business card carries
+            # and the contact row had nowhere to put: the department,
+            # the street and postal code, and the photograph of the
+            # card itself, which stays with the person it names.
+            ('contacts',      'department',       'VARCHAR(120)'),
+            ('contacts',      'address',          'TEXT'),
+            ('contacts',      'postal_code',      'VARCHAR(16)'),
+            ('contacts',      'card_image_path',  'TEXT'),
+            ('business_card_imports', 'back_image_path', 'TEXT'),
+            ('business_card_imports', 'confidence_json', 'JSON'),
+            ('business_card_imports', 'prep_notes',      'TEXT'),
             ('opportunities', 'won_project_ref',  'VARCHAR(60)'),
             ('opportunities', 'won_project_at',   'TIMESTAMP'),
             # Dashboard v2 (Phase 1-3)

@@ -2471,8 +2471,23 @@ async function openContact(id, preloaded){
       + line('Phone', c.phone, c.phone ? 'tel:' + c.phone : null)
       + line('Location', [c.city, c.country].filter(Boolean).join(', '))
       + line('Industry', c.industry)
+      + line('Department', c.department)
       + line('Owner', c.assigned_to)
     + '</div>'
+    /* The card this person was read off, kept with them. A wrong
+       reading is only ever found by looking at the card again. */
+    + (c.has_card_image
+        ? '<div style="margin-top:14px">'
+          + '<div style="font-size:10.5px;font-weight:700;'
+            + 'letter-spacing:.06em;text-transform:uppercase;'
+            + 'color:var(--text-3);margin-bottom:5px">Business card</div>'
+          + '<a href="' + crmUrl('/api/contacts/' + c.id + '/card-image')
+            + '" target="_blank">'
+          + '<img src="' + crmUrl('/api/contacts/' + c.id + '/card-image')
+            + '" alt="The business card this contact was read off" '
+            + 'style="max-width:320px;max-height:200px;border-radius:8px;'
+            + 'border:1px solid var(--line)"></a></div>'
+        : '')
     + (c.notes ? '<div style="margin-top:14px;font-size:13px;'
         + 'color:var(--text-2);line-height:1.7">' + e(c.notes) + '</div>' : '')
     + '</div>';

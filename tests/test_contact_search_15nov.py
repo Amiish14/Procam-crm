@@ -550,7 +550,10 @@ def test_the_country_filter_says_when_it_cannot_be_trusted():
     # ran first. What must always hold is that a column dominated by
     # one value is reported as untrustworthy AND explained, and that
     # one which is not is reported as usable with nothing to explain.
-    if body['dominant']['percent'] >= 90.0:
+    # The threshold is the module's, not a number repeated here: it
+    # moved from 90 to 80 on 15 Nov and a copy of it in a test is a
+    # copy that goes stale between suites.
+    if body['dominant']['percent'] >= ps.DOMINANT_AT:
         assert body['trustworthy'] is False
         assert 'defaulted' in body['note']
     else:
