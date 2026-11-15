@@ -48,6 +48,13 @@ LIST_KEY = 'vertical'
 ALIASES = {
     'ht': 'Heavy Transport',
     'heavy transportation': 'Heavy Transport',
+    # Both named on 15 Nov. 'General Transport' was an Other; the rest
+    # of the CRM has read it as Heavy Transport since the vertical
+    # master went in (vertical_master_apply.py, vertical_heads), so
+    # filing it under Other here was the odd one out.
+    'transportation': 'Heavy Transport',
+    'general transport': 'Heavy Transport',
+    'general transportation': 'Heavy Transport',
     'heavy haulage': 'Heavy Transport',
     'odc': 'Heavy Transport',
     'pfm': 'Project Freight',
@@ -77,7 +84,6 @@ ALIASES = {
     'heavylift': 'Heavy Cargo',
     'others': 'Other',
     'general': 'Other',
-    'general transport': 'Other',
     'misc': 'Other',
 }
 

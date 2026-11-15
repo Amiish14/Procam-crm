@@ -156,6 +156,20 @@ def test_thirteen_spellings_become_ten_desks():
         assert vm.canonical(value) == want, value
 
 
+def test_transport_spellings_are_the_heavy_transport_desk():
+    """Named on 15 Nov. Neither is an "Other": the rest of the CRM
+    (`scripts/vertical_master_apply.py`, `vertical_heads`) has read
+    General Transport as Heavy Transport since the master list went
+    in, and this was the one place that disagreed."""
+    for value in ('Transportation', 'transportation',
+                  'General Transport', 'general transport',
+                  'GENERAL TRANSPORT', 'General Transportation',
+                  'General Transport - South', 'Road Transportation'):
+        assert vm.canonical(value) == 'Heavy Transport', value
+    # and "General" on its own still cannot be told apart from Other.
+    assert vm.canonical('General') == 'Other'
+
+
 def test_a_desk_it_cannot_place_is_not_filed_under_other():
     """"I don't know which desk this is" and "this is the Other desk"
     are different answers, and a sweep that files the first under the
