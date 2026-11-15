@@ -80,6 +80,7 @@
       <span class="fs-note" id="status"></span>
     </div>
     <div class="fs-warn" id="country-warn" style="display:none"></div>
+    <div class="fs-warn" id="cap-warn" style="display:none"></div>
   </form>
 
   <div id="out"></div>
@@ -98,6 +99,7 @@ const esc = (s) => String(s == null ? '' : s)
   .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const FIELDS = ['name','company','country','location','vertical','industry'];
 let PAGE = 1, PAGES = 0, SORT = 'name', DIR = 'asc';
+let HINT_T = null;
 
 function values(){
   const out = {};
@@ -107,16 +109,40 @@ function values(){
 
 function clearAll(){
   FIELDS.forEach(f => { document.getElementById(f).value = ''; });
+  closeMenus();
   document.getElementById('out').innerHTML = '';
   document.getElementById('pager').style.display = 'none';
   document.getElementById('status').textContent = '';
   history.replaceState({}, '', location.pathname);
 }
 
+/* UAT of 15 Nov: a type-ahead menu stayed open over the results after
+   Escape, after a click outside it and after Clear. A menu that
+   covers the answer is worse than no menu. One function closes them
+   all, and everything that should close one calls it. */
+function closeMenus(except){
+  clearTimeout(HINT_T);
+  FIELDS.forEach(f => {
+    if (f === except) return;
+    const host = document.getElementById('h_' + f);
+    if (host) host.innerHTML = '';
+  });
+}
+
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') closeMenus();
+});
+document.addEventListener('click', (ev) => {
+  if (!ev.target.closest('.fs-hits')) closeMenus();
+});
+document.addEventListener('focusin', (ev) => {
+  const held = ev.target.closest('.fs-hits');
+  closeMenus(held ? held.querySelector('input').id : undefined);
+});
+
 /* Type-ahead from the values the data actually carries. A filter that
    offers something nothing holds looks broken the first time it is
    used; one that hides a value somebody uses is worse. */
-let HINT_T = null;
 function hint(field){
   clearTimeout(HINT_T);
   HINT_T = setTimeout(async () => {
@@ -140,7 +166,7 @@ function hint(field){
 
 function pick(field, value){
   document.getElementById(field).value = value;
-  document.getElementById('h_' + field).innerHTML = '';
+  closeMenus();
   go(1);
 }
 
@@ -159,6 +185,7 @@ function step(by){
 
 async function go(page){
   PAGE = page || 1;
+  closeMenus();
   const v = values();
   const asked = FIELDS.filter(f => v[f]);
   const status = document.getElementById('status');
@@ -193,11 +220,14 @@ async function go(page){
     ? (body.capped ? 'more than ' : '') + body.total + ' person(s) · '
       + body.took_ms + ' ms'
     : 'Nobody matches all of those.';
-  const warn = document.getElementById('country-warn');
+  /* Its own line: the cap is about THIS search, the country warning
+     is about the data, and one overwriting the other lost whichever
+     came second. */
+  const cap = document.getElementById('cap-warn');
   if (body.capped && body.capped_note){
-    warn.style.display = 'block';
-    warn.textContent = body.capped_note;
-  }
+    cap.style.display = 'block';
+    cap.textContent = body.capped_note;
+  } else { cap.style.display = 'none'; cap.textContent = ''; }
   out.innerHTML = rows.length ? table(rows) : '';
   if (PAGES > 1){
     pager.style.display = 'flex';
@@ -260,9 +290,16 @@ async function countryHealth(){
   } catch (err) { return; }
   if (!body.ok || body.trustworthy || !body.note) return;
   const host = document.getElementById('country-warn');
+  const d = body.dominant || {};
+  const spellings = ((body.values || [])[0] || {}).spellings || [];
+  const how = spellings.length > 1
+    ? ' (spelled ' + spellings.map(s => '"' + s.value + '" ' + s.count)
+        .join(', ') + ')'
+    : '';
   host.style.display = 'block';
-  host.textContent = body.dominant.percent + '% of contacts are filed as "'
-    + body.dominant.value + '". ' + body.note;
+  host.textContent = d.count + ' of ' + body.total + ' contacts ('
+    + d.percent + '%) are filed as "' + d.value + '"' + how + '. '
+    + body.note;
 }
 
 /* Deep links: /contacts/search?company=Jindal&vertical=Heavy%20Transport */

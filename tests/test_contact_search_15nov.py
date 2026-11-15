@@ -221,7 +221,7 @@ def test_one_person_on_a_contact_and_three_leads_is_one_row():
         assert row['designation'] == 'Head - Logistics'
         # And the lead it came with is reachable.
         assert row['lead_id']
-        assert 'and 3 more lead(s)' in row['source_note']
+        assert row['source_note'] == 'Contact · also on 3 leads'
 
 
 def test_two_people_with_the_same_name_stay_two_people():
@@ -680,3 +680,155 @@ def test_the_gap_sweep_never_overwrites_a_stored_country():
         found = {row.id: fills for row, fills in mod.survey()}
         assert 'country' not in (found.get(held.id) or {})
         assert db.session.get(Contact, held.id).country == 'India'
+
+
+# ═══ the UAT of 15 Nov ═════════════════════════════════════════════
+# Five findings from the Chrome run on live. Each one is a test here
+# so the fix is the thing that is kept, not the thing that was done.
+
+def test_three_spellings_of_india_are_one_country():
+    """The finding: 664 "India" + 2 "INDIA" + 1 "Indian" of 667, and
+    the page reported the top value as "Indian", 1 contact, 0.1%, and
+    called the filter trustworthy. Counting case-sensitively made the
+    dominant value the rarest spelling of it."""
+    for n in range(20):
+        _contact(name=f'ZT India {n}', country='India',
+                 email=f'i{n}@zt.example')
+    _contact(name='ZT Shout', country='INDIA', email='shout@zt.example')
+    _contact(name='ZT Adj', country='Indian', email='adj@zt.example')
+    found = ps.country_health()
+    assert found['dominant']['value'] == 'India'
+    assert found['dominant']['count'] >= 22
+    spellings = found['values'][0]['spellings']
+    assert {s['value'] for s in spellings} >= {'India', 'INDIA', 'Indian'}
+
+
+def test_the_warning_fires_above_eighty_percent():
+    """80%, on the instruction of 15 Nov. 664 of 667 is 99.6% and
+    nothing honest sits near 80 in this column."""
+    assert ps.DOMINANT_AT == 80.0
+    for n in range(20):
+        _contact(name=f'ZT Dom {n}', country='india',
+                 email=f'd{n}@zt.example')
+    body = _client().get('/api/contacts/search/country-health').get_json()
+    assert body['ok'] is True
+    if body['dominant']['percent'] >= 80.0:
+        assert body['trustworthy'] is False
+        assert 'defaulted' in body['note']
+    else:
+        assert body['trustworthy'] is True
+
+
+def test_a_country_it_does_not_know_is_its_own_country():
+    """Grouping is not guessing: only spellings the business uses are
+    folded together, and anything else stands alone."""
+    assert ps.country_group('india') == ps.country_group('INDIA') == 'India'
+    assert ps.country_group('Indian') == 'India'
+    assert ps.country_group('UAE') == 'United Arab Emirates'
+    assert ps.country_group('Zanzibar') == 'Zanzibar'
+    assert ps.country_group('  ') == ''
+
+
+def test_the_portal_is_not_a_person():
+    """#12645 showed "partner@procol.in" as a person under Amns. It is
+    the portal's own delivery address — the one the matcher is
+    forbidden to learn — and a search result is somebody to ring."""
+    account = _account()
+    _lead(pic='partner@procol.in', company_id=account.id,
+          email='partner@procol.in')
+    assert ps.search(name='partner')['total'] == 0
+    assert ps.search(company='ZT Steel Works')['total'] == 0
+    assert ps.duplicates_of(email='partner@procol.in') == []
+
+
+def test_the_same_list_the_matcher_uses():
+    for address in ('partner@procol.in', 'x@ansmtp.ariba.com',
+                    'rfq@superprocure.in', 'a@procurengine.com',
+                    'noreply@anything.example',
+                    'do-not-reply@buyer.example'):
+        assert ps.is_system_address(address), address
+    for address in ('ravi@ztsteel.example', 'purchase@jindal.example',
+                    'partner@realcustomer.example'):
+        assert not ps.is_system_address(address), address
+
+
+def test_a_real_person_keeps_their_phone_and_loses_the_robot_address():
+    """The row is dropped only when there is nothing of a person left.
+    A named PIC with a phone is a person whose email was the portal's."""
+    account = _account()
+    _lead(pic='ZT Ravi Kumar', company_id=account.id,
+          email='noreply@procol.in', phone='+91 98200 33333')
+    found = ps.search(name='ZT Ravi')
+    assert found['total'] == 1
+    row = found['rows'][0]
+    assert row['emails'] == []
+    assert row['phones']
+
+
+def test_the_source_note_counts_leads_the_same_way_every_time():
+    """"Contact · and 1 lead" beside "and 2 more lead(s)" was two
+    wordings of one fact."""
+    account = _account()
+    _contact(name='ZT Nita Shah', account_id=account.id,
+             email='nita@ztsteel.example')
+    _lead(pic='ZT Nita Shah', company_id=account.id,
+          email='nita@ztsteel.example')
+    row = ps.search(name='ZT Nita')['rows'][0]
+    assert row['source_note'] == 'Contact · also on 1 lead'
+    _lead(pic='ZT Nita Shah', company_id=account.id,
+          email='NITA@ztsteel.example')
+    row = ps.search(name='ZT Nita')['rows'][0]
+    assert row['source_note'] == 'Contact · also on 2 leads'
+
+
+def test_the_type_ahead_offers_the_name_that_starts_that_way_first():
+    """"Am" offered BHEL above Amns, because BHEL was on more rows."""
+    _account(name='ZT Amns')
+    for n in range(6):
+        _lead(pic=f'ZT P{n}', company='ZT Bharat Am Works')
+    values = ps.suggest('company', 'ZT Am')
+    assert values[0] == 'ZT Amns', values
+
+
+def test_the_search_page_closes_its_menus():
+    """Escape, a click outside and Clear all left a dropdown covering
+    the results. One function closes them; everything calls it."""
+    html = _client().get('/contacts/search').get_data(as_text=True)
+    assert 'function closeMenus' in html
+    assert "ev.key === 'Escape'" in html
+    assert "closest('.fs-hits')" in html
+    # and Clear closes them before it clears the results
+    assert html.index('function clearAll') < html.index('function closeMenus')
+    assert 'cap-warn' in html
+
+
+def test_the_new_contact_form_shows_the_duplicates_it_is_sent():
+    """The server has answered 409 with the matches since Part 1; the
+    form threw the body away, so Save appeared to do nothing."""
+    client = _client()
+    token = _token(client)
+    account = _account()
+    _contact(name='ZT Dup Person', account_id=account.id,
+             email='dup@ztsteel.example', mobile='+91 98200 44444')
+    answer = client.post('/api/contacts',
+                         json={'name': 'ZT Dup Person',
+                               'email': 'dup@ztsteel.example'},
+                         headers={'X-CSRF-Token': token})
+    assert answer.status_code == 409
+    body = answer.get_json()
+    assert body['needs'] == 'duplicate_check'
+    assert body['duplicates'] and body['duplicates'][0]['person']
+    emp = Employee.query.filter_by(emp_code=ADMIN).first()
+    emp.must_change_pw = False          # /app is the change form until then
+    db.session.commit()
+    html = client.get('/app').get_data(as_text=True)
+    assert 'function ctDupes' in html
+    assert "r.needs==='duplicate_check'" in html
+    assert 'id="ctDupe"' in html
+    # and it can still be created on purpose
+    made = client.post('/api/contacts',
+                       json={'name': 'ZT Dup Person',
+                             'email': 'dup@ztsteel.example',
+                             'use_existing': True},
+                       headers={'X-CSRF-Token': token})
+    assert made.status_code == 200 and made.get_json()['ok'] is True

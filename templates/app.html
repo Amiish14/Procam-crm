@@ -2136,6 +2136,11 @@ catch (err) { console.error('Employee list could not start loading', err); }
       <div class="fmr"><div class="fmg"><label class="fml">Website</label><input class="fmc" id="ctW" placeholder="https://"></div><div class="fmg"><label class="fml">LinkedIn</label><input class="fmc" id="ctL" placeholder="https://linkedin.com/in/..."></div></div>
       <div class="fmg"><label class="fml">Agent Type / Category</label><select class="fmc" id="ctAt"><option value="">—</option><option>Overseas Agent</option><option>Partner</option><option>Vendor</option><option>Client</option><option>Consultant</option></select></div>
       <div class="fmg"><label class="fml">Notes</label><textarea class="fmc" id="ctNote" rows="2"></textarea></div>
+      <!-- CRM-SEARCH-SCAN-01: the duplicate answer. The server has
+           returned 409 with the people who look like this one since
+           Part 1; until the UAT of 15 Nov the form threw it away and
+           Save appeared to do nothing. -->
+      <div id="ctDupe" style="display:none"></div>
     </div>
     <div class="mft"><button class="btn btn-ghost" onclick="document.getElementById('ctMob').style.display='none'">Cancel</button><button class="btn btn-red" onclick="saveCt()">Save</button></div>
   </div>
@@ -6073,10 +6078,45 @@ function ctCardClicks(ev){
   });
 })();
 function ctTab(t){ctype=t;document.querySelectorAll('.tabs .tab').forEach((el,i)=>el.classList.toggle('on',['person','company','agent'][i]===t));rCt();}
-function openCt(){g('ctN').value='';g('ctC').value='';g('ctD').value='';g('ctI').value='';g('ctE').value='';g('ctP').value='';g('ctCo').value='India';g('ctCi').value='';g('ctW').value='';g('ctL').value='';g('ctNote').value='';g('ctMob').style.display='flex';}
-async function saveCt(){
-  const r=await api('/api/contacts',{method:'POST',body:JSON.stringify({type:g('ctType').value,name:g('ctN').value,company:g('ctC').value,designation:g('ctD').value,industry:g('ctI').value,email:g('ctE').value,phone:g('ctP').value,country:g('ctCo').value,state:g('ctSt').value,city:g('ctCi').value,website:g('ctW').value,linkedin:g('ctL').value,agent_type:g('ctAt').value,notes:g('ctNote').value})});
-  if(r.ok){g('ctMob').style.display='none';rCt();toast('Contact saved ✓','ok');}
+function openCt(){g('ctDupe').style.display='none';g('ctDupe').innerHTML='';g('ctN').value='';g('ctC').value='';g('ctD').value='';g('ctI').value='';g('ctE').value='';g('ctP').value='';g('ctCo').value='India';g('ctCi').value='';g('ctW').value='';g('ctL').value='';g('ctNote').value='';g('ctMob').style.display='flex';}
+function ctBody(useExisting){
+  return JSON.stringify({type:g('ctType').value,name:g('ctN').value,company:g('ctC').value,designation:g('ctD').value,industry:g('ctI').value,email:g('ctE').value,phone:g('ctP').value,country:g('ctCo').value,state:g('ctSt').value,city:g('ctCi').value,website:g('ctW').value,linkedin:g('ctL').value,agent_type:g('ctAt').value,notes:g('ctNote').value,use_existing:!!useExisting});
+}
+
+/* The people already on file who look like this one. The server
+   decides (same search as Find a person, by email, by phone and by
+   name-at-company); the form's job is to SHOW them. Each one opens,
+   and "Save anyway" is the only way a second record gets created —
+   on purpose, with the matches on screen while it is done. */
+function ctDupes(body){
+  const host=g('ctDupe');
+  const rows=(body&&body.duplicates)||[];
+  if(!rows.length){host.style.display='none';host.innerHTML='';return;}
+  host.style.display='block';
+  host.innerHTML='<div style="margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--surface-2)">'
+    +'<div style="font-weight:600;font-size:13px;margin-bottom:6px">'+e(body.error||'Already on file')+'</div>'
+    +rows.map(r=>{
+      const where=r.lead_url||r.url||'';
+      const who=e(r.person||'(no name)');
+      const link=where?'<a href="'+e(crmUrl(where))+'" target="_blank">'+who+'</a>':who;
+      const bits=[e(r.company||''),e((r.emails||[])[0]||''),e((r.phones||[])[0]||'')].filter(Boolean).join(' · ');
+      return '<div style="padding:6px 0;border-top:1px solid var(--line);font-size:12.5px">'
+        +'<div>'+link+' <span style="color:var(--text-3)">'+e(r.source_note||r.label||'')+'</span></div>'
+        +'<div style="color:var(--text-3)">'+bits+'</div>'
+        +'<div style="color:var(--text-3);font-size:11.5px">matched on '+e(r.why||'')+'</div>'
+        +(where?'<button class="btn btn-ghost" style="margin-top:4px;font-size:11.5px;padding:3px 8px" onclick="g(\'ctMob\').style.display=\'none\';window.open(\''+e(crmUrl(where))+'\',\'_blank\')">Use existing</button>':'')
+        +'</div>';
+    }).join('')
+    +'<div style="margin-top:8px"><button class="btn btn-red" style="font-size:12px;padding:4px 10px" onclick="saveCt(true)">Save anyway — this is somebody else</button></div>'
+    +'</div>';
+}
+
+async function saveCt(useExisting){
+  g('ctDupe').style.display='none';
+  const r=await api('/api/contacts',{method:'POST',body:ctBody(useExisting)});
+  if(r.ok){g('ctMob').style.display='none';rCt();toast('Contact saved ✓','ok');return;}
+  if(r.needs==='duplicate_check'){ctDupes(r);return;}
+  toast(r.error||'The contact was not saved.','err');
 }
 
 // ── NEWS INTELLIGENCE ──

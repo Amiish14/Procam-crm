@@ -102,28 +102,14 @@ def api_duplicates():
 def api_country_health():
     """Whether the country filter can be trusted today.
 
-    `api_create_contact` has always defaulted country to 'India', so
-    the column is 100% filled and says nothing. A filter that looks
-    authoritative and is not is worse than one marked as unreliable,
-    so the screen asks and prints what it is told.
+    The counting lives in `people_search.country_health` — spellings
+    of one country grouped into one country, which is what the UAT of
+    15 Nov found this route was not doing: 664 "India" + 2 "INDIA" +
+    1 "Indian" was read as three countries whose biggest was
+    "Indian", and the page called a 99.6%-default column trustworthy.
     """
-    from app import Contact, db
+    from app.services import people_search
 
-    rows = db.session.query(Contact.country, db.func.count(Contact.id)) \
-        .group_by(Contact.country).all()
-    total = sum(n for _v, n in rows) or 0
-    spread = sorted(((v or '(blank)'), n) for v, n in rows)
-    top = max(((v or '(blank)'), n) for v, n in rows) if rows else ('', 0)
-    dominant = (100.0 * top[1] / total) if total else 0.0
-    return jsonify(
-        ok=True, total=total,
-        values=[{'value': v, 'count': n} for v, n in
-                sorted(spread, key=lambda x: -x[1])[:12]],
-        distinct=len(rows),
-        dominant={'value': top[0], 'count': top[1],
-                  'percent': round(dominant, 1)},
-        trustworthy=bool(total and dominant < 90.0),
-        note=('Every contact carries a country because the create form '
-              'has always defaulted it. Until that is corrected, a '
-              'country filter answers about the default, not about the '
-              'person.') if dominant >= 90.0 else '')
+    found = people_search.country_health()
+    found['ok'] = True
+    return jsonify(found)

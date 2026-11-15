@@ -108,6 +108,78 @@ def country_from_phone(*numbers):
     return ''
 
 
+#: Local parts that are a robot whatever the domain sends them.
+#: `partner@`, `rfq@` and the like are NOT here: those are mailboxes a
+#: human reads. These are addresses nobody is.
+SYSTEM_LOCALS = frozenset((
+    'noreply', 'no-reply', 'no_reply', 'donotreply', 'do-not-reply',
+    'do_not_reply', 'notifications', 'notification', 'notify',
+    'mailer-daemon', 'mailerdaemon', 'postmaster', 'bounce', 'bounces',
+    'automailer', 'autoreply', 'auto-reply', 'alerts', 'alert',
+    'system', 'noreplyemail',
+))
+
+
+def is_system_address(address):
+    """The portal or robot this address belongs to, or ''.
+
+    UAT of 15 Nov: `partner@procol.in` was shown as a person under
+    Amns. It is the portal's own delivery address — the same thing
+    `account_match.not_a_customer` refuses to learn — and a search
+    that offers it as somebody to ring is offering a robot.
+
+    The portal half is `portal_rfq.is_portal_sender`, deliberately the
+    SAME list the matcher uses (`data/portal_senders.txt` plus the
+    brand labels), so a portal added there is excluded here without a
+    second edit.
+    """
+    text = str(address or '').strip().lower().strip('<>,;')
+    if '@' not in text:
+        return ''
+    try:
+        from app.services import portal_rfq
+        portal = portal_rfq.is_portal_sender(text)
+    except Exception:                                     # noqa: BLE001
+        portal = ''
+    if portal:
+        return portal
+    local, _, domain = text.partition('@')
+    local = re.split(r'[+]', local, 1)[0]
+    if local in SYSTEM_LOCALS:
+        return domain or local
+    return ''
+
+
+def _real_emails(*values):
+    """The addresses that belong to a PERSON."""
+    out, bad = [], []
+    for raw in values:
+        text = str(raw or '').strip()
+        if not text:
+            continue
+        (bad if is_system_address(text) else out).append(text)
+    return out, bad
+
+
+def _is_a_robot(row):
+    """A result row that is an address, not a person.
+
+    Two shapes, both seen on live. The lead whose PIC *is* the portal
+    address (#12645, "partner@procol.in" — there is no person there to
+    name), and the row whose only way of being reached was a portal
+    address, which leaves nothing a search result is for. A row with a
+    real phone or a second real address survives with the robot
+    address dropped: the person is still a person.
+    """
+    person = (row.get('person') or '').strip()
+    if '@' in person and is_system_address(person):
+        return True
+    if row.get('system_emails') and not row.get('emails') \
+            and not row.get('phones'):
+        return True
+    return False
+
+
 def _digits(value):
     """A phone as comparable digits — the last ten, which is what two
     spellings of one Indian number have in common."""
@@ -307,7 +379,8 @@ def _shape_contact(row, accounts):
         'industry': (row.industry or '')
                     or ((account.industry or '') if account else ''),
         'phones': phones,
-        'emails': [e for e in ((row.email or '').strip(),) if e],
+        'emails': _real_emails(row.email)[0],
+        'system_emails': _real_emails(row.email)[1],
         'owner': row.assigned_to or '',
         'last_activity': str(row.created_at or '')[:10],
         'url': (f'/company/{account.id}' if account is not None else ''),
@@ -349,7 +422,8 @@ def _shape_lead(row, accounts):
         'industry': (getattr(row, 'industry', '') or '')
                     or ((account.industry or '') if account else ''),
         'phones': phones,
-        'emails': [e for e in ((row.email or '').strip(),) if e],
+        'emails': _real_emails(row.email)[0],
+        'system_emails': _real_emails(row.email)[1],
         'owner': row.assigned_to or '',
         'last_activity': str(getattr(row, 'updated_at', None)
                              or getattr(row, 'created_at', None) or '')[:10],
@@ -469,6 +543,10 @@ def search(*, name='', company='', country='', location='', vertical='',
         want = f['industry'].lower()
         rows = [r for r in rows if want in (r['industry'] or '').lower()]
 
+    # The portal's own address is not a person. Before the merge, so
+    # a robot row cannot absorb a real one's phone and survive.
+    rows = [r for r in rows if not _is_a_robot(r)]
+
     rows = _merge(rows)
     for row in rows:
         # One line, however many places the person turned up in: the
@@ -477,8 +555,8 @@ def search(*, name='', company='', country='', location='', vertical='',
         extra = row.get('also_leads') or 0
         first = (row.get('sources') or [row['label']])[0]
         row['source_note'] = (
-            f'{first} · and {extra} more lead(s)' if extra > 1
-            else (f'{first} · and 1 lead' if extra == 1 else first))
+            f'{first} · also on {extra} lead{"s" if extra > 1 else ""}'
+            if extra else first)
     key = SORTS.get(sort, SORTS['name'])
     rows.sort(key=key, reverse=bool(descending))
 
@@ -500,6 +578,95 @@ def search(*, name='', company='', country='', location='', vertical='',
         'sort': sort,
         'descending': bool(descending),
         'took_ms': int((time.time() - started) * 1000),
+    }
+
+
+#: Above this share of one country, the filter is reporting the
+#: default rather than the person. 80% on the user's instruction of
+#: 15 Nov: 664 of 667 is 99.6%, and nothing honest sits near 80 here.
+DOMINANT_AT = 80.0
+
+#: Spellings of one country. Only the ones this book carries; an
+#: unfamiliar value is its own country, never folded into a guess.
+COUNTRY_SYNONYMS = {
+    'india': 'India', 'indian': 'India', 'bharat': 'India',
+    'ind': 'India', 'in': 'India', 'india.': 'India',
+    'uae': 'United Arab Emirates',
+    'united arab emirates': 'United Arab Emirates',
+    'u a e': 'United Arab Emirates', 'dubai': 'United Arab Emirates',
+    'usa': 'United States', 'us': 'United States',
+    'u s a': 'United States',
+    'united states of america': 'United States',
+    'united states': 'United States',
+    'uk': 'United Kingdom', 'u k': 'United Kingdom',
+    'great britain': 'United Kingdom', 'britain': 'United Kingdom',
+    'united kingdom': 'United Kingdom',
+    'ksa': 'Saudi Arabia', 'saudi': 'Saudi Arabia',
+    'saudi arabia': 'Saudi Arabia',
+}
+
+
+def country_group(value):
+    """The one spelling of a country, for counting.
+
+    UAT of 15 Nov: 664 "India", 2 "INDIA" and 1 "Indian" were counted
+    as three countries, so the page reported the top value as
+    "Indian", one contact, 0.1%, and called the filter trustworthy.
+    Three spellings of one word are one country.
+    """
+    text = ' '.join(str(value or '').strip().lower().split())
+    if not text:
+        return ''
+    text = text.rstrip('.')
+    if text in COUNTRY_SYNONYMS:
+        return COUNTRY_SYNONYMS[text]
+    return text.title()
+
+
+def country_health(*, threshold=DOMINANT_AT):
+    """Whether the country filter can be trusted today.
+
+    `api_create_contact` has always written `d.get('country','India')`,
+    so the column is full and says almost nothing. The screen prints
+    what this returns beside the filter: a filter that looks
+    authoritative and is not is worse than one marked unreliable.
+    """
+    from app import Contact, db
+
+    rows = db.session.query(Contact.country, db.func.count(Contact.id)) \
+        .group_by(Contact.country).all()
+    grouped, spellings = {}, {}
+    total = 0
+    for value, n in rows:
+        total += n
+        key = country_group(value) or '(blank)'
+        grouped[key] = grouped.get(key, 0) + n
+        held = spellings.setdefault(key, {})
+        held[(value or '').strip() or '(blank)'] = \
+            held.get((value or '').strip() or '(blank)', 0) + n
+    ranked = sorted(grouped.items(), key=lambda kv: (-kv[1], kv[0]))
+    top = ranked[0] if ranked else ('', 0)
+    percent = (100.0 * top[1] / total) if total else 0.0
+    bad = bool(total) and percent >= threshold
+    return {
+        'total': total,
+        'values': [{'value': value, 'count': n,
+                    'percent': round(100.0 * n / total, 1) if total else 0,
+                    'spellings': sorted(
+                        ({'value': k, 'count': v}
+                         for k, v in spellings.get(value, {}).items()),
+                        key=lambda d: -d['count'])}
+                   for value, n in ranked[:12]],
+        'distinct': len(grouped),
+        'spellings_seen': len(rows),
+        'threshold': threshold,
+        'dominant': {'value': top[0], 'count': top[1],
+                     'percent': round(percent, 1)},
+        'trustworthy': not bad,
+        'note': ('Every contact carries a country because the create '
+                 'form has always defaulted it. Until that is '
+                 'corrected, a country filter answers about the '
+                 'default, not about the person.') if bad else '',
     }
 
 
@@ -525,6 +692,17 @@ def suggest(field, q='', *, sc=None, limit=12):
         key = label.lower()
         held, n = found.get(key, (label, 0))
         found[key] = (held, n + 1)
+
+    def rank(item):
+        """Prefix matches first. UAT of 15 Nov: typing "Am" offered
+        BHEL above Amns, because BHEL is on more rows. What somebody
+        typing two letters means is the name that STARTS that way;
+        how common the others are only decides the rest."""
+        label, n = item
+        lower = label.lower()
+        where = 0 if (text and lower.startswith(text)) else (
+            1 if (text and f' {text}' in lower) else 2)
+        return (where, -n, lower)
 
     if field == 'company':
         for (value,) in db.session.query(Company.name).limit(5000):
@@ -561,7 +739,7 @@ def suggest(field, q='', *, sc=None, limit=12):
                 continue
             for (value,) in db.session.query(col).distinct().limit(800):
                 offer(value)
-    rows = sorted(found.values(), key=lambda item: (-item[1], item[0]))
+    rows = sorted(found.values(), key=rank)
     return [name for name, _n in rows[:limit]]
 
 
@@ -611,8 +789,10 @@ def duplicates_of(*, email='', phone='', name='', company='', sc=None,
         accounts = _accounts_by_id(
             [c.account_id or c.company_id for c in contacts]
             + [l.company_id for l in leads])
-        take(_merge([_shape_contact(c, accounts) for c in contacts]
-                    + [_shape_lead(l, accounts) for l in leads]),
+        take([r for r in
+              _merge([_shape_contact(c, accounts) for c in contacts]
+                     + [_shape_lead(l, accounts) for l in leads])
+              if not _is_a_robot(r)],
              'the same email address')
 
     if want_phone and len(out) < limit:
@@ -632,8 +812,10 @@ def duplicates_of(*, email='', phone='', name='', company='', sc=None,
         accounts = _accounts_by_id(
             [c.account_id or c.company_id for c in contacts]
             + [l.company_id for l in leads])
-        rows = _merge([_shape_contact(c, accounts) for c in contacts]
-                      + [_shape_lead(l, accounts) for l in leads])
+        rows = [r for r in
+                _merge([_shape_contact(c, accounts) for c in contacts]
+                       + [_shape_lead(l, accounts) for l in leads])
+                if not _is_a_robot(r)]
         take([r for r in rows
               if want_phone in [_digits(p) for p in r['phones']]],
              'the same phone number')
