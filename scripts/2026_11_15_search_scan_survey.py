@@ -174,7 +174,7 @@ def report_vocabulary():
 
     try:
         from app.master_data import service as md
-        items = md.items('procam_vertical')
+        items = md.items('vertical')
         print(f'\n  The master list (Admin → Master data → '
               f'procam_vertical): {len(items)} entries')
         for item in items:

@@ -4045,6 +4045,29 @@ def api_create_contact():
     _refusal = _gate.guard(d, what='new contact')
     if _refusal:
         return _refusal
+    # CRM-SEARCH-SCAN-01 Part 1 — no silent duplicates. The same
+    # search the Find-a-person screen runs, asked by email, by phone
+    # and by name-at-company, and answered BEFORE the row is written.
+    # `use_existing` is the screen saying "I looked at those and this
+    # is somebody else"; without it a duplicate cannot be created by
+    # accident, and with it one can still be created on purpose.
+    if not d.get('use_existing'):
+        try:
+            from app.services import people_search as _ps
+            _dupes = _ps.duplicates_of(
+                email=d.get("email") or "",
+                phone=d.get('mobile') or d.get('phone') or '',
+                name=d.get('name') or '', company=d.get('company') or '')
+        except Exception:                                 # noqa: BLE001
+            _dupes = []
+        if _dupes:
+            return jsonify({
+                'ok': False, 'needs': 'duplicate_check',
+                'duplicates': _dupes,
+                'error': (f'{len(_dupes)} person(s) already on file look '
+                          f'like this one. Use one of them, or send '
+                          f'use_existing to create a second record '
+                          f'anyway.')}), 409
     ct = Contact(
         contact_type = d.get('type','person'),
         name         = d.get('name','').strip(),
@@ -6911,6 +6934,11 @@ for _mod_path, _bp_name in [
     # and one enquiry entered twice are different problems.
     ('app.lead_dupes.routes',    'lead_dupes_bp'),
     ('app.account_link.routes',  'account_link_bp'),
+    # CRM-SEARCH-SCAN-01 Part 1 — find a person by name, company,
+    # country, location, vertical or industry, across the contacts
+    # AND the lead PICs, which is where this book's contact data
+    # actually is.
+    ('app.contact_search.routes', 'contact_search_bp'),
 ]:
     try:
         _mod = __import__(_mod_path, fromlist=['bp'])

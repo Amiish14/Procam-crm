@@ -1,0 +1,283 @@
+{# CRM-SEARCH-SCAN-01 Part 1 — find a person.
+
+   One screen, six fields, ANDed. The results are PEOPLE, assembled
+   from the contacts and from the lead PICs and de-duplicated on
+   email and phone, because 667 contacts and 12,000 leads hold the
+   same people twice and a search that reads one of them answers
+   "we don't know them" about somebody we quoted last week. #}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Find a person · Procam CRM</title>
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<style>
+  .fs-wrap{max-width:1180px;margin:0 auto;padding:18px 16px 40px}
+  .fs-grid{display:grid;gap:12px;
+           grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+  .fs-f label{display:block;font-size:11.5px;font-weight:600;
+              letter-spacing:.02em;color:var(--text-2);margin-bottom:4px}
+  .fs-f input{width:100%;padding:8px 10px;font-size:13.5px;
+              border:1px solid var(--line);border-radius:7px;
+              background:var(--surface);color:var(--ink)}
+  .fs-row{display:flex;gap:10px;align-items:center;margin-top:12px;
+          flex-wrap:wrap}
+  .fs-note{font-size:11.5px;color:var(--text-3)}
+  .fs-warn{font-size:12px;color:#b0421a;margin-top:6px}
+  table.fs{width:100%;border-collapse:collapse;margin-top:16px}
+  table.fs th{text-align:left;font-size:11.5px;text-transform:uppercase;
+              letter-spacing:.04em;color:var(--text-3);
+              padding:6px 8px;border-bottom:1px solid var(--line);
+              cursor:pointer;white-space:nowrap}
+  table.fs td{padding:8px;border-bottom:1px solid var(--line);
+              font-size:13px;vertical-align:top}
+  .fs-tag{font-size:10.5px;padding:1px 6px;border-radius:999px;
+          border:1px solid var(--line);color:var(--text-3);
+          white-space:nowrap}
+  .fs-src{font-size:11px;color:var(--text-3)}
+  .fs-hits{position:relative}
+  .fs-menu{position:absolute;z-index:40;left:0;right:0;top:100%;
+           background:var(--surface);border:1px solid var(--line);
+           border-radius:7px;max-height:220px;overflow:auto;
+           box-shadow:0 8px 24px rgba(0,0,0,.12)}
+  .fs-menu div{padding:6px 10px;font-size:13px;cursor:pointer}
+  .fs-menu div:hover{background:var(--surface-2)}
+</style>
+</head>
+<body>
+<div class="fs-wrap">
+  <h1 style="margin:0 0 4px">Find a person</h1>
+  <p class="fs-note" style="margin:0 0 16px">
+    Fill any one field, or several — they are ANDed. Matching is
+    partial and ignores case. Results come from the contacts and from
+    the people named on leads, with the same person shown once.
+  </p>
+
+  <form id="f" onsubmit="go(1);return false">
+    <div class="fs-grid">
+      <div class="fs-f"><label for="name">Name</label>
+        <input id="name" autocomplete="off" placeholder="First, last or part"></div>
+      <div class="fs-f fs-hits"><label for="company">Company</label>
+        <input id="company" autocomplete="off" placeholder="Company or account"
+               oninput="hint('company')"><div id="h_company"></div></div>
+      <div class="fs-f fs-hits"><label for="country">Country</label>
+        <input id="country" autocomplete="off" oninput="hint('country')">
+        <div id="h_country"></div></div>
+      <div class="fs-f fs-hits"><label for="location">Location</label>
+        <input id="location" autocomplete="off" placeholder="City or state"
+               oninput="hint('location')"><div id="h_location"></div></div>
+      <div class="fs-f fs-hits"><label for="vertical">Business vertical</label>
+        <input id="vertical" autocomplete="off" placeholder="The desk"
+               oninput="hint('vertical')"><div id="h_vertical"></div></div>
+      <div class="fs-f fs-hits"><label for="industry">Industry</label>
+        <input id="industry" autocomplete="off" placeholder="What they do"
+               oninput="hint('industry')"><div id="h_industry"></div></div>
+    </div>
+    <div class="fs-row">
+      <button class="btn" type="submit">Search</button>
+      <button class="btn btn-ghost" type="button" onclick="clearAll()">Clear</button>
+      <span class="fs-note" id="status"></span>
+    </div>
+    <div class="fs-warn" id="country-warn" style="display:none"></div>
+  </form>
+
+  <div id="out"></div>
+  <div class="fs-row" id="pager" style="display:none">
+    <button class="btn btn-ghost" id="prev" onclick="step(-1)">← Previous</button>
+    <span class="fs-note" id="where"></span>
+    <button class="btn btn-ghost" id="next" onclick="step(1)">Next →</button>
+  </div>
+</div>
+
+<script>
+const PREFIX = {{ url_prefix | tojson }};
+const u = (p) => PREFIX + p;
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const FIELDS = ['name','company','country','location','vertical','industry'];
+let PAGE = 1, PAGES = 0, SORT = 'name', DIR = 'asc';
+
+function values(){
+  const out = {};
+  FIELDS.forEach(f => { out[f] = (document.getElementById(f).value || '').trim(); });
+  return out;
+}
+
+function clearAll(){
+  FIELDS.forEach(f => { document.getElementById(f).value = ''; });
+  document.getElementById('out').innerHTML = '';
+  document.getElementById('pager').style.display = 'none';
+  document.getElementById('status').textContent = '';
+  history.replaceState({}, '', location.pathname);
+}
+
+/* Type-ahead from the values the data actually carries. A filter that
+   offers something nothing holds looks broken the first time it is
+   used; one that hides a value somebody uses is worse. */
+let HINT_T = null;
+function hint(field){
+  clearTimeout(HINT_T);
+  HINT_T = setTimeout(async () => {
+    const q = (document.getElementById(field).value || '').trim();
+    const host = document.getElementById('h_' + field);
+    if (q.length < 1){ host.innerHTML = ''; return; }
+    let body = {};
+    try {
+      const r = await fetch(u('/api/contacts/search/suggest?field=' + field
+                              + '&q=' + encodeURIComponent(q)),
+                            {credentials:'same-origin'});
+      body = await r.json();
+    } catch (err) { return; }
+    const vals = (body && body.values) || [];
+    if (!vals.length){ host.innerHTML = ''; return; }
+    host.innerHTML = '<div class="fs-menu">' + vals.map(v =>
+      `<div onclick="pick('${field}', this.textContent)">${esc(v)}</div>`
+    ).join('') + '</div>';
+  }, 160);
+}
+
+function pick(field, value){
+  document.getElementById(field).value = value;
+  document.getElementById('h_' + field).innerHTML = '';
+  go(1);
+}
+
+function sortBy(col){
+  if (SORT === col){ DIR = (DIR === 'asc' ? 'desc' : 'asc'); }
+  else { SORT = col; DIR = 'asc'; }
+  go(PAGE);
+}
+
+function step(by){
+  const next = PAGE + by;
+  if (next < 1 || (PAGES && next > PAGES)) return;
+  go(next);
+  window.scrollTo(0, 0);
+}
+
+async function go(page){
+  PAGE = page || 1;
+  const v = values();
+  const asked = FIELDS.filter(f => v[f]);
+  const status = document.getElementById('status');
+  const out = document.getElementById('out');
+  const pager = document.getElementById('pager');
+  if (!asked.length){
+    out.innerHTML = '';
+    pager.style.display = 'none';
+    status.textContent = 'Fill at least one field.';
+    return;
+  }
+  const qs = asked.map(f => f + '=' + encodeURIComponent(v[f])).join('&')
+    + '&page=' + PAGE + '&sort=' + SORT + '&dir=' + DIR;
+  history.replaceState({}, '', location.pathname + '?' + qs);
+  status.textContent = 'Searching…';
+  let body = {};
+  try {
+    const r = await fetch(u('/api/contacts/search?' + qs),
+                          {credentials:'same-origin'});
+    body = await r.json();
+  } catch (err) {
+    status.textContent = 'The search did not answer.';
+    return;
+  }
+  if (!body.ok){
+    status.textContent = body.error || 'The search did not answer.';
+    return;
+  }
+  PAGES = body.pages || 0;
+  const rows = body.rows || [];
+  status.textContent = body.total
+    ? (body.capped ? 'more than ' : '') + body.total + ' person(s) · '
+      + body.took_ms + ' ms'
+    : 'Nobody matches all of those.';
+  const warn = document.getElementById('country-warn');
+  if (body.capped && body.capped_note){
+    warn.style.display = 'block';
+    warn.textContent = body.capped_note;
+  }
+  out.innerHTML = rows.length ? table(rows) : '';
+  if (PAGES > 1){
+    pager.style.display = 'flex';
+    const first = (PAGE - 1) * body.per_page + 1;
+    const last = first + rows.length - 1;
+    document.getElementById('where').textContent =
+      first + '–' + last + ' of ' + body.total;
+    document.getElementById('prev').disabled = PAGE <= 1;
+    document.getElementById('next').disabled = PAGE >= PAGES;
+  } else { pager.style.display = 'none'; }
+}
+
+function head(col, label){
+  const mark = (SORT === col) ? (DIR === 'asc' ? ' ▲' : ' ▼') : '';
+  return `<th onclick="sortBy('${col}')">${esc(label)}${mark}</th>`;
+}
+
+function table(rows){
+  return `<table class="fs"><tr>
+    ${head('name','Name')}${head('company','Company')}
+    <th>Designation</th>${head('country','Country')}
+    ${head('location','Location')}${head('vertical','Vertical')}
+    <th>Phones</th><th>Emails</th>${head('owner','Owner')}
+    ${head('last_activity','Last activity')}</tr>
+    ${rows.map(row).join('')}</table>`;
+}
+
+function row(r){
+  const where = r.lead_url || r.url || '';
+  const name = where
+    ? `<a href="${esc(PREFIX + where)}">${esc(r.person || '(no name)')}</a>`
+    : esc(r.person || '(no name)');
+  const sources = r.source_note || (r.sources || [r.label]).join(' · ');
+  const country = esc(r.country || '—')
+    + (r.country_from ? ` <span class="fs-src">(${esc(r.country_from)})</span>` : '');
+  return `<tr>
+    <td><div>${name}</div><div class="fs-src">${esc(sources)}</div></td>
+    <td>${esc(r.company || '—')}</td>
+    <td>${esc(r.designation || '—')}</td>
+    <td>${country}</td>
+    <td>${esc(r.location || '—')}</td>
+    <td>${r.vertical ? `<span class="fs-tag">${esc(r.vertical)}</span>` : '—'}</td>
+    <td>${(r.phones || []).map(esc).join('<br>') || '—'}</td>
+    <td>${(r.emails || []).map(esc).join('<br>') || '—'}</td>
+    <td>${esc(r.owner || '—')}</td>
+    <td>${esc(r.last_activity || '—')}</td>
+  </tr>`;
+}
+
+/* The country column is 100% filled because the create form has
+   always defaulted it to India. Saying so beside the filter is the
+   difference between a filter somebody distrusts and one they are
+   misled by. */
+async function countryHealth(){
+  let body = {};
+  try {
+    const r = await fetch(u('/api/contacts/search/country-health'),
+                          {credentials:'same-origin'});
+    body = await r.json();
+  } catch (err) { return; }
+  if (!body.ok || body.trustworthy || !body.note) return;
+  const host = document.getElementById('country-warn');
+  host.style.display = 'block';
+  host.textContent = body.dominant.percent + '% of contacts are filed as "'
+    + body.dominant.value + '". ' + body.note;
+}
+
+/* Deep links: /contacts/search?company=Jindal&vertical=Heavy%20Transport */
+(function start(){
+  const params = new URLSearchParams(location.search);
+  let any = false;
+  FIELDS.forEach(f => {
+    const v = params.get(f);
+    if (v){ document.getElementById(f).value = v; any = true; }
+  });
+  if (params.get('sort')) SORT = params.get('sort');
+  if (params.get('dir')) DIR = params.get('dir');
+  countryHealth();
+  if (any) go(parseInt(params.get('page') || '1', 10));
+})();
+</script>
+</body>
+</html>
