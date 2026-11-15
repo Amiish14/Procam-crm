@@ -649,8 +649,8 @@ def test_a_reader_failure_is_logged_and_returned(monkeypatch, caplog):
         found = business_card_ocr.extract_business_card(data, mime=mime)
     assert found['error'] and 'HTTP 404' in found['error']
     assert 'not_found_error' in found['error']
-    assert any('reader failed' in r.message or 'reader failed' in
-               r.getMessage() for r in caplog.records), caplog.records
+    assert any('image service failed' in r.getMessage()
+               for r in caplog.records), caplog.records
 
 
 def test_an_answer_without_json_is_a_reason_not_an_empty_form(monkeypatch):
@@ -739,3 +739,223 @@ def test_the_accuracy_report_refuses_to_claim_a_reading_it_did_not_get(
     assert 'READING IS MEASURED' not in printed
     assert 'THE READER FAILED ON 11 OF 11' in printed
     assert 'NOT a measurement of the reader' in printed
+
+
+# ═══ the on-server reader, live 15 Nov ═════════════════════════════
+# The key was commented out and CARD_TEXT_READER=on. The card was
+# read correctly — and the extractor then reported the ABSENT image
+# service as a failure, so the report called a good reading "not a
+# measurement" and fell back to the printed text, and the scan page
+# put an error banner over a form that was correctly filled.
+
+def _fake_tesseract(text='Rajesh Kumar Sharma\nZENITH STEEL WORKS LIMITED\n'
+                         '+91 98200 11111\nrajesh.sharma@zenithsteel.com',
+                    osd=0, raise_with=None, record=None):
+    import types
+
+    module = types.ModuleType('pytesseract')
+    module.get_tesseract_version = lambda: '5.3.4'
+    module.get_languages = lambda config='': ['eng', 'osd']
+
+    def image_to_string(img, lang='eng', config=''):
+        if record is not None:
+            record.append({'mode': img.mode, 'size': img.size,
+                           'lang': lang, 'config': config})
+        if raise_with is not None:
+            raise raise_with
+        return text
+
+    def image_to_osd(img):
+        return f'Page number: 0\nRotate: {osd}\n'
+
+    module.image_to_string = image_to_string
+    module.image_to_osd = image_to_osd
+    module.pytesseract = types.SimpleNamespace(
+        tesseract_cmd='/usr/bin/tesseract')
+    return module
+
+
+def test_no_key_is_not_a_failure_when_the_on_server_reader_read_it(
+        monkeypatch):
+    """THE FAULT: the card was read, and the extraction still reported
+    'no key is visible' as the error."""
+    monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
+    monkeypatch.setenv(card_read.SWITCH, 'on')
+    monkeypatch.setitem(sys.modules, 'pytesseract', _fake_tesseract())
+
+    data, mime = card_samples.as_bytes(card_samples.by_key('plain'))
+    found = business_card_ocr.extract_business_card(data, mime=mime)
+    assert found['error'] is None, found['error']
+    assert found['extracted']['name'] == 'Rajesh Kumar Sharma'
+    assert found['extracted']['mobile'] == '+919820011111'
+
+
+def test_the_scan_page_shows_no_banner_when_it_was_read(client,
+                                                        monkeypatch):
+    monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
+    monkeypatch.setenv(card_read.SWITCH, 'on')
+    monkeypatch.setitem(sys.modules, 'pytesseract', _fake_tesseract())
+
+    specimen = card_samples.by_key('plain')
+    front, mime = card_samples.as_bytes(specimen)
+    answer = client.post('/api/business-cards/upload',
+                         data={'file': (io.BytesIO(front), 'card.png')},
+                         content_type='multipart/form-data')
+    card = answer.get_json()['card']
+    assert card['ocr_error'] in (None, '')      # nothing for the banner
+    assert card['extracted']['name'] == 'Rajesh Kumar Sharma'
+
+
+def test_nothing_read_at_all_is_still_said(monkeypatch):
+    """Silent only when it WORKED. A reader that runs and finds no
+    text still has to say so."""
+    monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
+    monkeypatch.setenv(card_read.SWITCH, 'on')
+    monkeypatch.setitem(sys.modules, 'pytesseract', _fake_tesseract(text=''))
+
+    data, mime = card_samples.as_bytes(card_samples.by_key('plain'))
+    found = business_card_ocr.extract_business_card(data, mime=mime)
+    assert found['error'] and 'nothing read this card' in found['error']
+
+
+def test_the_reader_is_given_a_greyscale_picture_big_enough_to_read(
+        monkeypatch):
+    """Mode and size are the first suspects when a reader answers
+    nothing, so they are pinned."""
+    seen = []
+    monkeypatch.setenv(card_read.SWITCH, 'on')
+    monkeypatch.setitem(sys.modules, 'pytesseract',
+                        _fake_tesseract(record=seen))
+
+    data, mime = card_samples.as_bytes(card_samples.by_key('plain'))
+    ready = card_image.prepare(data, mime)
+    card_read.read_image(ready.pages[0])
+    assert seen, 'the reader was never called'
+    assert seen[0]['mode'] == 'L'
+    assert seen[0]['size'][0] >= 1000
+    assert seen[0]['lang'] == 'eng'
+    assert '--psm' in seen[0]['config']
+
+
+def test_a_card_is_not_read_as_a_page_of_running_text(monkeypatch):
+    """psm 3, the default, assumes a page. A card is a few short
+    lines scattered over a small area — psm 6, then 11 when that
+    reads poorly."""
+    seen = []
+    monkeypatch.setenv(card_read.SWITCH, 'on')
+    monkeypatch.setitem(sys.modules, 'pytesseract',
+                        _fake_tesseract(text='x', record=seen))
+    data, mime = card_samples.as_bytes(card_samples.by_key('plain'))
+    ready = card_image.prepare(data, mime)
+    card_read.read_image(ready.pages[0])
+    used = {s['config'] for s in seen}
+    assert '--oem 3 --psm 6' in used
+    assert card_read.SPARSE_CONFIG in used      # a poor read tried both
+
+
+def test_which_way_up_is_one_question_not_four(monkeypatch):
+    """The orientation model answers it in one call. Four reads of
+    every card is four times the wait on a phone."""
+    seen = []
+    monkeypatch.setenv(card_read.SWITCH, 'on')
+    monkeypatch.setitem(sys.modules, 'pytesseract',
+                        _fake_tesseract(osd=90, record=seen))
+    data, mime = card_samples.as_bytes(card_samples.by_key('upside_down'))
+    ready = card_image.prepare(data, mime)
+    found = card_read.read_image(ready.pages[0])
+    assert found['rotation'] == 90
+    assert len(seen) <= 2                        # not four turns
+
+
+def test_the_reader_failing_is_reported_not_swallowed(monkeypatch):
+    monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
+    monkeypatch.setenv(card_read.SWITCH, 'on')
+    monkeypatch.setitem(sys.modules, 'pytesseract',
+                        _fake_tesseract(raise_with=RuntimeError('boom')))
+    data, mime = card_samples.as_bytes(card_samples.by_key('plain'))
+    found = card_read.read_image(card_image.prepare(data, mime).pages[0])
+    assert 'boom' in found['error']
+
+
+def test_the_binary_can_be_pointed_at(monkeypatch):
+    """systemd has its own PATH, which is the commonest reason this
+    works in a shell and not in the service."""
+    module = _fake_tesseract()
+    monkeypatch.setitem(sys.modules, 'pytesseract', module)
+    monkeypatch.setenv(card_read.SWITCH, 'on')
+    monkeypatch.setenv(card_read.CMD, '/opt/bin/tesseract')
+    reader, why = card_read.text_reader()
+    assert reader is not None and why == ''
+    assert module.pytesseract.tesseract_cmd == '/opt/bin/tesseract'
+
+
+def test_the_debug_command_tests_the_on_server_reader(monkeypatch, capsys):
+    """It stopped at "no key" and never tried the reader that was
+    actually configured."""
+    import importlib.util
+
+    monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
+    monkeypatch.setenv(card_read.SWITCH, 'on')
+    monkeypatch.setitem(sys.modules, 'pytesseract', _fake_tesseract())
+
+    path = os.path.join(_ROOT, 'scripts', '2026_11_16_card_debug.py')
+    spec = importlib.util.spec_from_file_location('card_debug3', path)
+    debug = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(debug)
+    with flask_app.app_context():
+        assert debug.main(['--no-socket']) == 0
+    printed = capsys.readouterr().out
+    assert 'the on-server reader call' in printed
+    assert '/usr/bin/tesseract' in printed       # the binary
+    assert '5.3.4' in printed                    # the version
+    assert 'eng' in printed                      # the languages
+    assert '--psm' in printed                    # the segmentation
+    assert 'mode L' in printed                   # the picture it got
+    assert 'ms' in printed                       # elapsed
+    assert 'Rajesh Kumar Sharma' in printed      # the first 300 chars
+
+
+def test_the_debug_command_says_a_reader_that_found_nothing(
+        monkeypatch, capsys):
+    import importlib.util
+
+    monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
+    monkeypatch.setenv(card_read.SWITCH, 'on')
+    monkeypatch.setitem(sys.modules, 'pytesseract',
+                        _fake_tesseract(text=''))
+    path = os.path.join(_ROOT, 'scripts', '2026_11_16_card_debug.py')
+    spec = importlib.util.spec_from_file_location('card_debug4', path)
+    debug = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(debug)
+    with flask_app.app_context():
+        assert debug.main(['--no-socket']) == 1
+    printed = capsys.readouterr().out
+    assert 'found NO TEXT' in printed
+    assert 'psm 11' in printed                   # what to try next
+
+
+def test_the_report_does_not_call_an_unconfigured_service_a_failure(
+        monkeypatch, capsys):
+    import importlib.util
+
+    monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
+    monkeypatch.setenv(card_read.SWITCH, 'on')
+    monkeypatch.setitem(sys.modules, 'pytesseract', _fake_tesseract())
+
+    path = os.path.join(_ROOT, 'scripts', '2026_11_16_card_accuracy.py')
+    spec = importlib.util.spec_from_file_location('card_acc3', path)
+    report = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(report)
+    with flask_app.app_context():
+        report.run()
+    printed = capsys.readouterr().out
+    assert 'THE READER FAILED' not in printed
+    assert 'the on-server reader: 5.3.4' in printed
+
+
+def test_the_pdf_reader_is_asked_for_by_its_name():
+    """pymupdf, not fitz — the old name warns on import."""
+    source = open(os.path.join(_ROOT, 'app', 'services',
+                               'card_image.py')).read()
+    assert 'import pymupdf' in source
+    assert source.index('import pymupdf') < source.index('import fitz')

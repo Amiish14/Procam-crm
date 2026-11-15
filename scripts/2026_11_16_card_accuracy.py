@@ -154,12 +154,16 @@ def readers():
 
     found = []
     if os.environ.get('ANTHROPIC_API_KEY'):
-        found.append('the image service')
+        found.append('the image service: configured')
+    else:
+        found.append('the image service: not configured (no key here)')
     reader, why = card_read.text_reader()
     if reader is not None:
-        found.append('the on-server reader')
+        told = card_read.describe()
+        found.append(f'the on-server reader: {told["version"]} at '
+                     f'{told["cmd"]}, {told["langs"]}, {told["config"]}')
     else:
-        found.append(f'no on-server reader — {why}')
+        found.append(f'the on-server reader: {why}')
     return found
 
 
@@ -176,7 +180,7 @@ def run(*, write_cards=None, as_csv=None):
     for line in readers():
         print(f'  · {line}')
     if read_pictures:
-        print('\n  A reader is configured, so the pictures are sent to '
+        print('\n  A reader is configured, so the pictures are read by '
               'it. Whether')
         print('  it ANSWERED is reported per card below and again at '
               'the end —')
@@ -273,6 +277,10 @@ def run(*, write_cards=None, as_csv=None):
     if not read_pictures:
         print('\n  Reading not measured — see the top of this report.')
     if failures:
+        # Only a reader that was ASKED and did not answer. An image
+        # service with no key configured is not a failure — running on
+        # the on-server reader alone is a choice, and calling it a
+        # fault on every card is what buried the real one.
         # The 15 Nov fault said "READING IS MEASURED" at the top and
         # printed zeros underneath. A report that measured nothing has
         # to say so at the BOTTOM too, where the number is.

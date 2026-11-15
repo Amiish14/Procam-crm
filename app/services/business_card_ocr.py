@@ -129,10 +129,18 @@ def read_with_service(pictures):
     import time
 
     out = {'fields': None, 'raw': '', 'error': '', 'notes': [],
-           'ms': 0, 'status': ''}
+           'ms': 0, 'status': '', 'configured': True}
     ready, why = service_ready()
     if not ready:
-        out['error'] = why
+        # NOT configured is not FAILED. Running on the on-server
+        # reader alone is a choice (15 Nov), and a chosen
+        # configuration must not report itself as a fault on every
+        # card — which is what made the report call a good reading a
+        # failure and the scan page show a banner over a form that
+        # was correctly filled.
+        out['configured'] = False
+        out['error'] = ''
+        out['notes'].append(why)
         return out
 
     blocks, notes = _picture_blocks(pictures)
@@ -181,6 +189,18 @@ def read_with_service(pictures):
     from app.services import card_parse as _cp
     out['fields'] = _cp.normalise(parsed)
     return out
+
+
+def _nothing_read(notes):
+    """Why there is no reading at all, in one line a person can act on."""
+    from app.services import card_read
+
+    _reader, why = card_read.text_reader()
+    if why:
+        return (f'nothing read this card: no image service is '
+                f'configured and {why}')
+    return ('nothing read this card: the on-server reader found no '
+            'text on it')
 
 
 def _why(exc):
@@ -338,20 +358,24 @@ def extract_business_card(image_bytes: bytes,
 
     read = read_with_service(pictures)
     notes.extend(read['notes'])
-    if read['error']:
+    if read['fields']:
+        return finish(read['fields'], read['raw'], None)
+
+    if read['configured']:
         # NEVER SWALLOWED (live, 15 Nov): every specimen came back
         # empty and journalctl had not one line about it, because this
         # path returned the reason as a string and nobody printed it.
-        _log().warning('business card: the image reader failed — %s',
-                       read['error'])
-        return finish(None, read['raw'], read['error'])
-    if not read['fields']:
-        _log().warning('business card: the image reader answered with '
-                       'nothing usable (%d characters)', len(read['raw']))
-        return finish(None, read['raw'],
-                      'the image reader answered, but not with card '
-                      'fields')
-    return finish(read['fields'], read['raw'], None)
+        why = read['error'] or ('the image service answered, but not '
+                                'with card fields')
+        _log().warning('business card: the image service failed — %s', why)
+        return finish(None, read['raw'], why)
+
+    # No image service configured. Then whatever the on-server reader
+    # or the typed text produced IS the reading, and a card read that
+    # way is not an error — it is the configuration working.
+    if fallback:
+        return finish(None, '', None)
+    return finish(None, '', _nothing_read(notes))
 
 
 def _domain_of(url_or_email: str) -> str:

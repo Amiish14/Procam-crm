@@ -267,8 +267,11 @@ def _pdf_pages(data, notes):
     """
     pages = []
     try:
-        import fitz                                        # PyMuPDF
-        doc = fitz.open(stream=data, filetype='pdf')
+        try:
+            import pymupdf                                 # the name now
+        except Exception:                                  # noqa: BLE001
+            import fitz as pymupdf        # older installs, with a warning
+        doc = pymupdf.open(stream=data, filetype='pdf')
         for page in list(doc)[:MAX_PDF_PAGES]:
             pix = page.get_pixmap(dpi=300)
             pages.append(pix.tobytes('png'))

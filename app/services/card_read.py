@@ -40,19 +40,57 @@ import os
 SWITCH = 'CARD_TEXT_READER'
 _ON = ('1', 'on', 'yes', 'true', 'enabled')
 
+#: Which languages. `eng` alone unless the box has more installed;
+#: `osd` is the orientation model, which is not a language and is not
+#: listed here.
+LANGS = 'CARD_TEXT_READER_LANGS'
+DEFAULT_LANGS = 'eng'
+
+#: The page-segmentation mode. A business card is NOT a page of
+#: running text, which is what the default (psm 3, "fully automatic")
+#: assumes: it is a few short lines scattered over a small area, and
+#: psm 3 on one is where a reader returns two words or nothing. 6 is
+#: "one uniform block" and reads the usual stacked-lines card; 11 is
+#: "sparse text", which is the one that saves a card with the name in
+#: a corner and the numbers down the side. Both are tried, best kept.
+CONFIG = 'CARD_TEXT_READER_CONFIG'
+DEFAULT_CONFIG = '--oem 3 --psm 6'
+SPARSE_CONFIG = '--oem 3 --psm 11'
+
+#: Where the binary is, when it is not on PATH.
+CMD = 'TESSERACT_CMD'
+
+#: Below this, the reading is not worth keeping over another try.
+WORTH_KEEPING = 30
+
 
 def text_reader_wanted():
     return str(os.environ.get(SWITCH, '')).strip().lower() in _ON
 
 
+def langs():
+    return (os.environ.get(LANGS) or DEFAULT_LANGS).strip()
+
+
+def config():
+    return (os.environ.get(CONFIG) or DEFAULT_CONFIG).strip()
+
+
 def text_reader():
     """The on-server reader, or (None, why it is not there)."""
     if not text_reader_wanted():
-        return None, f'the on-server reader is switched off ({SWITCH})'
+        return None, (f'the on-server reader is switched off '
+                      f'({SWITCH} is not set to "on")')
     try:
         import pytesseract
     except Exception as exc:                              # noqa: BLE001
         return None, f'the on-server reader is not installed ({exc})'
+    wanted = os.environ.get(CMD)
+    if wanted:
+        # A binary that is not on PATH is the commonest reason this
+        # works in a shell and not under systemd, whose PATH is its
+        # own.
+        pytesseract.pytesseract.tesseract_cmd = wanted
     try:
         pytesseract.get_tesseract_version()
     except Exception as exc:                              # noqa: BLE001
@@ -60,12 +98,35 @@ def text_reader():
     return pytesseract, ''
 
 
+def describe():
+    """Everything about the on-server reader, for the debug command."""
+    found = {'wanted': text_reader_wanted(), 'switch': SWITCH,
+             'cmd': '', 'version': '', 'langs': langs(),
+             'available_langs': [], 'config': config(),
+             'sparse_config': SPARSE_CONFIG, 'error': ''}
+    reader, why = text_reader()
+    if reader is None:
+        found['error'] = why
+        return found
+    try:
+        found['cmd'] = str(reader.pytesseract.tesseract_cmd)
+        found['version'] = str(reader.get_tesseract_version())
+    except Exception as exc:                              # noqa: BLE001
+        found['error'] = str(exc)
+    try:
+        found['available_langs'] = list(reader.get_languages(config=''))
+    except Exception:                                     # noqa: BLE001
+        pass
+    return found
+
+
 def _card_likeness(text):
     """How much this reading looks like a business card.
 
-    Used only to choose which way up the picture is, so it counts the
-    things a card has and a desk does not: an @, a run of digits, a
-    dot-something domain, and lines of a card's length.
+    Used to choose which way up the picture is and which segmentation
+    read it better, so it counts the things a card has and a desk does
+    not: an @, a run of digits, a dot-something domain, and lines of a
+    card's length.
     """
     body = str(text or '')
     if not body.strip():
@@ -82,17 +143,63 @@ def _card_likeness(text):
     return score
 
 
+def for_reading(img):
+    """The picture in the shape the reader wants it.
+
+    Greyscale, because colour tells a text reader nothing and costs
+    it time; and up to at least 1000 pixels across, because the
+    reader wants roughly 300 dpi over a card and a picture scaled
+    down for sending can fall under it.
+    """
+    out = img.convert('L')
+    if out.size[0] < 1000:
+        scale = 1000.0 / max(1, out.size[0])
+        out = out.resize((int(out.size[0] * scale),
+                          int(out.size[1] * scale)))
+    return out
+
+
+def _osd_rotation(reader, img):
+    """Which way up, asked of the orientation model — one cheap call.
+
+    Four reads of every card to find out which way up it is costs
+    four times the wait on a phone. The orientation model answers
+    that in one. When it cannot (too little text, no `osd` data), the
+    caller falls back to reading each turn.
+    """
+    try:
+        found = reader.image_to_osd(img)
+    except Exception:                                     # noqa: BLE001
+        return None
+    for line in str(found or '').splitlines():
+        if line.lower().startswith('rotate:'):
+            try:
+                return int(line.split(':', 1)[1].strip()) % 360
+            except Exception:                             # noqa: BLE001
+                return None
+    return None
+
+
+def _read_once(reader, img, *, how):
+    return reader.image_to_string(img, lang=langs(), config=how)
+
+
 def read_image(png_bytes, *, try_orientations=True):
     """One picture → the text on it, and which way up it was.
 
-    "Any orientation" is decided by READING, not by guessing from
-    pixels: each quarter turn is read and the one that comes back
-    looking most like a business card wins. A wrong guess here is a
-    blank form; four reads of a cropped card are cheap.
+    Orientation from the orientation model where it answers, from
+    reading each quarter turn where it does not. Then the two
+    segmentations, best kept: a card is a few short lines scattered
+    over a small area, and the reader's default assumes a page of
+    running text.
     """
     reader, why = text_reader()
     if reader is None:
-        return {'text': '', 'rotation': 0, 'error': why}
+        return {'text': '', 'rotation': 0, 'error': why, 'ms': 0,
+                'how': '', 'size': '', 'mode': ''}
+    import time
+
+    started = time.time()
     try:
         import io
         from PIL import Image
@@ -100,21 +207,48 @@ def read_image(png_bytes, *, try_orientations=True):
 
         img = Image.open(io.BytesIO(png_bytes))
         img.load()
-        tries = card_image.quarter_turns(img) if try_orientations \
-            else [(0, img)]
-        best, best_text, best_score = 0, '', -1
-        for angle, turned in tries:
-            try:
-                text = reader.image_to_string(turned)
-            except Exception:                             # noqa: BLE001
-                continue
-            found = _card_likeness(text)
-            if found > best_score:
-                best, best_text, best_score = angle, text, found
-        return {'text': best_text, 'rotation': best, 'error': ''}
+        work = for_reading(img)
+        shape = {'size': f'{work.size[0]}×{work.size[1]}',
+                 'mode': work.mode}
+
+        turn = _osd_rotation(reader, work) if try_orientations else 0
+        tries = []
+        if turn:
+            tries.append((turn, work.rotate(-turn, expand=True,
+                                            fillcolor=255)))
+        tries.append((0, work))
+        if try_orientations and turn is None:
+            tries = [(angle, for_reading(one)) for angle, one
+                     in card_image.quarter_turns(img)]
+
+        best = {'text': '', 'rotation': 0, 'how': '', 'score': -1}
+        for angle, candidate in tries:
+            for how in (config(), SPARSE_CONFIG):
+                try:
+                    text = _read_once(reader, candidate, how=how)
+                except Exception as exc:                  # noqa: BLE001
+                    return {'text': '', 'rotation': 0,
+                            'error': f'the on-server reader failed '
+                                     f'({type(exc).__name__}: {exc})',
+                            'ms': int((time.time() - started) * 1000),
+                            'how': how, **shape}
+                score = _card_likeness(text)
+                if score > best['score']:
+                    best = {'text': text, 'rotation': angle, 'how': how,
+                            'score': score}
+                if score >= WORTH_KEEPING and how == config():
+                    break          # the usual card, read the usual way
+            if best['score'] >= WORTH_KEEPING:
+                break
+        return {'text': best['text'], 'rotation': best['rotation'],
+                'error': '', 'ms': int((time.time() - started) * 1000),
+                'how': best['how'], 'score': best['score'], **shape}
     except Exception as exc:                              # noqa: BLE001
         return {'text': '', 'rotation': 0,
-                'error': f'the on-server reader failed ({exc})'}
+                'error': f'the on-server reader failed '
+                         f'({type(exc).__name__}: {exc})',
+                'ms': int((time.time() - started) * 1000),
+                'how': '', 'size': '', 'mode': ''}
 
 
 def read_pages(pages):
@@ -122,14 +256,17 @@ def read_pages(pages):
     out, notes = [], []
     for n, png in enumerate(pages or []):
         found = read_image(png)
+        where = 'front' if n == 0 else ('back' if n == 1
+                                        else f'page {n + 1}')
         if found.get('error'):
-            notes.append(found['error'])
+            notes.append(f'{where}: {found["error"]}')
             break                 # the same reason will hold for page 2
         if found.get('text', '').strip():
-            where = 'front' if n == 0 else ('back' if n == 1
-                                            else f'page {n + 1}')
             if found.get('rotation'):
                 notes.append(f'{where}: read it turned '
                              f'{found["rotation"]}°')
             out.append(found['text'])
+        else:
+            notes.append(f'{where}: the on-server reader found no text '
+                         f'on it ({found.get("ms", 0)} ms)')
     return '\n'.join(out), notes

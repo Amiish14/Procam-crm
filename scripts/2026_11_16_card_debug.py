@@ -86,10 +86,29 @@ def environment():
         print(f'  client library: {anthropic.__version__}')
     except Exception as exc:                              # noqa: BLE001
         print(f'  client library: UNAVAILABLE ({exc})')
+    print('\n══ the on-server reader ══')
+    from app.services import card_read
+
+    told = card_read.describe()
+    print(f'  switch:        {told["switch"]}='
+          f'{os.environ.get(card_read.SWITCH) or "(not set)"}'
+          f'  → {"wanted" if told["wanted"] else "OFF"}')
+    print(f'  binary:        {told["cmd"] or "(not found)"}')
+    print(f'  version:       {told["version"] or "(unknown)"}')
+    print(f'  languages:     {told["langs"]}'
+          + (f'   (installed: {", ".join(told["available_langs"])})'
+             if told['available_langs'] else ''))
+    print(f'  segmentation:  {told["config"]}'
+          f'   then {told["sparse_config"]} if that reads poorly')
+    if os.environ.get(card_read.CMD):
+        print(f'  {card_read.CMD}={os.environ[card_read.CMD]}')
+    if told['error']:
+        print(f'  !! {told["error"]}')
+
     ready, why = ocr.service_ready()
     if not ready:
-        print(f'\n  !! the reader cannot run: {why}')
-        if 'no key' in why:
+        print(f'\n  the image service is not configured: {why}')
+        if 'no key' in why and not told['wanted']:
             # The whole reason this command exists twice over: a shell
             # `.env` and a systemd EnvironmentFile are different
             # environments, and the key can be in one and not the other.
@@ -102,7 +121,8 @@ def environment():
             print('     then run this command again inside it (the '
                   'docstring at the')
             print('     top of this file has the systemd-run line).')
-    return ready
+    return {'service': ready, 'local': told['error'] == ''
+                                     and told['wanted']}
 
 
 def reachable(host=None, port=443, timeout=6):
@@ -134,9 +154,10 @@ def reachable(host=None, port=443, timeout=6):
         return False
 
 
-def one_card(path=None, raw_chars=300):
+def one_card(path=None, raw_chars=300, which=None):
     from app.services import business_card_ocr as ocr, card_image, card_samples
 
+    which = which or {'service': True, 'local': False}
     print('\n══ the picture ══')
     if path:
         with open(path, 'rb') as fh:
@@ -165,7 +186,76 @@ def one_card(path=None, raw_chars=300):
             pass
         print(f'  sent as #{n + 1}: {kind}, {len(blob) // 1024} KB{size}')
 
-    print('\n══ the reader call ══')
+    out = {}
+    if which.get('local'):
+        out['local'] = _local_call(pictures)
+    if which.get('service'):
+        out['service'] = _service_call(ocr, pictures, raw_chars)
+    return out
+
+
+def _local_call(pictures):
+    """The on-server reader, one picture, everything it did."""
+    from app.services import card_read
+
+    print('\n══ the on-server reader call ══')
+    png, _kind = pictures[0]
+    found = card_read.read_image(png)
+    print(f'  image given:   {found.get("size") or "(unknown)"}, mode '
+          f'{found.get("mode") or "?"}')
+    print(f'  segmentation:  {found.get("how") or "(none reached)"}')
+    print(f'  turned:        {found.get("rotation", 0)}°')
+    print(f'  elapsed:       {found.get("ms", 0)} ms')
+    text = found.get('text') or ''
+    print(f'  text length:   {len(text)} characters'
+          + (f'   (card-likeness {found["score"]})'
+             if found.get('score') is not None else ''))
+    if text.strip():
+        print('  first 300 characters:')
+        print('    ' + text[:300].replace('\n', '\n    '))
+    if found.get('error'):
+        print(f'\n  !! FAILED: {found["error"]}')
+        _blame_local(found)
+    elif not text.strip():
+        print('\n  !! the reader ran and found NO TEXT on the picture.')
+        _blame_local(found)
+    else:
+        from app.services import card_parse
+        parsed = card_parse.parse(text)
+        print(f'\n  parsed: name={parsed.get("name")!r} '
+              f'company={parsed.get("company")!r} '
+              f'emails={parsed.get("emails")!r}')
+    return found
+
+
+def _blame_local(found):
+    text = (found.get('error') or '').lower()
+    if 'not installed' in text:
+        print('  → pip install pytesseract, and install the tesseract '
+              'binary.')
+    elif 'cannot run' in text or 'tesseractnotfound' in text:
+        print('  → the binary is not on this process\'s PATH. systemd '
+              'has its own')
+        print('    PATH: set TESSERACT_CMD=/usr/bin/tesseract in the '
+              'service')
+        print('    environment, or add the path to it.')
+    elif 'switched off' in text:
+        print(f'  → set {__import__("app.services.card_read", fromlist=["x"]).SWITCH}'
+              f'=on in the SERVICE environment, not only the shell:')
+        print('    systemctl show procam-crm -p EnvironmentFile '
+              '-p Environment')
+    elif not (found.get('text') or '').strip():
+        print('  → the reader ran and the picture carried no text it '
+              'could find.')
+        print('    Try the other segmentation by hand:')
+        print('      CARD_TEXT_READER_CONFIG="--oem 3 --psm 11" \\')
+        print('        .venv/bin/python scripts/2026_11_16_card_debug.py')
+        print('    and check the language data is installed '
+              '(tesseract --list-langs).')
+
+
+def _service_call(ocr, pictures, raw_chars=300):
+    print('\n══ the image service call ══')
     found = ocr.read_with_service(pictures)
     for note in found['notes']:
         print(f'  · {note}')
@@ -244,16 +334,23 @@ def main(argv=None):
     with app.app_context():
         print('business card reader — debug. READ ONLY.')
         _rule()
-        ready = environment()
-        if not args.no_socket:
+        which = environment()
+        if which['service'] and not args.no_socket:
             reachable()
-        if not ready:
-            print('\nStopped: the reader cannot run in this environment. '
-                  'The lines')
-            print('above say why. Nothing was sent.')
+        if not which['service'] and not which['local']:
+            print('\nStopped: NEITHER reader can run in this '
+                  'environment. The lines')
+            print('above say why. Nothing was sent or read.')
             return 2
-        found = one_card(args.file, args.raw)
-        return 0 if not found['error'] else 1
+        found = one_card(args.file, args.raw, which)
+        local = found.get('local') or {}
+        service = found.get('service') or {}
+        if local and not local.get('error') and (local.get('text') or ''
+                                                 ).strip():
+            return 0
+        if service and not service.get('error'):
+            return 0
+        return 1
 
 
 if __name__ == '__main__':
