@@ -549,3 +549,193 @@ def test_a_contact_with_no_card_offers_no_image(client):
         assert row.to_dict()['has_card_image'] is False
     assert client.get(f'/api/contacts/{contact_id}/card-image').status_code \
         == 404
+
+
+# ═══ the fault of 15 Nov on live: a reader that failed in silence ═══
+# Every specimen read back empty, the report said READING IS MEASURED,
+# and journalctl had not one line about it. Three faults, one test
+# each, plus the command that would have found it in a minute.
+
+def _fake_service(answer=None, raise_with=None):
+    """A stand-in for the client library, recording what it was sent."""
+    import types
+
+    sent = {}
+
+    class _Message:
+        def __init__(self, text):
+            self.content = [types.SimpleNamespace(text=text)]
+
+    class _Messages:
+        def create(self, **kw):
+            sent.update(kw)
+            if raise_with is not None:
+                raise raise_with
+            return _Message(answer or '{}')
+
+    class _Client:
+        def __init__(self, **kw):
+            self.messages = _Messages()
+
+    module = types.ModuleType('anthropic')
+    module.Anthropic = _Client
+    module.__version__ = 'test'
+    return module, sent
+
+
+def test_the_prepared_picture_is_what_gets_sent(monkeypatch):
+    """The other half of the 15 Nov fault: the straightening, the
+    crop and the contrast were computed and then thrown away — the
+    reader was handed the ORIGINAL bytes and the original type."""
+    module, sent = _fake_service(
+        '{"name": "Rajesh Kumar Sharma", "company": "Zenith"}')
+    monkeypatch.setitem(sys.modules, 'anthropic', module)
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test-only-not-a-key')
+
+    specimen = card_samples.by_key('skewed')
+    original, mime = card_samples.as_bytes(specimen)
+    found = business_card_ocr.extract_business_card(original, mime=mime)
+    assert found['error'] is None, found['error']
+    blocks = [b for b in sent['messages'][0]['content']
+              if b.get('type') == 'image']
+    assert blocks, sent
+    import base64
+    was_sent = base64.b64decode(blocks[0]['source']['data'])
+    assert blocks[0]['source']['media_type'] == 'image/png'
+    assert was_sent != original          # prepared, not the upload
+
+
+def test_a_pdf_is_never_sent_as_a_pdf(monkeypatch):
+    """A PDF inside an image block is refused by the service, and on
+    live that refusal was swallowed — which is why the PDF specimen
+    read back empty with no reason."""
+    module, sent = _fake_service('{"name": "Harpreet Singh"}')
+    monkeypatch.setitem(sys.modules, 'anthropic', module)
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test-only-not-a-key')
+
+    data, mime = card_samples.as_bytes(card_samples.by_key('pdf'))
+    assert mime == 'application/pdf'
+    business_card_ocr.extract_business_card(data, mime=mime)
+    for block in sent['messages'][0]['content']:
+        if block.get('type') == 'image':
+            assert block['source']['media_type'] in \
+                business_card_ocr.IMAGE_TYPES
+
+
+def test_a_type_it_cannot_send_is_said_so_not_swallowed(monkeypatch):
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test-only-not-a-key')
+    found = business_card_ocr.read_with_service(
+        [(b'%PDF-1.4 whatever', 'application/pdf')])
+    assert found['fields'] is None
+    assert 'not a picture it accepts' in (found['error'] + ''.join(
+        found['notes']))
+
+
+def test_a_reader_failure_is_logged_and_returned(monkeypatch, caplog):
+    """NEVER SWALLOWED. The status, the exception type and the first
+    of the message, at WARNING, where journalctl will show it."""
+    import logging
+
+    class _Boom(Exception):
+        status_code = 404
+
+    module, _sent = _fake_service(
+        raise_with=_Boom('model: claude-nope not_found_error'))
+    monkeypatch.setitem(sys.modules, 'anthropic', module)
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test-only-not-a-key')
+
+    data, mime = card_samples.as_bytes(card_samples.by_key('plain'))
+    with caplog.at_level(logging.WARNING):
+        found = business_card_ocr.extract_business_card(data, mime=mime)
+    assert found['error'] and 'HTTP 404' in found['error']
+    assert 'not_found_error' in found['error']
+    assert any('reader failed' in r.message or 'reader failed' in
+               r.getMessage() for r in caplog.records), caplog.records
+
+
+def test_an_answer_without_json_is_a_reason_not_an_empty_form(monkeypatch):
+    module, _sent = _fake_service('I cannot read this image.')
+    monkeypatch.setitem(sys.modules, 'anthropic', module)
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test-only-not-a-key')
+    data, mime = card_samples.as_bytes(card_samples.by_key('plain'))
+    found = business_card_ocr.extract_business_card(data, mime=mime)
+    assert 'without any JSON' in (found['error'] or '')
+
+
+def test_the_key_is_never_printed_or_returned(monkeypatch):
+    """The debug command answers yes or no. Not a prefix, not a
+    length, not the key."""
+    secret = 'sk-ant-secret-value-do-not-print-0123456789'
+    monkeypatch.setenv('ANTHROPIC_API_KEY', secret)
+    ready, why = business_card_ocr.service_ready()
+    assert ready is True and why == ''
+    found = business_card_ocr.read_with_service([])
+    assert secret not in (found['error'] + found['raw'])
+
+
+def test_the_scan_page_says_the_reader_failed(client):
+    html = client.get('/business-cards/scan').get_data(as_text=True)
+    assert 'The image reader could not read this card' in html
+    assert 'Nothing below was read off it' in html
+
+
+def test_the_debug_command_reports_without_leaking(monkeypatch, capsys):
+    import importlib.util
+
+    secret = 'sk-ant-another-secret-0123456789abcdef'
+    monkeypatch.setenv('ANTHROPIC_API_KEY', secret)
+    monkeypatch.setenv('BUSINESS_CARD_MODEL', 'test-model-name')
+    module, _sent = _fake_service('{"name": "Rajesh Kumar Sharma"}')
+    monkeypatch.setitem(sys.modules, 'anthropic', module)
+
+    path = os.path.join(_ROOT, 'scripts', '2026_11_16_card_debug.py')
+    spec = importlib.util.spec_from_file_location('card_debug', path)
+    debug = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(debug)
+    with flask_app.app_context():
+        assert debug.main(['--no-socket']) == 0
+    printed = capsys.readouterr().out
+    assert 'key visible to this process: yes' in printed
+    assert 'test-model-name' in printed
+    assert 'HTTP status:   200' in printed
+    assert secret not in printed
+    assert 'sk-ant' not in printed
+
+
+def test_the_debug_command_says_when_no_key_is_visible(monkeypatch, capsys):
+    monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
+    path = os.path.join(_ROOT, 'scripts', '2026_11_16_card_debug.py')
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('card_debug2', path)
+    debug = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(debug)
+    with flask_app.app_context():
+        assert debug.main(['--no-socket']) == 2      # stopped, nothing sent
+    printed = capsys.readouterr().out
+    assert 'key visible to this process: NO' in printed
+    assert 'EnvironmentFile' in printed              # where to look next
+
+
+def test_the_accuracy_report_refuses_to_claim_a_reading_it_did_not_get(
+        monkeypatch, capsys):
+    """The 15 Nov report said READING IS MEASURED at the top and
+    printed zeros underneath."""
+    import importlib.util
+
+    class _Boom(Exception):
+        status_code = 401
+
+    module, _sent = _fake_service(raise_with=_Boom('invalid x-api-key'))
+    monkeypatch.setitem(sys.modules, 'anthropic', module)
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test-only-not-a-key')
+
+    path = os.path.join(_ROOT, 'scripts', '2026_11_16_card_accuracy.py')
+    spec = importlib.util.spec_from_file_location('card_acc2', path)
+    report = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(report)
+    with flask_app.app_context():
+        report.run()
+    printed = capsys.readouterr().out
+    assert 'READING IS MEASURED' not in printed
+    assert 'THE READER FAILED ON 11 OF 11' in printed
+    assert 'NOT a measurement of the reader' in printed

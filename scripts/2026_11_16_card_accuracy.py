@@ -100,7 +100,13 @@ def before(text):
 
 
 def after(specimen, text, *, read_pictures):
-    """Part 2: the picture prepared, then read, then understood."""
+    """Part 2: the picture prepared, then read, then understood.
+
+    Returns (fields, why it failed). The second value is the whole
+    point of the 15 Nov fix: this returned only the fields, so a run
+    where the reader failed on all eleven cards printed eleven rows
+    of zeros and no reason at all.
+    """
     from app.services import card_samples, business_card_ocr
 
     front, front_mime = card_samples.as_bytes(specimen)
@@ -110,12 +116,20 @@ def after(specimen, text, *, read_pictures):
     if read_pictures:
         found = business_card_ocr.extract_business_card(
             front, mime=front_mime, sides=sides)
+        if found.get('error'):
+            # The reading failed. Rather than eleven rows of zeros,
+            # fall back to the card's text so the UNDERSTANDING half
+            # is still measured — and keep the reason, which is what
+            # the row prints.
+            again = business_card_ocr.extract_business_card(
+                b'', mime='image/png', card_text=text, preprocess=False)
+            return ((again.get('extracted') or {}), found['error'])
     else:
         # No reader on this machine: the card's own text stands in for
         # the reading, and the report says so.
         found = business_card_ocr.extract_business_card(
             b'', mime='image/png', card_text=text, preprocess=False)
-    return found.get('extracted') or {}
+    return (found.get('extracted') or {}), (found.get('error') or '')
 
 
 def prepared(specimen):
@@ -162,8 +176,12 @@ def run(*, write_cards=None, as_csv=None):
     for line in readers():
         print(f'  · {line}')
     if read_pictures:
-        print('\n  READING IS MEASURED: the pictures are read by a real '
-              'reader.')
+        print('\n  A reader is configured, so the pictures are sent to '
+              'it. Whether')
+        print('  it ANSWERED is reported per card below and again at '
+              'the end —')
+        print('  a configured reader and a working one are not the '
+              'same thing.')
     else:
         print('\n  !! READING NOT MEASURED. No reader on this machine, so '
               'the card\'s')
@@ -176,13 +194,20 @@ def run(*, write_cards=None, as_csv=None):
         print('     by scanning ten real cards on a box that has a '
               'reader.')
 
-    rows, totals = [], {'before': 0, 'after': 0, 'fields': 0,
-                        'added': 0, 'added_right': 0}
+    rows, failures = [], []
+    totals = {'before': 0, 'after': 0, 'fields': 0,
+              'added': 0, 'added_right': 0}
     print(f'\n══ {len(card_samples.SPECIMENS)} specimen card(s) ══')
     for specimen in card_samples.SPECIMENS:
         text = card_samples.both_sides_text(specimen)
         was = before(text)
-        now = after(specimen, text, read_pictures=read_pictures)
+        now, failed = after(specimen, text, read_pictures=read_pictures)
+        # Only when a picture was actually sent. Without a reader no
+        # picture goes anywhere on purpose, and the top of the report
+        # already says so — repeating it eleven times as a failure
+        # would bury the case this block exists for.
+        if failed and read_pictures:
+            failures.append((specimen['key'], failed))
         pages, notes = prepared(specimen)
 
         scored = [f for f in card_samples.SCORED_FIELDS
@@ -204,6 +229,8 @@ def run(*, write_cards=None, as_csv=None):
                   if not _same(f, now.get(f), specimen['truth'][f])]
 
         print(f'\n  {specimen["key"]} — {specimen["what"]}')
+        if failed and read_pictures:
+            print(f'    !! THE READER FAILED: {failed}')
         print(f'    the fields it always had: before '
               f'{len(right_before)}/{len(shared)}, after '
               f'{len(right_after)}/{len(shared)}')
@@ -245,6 +272,30 @@ def run(*, write_cards=None, as_csv=None):
           'nowhere to put them.')
     if not read_pictures:
         print('\n  Reading not measured — see the top of this report.')
+    if failures:
+        # The 15 Nov fault said "READING IS MEASURED" at the top and
+        # printed zeros underneath. A report that measured nothing has
+        # to say so at the BOTTOM too, where the number is.
+        print(f'\n  !! THE READER FAILED ON {len(failures)} OF '
+              f'{len(card_samples.SPECIMENS)} CARD(S).')
+        # Grouped by the KIND of failure: every answer carries its own
+        # request id, so the whole string is unique and printing one
+        # per card buries the one fact that matters.
+        seen = {}
+        for key, why in failures:
+            head = why.split(' - ')[0].split(':')[0].strip()
+            seen.setdefault(head, [why, []])[1].append(key)
+        for head, (why, keys) in seen.items():
+            print(f'     {len(keys)} card(s): {why}')
+        print('\n     The numbers above ARE still a measurement of the '
+              'parsing —')
+        print('     the card\'s text stood in for the reading — but NOT '
+              'of the')
+        print('     reader, which answered nothing.')
+        print('     These numbers are NOT a measurement of the reader. '
+              'Run:')
+        print('       .venv/bin/python '
+              'scripts/2026_11_16_card_debug.py')
     if as_csv:
         _write_csv(rows, as_csv)
     return rows, totals

@@ -197,10 +197,24 @@
   function renderReview(card){
     $('review-card').style.display='block';
     const errBox = $('ocr-error');
+    const readNothing = !Object.keys(card.extracted || {})
+      .filter(k => !['conflicts','notes','confidence','raw_text',
+                     'confidence_summary','phone_numbers','emails',
+                     'phones'].includes(k) && card.extracted[k]).length;
     if (card.ocr_error) {
-      errBox.textContent = 'The card could not be read automatically ('
-        + card.ocr_error + '). Type what it says — nothing is saved '
-        + 'until you press Save.';
+      /* Live, 15 Nov: the reader failed on every card and the screen
+         showed an empty form, which reads as "this card says
+         nothing". It says which it is now. */
+      errBox.textContent = 'The image reader could not read this card ('
+        + card.ocr_error + ').'
+        + (readNothing
+            ? ' Nothing below was read off it — type what it says.'
+            : ' What is below came from the text, not the picture.')
+        + ' Nothing is saved until you press Save.';
+      errBox.style.display = 'block';
+    } else if (readNothing) {
+      errBox.textContent = 'Nothing could be read off this card. Type '
+        + 'what it says — nothing is saved until you press Save.';
       errBox.style.display = 'block';
     } else { errBox.style.display = 'none'; }
 

@@ -44,6 +44,160 @@ import re
 from app.services import card_confidence
 
 
+#: What an image block may carry. A PDF is NOT one of these, which
+#: is the fault of 15 Nov: the PDF specimen was sent with
+#: `media_type: application/pdf` inside an image block, refused, and
+#: the refusal was swallowed.
+IMAGE_TYPES = ('image/png', 'image/jpeg', 'image/gif', 'image/webp')
+
+#: How many pictures of one card are sent. Front, back, and no more:
+#: the rest of a PDF is somebody's brochure.
+MAX_PICTURES = 2
+
+#: Per picture, before base64. The preparation already scales to
+#: 1600px, so this only ever catches a picture that skipped it.
+MAX_PICTURE_BYTES = 4 * 1024 * 1024
+
+
+def _log():
+    """The CRM's logger where there is an app, the module's otherwise.
+
+    The scanner is called from a request, from a script and from a
+    test. All three have to be able to say "the reader failed", and
+    `current_app` outside a request context raises.
+    """
+    import logging
+
+    try:
+        from flask import current_app
+        if current_app:
+            return current_app.logger
+    except Exception:                                     # noqa: BLE001
+        pass
+    return logging.getLogger('business_card')
+
+
+def service_model():
+    """The model the image service is asked for, and where it came from."""
+    return os.environ.get('BUSINESS_CARD_MODEL') or _MODEL
+
+
+def service_ready():
+    """(ready, why not) — without ever reading the key itself."""
+    if not os.environ.get('ANTHROPIC_API_KEY'):
+        return False, ('no key is visible to this process '
+                       '(ANTHROPIC_API_KEY)')
+    try:
+        import anthropic                                  # noqa: F401
+    except Exception as exc:                              # noqa: BLE001
+        return False, f'the client library is unavailable ({exc})'
+    return True, ''
+
+
+def _picture_blocks(pictures):
+    """The pictures the service will accept, as content blocks."""
+    blocks, notes = [], []
+    for data, mime in (pictures or [])[:MAX_PICTURES]:
+        kind = (mime or '').split(';')[0].strip().lower()
+        if kind not in IMAGE_TYPES:
+            notes.append(f'not sent to the reader: {kind or "unknown type"} '
+                         f'is not a picture it accepts')
+            continue
+        if len(data) > MAX_PICTURE_BYTES:
+            notes.append(f'not sent to the reader: {len(data) // 1024} KB '
+                         f'is over the limit')
+            continue
+        blocks.append({'type': 'image',
+                       'source': {'type': 'base64', 'media_type': kind,
+                                  'data': base64.b64encode(data).decode()}})
+    return blocks, notes
+
+
+def read_with_service(pictures):
+    """Ask the image service to read these pictures of one card.
+
+    Returns {'fields', 'raw', 'error', 'notes', 'ms', 'status'} and
+    NEVER raises. Every way this can fail now has a reason in words
+    and a WARNING in the log: on 15 Nov it failed on live for every
+    card and journalctl had nothing in it at all.
+
+    The pictures are the PREPARED ones. Sending the original was the
+    other half of that fault — the straightening, cropping and
+    contrast were computed and then thrown away, and a PDF card was
+    sent as a PDF inside an image block.
+    """
+    import time
+
+    out = {'fields': None, 'raw': '', 'error': '', 'notes': [],
+           'ms': 0, 'status': ''}
+    ready, why = service_ready()
+    if not ready:
+        out['error'] = why
+        return out
+
+    blocks, notes = _picture_blocks(pictures)
+    out['notes'] = notes
+    if not blocks:
+        out['error'] = ('nothing could be sent to the reader'
+                        + (f' — {notes[0]}' if notes else ''))
+        return out
+
+    import anthropic
+
+    started = time.time()
+    try:
+        client = anthropic.Anthropic(
+            api_key=os.environ['ANTHROPIC_API_KEY'])
+        message = client.messages.create(
+            model=service_model(), max_tokens=800,
+            messages=[{'role': 'user',
+                       'content': blocks + [{'type': 'text',
+                                             'text': _PROMPT}]}])
+    except Exception as exc:                              # noqa: BLE001
+        out['ms'] = int((time.time() - started) * 1000)
+        out['status'] = str(getattr(exc, 'status_code', '') or '')
+        out['error'] = _why(exc)
+        return out
+    out['ms'] = int((time.time() - started) * 1000)
+    out['status'] = '200'
+    raw = ''.join(b.text for b in message.content
+                  if hasattr(b, 'text')).strip()
+    out['raw'] = raw
+    found = re.search(r'\{[\s\S]*\}', raw)
+    if not found:
+        out['error'] = 'the reader answered without any JSON in it'
+        return out
+    try:
+        parsed = json.loads(found.group(0))
+    except Exception as exc:                              # noqa: BLE001
+        out['error'] = f'the reader\'s answer is not readable JSON ({exc})'
+        return out
+    if not isinstance(parsed, dict):
+        # A model that answers with a list or a string must not be
+        # allowed to bypass validation.
+        out['error'] = 'the reader answered with something other than an '\
+                       'object'
+        return out
+    from app.services import card_parse as _cp
+    out['fields'] = _cp.normalise(parsed)
+    return out
+
+
+def _why(exc):
+    """An exception from the client as something a person can act on."""
+    status = getattr(exc, 'status_code', None)
+    name = type(exc).__name__
+    text = str(exc)[:300]
+    if status:
+        return f'HTTP {status} from the image service ({name}): {text}'
+    low = text.lower()
+    if 'connect' in low or 'timeout' in low or 'ssl' in low \
+            or 'name resolution' in low or 'proxy' in low:
+        return (f'the server could not reach the image service '
+                f'({name}): {text}')
+    return f'{name}: {text}'
+
+
 def _on_the_card(value, raw_text):
     """Whether this value is actually printed on the card.
 
@@ -182,43 +336,22 @@ def extract_business_card(image_bytes: bytes,
         return {'extracted': out, 'raw': raw, 'error': error,
                 'confidence': out['confidence'], 'notes': notes}
 
-    api_key = os.environ.get('ANTHROPIC_API_KEY')
-    if not api_key:
-        return finish(None, '', 'ANTHROPIC_API_KEY not configured')
-    try:
-        import anthropic
-    except Exception as exc:                                        # pragma: no cover
-        return finish(None, '', f'anthropic package unavailable: {exc}')
-
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-        b64 = base64.b64encode(image_bytes).decode()
-        msg = client.messages.create(
-            model=_MODEL,
-            max_tokens=800,
-            messages=[{
-                'role': 'user',
-                'content': [
-                    {'type': 'image',
-                     'source': {'type': 'base64',
-                                'media_type': mime,
-                                'data': b64}},
-                    {'type': 'text', 'text': _PROMPT},
-                ],
-            }],
-        )
-        raw = ''.join([b.text for b in msg.content
-                       if hasattr(b, 'text')]).strip()
-        m = re.search(r'\{[\s\S]*\}', raw)
-        parsed = json.loads(m.group(0)) if m else {}
-        if not isinstance(parsed, dict):
-            # A model that answers with a list or a string must not be
-            # allowed to bypass validation.
-            return finish(None, raw, 'model returned a non-object')
-        from app.services import card_parse as _cp
-        return finish(_cp.normalise(parsed), raw, None)
-    except Exception as exc:
-        return finish(None, '', str(exc))
+    read = read_with_service(pictures)
+    notes.extend(read['notes'])
+    if read['error']:
+        # NEVER SWALLOWED (live, 15 Nov): every specimen came back
+        # empty and journalctl had not one line about it, because this
+        # path returned the reason as a string and nobody printed it.
+        _log().warning('business card: the image reader failed — %s',
+                       read['error'])
+        return finish(None, read['raw'], read['error'])
+    if not read['fields']:
+        _log().warning('business card: the image reader answered with '
+                       'nothing usable (%d characters)', len(read['raw']))
+        return finish(None, read['raw'],
+                      'the image reader answered, but not with card '
+                      'fields')
+    return finish(read['fields'], read['raw'], None)
 
 
 def _domain_of(url_or_email: str) -> str:

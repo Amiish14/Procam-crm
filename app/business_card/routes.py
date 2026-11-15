@@ -125,6 +125,13 @@ def api_upload():
     result = extract_business_card(img_bytes, mime=mime,
                                    card_text=card_text, sides=sides)
     extracted = result.get('extracted') or {}
+    if result.get('error'):
+        # The request path says so too. A reader that fails on every
+        # card for a fortnight and logs nothing is the fault of
+        # 15 Nov; one line per upload is what makes it findable.
+        current_app.logger.warning(
+            'business card %s: the reader failed — %s',
+            fs.filename, result['error'])
     _industry_from_account(extracted, result.get('confidence') or {})
     dup = find_duplicates(extracted, db)
 
