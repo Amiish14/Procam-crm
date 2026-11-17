@@ -1,0 +1,8 @@
+# Development and test only — not installed on the CRM box.
+-r requirements.txt
+
+# Parallel test runs. `-n auto` has been asked for all along and was
+# silently unavailable: pytest took the flag only because xdist was
+# absent from every requirements file, so every run was serial.
+pytest>=8.0
+pytest-xdist>=3.5
