@@ -1022,3 +1022,31 @@ def test_there_is_exactly_one_palette():
         if ':root{' in body or ':root {' in body:
             roots.append(os.path.basename(path))
     assert roots == ['tokens.css'], roots
+
+
+def test_every_stylesheet_carries_a_version(client):
+    """Live, 17 Nov: Stage 1 and 2 were deployed and phones kept
+    serving the old CSS out of cache. A changed URL is the only thing
+    a browser reliably treats as a different file."""
+    import re
+
+    for page in ('/app', '/contacts/search', '/business-cards/scan'):
+        html = client.get(page).get_data(as_text=True)
+        links = re.findall(r'href="[^"]*?/static/css/([a-z0-9_.-]+\.css)'
+                           r'(\?v=[^"]*)?"', html)
+        assert links, page
+        for name, version in links:
+            assert version, f'{name} on {page} carries no ?v='
+
+
+def test_the_token_file_is_linked_not_imported():
+    """An @import carries no `?v=`, so the palette would stay cached
+    while the rest of the deploy arrived."""
+    css = open(os.path.join(_ROOT, 'static', 'css', 'crm.css')).read()
+    # The word appears in the comment that explains why there is no
+    # import; what must not be there is the rule.
+    assert '@import url' not in css
+    page = open(os.path.join(_ROOT, 'templates',
+                             'contact_search.html')).read()
+    assert 'tokens.css?v=' in page
+    assert page.index('tokens.css') < page.index('crm.css')

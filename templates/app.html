@@ -47,7 +47,7 @@
 <!-- CRM-UI-01 Stage 1 — the tokens, one file, before anything
      that uses them. app.html carried two palettes of its own and
      crm.css a third; they disagreed about the brand red. -->
-<link rel="stylesheet" href="{{ url_prefix }}/static/css/tokens.css">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/tokens.css?v={{ asset_v }}">
 <style>
 /* ────────── PROCAM CRM — DESIGN SYSTEM v4 ────────── */
 
@@ -1108,10 +1108,10 @@ window.CRMToast = (function(){
 try { CRM.ensureEmployees(); }
 catch (err) { console.error('Employee list could not start loading', err); }
 </script>
-<link rel="stylesheet" href="{{ url_prefix }}/static/css/ui.css">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/ui.css?v={{ asset_v }}">
 <!-- CRM-UI-01 Stage 2 — the app shell: the sidebar, the top bar,
      and on a phone the bottom tab bar and the full-screen More. -->
-<link rel="stylesheet" href="{{ url_prefix }}/static/css/shell.css">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/shell.css?v={{ asset_v }}">
 </head>
 <body>
 <div class="top">

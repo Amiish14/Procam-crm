@@ -3,10 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <title>Quote {{ quote.quote_number }} — printable</title>
-<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/tokens.css?v={{ asset_v }}">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css?v={{ asset_v }}">
 <!-- CRM-UI-01 Stage 1: the primitives, after the page styles
      so they are the last word on how a control looks. -->
-<link rel="stylesheet" href="{{ url_prefix }}/static/css/ui.css">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/ui.css?v={{ asset_v }}">
 </head>
 <body>
 {% include "_crm_topbar.html" %}

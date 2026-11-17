@@ -1880,7 +1880,43 @@ def _inject_url_prefix():
         except Exception:
             return False
 
-    return {'url_prefix': prefix, 'crm_url': crm_url, 'can': can}
+    return {'url_prefix': prefix, 'crm_url': crm_url, 'can': can,
+            'asset_v': _asset_version()}
+
+
+#: Worked out once per process and kept: a stylesheet is read on
+#: every page and the answer only changes when a deploy restarts us.
+_ASSET_V = None
+
+
+def _asset_version():
+    """A token for `?v=` on the stylesheets, so a phone picks up a
+    deploy without being told to hard-refresh.
+
+    CRM-UI-01, 17 November: Stage 1 and 2 were live and still looked
+    like the old CRM on phones that had the CSS cached. A changed
+    URL is the only thing a browser reliably treats as a different
+    file.
+
+    It is the newest modification time across static/css, not the git
+    hash: the deploy writes those files, the version follows what was
+    actually written, and it needs no git and no subprocess at boot.
+    """
+    global _ASSET_V
+    if _ASSET_V:
+        return _ASSET_V
+    newest = 0.0
+    try:
+        css = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           'static', 'css')
+        for name in os.listdir(css):
+            if name.endswith('.css'):
+                newest = max(newest, os.path.getmtime(
+                    os.path.join(css, name)))
+    except Exception:                                     # noqa: BLE001
+        newest = 0.0
+    _ASSET_V = format(int(newest), 'x') if newest else 'dev'
+    return _ASSET_V
 
 
 # ─────────────────── AUTH ROUTES ───────────────────

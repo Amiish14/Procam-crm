@@ -6,10 +6,11 @@
 <title>Bulk Leads — Procam CRM</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/tokens.css?v={{ asset_v }}">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css?v={{ asset_v }}">
 <!-- CRM-UI-01 Stage 1: the primitives, after the page styles
      so they are the last word on how a control looks. -->
-<link rel="stylesheet" href="{{ url_prefix }}/static/css/ui.css">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/ui.css?v={{ asset_v }}">
 <style>
   .barsel{position:sticky;top:56px;z-index:20;background:var(--p-surface);
     border:1px solid var(--p-border);border-radius:var(--rd-md);

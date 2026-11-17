@@ -1,7 +1,10 @@
-/* CRM-UI-01 Stage 1: one palette, in one file. This used to carry a
-   third copy of the tokens, which disagreed with app.html about the
-   brand red. */
-@import url('tokens.css');
+/* CRM-UI-01 Stage 1: one palette, in one file (static/css/tokens.css).
+   This used to carry a third copy of the tokens, which disagreed with
+   app.html about the brand red.
+
+   tokens.css is LINKED by the templates rather than @import-ed here:
+   an import carries no `?v=`, so a phone would keep serving yesterday's
+   palette out of its cache while the rest of the deploy arrived. */
 
 /* ═══════════════════════════════════════════════════════════════════
    PROCAM CRM — shared module stylesheet
