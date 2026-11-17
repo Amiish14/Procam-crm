@@ -1,0 +1,9 @@
+# The individual screenshots are an intermediate: they are rebuilt by
+# `scripts/2026_11_17_ui_audit.py` in a minute and there are 70 of
+# them per run. The contact sheets and findings.json are what the
+# before/after comparison needs, so those ARE committed.
+*__phone-360.png
+*__phone-390.png
+*__tablet-768.png
+*__laptop-1366.png
+*__desktop-1920.png
