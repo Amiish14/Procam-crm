@@ -1,0 +1,250 @@
+/* ═══════════════════════════════════════════════════════════════════
+   PROCAM CRM — the primitives, drawn from the tokens.
+   CRM-UI-01 Stage 1. Loaded AFTER tokens.css and after each page's
+   own styles, so it is the last word on how a control looks.
+
+   SCOPE: colour, border, radius, shadow, focus, state. Not layout —
+   nothing here moves anything. The sizes that have to change (44px
+   targets, the phone's type) come in Stage 2 with the shell, so that
+   if a page shifts there is one commit to look at.
+
+   The one exception is `:focus-visible`, which draws something that
+   was not there before. A keyboard user who cannot see where they
+   are cannot use the CRM, and every `outline:none` in the file below
+   is replaced rather than removed.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Focus, everywhere, once ───────────────────────────────────── */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible,
+[role="button"]:focus-visible {
+  outline: var(--focus-line);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+/* A mouse click should not leave a ring behind it. */
+:focus:not(:focus-visible) { outline: none; }
+
+/* ── Buttons ───────────────────────────────────────────────────── */
+.btn {
+  font-family: var(--font-body);
+  font-weight: var(--weight-semi);
+  border-radius: var(--radius);
+  border: 1px solid var(--line-1);
+  background: var(--bg-surface);
+  color: var(--fg-ink);
+  cursor: pointer;
+  transition: background var(--dur-in) var(--ease),
+              border-color var(--dur-in) var(--ease),
+              box-shadow var(--dur-in) var(--ease),
+              color var(--dur-in) var(--ease);
+}
+.btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--line-strong);
+}
+.btn:active:not(:disabled) { transform: translateY(.5px); }
+.btn:disabled,
+.btn[disabled],
+.btn[aria-disabled="true"] {
+  opacity: .55;
+  cursor: not-allowed;
+  /* The disabled state has to be legible as well as dim: a button
+     nobody can read is not a button nobody can press. */
+  color: var(--fg-muted);
+}
+
+.btn.primary,
+.btn.btn-red,
+.btn-red,
+.btn.dark {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--fg-on-brand);
+}
+.btn.primary:hover:not(:disabled),
+.btn.btn-red:hover:not(:disabled),
+.btn-red:hover:not(:disabled),
+.btn.dark:hover:not(:disabled) {
+  background: var(--brand-strong);
+  border-color: var(--brand-strong);
+  color: var(--fg-on-brand);
+}
+
+.btn.btn-ghost,
+.btn-ghost {
+  background: transparent;
+  border-color: var(--line-1);
+  color: var(--fg-body);
+}
+.btn.btn-ghost:hover:not(:disabled),
+.btn-ghost:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg-ink);
+}
+
+/* ── Fields ────────────────────────────────────────────────────── */
+input[type="text"], input[type="search"], input[type="email"],
+input[type="tel"], input[type="url"], input[type="number"],
+input[type="password"], input[type="date"], input[type="datetime-local"],
+input:not([type]), select, textarea, .fmc {
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  color: var(--fg-ink);
+  background: var(--bg-surface);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+  transition: border-color var(--dur-in) var(--ease),
+              box-shadow var(--dur-in) var(--ease);
+}
+input:focus, select:focus, textarea:focus, .fmc:focus {
+  border-color: var(--brand);
+  box-shadow: var(--focus-ring);
+  outline: none;            /* replaced by the ring above, not removed */
+}
+input::placeholder, textarea::placeholder {
+  color: var(--fg-faint);
+  opacity: 1;               /* Firefox dims placeholders a second time */
+}
+input:disabled, select:disabled, textarea:disabled, .fmc:disabled {
+  background: var(--bg-surface-3);
+  color: var(--fg-muted);
+  cursor: not-allowed;
+}
+input[aria-invalid="true"], .fmc.invalid, .field.invalid input {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 3px var(--bad-soft);
+}
+label, .fml {
+  color: var(--fg-muted);
+  font-weight: var(--weight-semi);
+}
+
+/* ── Cards and tables ──────────────────────────────────────────── */
+.card, .panel, .tile {
+  background: var(--bg-surface);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+}
+table th {
+  color: var(--fg-muted);
+  font-weight: var(--weight-semi);
+  border-bottom: 1px solid var(--line-1);
+  background: var(--bg-surface-2);
+}
+table td { border-bottom: 1px solid var(--line-2); color: var(--fg-body); }
+table tbody tr:hover > td { background: var(--bg-hover); }
+
+/* ── Badges and chips ──────────────────────────────────────────── */
+.b, .badge, .chip, .fs-tag, .pill {
+  border-radius: var(--radius-full);
+  font-weight: var(--weight-semi);
+  border: 1px solid var(--line-1);
+  color: var(--fg-muted);
+  background: var(--bg-surface-2);
+}
+.b.ok, .badge.ok, .chip.ok, .b.relHi {
+  color: var(--ok); background: var(--ok-soft); border-color: transparent;
+}
+.b.warn, .badge.warn, .chip.warn, .b.relMe {
+  color: var(--warn); background: var(--warn-soft);
+  border-color: transparent;
+}
+.b.bad, .badge.bad, .chip.bad, .b.relLo {
+  color: var(--bad); background: var(--bad-soft); border-color: transparent;
+}
+.b.info, .badge.info, .chip.info {
+  color: var(--note); background: var(--note-soft);
+  border-color: transparent;
+}
+
+/* ── Alerts ────────────────────────────────────────────────────── */
+.err, .alert-bad, .alert.bad {
+  color: var(--bad); background: var(--bad-soft);
+  border: 1px solid color-mix(in srgb, var(--bad) 22%, transparent);
+  border-radius: var(--radius); padding: var(--space-3) var(--space-4);
+}
+.ok-msg, .alert-ok, .alert.ok {
+  color: var(--ok); background: var(--ok-soft);
+  border: 1px solid color-mix(in srgb, var(--ok) 22%, transparent);
+  border-radius: var(--radius); padding: var(--space-3) var(--space-4);
+}
+.fs-warn, .alert-warn, .alert.warn {
+  color: var(--warn); background: var(--warn-soft);
+  border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent);
+  border-radius: var(--radius); padding: var(--space-3) var(--space-4);
+}
+
+/* ── Dialogs ───────────────────────────────────────────────────── */
+.mob, .modal-backdrop {
+  background: color-mix(in srgb, var(--fg-ink) 45%, transparent);
+  backdrop-filter: blur(2px);
+}
+.mod, .modal, dialog {
+  background: var(--bg-surface);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-4);
+}
+.mhd, .modal-head { border-bottom: 1px solid var(--line-2); }
+.mft, .modal-foot {
+  border-top: 1px solid var(--line-2);
+  background: var(--bg-surface-2);
+}
+
+/* ── Nothing here yet, and still loading ───────────────────────── */
+.empty, .empty-state {
+  color: var(--fg-muted);
+  background: var(--bg-surface-2);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+.empty strong, .empty-state strong {
+  display: block; color: var(--fg-ink); margin-bottom: var(--space-1);
+  font-weight: var(--weight-semi);
+}
+.spinner {
+  width: 22px; height: 22px; margin: 0 auto;
+  border: 2px solid var(--line-1);
+  border-top-color: var(--brand);
+  border-radius: var(--radius-full);
+  animation: ui-spin 700ms linear infinite;
+}
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+
+/* A skeleton says "a row is coming and it is this tall", which an
+   empty box does not. */
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-surface-3) 25%,
+              var(--bg-hover) 37%, var(--bg-surface-3) 63%);
+  background-size: 400% 100%;
+  animation: ui-sheen 1.3s ease infinite;
+  border-radius: var(--radius-sm);
+  color: transparent;
+}
+@keyframes ui-sheen { to { background-position: -135% 0; } }
+
+/* Somebody who has asked for less movement gets none of it. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}
+
+/* ── Selection and scrollbars, from the tokens ─────────────────── */
+::selection { background: var(--brand-soft); color: var(--fg-ink); }
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: var(--radius);
+  border: 2px solid var(--bg-app);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--fg-faint); }

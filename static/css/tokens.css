@@ -1,0 +1,319 @@
+/* ═══════════════════════════════════════════════════════════════════
+   PROCAM CRM — the tokens. One file, loaded everywhere.
+   CRM-UI-01 Stage 1.
+
+   WHY THIS FILE EXISTS
+
+   There were three palettes: app.html's own `:root` (v4), a second
+   `:root` lower down the same file (v5), and a third copy in
+   crm.css. Two of them disagreed about the brand red (#C72435 vs
+   #CC1E2E) and about the body size, so the same button was a
+   different colour depending on which screen it was on.
+
+   And NINETEEN variable names were used without ever being defined
+   — `--line`, `--surface`, `--accent`, `--amber`, `--green`, `--r`,
+   `--rd`, `--t-lg` among them. A `var(--line)` with no definition
+   and no fallback is not a colour: the browser drops the whole
+   declaration, so those borders were never drawn. Defining them is
+   this file's first job.
+
+   HOW TO USE IT
+
+   Everything below the CANONICAL block is an alias kept so that the
+   nine thousand lines written against the old names keep working.
+   New CSS uses the canonical names. Nothing else may declare a
+   `:root` palette — one place, or this grows a fourth.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── CANONICAL ─────────────────────────────────────────────────
+     Colour. The brand red is Procam's and is the ONE accent: every
+     other colour here is a neutral or carries a meaning (success,
+     warning, danger, info). An accent used for emphasis everywhere
+     emphasises nothing. */
+  --brand:            #C72435;
+  --brand-strong:     #A31D2B;
+  --brand-soft:       #FDEEF0;
+  --brand-ring:       rgba(199, 36, 53, .16);
+
+  /* Neutrals, biased a few degrees towards the brand so a grey next
+     to the red reads as chosen rather than as the browser default. */
+  --bg-app:           #F6F7F9;
+  --bg-surface:       #FFFFFF;
+  --bg-surface-2:     #FAFBFC;
+  --bg-surface-3:     #F1F3F6;
+  --bg-hover:         #F4F5F8;
+  --line-1:           #E5E7EB;
+  --line-2:           #EEF0F3;
+  --line-strong:      #D6D9E0;
+
+  --fg-ink:           #0B0D12;   /* headings */
+  --fg-ink-2:         #1F2430;
+  --fg-body:          #363B47;   /* body copy */
+  --fg-muted:         #6B7280;   /* labels, secondary */
+  --fg-faint:         #9CA3AF;   /* hints; never for body text */
+  --fg-on-brand:      #FFFFFF;
+
+  --ok:               #059669;  --ok-soft:     #ECFDF5;
+  --warn:             #B45309;  --warn-soft:   #FFFBEB;
+  --bad:              #B91C1C;  --bad-soft:    #FEF2F2;
+  --note:             #1D4ED8;  --note-soft:   #EFF6FF;
+  --hold:             #7C3AED;  --hold-soft:   #F5F3FF;
+
+  /* Type. One scale. The phone bump is in the media query at the
+     bottom: 13.5px is comfortable on a desk and small in a lorry
+     yard, which is where this CRM is actually read. */
+  --font-body: 'Barlow', 'Inter', -apple-system, system-ui,
+               'Segoe UI', sans-serif;
+  --font-num:  'Barlow', 'Inter', system-ui, sans-serif;
+
+  --text-xs:   11px;
+  --text-sm:   12.5px;
+  --text-base: 13.5px;
+  --text-md:   15px;
+  --text-lg:   17px;
+  --text-xl:   20px;
+  --text-2xl:  25px;
+  --text-3xl:  32px;
+  --text-hero: 40px;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semi:   600;
+  --weight-bold:   700;
+  --leading-tight: 1.25;
+  --leading-body:  1.55;
+
+  /* Space. 4 / 8 / 12 / 16 / 24 / 32, and the two beyond it that the
+     page gutters need. */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  24px;
+  --space-6:  32px;
+  --space-7:  48px;
+  --space-8:  64px;
+
+  /* Radius */
+  --radius-sm:   4px;
+  --radius:      8px;
+  --radius-md:   10px;
+  --radius-lg:   14px;
+  --radius-full: 9999px;
+
+  /* Elevation. Four, and they mean distance from the page: a card,
+     a raised card, a popover, a dialog. */
+  --shadow-1: 0 1px 2px rgba(11,13,18,.05), 0 1px 3px rgba(11,13,18,.04);
+  --shadow-2: 0 2px 6px rgba(11,13,18,.06), 0 1px 2px rgba(11,13,18,.05);
+  --shadow-3: 0 8px 24px rgba(11,13,18,.10), 0 2px 6px rgba(11,13,18,.05);
+  --shadow-4: 0 20px 48px rgba(11,13,18,.16), 0 6px 12px rgba(11,13,18,.07);
+
+  /* The focus ring. One ring, visible on every surface, and never
+     removed without replacing it — a keyboard user who cannot see
+     where they are cannot use the CRM at all. */
+  --focus-ring: 0 0 0 3px var(--brand-ring);
+  --focus-line: 2px solid var(--brand);
+
+  /* The smallest thing a finger may be asked to hit. 44px is what
+     both platform guidelines say, and the Stage 0 audit found 825
+     targets under it. */
+  --tap-min: 44px;
+
+  --ease: cubic-bezier(.16,.84,.36,1);
+  --dur-in: 160ms;
+  --dur-out: 120ms;
+
+  /* ── ALIASES ───────────────────────────────────────────────────
+     Every name the existing CSS already uses, pointed at a token
+     above. Nothing here invents a value. */
+
+  /* app.html v4 */
+  --red: var(--brand);
+  --red-hover: var(--brand-strong);
+  --red-tint: var(--brand-soft);
+  --ink: var(--fg-ink);
+  --ink-2: var(--fg-ink-2);
+  --text: var(--fg-body);
+  --text-2: var(--fg-muted);
+  --text-3: var(--fg-faint);
+  --text-4: var(--fg-faint);
+  --bg: var(--bg-app);
+  --card: var(--bg-surface);
+  --border: var(--line-1);
+  --border-2: var(--line-2);
+  --hover: var(--bg-hover);
+  --surface: var(--bg-surface);
+  --surface-2: var(--bg-surface-2);
+  --surface-3: var(--bg-surface-3);
+  --line: var(--line-1);            /* was never defined: see above */
+  --success: var(--ok);
+  --warning: var(--warn);
+  --danger: var(--bad);
+  --info: var(--note);
+  --accent: var(--brand);
+  --amber: var(--warn);
+  --amber-soft: var(--warn-soft);
+  --amber-tint: var(--warn-soft);
+  --green: var(--ok);
+  --green-soft: var(--ok-soft);
+  --green-tint: var(--ok-soft);
+  --r-sm: var(--radius-sm);
+  --r: var(--radius);
+  --r-lg: var(--radius-md);
+  --rd: var(--radius);
+  --rd-sm: var(--radius-sm);
+  --rd-md: var(--radius-md);
+  --rd-lg: var(--radius-lg);
+  --rd-full: var(--radius-full);
+  --sh-1: var(--shadow-1);
+  --sh-2: var(--shadow-2);
+  --sh-lg: var(--shadow-4);
+  --font: var(--font-body);
+  --font-num: var(--font-num);
+  --t-xs: var(--text-xs);
+  --t-sm: var(--text-sm);
+  --t-md: var(--text-base);
+  --t-lg: var(--text-md);
+  --t-xl: var(--text-xl);
+  --t-2xl: var(--text-2xl);
+  --t-num: var(--text-3xl);
+  --t-hero: var(--text-hero);
+
+  /* crm.css / premium v5 */
+  --p-bg: var(--bg-app);
+  --p-surface: var(--bg-surface);
+  --p-surface-2: var(--bg-surface-2);
+  --p-surface-3: var(--bg-surface-3);
+  --p-border: var(--line-1);
+  --p-border-2: var(--line-2);
+  --p-border-strong: var(--line-strong);
+  --p-divider: var(--line-2);
+  --p-line: var(--line-1);
+  --p-ink: var(--fg-ink);
+  --p-ink-2: var(--fg-ink-2);
+  --p-text: var(--fg-body);
+  --p-text-2: var(--fg-muted);
+  --p-text-3: var(--fg-faint);
+  --p-text-4: var(--fg-faint);
+  --p-red: var(--brand);
+  --p-red-strong: var(--brand-strong);
+  --p-red-soft: var(--brand-soft);
+  --p-red-ring: var(--brand-ring);
+  --p-accent: var(--brand);
+  --p-success: var(--ok);
+  --p-success-soft: var(--ok-soft);
+  --p-warning: var(--warn);
+  --p-warn: var(--warn);
+  --p-warning-soft: var(--warn-soft);
+  --p-danger: var(--bad);
+  --p-danger-soft: var(--bad-soft);
+  --p-info: var(--note);
+  --p-info-soft: var(--note-soft);
+  --p-hold: var(--hold);
+  --p-hold-soft: var(--hold-soft);
+  --p-grey: var(--fg-faint);
+  --p-font: var(--font-body);
+  --p-font-display: var(--font-body);
+  --p-font-num: var(--font-num);
+  --s-1: var(--space-1);
+  --s-2: var(--space-2);
+  --s-3: var(--space-3);
+  --s-4: var(--space-4);
+  --s-5: 20px;
+  --s-6: var(--space-5);
+  --s-8: var(--space-6);
+  --s-10: 40px;
+  --s-12: var(--space-7);
+  --el-1: var(--shadow-1);
+  --el-2: var(--shadow-2);
+  --el-3: var(--shadow-3);
+  --el-4: var(--shadow-4);
+  --easing: var(--ease);
+  --dur-in: var(--dur-in);
+  --dur-out: var(--dur-out);
+}
+
+/* ── Dark, for the viewer who has asked their machine for it ──────
+   Only the tokens are redefined; nothing below this line styles a
+   component. An explicit light choice beats a dark machine. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg-app:       #0D0F13;
+    --bg-surface:   #15181F;
+    --bg-surface-2: #1A1E26;
+    --bg-surface-3: #212630;
+    --bg-hover:     #1F242D;
+    --line-1:       #2A2F3A;
+    --line-2:       #222730;
+    --line-strong:  #3A4150;
+
+    --fg-ink:       #F5F6F8;
+    --fg-ink-2:     #E4E6EB;
+    --fg-body:      #C9CDD6;
+    --fg-muted:     #99A0AD;
+    --fg-faint:     #6F7784;
+
+    --brand:        #F2566A;
+    --brand-strong: #FF7183;
+    --brand-soft:   #2A1419;
+    --brand-ring:   rgba(242, 86, 106, .26);
+
+    --ok-soft:   #0C2219;
+    --warn-soft: #2A1E08;
+    --bad-soft:  #2A1212;
+    --note-soft: #101C33;
+    --hold-soft: #1C1430;
+
+    --shadow-1: 0 1px 2px rgba(0,0,0,.40);
+    --shadow-2: 0 2px 6px rgba(0,0,0,.45);
+    --shadow-3: 0 8px 24px rgba(0,0,0,.55);
+    --shadow-4: 0 20px 48px rgba(0,0,0,.65);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg-app:       #0D0F13;
+  --bg-surface:   #15181F;
+  --bg-surface-2: #1A1E26;
+  --bg-surface-3: #212630;
+  --bg-hover:     #1F242D;
+  --line-1:       #2A2F3A;
+  --line-2:       #222730;
+  --line-strong:  #3A4150;
+  --fg-ink:       #F5F6F8;
+  --fg-ink-2:     #E4E6EB;
+  --fg-body:      #C9CDD6;
+  --fg-muted:     #99A0AD;
+  --fg-faint:     #6F7784;
+  --brand:        #F2566A;
+  --brand-strong: #FF7183;
+  --brand-soft:   #2A1419;
+  --brand-ring:   rgba(242, 86, 106, .26);
+  --ok-soft:   #0C2219;
+  --warn-soft: #2A1E08;
+  --bad-soft:  #2A1212;
+  --note-soft: #101C33;
+  --hold-soft: #1C1430;
+  --shadow-1: 0 1px 2px rgba(0,0,0,.40);
+  --shadow-2: 0 2px 6px rgba(0,0,0,.45);
+  --shadow-3: 0 8px 24px rgba(0,0,0,.55);
+  --shadow-4: 0 20px 48px rgba(0,0,0,.65);
+}
+
+/* ── The phone ────────────────────────────────────────────────────
+   13.5px is comfortable at a desk and small in a lorry yard, which
+   is where this CRM is read. The whole scale moves with the base,
+   so nothing has to be respecified per component. Stage 0 found 296
+   runs of text under 14px on a phone; this is what answers them. */
+@media (max-width: 767px) {
+  :root {
+    --text-xs:   12px;
+    --text-sm:   13.5px;
+    --text-base: 15px;
+    --text-md:   16px;
+    --text-lg:   18px;
+    --text-xl:   21px;
+    --text-2xl:  26px;
+  }
+}
