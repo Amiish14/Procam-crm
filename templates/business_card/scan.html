@@ -378,7 +378,7 @@
         renderReview(currentCard);
         $('save-msg').innerHTML = escHtml(j.error || 'Already on file.')
           + ' <button class="btn" id="btn-anyway">Save anyway — this is '
-          + 'somebody else</button>';
+          + 'a different person</button>';
         $('save-msg').style.display = 'block';
         const anyway = $('btn-anyway');
         if (anyway) anyway.onclick = () => save(choice, true);

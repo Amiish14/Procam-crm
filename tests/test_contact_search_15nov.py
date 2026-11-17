@@ -835,3 +835,19 @@ def test_the_new_contact_form_shows_the_duplicates_it_is_sent():
                              'use_existing': True},
                        headers={'X-CSRF-Token': token})
     assert made.status_code == 200 and made.get_json()['ok'] is True
+
+
+def test_the_duplicate_message_names_the_button_not_the_field():
+    """UAT 17 Nov: "send use_existing to create a second record" is
+    what the browser does, not what the person presses."""
+    client = _client()
+    token = _token(client)
+    _contact(name='ZT Wording Person', email='wording@zt.example')
+    answer = client.post('/api/contacts',
+                         json={'name': 'ZT Wording Person',
+                               'email': 'wording@zt.example'},
+                         headers={'X-CSRF-Token': token})
+    assert answer.status_code == 409
+    said = answer.get_json()['error']
+    assert 'press Save anyway if this is a different person' in said
+    assert 'use_existing' not in said

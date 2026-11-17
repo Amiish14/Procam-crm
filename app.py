@@ -4080,10 +4080,12 @@ def api_create_contact():
             return jsonify({
                 'ok': False, 'needs': 'duplicate_check',
                 'duplicates': _dupes,
+                # The message names the BUTTON the person is looking
+                # at, not the field the browser sends. UAT 17 Nov.
                 'error': (f'{len(_dupes)} person(s) already on file look '
-                          f'like this one. Use one of them, or send '
-                          f'use_existing to create a second record '
-                          f'anyway.')}), 409
+                          f'like this one. Use one of them, or press '
+                          f'Save anyway if this is a different '
+                          f'person.')}), 409
     ct = Contact(
         contact_type = d.get('type','person'),
         name         = d.get('name','').strip(),

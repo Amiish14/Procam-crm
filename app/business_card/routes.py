@@ -384,16 +384,17 @@ def api_save(card_id):
             return jsonify(ok=False, duplicate=True, matches=again,
                            people=people,
                            error='This person may already be in the CRM. '
-                                 'Open one of them, or confirm to create '
-                                 'a new record.'), 409
+                                 'Open one of them, or press Save anyway '
+                                 'if this is a different person.'), 409
         if again.get('contacts'):
             row.dup_matches = again
             db.session.commit()
             return jsonify(ok=False, duplicate=True,
                            matches=again, people=_people_like(fields),
                            error='This person may already be in the CRM.'
-                                 ' Link to the existing record, or confirm'
-                                 ' to create a new one.'), 409
+                                 ' Link to the existing record, or press'
+                                 ' Save anyway if this is a different'
+                                 ' person.'), 409
 
     if choice == 'link':
         if link_account_id:
