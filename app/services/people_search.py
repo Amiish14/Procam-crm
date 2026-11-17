@@ -693,20 +693,57 @@ def suggest(field, q='', *, sc=None, limit=12):
         held, n = found.get(key, (label, 0))
         found[key] = (held, n + 1)
 
+    #: Account names and aliases, for the company type-ahead only.
+    #: An account somebody has FILED is worth more than a company
+    #: name a lead happens to carry — and an alias is how this CRM
+    #: says "Amns is ArcelorMittal Nippon Steel" (14 Nov).
+    known, known_lower = {}, set()
+    if field == 'company' and text:
+        try:
+            from app.services import account_match
+            for account, _norms, _stricts, _own in account_match.active_index():
+                for value in [account.name] + list(
+                        getattr(account, 'aliases', None) or []):
+                    label = str(value or '').strip()
+                    if label:
+                        known[label.lower()] = label
+                        known_lower.add(label.lower())
+        except Exception:                                 # noqa: BLE001
+            known, known_lower = {}, set()
+
     def rank(item):
-        """Prefix matches first. UAT of 15 Nov: typing "Am" offered
-        BHEL above Amns, because BHEL is on more rows. What somebody
-        typing two letters means is the name that STARTS that way;
-        how common the others are only decides the rest."""
+        """Exact first, then an account or one of its aliases, then
+        the names that START with what was typed.
+
+        UAT 15 Nov: typing "Am" offered BHEL above Amns, because BHEL
+        is on more rows. UAT 17 Nov: an exact or alias match should
+        come first — typing the whole of a short account name and
+        finding it third is the same complaint one step further on.
+        How common a value is only ever decides ties.
+        """
         label, n = item
         lower = label.lower()
-        where = 0 if (text and lower.startswith(text)) else (
-            1 if (text and f' {text}' in lower) else 2)
+        if text and lower == text:
+            where = 0
+        elif lower in known_lower and text and text in lower:
+            where = 1
+        elif text and lower.startswith(text):
+            where = 2
+        elif text and f' {text}' in lower:
+            where = 3
+        else:
+            where = 4
         return (where, -n, lower)
 
     if field == 'company':
         for (value,) in db.session.query(Company.name).limit(5000):
             offer(value)
+        # And what each account is also CALLED. Typing the full name
+        # of an account filed under its short one offered nothing at
+        # all before this, which is the 14 Nov alias reading missing
+        # from the one place somebody types a company name.
+        for label in sorted(known.values()):
+            offer(label)
         for (value,) in db.session.query(Contact.company).limit(5000):
             offer(value)
         for (value,) in db.session.query(Lead.company).limit(8000):

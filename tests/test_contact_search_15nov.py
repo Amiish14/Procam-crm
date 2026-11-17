@@ -886,3 +886,23 @@ def test_the_search_itself_still_matches_a_part_of_a_name():
     _contact(name='ZT Integration Test', email='sub@zt.example')
     assert ps.search(name='Integration')['total'] >= 1
     assert ps.search(name='Test')['total'] >= 1
+
+
+def test_the_type_ahead_puts_an_exact_match_first():
+    """UAT 17 Nov §4. Typing the whole of a short account name and
+    finding it third is the 15 Nov complaint one step further on."""
+    _account(name='ZT Am')
+    for n in range(8):
+        _lead(pic=f'ZT Q{n}', company='ZT Amalgamated Movers')
+    values = ps.suggest('company', 'ZT Am')
+    assert values[0] == 'ZT Am', values
+
+
+def test_an_account_alias_beats_a_name_a_lead_happens_to_carry():
+    account = _account(name='ZT Amns',
+                       aliases=['ZT ArcelorMittal Nippon Steel'])
+    _lead(pic='ZT R1', company_id=account.id)
+    for n in range(6):
+        _lead(pic=f'ZT S{n}', company='ZT Arcelor Trading Company')
+    values = ps.suggest('company', 'ZT Arcelor')
+    assert values[0] == 'ZT ArcelorMittal Nippon Steel', values
