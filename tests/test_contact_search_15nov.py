@@ -906,3 +906,39 @@ def test_an_account_alias_beats_a_name_a_lead_happens_to_carry():
         _lead(pic=f'ZT S{n}', company='ZT Arcelor Trading Company')
     values = ps.suggest('company', 'ZT Arcelor')
     assert values[0] == 'ZT ArcelorMittal Nippon Steel', values
+
+
+def test_the_duplicate_warning_renders_both_buttons():
+    """UAT 17 Nov regression: only "Save anyway" was left, and the
+    matched row was not clickable, so "use one of them" — the whole
+    point of showing them — could not be done."""
+    client = _client()
+    emp = Employee.query.filter_by(emp_code=ADMIN).first()
+    emp.must_change_pw = False
+    db.session.commit()
+    html = client.get('/app').get_data(as_text=True)
+    assert 'Use existing</button>' in html
+    assert 'Save anyway — this is a different person</button>' in html
+    # and the button is wired to open the person, not to save
+    assert 'function ctUseExisting' in html
+    assert 'openContact(contactId)' in html
+
+
+def test_every_matched_person_has_somewhere_to_open():
+    """A contact with no account carried no url at all, which is why
+    the row had nothing to click."""
+    _contact(name='ZT Orphan Person', email='orphan@zt.example')
+    rows = ps.duplicates_of(email='orphan@zt.example')
+    assert rows
+    for row in rows:
+        assert row.get('contact_id') or row.get('person_url'), row
+    assert rows[0]['person_url'] == f"/app?contact={rows[0]['contact_id']}"
+
+
+def test_a_person_only_on_a_lead_opens_the_lead():
+    account = _account()
+    lead = _lead(pic='ZT Lead Only', company_id=account.id,
+                 email='leadonly@zt.example')
+    rows = ps.duplicates_of(email='leadonly@zt.example')
+    assert rows and rows[0]['person_url'] == f'/app?lead={lead.id}'
+    assert not rows[0].get('contact_id')

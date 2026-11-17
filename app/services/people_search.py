@@ -384,6 +384,12 @@ def _shape_contact(row, accounts):
         'owner': row.assigned_to or '',
         'last_activity': str(row.created_at or '')[:10],
         'url': (f'/company/{account.id}' if account is not None else ''),
+        'contact_id': row.id,
+        # Where to open THIS PERSON, which is not the same as where to
+        # open their company. UAT 17 Nov: a contact with no account
+        # carried no url at all, so the duplicate list had nothing to
+        # click and "use one of them" could not be done.
+        'person_url': f'/app?contact={row.id}',
     }
 
 
@@ -428,6 +434,7 @@ def _shape_lead(row, accounts):
         'last_activity': str(getattr(row, 'updated_at', None)
                              or getattr(row, 'created_at', None) or '')[:10],
         'url': f'/?lead={row.id}',
+        'person_url': f'/app?lead={row.id}',
         'lead_id': row.id,
     }
 
@@ -460,6 +467,8 @@ def _merge(rows):
         if extra['kind'] == 'lead' and not into.get('lead_id'):
             into['lead_id'] = extra['id']
             into['lead_url'] = extra['url']
+        if not into.get('person_url') and extra.get('person_url'):
+            into['person_url'] = extra['person_url']
 
     # Contacts first, so a contact is always the surviving row.
     for row in sorted(rows, key=lambda r: 0 if r['kind'] == 'contact' else 1):
