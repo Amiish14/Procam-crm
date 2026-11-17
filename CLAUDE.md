@@ -10,6 +10,14 @@ Tests: `SECRET_KEY=x ADMIN_INITIAL_PASSWORD=Test-123456789
 .venv/bin/python -m pytest`. Dev extras (pytest-xdist) are in
 `requirements-dev.txt`.
 
+`-n auto` needs `--dist loadfile`, which `pytest.ini` now supplies,
+so plain `-n auto` is safe. Without it the parallel run disagrees
+with the serial one: these suites share one in-process database per
+process (the first module to import `app` picks it, and several
+modules read rows another created), and a worker that gets a
+different set of modules gets a different database. Measured on
+17 Nov: two false failures in a three-file run, none serially.
+
 ## Speed rules (Nilesh)
 
 - Run ONLY the tests for the files you changed: `.venv/bin/python -m pytest -x -q -n auto <files>`. Never wait on the full suite before pushing; if it's needed, run it in the background after pushing and report only failures.
