@@ -1050,3 +1050,52 @@ def test_the_token_file_is_linked_not_imported():
                              'contact_search.html')).read()
     assert 'tokens.css?v=' in page
     assert page.index('tokens.css') < page.index('crm.css')
+
+
+# ═══ CRM-UI-01 Stage 3 — lists ═════════════════════════════════════
+def test_a_table_becomes_a_card_list_on_a_phone(client):
+    html = client.get('/app').get_data(as_text=True)
+    assert 'css/lists.css' in html
+    assert 'js/lists.js' in html
+    css = open(os.path.join(_ROOT, 'static', 'css', 'lists.css')).read()
+    assert 'content: attr(data-label)' in css
+    assert '@media (max-width: 767px)' in css
+
+
+def test_the_labels_come_from_the_table_not_from_each_renderer():
+    """Forty render functions would each have to be edited, and the
+    forty-first would be forgotten."""
+    js = open(os.path.join(_ROOT, 'static', 'js', 'lists.js')).read()
+    assert "setAttribute('data-label'" in js
+    assert 'MutationObserver' in js          # rows are replaced wholesale
+
+
+def test_the_filters_are_moved_into_the_sheet_not_copied():
+    """A copy would have the same ids as the originals, and every
+    `g('lSt').value` in the app reads by id."""
+    js = open(os.path.join(_ROOT, 'static', 'js', 'lists.js')).read()
+    assert 'appendChild(el)' in js
+    assert 'cloneNode' not in js
+
+
+def test_find_a_person_does_not_scroll_the_page_sideways():
+    """Stage 0's only horizontal scroll: ten columns, 1043px of table
+    in a 768px screen, and part of every row unreachable."""
+    page = open(os.path.join(_ROOT, 'templates',
+                             'contact_search.html')).read()
+    assert 'fs-tw' in page and 'overflow-x:auto' in page
+    assert "data-label=" in page             # and a card list below 768
+
+
+def test_a_dialog_is_never_taller_than_the_screen():
+    """My own regression from the phone type bump: the lead sheet was
+    849px tall in an 800px screen with `overflow:hidden`, so its
+    buttons could not be reached."""
+    css = open(os.path.join(_ROOT, 'static', 'css', 'shell.css')).read()
+    assert '100dvh' in css
+    assert 'body.modal-open #crmTabs' in css
+
+
+def test_the_bottom_bar_steps_aside_for_a_dialog(client):
+    html = client.get('/app').get_data(as_text=True)
+    assert "classList.toggle('modal-open'" in html

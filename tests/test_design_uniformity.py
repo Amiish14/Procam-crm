@@ -100,17 +100,35 @@ def test_stylesheet_is_served():
 def test_tokens_match_the_portal():
     """The shared sheet and the single-page app must not drift.
 
-    Both define the same accent and surface colours; if one is edited the
-    other has to follow, or the two halves of the portal diverge again.
+    CRM-UI-01 Stage 1 (approved 17 Nov) answered this a stronger way
+    than the test asked for: there is now ONE `:root`, in
+    static/css/tokens.css, and both halves of the portal link it. So
+    the question is no longer "do the two copies agree" — there is
+    one copy — it is "is there still only one, and does everything
+    written against the old names still resolve".
+
+    The accent moved to #C72435 in that consolidation: crm.css said
+    #CC1E2E and app.html said #C72435, so the same button was a
+    different colour depending on the screen.
     """
-    css = open(_CSS).read()
-    app_html = open(os.path.join(_TEMPLATES, 'app.html')).read()
-    for token, value in (('--p-red', '#CC1E2E'),
-                         ('--p-bg', '#F6F7F9'),
-                         ('--p-surface', '#FFFFFF'),
-                         ('--p-border', '#E7E9EE'),
-                         ('--p-ink', '#0A0B0F')):
-        assert f'{token}:{value}' in css.replace(' ', ''), \
-            f'{token} missing from the shared stylesheet'
-        assert f'{token}:{value}' in app_html.replace(' ', ''), \
-            f'{token} changed in app.html but not in crm.css'
+    import glob
+
+    flat = open(os.path.join(_ROOT, 'static', 'css',
+                             'tokens.css')).read().replace(' ', '')
+    for token, value in (('--brand', '#C72435'),
+                         ('--bg-app', '#F6F7F9'),
+                         ('--bg-surface', '#FFFFFF'),
+                         ('--line-1', '#E5E7EB'),
+                         ('--fg-ink', '#0B0D12')):
+        assert f'{token}:{value}' in flat, \
+            f'{token} missing from static/css/tokens.css'
+    for alias in ('--p-red', '--p-bg', '--p-surface', '--p-border',
+                  '--p-ink', '--red', '--ink', '--line'):
+        assert f'{alias}:var(' in flat, f'{alias} no longer resolves'
+    roots = []
+    for path in (glob.glob(os.path.join(_ROOT, 'static', 'css', '*.css'))
+                 + [os.path.join(_TEMPLATES, 'app.html')]):
+        body = open(path).read()
+        if ':root{' in body or ':root {' in body:
+            roots.append(os.path.basename(path))
+    assert roots == ['tokens.css'], roots

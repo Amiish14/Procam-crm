@@ -1,0 +1,240 @@
+/* ═══════════════════════════════════════════════════════════════════
+   PROCAM CRM — lists and tables.
+   CRM-UI-01 Stage 3. After shell.css. Tokens only.
+
+   A table of twelve columns on a 360px screen is not a table: it is
+   a horizontal scroll with a quarter of a row visible, and the
+   reader cannot know what they are not seeing. On a phone every row
+   becomes a CARD — the fields that matter, the status as a chip, the
+   whole thing tappable. On a desktop the table stays a table, with
+   its header pinned so the columns still have names at row sixty.
+
+   The card list is driven by `data-label` on each cell, which
+   static/js/lists.js copies from the column's own `<th>`. That is
+   the whole mechanism: no render function is rewritten, so a list
+   added tomorrow gets this for free, and a column renamed stays
+   right in both views.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Desktop: the header stays ─────────────────────────────────── */
+@media (min-width: 768px) {
+  .tw { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tw table { width: 100%; }
+  .tw thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg-surface-2);
+    box-shadow: inset 0 -1px 0 var(--line-1);
+  }
+  /* Comfortable, not cramped: 1366 is the commonest screen here and
+     the rows were 30px. */
+  .tw td { padding-top: var(--space-3); padding-bottom: var(--space-3); }
+}
+
+/* ── Phone: every row is a card ────────────────────────────────── */
+@media (max-width: 767px) {
+  .tw { overflow: visible; }
+  .tw table,
+  .tw thead,
+  .tw tbody,
+  .tw tr,
+  .tw td { display: block; width: auto; }
+  .tw thead { display: none; }
+  .tw table { min-width: 0 !important; border-collapse: separate; }
+
+  .tw tbody tr {
+    position: relative;
+    background: var(--bg-surface);
+    border: 1px solid var(--line-1);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-1);
+    padding: var(--space-3) var(--space-4);
+    margin-bottom: var(--space-3);
+  }
+  .tw tbody tr:active { background: var(--bg-hover); }
+
+  /* GRID, not flex: a cell often holds two elements — a name and
+     the email under it — and as flex items they sat side by side in
+     the value column and wrapped a word at a time. In a grid every
+     child lands in the value column, one under the other, which is
+     how the cell reads on the desktop too. */
+  .tw tbody td {
+    display: grid;
+    grid-template-columns: 38% 1fr;
+    column-gap: var(--space-4);
+    align-items: start;
+    padding: var(--space-1) 0;
+    border: 0;
+    font-size: var(--text-base);
+    text-align: right;
+    min-height: 0;
+  }
+  .tw tbody td::before {
+    content: attr(data-label);
+    grid-column: 1;
+    grid-row: 1;
+    text-align: left;
+    color: var(--fg-muted);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-bold);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    padding-top: 2px;
+  }
+  /* `justify-self` so a chip is the width of its own words: a grid
+     item stretches by default, and a status pill stretched across
+     the value column reads as a progress bar. */
+  .tw tbody td > * { grid-column: 2; min-width: 0; justify-self: end; }
+  .tw tbody td > div { justify-self: stretch; }
+  /* A cell with no label is a control column (the checkbox, the row
+     menu): no label, no reserved space. */
+  .tw tbody td[data-label=""],
+  .tw tbody td:not([data-label]) { grid-template-columns: 1fr; }
+  .tw tbody td[data-label=""]::before,
+  .tw tbody td:not([data-label])::before { content: none; }
+  .tw tbody td[data-label=""] > *,
+  .tw tbody td:not([data-label]) > * { grid-column: 1; }
+
+  /* The first labelled cell is the card's title and reads as one. */
+  .tw tbody td.is-title {
+    display: block;
+    grid-template-columns: 1fr;
+    text-align: left;
+    font-size: var(--text-md);
+    font-weight: var(--weight-semi);
+    color: var(--fg-ink);
+    padding-bottom: var(--space-2);
+  }
+  .tw tbody td.is-title::before { content: none; }
+  .tw tbody td.is-title .td-s { font-weight: var(--weight-normal); }
+
+  /* An empty cell on a card is a row of nothing with a label on it. */
+  .tw tbody td.is-empty { display: none; }
+
+  /* The row's own controls go along the bottom, not down the side. */
+  .tw tbody td.is-actions {
+    display: flex;
+    justify-content: flex-start;
+    gap: var(--space-2);
+    padding-top: var(--space-3);
+    margin-top: var(--space-2);
+    border-top: 1px solid var(--line-2);
+  }
+  .tw tbody td.is-actions::before { content: none; }
+
+  /* Row numbers are a desktop convenience and noise on a card. */
+  .tw tbody td.tbl-num[data-label="#"] { display: none; }
+
+  /* ── The search stays put while the list moves ──────────────── */
+  .fbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--line-1);
+  }
+  .fbar .fi-srch {
+    flex: 1 1 100%;
+    width: 100%;
+    min-height: var(--tap-min);
+    font-size: var(--text-base);
+  }
+  /* Everything else in the bar is in the sheet. */
+  .fbar > .fi:not(.fi-srch),
+  .fbar > .f-cnt,
+  .fbar > .btn:not(.filters-open) { display: none; }
+  .fbar .filters-open { display: inline-flex; }
+}
+
+@media (min-width: 768px) {
+  .filters-open, #crmFilterSheet { display: none !important; }
+}
+
+/* ── The filter sheet ──────────────────────────────────────────── */
+.filters-open {
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap-min);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  color: var(--fg-ink);
+  font-weight: var(--weight-semi);
+  font-size: var(--text-base);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.filters-open .count {
+  background: var(--brand);
+  color: var(--fg-on-brand);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  padding: 1px 7px;
+}
+.filters-open .count:empty { display: none; }
+
+#crmFilterScrim {
+  display: none;
+  position: fixed; inset: 0; z-index: 240;
+  background: color-mix(in srgb, var(--fg-ink) 45%, transparent);
+}
+#crmFilterScrim.on { display: block; }
+
+#crmFilterSheet {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 250;
+  max-height: 85vh;
+  overflow-y: auto;
+  background: var(--bg-surface);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  box-shadow: var(--shadow-4);
+  transform: translateY(100%);
+  transition: transform var(--dur-in) var(--ease);
+  padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+}
+#crmFilterSheet.on { transform: translateY(0); }
+#crmFilterSheet .sheet-hd {
+  position: sticky; top: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--line-2);
+}
+#crmFilterSheet .sheet-hd strong { font-size: var(--text-lg); }
+#crmFilterSheet .sheet-grip {
+  width: 36px; height: 4px; border-radius: var(--radius-full);
+  background: var(--line-strong); margin: var(--space-2) auto 0;
+}
+#crmFilterSheet .sheet-body {
+  display: grid; gap: var(--space-3);
+  padding: var(--space-4);
+}
+/* The controls are MOVED here, not copied: same elements, same ids,
+   so every `g('lSt').value` in the app still reads the same node. */
+#crmFilterSheet .fi {
+  width: 100%;
+  min-height: var(--tap-min);
+  font-size: var(--text-base);
+}
+#crmFilterSheet .sheet-ft {
+  display: flex; gap: var(--space-3);
+  padding: 0 var(--space-4);
+}
+#crmFilterSheet .sheet-ft .btn { flex: 1; min-height: var(--tap-min); }
+
+/* ── Find a person, on a phone ────────────────────────────────────
+   The page's own stylesheet may not restyle a component — one
+   definition of `.btn`, in the shared files, is a rule this repo
+   already tests for (tests/test_design_uniformity.py). So the
+   button's phone size lives here with every other component's. */
+@media (max-width: 767px) {
+  .fs-row .btn { min-height: var(--tap-min); }
+  .fs-wrap { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+}

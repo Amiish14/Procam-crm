@@ -243,3 +243,50 @@
     bottom: calc(18px + 62px) !important;
   }
 }
+
+/* ── A dialog never taller than the screen it is on ──────────────
+   My own regression, caught by the Stage 3 re-run: the phone's 15px
+   base made the lead sheet 849px tall in an 800px screen, and `.mod`
+   is `overflow:hidden`, so the buttons at its foot were unreachable
+   and the dialog could not be dismissed. `.mbdy` already scrolls —
+   what was missing is a ceiling on the dialog itself and the column
+   that lets the body take what is left.
+
+   `dvh` where the browser has it: on a phone `vh` counts the space
+   behind the address bar, which is the 60px that put the Save button
+   under it. */
+@media (max-width: 767px) {
+  .mob { padding: var(--space-2); align-items: flex-start; }
+  .mod, .mod-lg {
+    display: flex;
+    flex-direction: column;
+    max-width: 100%;
+    max-height: calc(100vh - var(--space-4));
+    max-height: calc(100dvh - var(--space-4));
+  }
+  .mhd, .mft { flex: 0 0 auto; }
+  .mbdy, .mod-lg .mbdy {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: var(--space-4);
+  }
+  /* The actions stay on screen with the dialog scrolled to any
+     point: a Save you have to hunt for is a Save nobody presses. */
+  .mft {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--line-1);
+    padding: var(--space-3) var(--space-4);
+  }
+  .mft .btn { min-height: var(--tap-min); }
+}
+
+/* While a dialog is open the bottom bar is not a destination: it sat
+   under the dialog's own sticky footer, so a tap meant for Save
+   could land on Leads. */
+body.modal-open #crmTabs,
+body.modal-open .pai-fab { display: none !important; }

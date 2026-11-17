@@ -1112,6 +1112,10 @@ catch (err) { console.error('Employee list could not start loading', err); }
 <!-- CRM-UI-01 Stage 2 — the app shell: the sidebar, the top bar,
      and on a phone the bottom tab bar and the full-screen More. -->
 <link rel="stylesheet" href="{{ url_prefix }}/static/css/shell.css?v={{ asset_v }}">
+<!-- CRM-UI-01 Stage 3 — a table is a table on a desk and a list of
+     cards on a phone. The labels that make the cards readable are
+     stamped by lists.js from each table's own header. -->
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/lists.css?v={{ asset_v }}">
 </head>
 <body>
 <div class="top">
@@ -9449,6 +9453,39 @@ function crmSignOut(){
   f.action = crmUrl('/logout');
   f.submit();
 }
+/* A dialog takes the screen on a phone: the bottom bar steps aside
+   while one is open, so a tap meant for Save cannot land on Leads.
+   Watched rather than hooked, because these modals are opened from
+   forty places by setting `style.display` directly. */
+(function(){
+  function anyOpen(){
+    return Array.prototype.some.call(
+      document.querySelectorAll('.mob'), function(el){
+        return getComputedStyle(el).display !== 'none';
+      });
+  }
+  function sync(){
+    document.body.classList.toggle('modal-open', anyOpen());
+  }
+  var watch = new MutationObserver(sync);
+  document.querySelectorAll('.mob').forEach(function(el){
+    watch.observe(el, {attributes:true, attributeFilter:['style','class']});
+  });
+  /* Dialogs added later (the lead sheet is built on demand). */
+  new MutationObserver(function(muts){
+    muts.forEach(function(m){
+      Array.prototype.forEach.call(m.addedNodes, function(n){
+        if (n.nodeType === 1 && n.classList && n.classList.contains('mob')){
+          watch.observe(n, {attributes:true,
+                            attributeFilter:['style','class']});
+          sync();
+        }
+      });
+    });
+  }).observe(document.body, {childList:true, subtree:true});
+  sync();
+})();
+
 /* Escape closes More, the same key that closes every other sheet. */
 document.addEventListener('keydown', function(ev){
   if (ev.key === 'Escape') crmMore(false);
@@ -9473,5 +9510,6 @@ function sbNarrow(on){
   catch (err) { /* ditto */ }
 })();
 </script>
+<script src="{{ url_prefix }}/static/js/lists.js?v={{ asset_v }}"></script>
 </body>
 </html>

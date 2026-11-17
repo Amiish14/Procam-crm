@@ -265,8 +265,12 @@ MEASURE = r"""
     for (let j = i + 1; j < stuck.length; j++) {
       const [a, ra] = stuck[i], [b, rb] = stuck[j];
       if (a.contains(b) || b.contains(a)) continue;
-      if ((overlay(a) && covers(ra, rb)) || (overlay(b) && covers(rb, ra)))
-        continue;
+      // An open dialog is on top of the page by definition, and a
+      // sticky header under it is not fighting it. Anything paired
+      // WITH an overlay is skipped; what matters is two things in
+      // the same layer, which is where the chat button and the bar
+      // were.
+      if (overlay(a) || overlay(b)) continue;
       const w = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
       const h = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
       if (w > 4 && h > 4) {
@@ -369,6 +373,15 @@ def run(out_dir, only=None):
             page = context.new_page()
             page.add_init_script(
                 f'window.__PHONE__ = {"true" if phone else "false"};')
+            # The app defaults to the mailbox scope, which on a
+            # seeded database matches nothing — every list measured
+            # EMPTY, and an empty list hides exactly the faults this
+            # is looking for (the card view, the density, the
+            # overflow). Widened in the page, after the app's own
+            # `CRM` object exists.
+            page.add_init_script(
+                'window.addEventListener("DOMContentLoaded", () => {'
+                ' try { CRM.dataScope = "all"; } catch (e) {} });')
             # Sign in once per width.
             page.goto(f'{base}/login', wait_until='domcontentloaded')
             page.evaluate(
@@ -387,6 +400,8 @@ def run(out_dir, only=None):
                     page.goto(base + shot['go'],
                               wait_until='domcontentloaded')
                     page.wait_for_timeout(700)
+                    page.evaluate('() => { try { CRM.dataScope = "all"; }'
+                                  ' catch (e) {} }')
                     if shot.get('then'):
                         page.evaluate('async () => { %s }' % shot['then'])
                     page.wait_for_timeout(shot.get('wait', 400))

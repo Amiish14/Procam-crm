@@ -16,6 +16,7 @@
 <!-- CRM-UI-01 Stage 1: the primitives, after the page styles
      so they are the last word on how a control looks. -->
 <link rel="stylesheet" href="{{ url_prefix }}/static/css/ui.css?v={{ asset_v }}">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/lists.css?v={{ asset_v }}">
 <style>
   .fs-wrap{max-width:1180px;margin:0 auto;padding:18px 16px 40px}
   .fs-grid{display:grid;gap:12px;
@@ -29,7 +30,14 @@
           flex-wrap:wrap}
   .fs-note{font-size:11.5px;color:var(--text-3)}
   .fs-warn{font-size:12px;color:#b0421a;margin-top:6px}
-  table.fs{width:100%;border-collapse:collapse;margin-top:16px}
+  /* CRM-UI-01 Stage 3. Ten columns in 768px was 1043px of table and
+     the PAGE scrolled sideways, so part of every row was unreachable
+     and nothing said so. The table now scrolls inside its own box at
+     middling widths and becomes a list of cards on a phone. */
+  .fs-tw{margin-top:16px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table.fs{width:100%;border-collapse:collapse;min-width:860px}
+  table.fs thead th{position:sticky;top:0;z-index:2;
+                    background:var(--bg-surface-2)}
   table.fs th{text-align:left;font-size:11.5px;text-transform:uppercase;
               letter-spacing:.04em;color:var(--text-3);
               padding:6px 8px;border-bottom:1px solid var(--line);
@@ -47,6 +55,27 @@
            box-shadow:0 8px 24px rgba(0,0,0,.12)}
   .fs-menu div{padding:6px 10px;font-size:13px;cursor:pointer}
   .fs-menu div:hover{background:var(--surface-2)}
+
+  @media (max-width: 767px){
+    .fs-tw{overflow:visible}
+    table.fs{min-width:0}
+    table.fs thead{display:none}
+    table.fs tr{display:block;background:var(--surface);
+                border:1px solid var(--line);border-radius:10px;
+                padding:12px 14px;margin-bottom:12px}
+    table.fs td{display:flex;justify-content:space-between;gap:16px;
+                text-align:right;border:0;padding:3px 0;font-size:15px}
+    table.fs td::before{content:attr(data-label);flex:0 0 40%;
+                        text-align:left;color:var(--text-3);
+                        font-size:12px;font-weight:700;
+                        text-transform:uppercase;letter-spacing:.05em}
+    table.fs td:first-child{display:block;text-align:left;
+                            font-size:16px;font-weight:600;
+                            padding-bottom:6px}
+    table.fs td:first-child::before{content:none}
+    .fs-grid{grid-template-columns:1fr}
+    .fs-f input{min-height:44px;font-size:15px}
+  }
 </style>
 </head>
 <body>
@@ -249,14 +278,17 @@ function head(col, label){
   return `<th onclick="sortBy('${col}')">${esc(label)}${mark}</th>`;
 }
 
+const COLS = ['Name','Company','Designation','Country','Location',
+              'Vertical','Phones','Emails','Owner','Last activity'];
+
 function table(rows){
-  return `<table class="fs"><tr>
+  return `<div class="fs-tw"><table class="fs"><thead><tr>
     ${head('name','Name')}${head('company','Company')}
     <th>Designation</th>${head('country','Country')}
     ${head('location','Location')}${head('vertical','Vertical')}
     <th>Phones</th><th>Emails</th>${head('owner','Owner')}
-    ${head('last_activity','Last activity')}</tr>
-    ${rows.map(row).join('')}</table>`;
+    ${head('last_activity','Last activity')}</tr></thead><tbody>
+    ${rows.map(row).join('')}</tbody></table></div>`;
 }
 
 function row(r){
@@ -267,17 +299,20 @@ function row(r){
   const sources = r.source_note || (r.sources || [r.label]).join(' · ');
   const country = esc(r.country || '—')
     + (r.country_from ? ` <span class="fs-src">(${esc(r.country_from)})</span>` : '');
+  const cell = (n, body) => `<td data-label="${COLS[n]}">${body}</td>`;
   return `<tr>
-    <td><div>${name}</div><div class="fs-src">${esc(sources)}</div></td>
-    <td>${esc(r.company || '—')}</td>
-    <td>${esc(r.designation || '—')}</td>
-    <td>${country}</td>
-    <td>${esc(r.location || '—')}</td>
-    <td>${r.vertical ? `<span class="fs-tag">${esc(r.vertical)}</span>` : '—'}</td>
-    <td>${(r.phones || []).map(esc).join('<br>') || '—'}</td>
-    <td>${(r.emails || []).map(esc).join('<br>') || '—'}</td>
-    <td>${esc(r.owner || '—')}</td>
-    <td>${esc(r.last_activity || '—')}</td>
+    ${cell(0, `<div>${name}</div>`
+             + `<div class="fs-src">${esc(sources)}</div>`)}
+    ${cell(1, esc(r.company || '—'))}
+    ${cell(2, esc(r.designation || '—'))}
+    ${cell(3, country)}
+    ${cell(4, esc(r.location || '—'))}
+    ${cell(5, r.vertical
+              ? `<span class="fs-tag">${esc(r.vertical)}</span>` : '—')}
+    ${cell(6, (r.phones || []).map(esc).join('<br>') || '—')}
+    ${cell(7, (r.emails || []).map(esc).join('<br>') || '—')}
+    ${cell(8, esc(r.owner || '—'))}
+    ${cell(9, esc(r.last_activity || '—'))}
   </tr>`;
 }
 
