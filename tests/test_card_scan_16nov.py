@@ -968,3 +968,57 @@ def test_the_screen_says_reader_not_service(client):
     assert 'the image reader is unavailable' in html
     assert 'image service' not in html
     assert 'vision' not in html.lower()
+
+
+# ═══ CRM-UI-01 Stage 2 — the shell ═════════════════════════════════
+def test_one_hamburger_only(client):
+    """Stage 0 found two: #sbHamb in the markup and #mobile-burger
+    injected beside it, toggling a selector that fell back to `nav`."""
+    html = client.get('/app').get_data(as_text=True)
+    assert 'id="sbHamb"' in html
+    assert "b.id = 'mobile-burger'" not in html
+
+
+def test_the_phone_gets_a_bottom_bar_with_five(client):
+    html = client.get('/app').get_data(as_text=True)
+    assert 'id="crmTabs"' in html
+    for tab in ('tabHome', 'tabLeads', 'tabScan', 'tabFind', 'tabMore'):
+        assert f'id="{tab}"' in html, tab
+
+
+def test_sign_out_is_reachable_from_more(client):
+    """It ran off the right edge of a 360px top bar."""
+    html = client.get('/app').get_data(as_text=True)
+    assert 'id="crmMore"' in html
+    assert 'crmSignOut()' in html
+    assert 'more-out' in html
+
+
+def test_the_scan_and_chat_buttons_cannot_share_a_corner():
+    css = open(os.path.join(_ROOT, 'static', 'css', 'shell.css')).read()
+    # On a phone the floating scan button is gone (Scan is a tab) and
+    # the chat button sits above the bar.
+    assert '#crm-fab { display: none !important; }' in css
+    assert '.pai-fab' in css and 'bottom: calc(76px' in css
+    # And in the 768-899 band, where there is no bar, it clears the FAB.
+    assert '@media (min-width: 768px) and (max-width: 899px)' in css
+
+
+def test_the_tap_minimum_is_a_token_not_a_number():
+    tokens = open(os.path.join(_ROOT, 'static', 'css', 'tokens.css')).read()
+    assert '--tap-min: 44px' in tokens
+    css = open(os.path.join(_ROOT, 'static', 'css', 'shell.css')).read()
+    assert 'var(--tap-min)' in css
+
+
+def test_there_is_exactly_one_palette():
+    """Three `:root` palettes disagreed about the brand red."""
+    import glob
+
+    roots = []
+    for path in (glob.glob(os.path.join(_ROOT, 'static', 'css', '*.css'))
+                 + [os.path.join(_ROOT, 'templates', 'app.html')]):
+        body = open(path).read()
+        if ':root{' in body or ':root {' in body:
+            roots.append(os.path.basename(path))
+    assert roots == ['tokens.css'], roots

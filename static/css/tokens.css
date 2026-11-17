@@ -308,8 +308,8 @@
    runs of text under 14px on a phone; this is what answers them. */
 @media (max-width: 767px) {
   :root {
-    --text-xs:   12px;
-    --text-sm:   13.5px;
+    --text-xs:   12.5px;
+    --text-sm:   14px;
     --text-base: 15px;
     --text-md:   16px;
     --text-lg:   18px;

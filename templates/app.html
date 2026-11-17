@@ -1109,6 +1109,9 @@ try { CRM.ensureEmployees(); }
 catch (err) { console.error('Employee list could not start loading', err); }
 </script>
 <link rel="stylesheet" href="{{ url_prefix }}/static/css/ui.css">
+<!-- CRM-UI-01 Stage 2 — the app shell: the sidebar, the top bar,
+     and on a phone the bottom tab bar and the full-screen More. -->
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/shell.css">
 </head>
 <body>
 <div class="top">
@@ -1170,6 +1173,11 @@ catch (err) { console.error('Employee list could not start loading', err); }
   <div class="sb-logo">
     <img src="https://www.procamlogistics.com/public/frontend/assets/img/logo.png" alt="Procam Group">
     <div class="sb-logo-txt">CRM</div>
+    <!-- CRM-UI-01 Stage 2 — narrow the sidebar to its icons. The
+         choice is remembered per browser, because somebody who wants
+         the room wants it on every page. -->
+    <button id="sbCollapse" type="button" onclick="sbNarrow()"
+            aria-label="Collapse the menu" title="Collapse the menu">⟨</button>
   </div>
   <div class="sb-sec">Workspace</div>
   <div class="sbi on" onclick="nav('dash')" data-p="dash"><span class="ic">📊</span>Dashboard</div>
@@ -9186,19 +9194,10 @@ async function loadMyWork(){
   } catch (e) { /* ignore */ }
 
   // ── Mobile burger ─────────────────────────────────────────────
-  try {
-    var top = document.querySelector('.top') || document.querySelector('header');
-    var side = document.querySelector('.side') || document.querySelector('nav');
-    if (top && side && !document.getElementById('mobile-burger')){
-      var b = document.createElement('button');
-      b.id = 'mobile-burger';
-      b.type = 'button';
-      b.setAttribute('aria-label', 'Toggle menu');
-      b.innerHTML = '&#9776;';
-      b.onclick = function(){ side.classList.toggle('mobile-open'); };
-      top.insertBefore(b, top.firstChild);
-    }
-  } catch (e) { /* ignore */ }
+  // DELETED, CRM-UI-01 Stage 2. This injected a SECOND hamburger
+  // into the top bar beside #sbHamb, and toggled `.side` — a
+  // selector that fell back to `nav`, so on this page it opened
+  // whatever came first. One menu, one button: #sbHamb.
 })();
 </script>
 {% include "_copilot_panel.html" %}
@@ -9347,5 +9346,132 @@ async function loadMyWork(){
     color:var(--p-info);text-decoration:underline}
 </style>
 {% endif %}
+
+<!-- ═══════════════════════════════════════════════════════════════
+     CRM-UI-01 Stage 2 — the bottom bar, phones only.
+     Five things, because five is what fits a thumb's reach across a
+     360px screen: where I am, my work, finding a person, scanning a
+     card, everything else. The scan button lives HERE, which is what
+     lets the floating one go: Stage 0 found it sitting on top of the
+     chat button on 33 page/width combinations.
+     ═══════════════════════════════════════════════════════════════ -->
+<nav id="crmTabs" aria-label="Main">
+  <div class="tabrow">
+    <a href="#" id="tabHome" class="on" onclick="crmTab('dash');return false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+      <span>Home</span></a>
+    <a href="#" id="tabLeads" onclick="crmTab('leads');return false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h9a2 2 0 0 1 2 2v14l-5-3-5 3V6a2 2 0 0 0-2-2H5"/></svg>
+      <span>Leads</span></a>
+    <a href="{{ url_prefix }}/business-cards/scan" id="tabScan" class="tab-scan">
+      <span class="tab-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px"><path d="M3 9V6a1 1 0 0 1 1-1h3"/><path d="M17 5h3a1 1 0 0 1 1 1v3"/><path d="M21 15v3a1 1 0 0 1-1 1h-3"/><path d="M7 19H4a1 1 0 0 1-1-1v-3"/><path d="M7 12h10"/></svg></span>
+      <span>Scan</span></a>
+    <a href="{{ url_prefix }}/contacts/search" id="tabFind">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <span>Find</span></a>
+    <button type="button" id="tabMore" onclick="crmMore(true)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></svg>
+      <span>More</span></button>
+  </div>
+</nav>
+
+<!-- The full screen, not a menu over the page: a list this long on a
+     260px drawer is a list nobody reaches the bottom of. Sign out is
+     the last row, which is the answer to it running off the right
+     edge of a 360px top bar. -->
+<div id="crmMore" role="dialog" aria-label="More" aria-modal="true">
+  <div class="more-hd">
+    <strong>More</strong>
+    <button class="btn btn-ghost" type="button" onclick="crmMore(false)"
+            style="min-height:var(--tap-min);padding:0 16px">Close</button>
+  </div>
+  <div id="crmMoreList"></div>
+  <div class="more-sec">Account</div>
+  <a href="{{ url_prefix }}/my-work">My Work</a>
+  <a href="{{ url_prefix }}/notifications">Notifications</a>
+  <button type="button" class="more-item more-out" onclick="crmSignOut()">
+    Sign out</button>
+</div>
+
+<script>
+/* The bottom bar drives the same `nav()` every other control uses —
+   it is a second way in, never a second implementation. */
+function crmTab(page){
+  crmMore(false);
+  nav(page);
+  crmTabMark(page);
+}
+function crmTabMark(page){
+  var map = {dash:'tabHome', leads:'tabLeads'};
+  ['tabHome','tabLeads'].forEach(function(id){
+    var el = document.getElementById(id);
+    if (el) el.classList.toggle('on', map[page] === id);
+  });
+}
+function crmMore(open){
+  var sheet = document.getElementById('crmMore');
+  if (!sheet) return;
+  sheet.classList.toggle('on', open !== false);
+  var more = document.getElementById('tabMore');
+  if (more) more.classList.toggle('on', open !== false);
+  if (open !== false) crmMoreFill();
+}
+/* The More list is BUILT FROM THE SIDEBAR, so a menu item added
+   there appears here too and the two can never disagree. */
+function crmMoreFill(){
+  var host = document.getElementById('crmMoreList');
+  if (!host || host.dataset.filled === '1') return;
+  var out = '';
+  document.querySelectorAll('#sbEl .sb-sec, #sbEl .sbi').forEach(function(el){
+    if (el.offsetParent === null && el.classList.contains('admin-only')
+        && el.style.display === 'none') return;
+    var label = (el.textContent || '').trim();
+    if (!label) return;
+    if (el.classList.contains('sb-sec')){
+      out += '<div class="more-sec">' + label + '</div>';
+      return;
+    }
+    var page = el.dataset ? el.dataset.p : '';
+    var href = el.getAttribute('href');
+    if (href){
+      out += '<a href="' + href + '">' + label + '</a>';
+    } else if (page){
+      out += '<button type="button" class="more-item" onclick="crmTab(\''
+             + page + '\')">' + label + '</button>';
+    }
+  });
+  host.innerHTML = out;
+  host.dataset.filled = '1';
+}
+function crmSignOut(){
+  var f = document.getElementById('logoutForm');
+  if (!f) return;
+  f.action = crmUrl('/logout');
+  f.submit();
+}
+/* Escape closes More, the same key that closes every other sheet. */
+document.addEventListener('keydown', function(ev){
+  if (ev.key === 'Escape') crmMore(false);
+});
+
+/* The sidebar's width, remembered per browser. */
+function sbNarrow(on){
+  var want = (on === undefined)
+    ? !document.body.classList.contains('sb-narrow') : !!on;
+  document.body.classList.toggle('sb-narrow', want);
+  var btn = document.getElementById('sbCollapse');
+  if (btn){
+    btn.textContent = want ? '⟩' : '⟨';
+    btn.setAttribute('aria-label', want ? 'Expand the menu'
+                                        : 'Collapse the menu');
+  }
+  try { localStorage.setItem('crm.sbNarrow', want ? '1' : '0'); }
+  catch (err) { /* a private window is still allowed to use the CRM */ }
+}
+(function(){
+  try { if (localStorage.getItem('crm.sbNarrow') === '1') sbNarrow(true); }
+  catch (err) { /* ditto */ }
+})();
+</script>
 </body>
 </html>
