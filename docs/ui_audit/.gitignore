@@ -1,9 +1,11 @@
-# The individual screenshots are an intermediate: they are rebuilt by
-# `scripts/2026_11_17_ui_audit.py` in a minute and there are 70 of
-# them per run. The contact sheets and findings.json are what the
-# before/after comparison needs, so those ARE committed.
-*__phone-360.png
-*__phone-390.png
-*__tablet-768.png
-*__laptop-1366.png
-*__desktop-1920.png
+# CRM-UI-01 — nothing in here is committed.
+#
+# The screenshots, the contact sheets and findings.json are a local
+# working artefact: ~6MB per run, rebuilt in four minutes by
+# `scripts/2026_11_17_ui_audit.py`, and they were landing on the
+# production server with every deploy.
+#
+# The script is the durable thing. Re-run it to compare:
+#   .venv/bin/python scripts/2026_11_17_ui_audit.py --out docs/ui_audit/<name>
+*
+!.gitignore
