@@ -959,3 +959,12 @@ def test_the_pdf_reader_is_asked_for_by_its_name():
                                'card_image.py')).read()
     assert 'import pymupdf' in source
     assert source.index('import pymupdf') < source.index('import fitz')
+
+
+def test_the_screen_says_reader_not_service(client):
+    """UAT 17 Nov §3, and the no-vendor-names rule: the person
+    scanning a card does not know or care which reader it is."""
+    html = client.get('/business-cards/scan').get_data(as_text=True)
+    assert 'the image reader is unavailable' in html
+    assert 'image service' not in html
+    assert 'vision' not in html.lower()

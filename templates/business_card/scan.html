@@ -37,13 +37,13 @@
     <div class="muted" id="back-chosen">Nothing added yet.</div>
   </label>
 
-  <!-- Extraction from the image needs the Vision service. When it is
-       unavailable, typed or pasted card text is parsed on the server and
+  <!-- Reading the picture needs an image reader. When none is
+       available, typed or pasted card text is parsed on the server and
        fills the same review form, so the scanner still works. -->
   <details id="text-fallback" style="margin-top:12px">
     <summary style="cursor:pointer;font-size:13px;color:var(--text-2)">
-      Add the card text (optional — used to cross-check, and to extract
-      when the image service is unavailable)
+      Add the card text (optional — used to cross-check, and to read
+      the card when the image reader is unavailable)
     </summary>
     <textarea id="card-text" rows="6" style="width:100%;margin-top:8px"
       placeholder="Paste or type the card exactly as printed, one line per line:&#10;Customer Contact&#10;Senior Manager - Logistics&#10;Company Name Limited&#10;Mobile: +91 90000 00000&#10;contact@example.com"></textarea>
