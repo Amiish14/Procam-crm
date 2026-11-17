@@ -851,3 +851,38 @@ def test_the_duplicate_message_names_the_button_not_the_field():
     said = answer.get_json()['error']
     assert 'press Save anyway if this is a different person' in said
     assert 'use_existing' not in said
+
+
+def test_a_name_only_duplicate_has_to_be_the_whole_name():
+    """UAT 17 Nov: "Test" was offered as a duplicate of "Integration
+    Test". A false duplicate costs the record not being created."""
+    _contact(name='ZT Integration Test', email='integration@zt.example')
+    assert ps.duplicates_of(name='ZT Integration Test')
+    assert ps.duplicates_of(name='Test') == []
+    assert ps.duplicates_of(name='ZT Integration') == []
+
+
+def test_a_middle_name_is_still_the_same_person():
+    _contact(name='ZT Rajesh Kumar Sharma', email='rks@zt.example')
+    assert ps.duplicates_of(name='ZT Rajesh Kumar Sharma')
+    # first + last, middle name dropped on the card or in the CRM
+    assert ps.same_person_name('Rajesh Sharma', 'Rajesh Kumar Sharma')
+    assert ps.same_person_name('Rajesh Kumar Sharma', 'Rajesh Sharma')
+    assert not ps.same_person_name('Rajesh', 'Rajesh Kumar Sharma')
+    assert not ps.same_person_name('Kumar', 'Rajesh Kumar Sharma')
+
+
+def test_the_email_and_phone_checks_are_untouched():
+    """Those ARE the person; only the name-only match was loosened."""
+    _contact(name='ZT Narrow Person', email='narrow@zt.example',
+             mobile='+91 98200 77777')
+    assert ps.duplicates_of(email='NARROW@zt.example')
+    assert ps.duplicates_of(phone='9820077777')
+
+
+def test_the_search_itself_still_matches_a_part_of_a_name():
+    """The duplicate check tightened; the SEARCH must not. Somebody
+    looking for a person they half remember needs the substring."""
+    _contact(name='ZT Integration Test', email='sub@zt.example')
+    assert ps.search(name='Integration')['total'] >= 1
+    assert ps.search(name='Test')['total'] >= 1

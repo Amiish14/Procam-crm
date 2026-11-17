@@ -822,8 +822,48 @@ def duplicates_of(*, email='', phone='', name='', company='', sc=None,
 
     if (name or '').strip() and len(out) < limit:
         found = search(name=name, company=company, sc=sc,
-                       per_page=limit)
-        take(found['rows'],
+                       per_page=max(limit * 4, 20))
+        take([r for r in found['rows'] if same_person_name(name, r['person'])],
              'the same name at the same company' if (company or '').strip()
              else 'the same name')
     return out[:limit]
+
+
+def same_person_name(asked, found):
+    """Whether these two names are the same PERSON, for the duplicate
+    check only.
+
+    UAT 17 Nov: "Test" was offered as a duplicate of "Integration
+    Test". The search is deliberately a substring match — somebody
+    looking for a person they half remember needs that — but a
+    duplicate WARNING on a substring is a warning about a different
+    person, and the one thing a false duplicate costs is the record
+    not being created.
+
+    So a name-only match has to be the whole name, or the first and
+    last of it: "Rajesh Sharma" matches "Rajesh Kumar Sharma", and
+    "Test" matches nothing but "Test". An email or a phone is still
+    matched as it was, because those ARE the person.
+    """
+    from app.services import card_fields
+
+    def parts(value):
+        text = re.sub(r'[^a-z0-9 ]', ' ', str(value or '').lower())
+        return [p for p in text.split() if p]
+
+    want, have = parts(asked), parts(found)
+    if not want or not have:
+        return False
+    if want == have:
+        return True
+    # First and last, with any middle names ignored on either side.
+    try:
+        a = card_fields.split_name(asked)
+        b = card_fields.split_name(found)
+    except Exception:                                     # noqa: BLE001
+        return False
+    first_a, last_a = (a['first'] or '').lower(), (a['last'] or '').lower()
+    first_b, last_b = (b['first'] or '').lower(), (b['last'] or '').lower()
+    if not (first_a and last_a and first_b and last_b):
+        return False
+    return first_a == first_b and last_a == last_b
