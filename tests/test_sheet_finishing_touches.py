@@ -186,10 +186,28 @@ def test_the_chat_button_steps_aside_while_a_sheet_is_open(page, dlg):
 
 # ── 3. /scan ─────────────────────────────────────────────────────────
 @pytest.fixture(scope='module')
-def client():
+def flask_app():
     import app as A
     A.app.config['TESTING'] = True
-    return A.app.test_client()
+    return A.app
+
+
+@pytest.fixture(scope='module')
+def client(flask_app):
+    """Signed in as an admin, because the alias is gated exactly like
+    the page it stands for (`module.business_cards`). A signed-out
+    client would only ever see the refusal, which is what
+    `test_the_alias_is_gated_like_the_page_it_stands_for` checks."""
+    c = flask_app.test_client()
+    with c.session_transaction() as sess:
+        sess.update(emp_code='DIR12010', name='Tech team', role='admin',
+                    vertical='All', sv=0)
+    return c
+
+
+@pytest.fixture(scope='module')
+def signed_out(flask_app):
+    return flask_app.test_client()
 
 
 def test_scan_redirects_to_the_page(client):
@@ -214,6 +232,34 @@ def test_the_real_page_is_still_where_it_was(client):
     if r.status_code == 302:
         assert 'business-cards/scan' not in r.headers['Location'], (
             'it should be the sign-in, not a redirect loop')
+
+
+def test_the_alias_is_gated_like_the_page_it_stands_for(signed_out):
+    """An alias more open than its destination is a second answer to
+    "who may reach the scanner". Signed out, both answer the same way
+    -- and neither of them answers with the page.
+    """
+    bare = signed_out.get('/business-cards/scan')
+    alias = signed_out.get('/scan')
+    assert bare.status_code != 200, 'the page itself is not public'
+    assert alias.status_code == bare.status_code, (
+        alias.status_code, bare.status_code)
+    if alias.status_code in (301, 302):
+        assert not alias.headers['Location'].endswith(
+            '/business-cards/scan'), 'it let the way through unchallenged'
+
+
+def test_the_alias_is_listed_nowhere_as_public():
+    """`tests/test_every_route_has_a_gate.py` refuses an ungated route
+    unless it is listed public with a reason. This one is gated, so it
+    must not also be sitting on that list."""
+    import re
+    src = open(os.path.join(ROOT, 'scripts',
+                            'generate_reference_docs.py')).read()
+    block = re.search(r'PUBLIC_ROUTES\s*=\s*[\[\({](.*?)[\]\)}]',
+                      src, re.S)
+    if block:
+        assert "'/scan'" not in block.group(1)
 
 
 def test_it_is_not_a_permanent_redirect(client):

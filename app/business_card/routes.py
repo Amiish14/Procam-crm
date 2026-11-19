@@ -65,6 +65,7 @@ def _card_or_404(card_id):
 
 # ─── HTML page ───────────────────────────────────────────────────────────
 @bp.route('/scan')
+@_require_auth
 def scan_alias():
     """UI sweep 19 Nov: /scan is what people type, and typed it 404s.
 
@@ -78,9 +79,14 @@ def scan_alias():
     pointing at a path nobody can change. `url_for` carries the prefix
     the CRM is served under, so this works behind /CRM.
 
-    No auth guard: it is a redirect to a guarded page, which refuses or
-    sends on to the sign-in itself. A second guard here would only mean
-    two places to keep in step.
+    The SAME gate as the page it stands for. It was written without
+    one, on the reasoning that a redirect to a guarded page leaks
+    nothing -- which is true, and still the wrong answer: an alias
+    that is more open than its destination is a second answer to "who
+    may reach the scanner", and `tests/test_every_route_has_a_gate.py`
+    is right to refuse it. Somebody without `module.business_cards`
+    now gets the same refusal here as there, rather than a redirect
+    into one.
     """
     return redirect(url_for('business_card.scan_page'), code=302)
 
