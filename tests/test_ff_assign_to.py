@@ -294,8 +294,30 @@ def test_the_two_dropdowns_are_separate_controls():
 def test_an_empty_list_is_said_rather_than_widened():
     """No silent fallback to everybody: that hands a freight
     enquiry to a warehouse clerk."""
-    html = _client().get('/ff').get_data(as_text=True)
-    assert 'nobody to offer' in html
+    # Nobody to offer has to be made true first. These suites share one
+    # in-process database and another module creates Freight Forwarding
+    # people, so whether this passed depended on which module had run --
+    # under `-n auto`, on which worker. Their `is_active` is put back
+    # exactly as it was, one row at a time.
+    with flask_app.app_context():
+        offered = [p['emp_code'] for p in _ff_people()]
+        was = {}
+        for code in offered:
+            emp = Employee.query.filter_by(emp_code=code).first()
+            if emp is not None:
+                was[code] = emp.is_active
+                emp.is_active = False
+        db.session.commit()
+    try:
+        html = _client().get('/ff').get_data(as_text=True)
+        assert 'nobody to offer' in html
+    finally:
+        with flask_app.app_context():
+            for code, active in was.items():
+                emp = Employee.query.filter_by(emp_code=code).first()
+                if emp is not None:
+                    emp.is_active = active
+            db.session.commit()
 
 
 def test_assigning_sets_the_owner():
