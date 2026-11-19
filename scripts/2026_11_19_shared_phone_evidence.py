@@ -80,6 +80,140 @@ def digits(value):
     return said[-10:] if len(said) >= 10 else ''
 
 
+# ── the sender's own words, and not the thread under them ────────────
+#
+# The fault this fixes: test (c) read the WHOLE body, so our own
+# signature quoted beneath a customer's reply counted as evidence that
+# the number was theirs. 8800394614 came out CUSTOMER for four
+# unrelated companies at once -- Zagreb, Korea, Spain and Japan -- which
+# is not a shared line, it is our own number quoted four times.
+#
+# Cut at the first quoted-thread marker and keep everything above it.
+# `email_ingest/ai_extractor._clean_body` does something similar for
+# the AI and is deliberately NOT reused: it also cuts at signature
+# markers ("Sent from my", "Med venlig hilsen"), which would remove the
+# signature block that holds the number -- the evidence itself.
+_QUOTE_LINE = re.compile(r"""(?imx)
+      ^[\s>*_-]*-{2,}\s*original\s+message\s*-{2,}
+    | ^[\s>*_-]*-{2,}\s*forwarded\s+message\s*-{2,}
+    | ^[\s>*_-]*begin\s+forwarded\s+message\s*:?
+    | ^[\s>*-]*_{8,}\s*$
+    | ^[\s>]*from\s*:\s*\S
+    | ^[\s>]*sent\s*:\s*\S
+    | ^[\s>]*subject\s*:\s*\S
+    | ^\s*>
+""")
+
+#: Gmail and Apple wrap it over two or three lines, so this one is not
+#: line-anchored: "On Wed, 12 Nov 2026 at 14:02, Someone\n<a@b.c> wrote:".
+_QUOTE_WROTE = re.compile(r'(?is)\bon\b[^\n]{0,120}(?:\n[^\n]{0,120}){0,2}?'
+                          r'\bwrote\s*:')
+
+
+def unquoted(body):
+    """The part of a body its SENDER wrote, signature included.
+
+    Everything from the first quoted-thread marker onwards is somebody
+    else's words and is dropped. A body with no marker is returned
+    whole, which is the common case for a first enquiry.
+    """
+    text = str(body or '')
+    if not text.strip():
+        return ''
+    cut = len(text)
+    found = _QUOTE_LINE.search(text)
+    if found:
+        cut = min(cut, found.start())
+    found = _QUOTE_WROTE.search(text)
+    if found:
+        cut = min(cut, found.start())
+    return text[:cut]
+
+
+#: A free mailbox is not a company, so it groups nobody.
+FREE_MAIL = {
+    'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com',
+    'live.com', 'msn.com', 'yahoo.com', 'yahoo.co.in', 'ymail.com',
+    'rediffmail.com', 'rediff.com', 'icloud.com', 'me.com', 'aol.com',
+    'protonmail.com', 'proton.me', 'zoho.com', 'zohomail.com',
+    'mail.com', 'gmx.com', 'yandex.com', 'qq.com', '163.com', '126.com',
+}
+
+#: Words that are not the distinguishing part of a company's name.
+_NOISE = {
+    'the', 'and', 'of', 'm/s', 'ms', 'messrs', 'pvt', 'private', 'ltd',
+    'limited', 'llp', 'llc', 'inc', 'corp', 'corporation', 'co',
+    'company', 'gmbh', 'ag', 'oy', 'oyj', 'ab', 'bv', 'nv', 'plc',
+    'pte', 'sa', 'srl', 'spa', 'group', 'holdings', 'india', 'indian',
+    'international', 'global', 'overseas', 'asia', 'apac', 'enterprises',
+    'industries', 'logistics', 'shipping', 'freight', 'forwarders',
+    'forwarding', 'transport', 'transports', 'cargo', 'projects',
+    'services', 'solutions', 'systems', 'technologies', 'technology',
+}
+
+
+def company_group_keys(company, email):
+    """The keys that put two companies in the same group.
+
+    Two of them, because neither alone is enough:
+
+      the ROOT DOMAIN, which catches a company whose name is spelled
+      two ways on two contacts;
+      the FIRST DISTINGUISHING WORD of the name, which catches a group
+      trading under two domains -- `jupiterwagons.com` and
+      `jupitertatravagonka.com` are one group and share no domain, and
+      "Indo Tech" twice and "Vedanta" twice are the same by name.
+
+    Companies whose key sets intersect are one group. Erring towards
+    FEWER groups is the safe direction: the unrelated-companies rule
+    only calls a number ours at three groups or more, so a wrong merge
+    leaves it CUSTOMER and changes nothing.
+    """
+    keys = set()
+    address = str(email or '').strip().lower()
+    if '@' in address:
+        domain = address.rsplit('@', 1)[1].strip().strip('>,; ')
+        if domain and domain not in FREE_MAIL:
+            bits = domain.split('.')
+            # The registrable part: `co.uk` and `com.sg` take three.
+            root = ('.'.join(bits[-3:])
+                    if len(bits) >= 3 and bits[-2] in ('co', 'com', 'net',
+                                                       'org', 'gov')
+                    else '.'.join(bits[-2:]))
+            keys.add('d:' + root)
+    words = [w for w in re.split(r'[^a-z0-9]+',
+                                 str(company or '').lower()) if w]
+    real = [w for w in words if w not in _NOISE and len(w) > 2]
+    if real:
+        keys.add('n:' + real[0])
+    return keys
+
+
+def company_groups(holders):
+    """How many unrelated company groups hold this number.
+
+    Union-find over the key sets: two contacts are in one group when
+    they share a key, and transitively so -- A with B and B with C puts
+    all three together.
+    """
+    sets = []
+    for contact, _f, _w in holders:
+        keys = company_group_keys(getattr(contact, 'company', ''),
+                                  getattr(contact, 'email', ''))
+        if not keys:
+            continue
+        merged = set(keys)
+        rest = []
+        for held in sets:
+            if held & merged:
+                merged |= held
+            else:
+                rest.append(held)
+        rest.append(merged)
+        sets = rest
+    return sets
+
+
 def _held_fields(row):
     """[(field, written value, digits)] for one record's phones."""
     out = []
@@ -150,7 +284,10 @@ def _bodies_by_domain(mails):
         if '@' not in said or not body:
             continue
         domain = said.rsplit('@', 1)[1].strip().strip('>,; ')
-        out[domain].append(re.sub(r'\D', '', body))
+        # THE SENDER'S OWN PART ONLY. Reading the whole body made our
+        # signature, quoted under a customer's reply, into evidence
+        # that the number was the customer's.
+        out[domain].append(re.sub(r'\D', '', unquoted(body)))
     return {d: ' '.join(v) for d, v in out.items()}
 
 
@@ -199,7 +336,18 @@ def classify(wanted=None):
         in_theirs = [d for d in sorted(their_domains)
                      if said in (by_domain.get(d) or '')]
 
+        # (d) how many UNRELATED companies hold it. One number on three
+        # or more groups is not a shared switchboard -- 8800394614 sat
+        # on companies in Zagreb, Korea, Spain and Japan, which have
+        # nothing to do with each other and everything to do with us.
+        # Same-group shares stay CUSTOMER: two Jupiter companies, or
+        # Vedanta twice, are one customer with two records.
+        groups = company_groups(holders)
+        unrelated = len(groups)
+
         if (in_ours or on_staff) and not in_theirs:
+            verdict = OURS
+        elif unrelated >= 3 and not in_theirs:
             verdict = OURS
         elif in_theirs and not (in_ours or on_staff):
             verdict = CUSTOMER
@@ -209,6 +357,8 @@ def classify(wanted=None):
             'in a body from our own domain' if in_ours else '',
             f'on {on_staff}\'s record' if on_staff else '',
             ('in a body from ' + ', '.join(in_theirs)) if in_theirs else '',
+            (f'on {unrelated} unrelated companies'
+             if unrelated >= 3 and not in_theirs else ''),
         ])) or 'no mail body and no user record carries it'
         rows.append({
             'phone': said,
@@ -217,6 +367,10 @@ def classify(wanted=None):
             'in_our_mail': 'yes' if in_ours else 'no',
             'on_a_procam_user': on_staff or '',
             'in_customer_mail': ', '.join(in_theirs),
+            'unrelated_companies': unrelated,
+            'company_groups': ' | '.join(
+                ', '.join(sorted(k.split(':', 1)[1] for k in g))
+                for g in groups),
             'contacts': '; '.join(sorted(
                 f'{c.name or "#" + str(c.id)} ({getattr(c, "company", "") or "—"})'
                 for c, _f, _w in holders)),
@@ -387,17 +541,27 @@ def main():
         path = write_csv(a.out, rows,
                          ['phone', 'verdict', 'why', 'in_our_mail',
                           'on_a_procam_user', 'in_customer_mail',
+                          'unrelated_companies', 'company_groups',
                           'contacts', 'contact_ids', 'as_written'])
 
-        print(f'{mails} mail body/sender pair(s) read.')
+        # The summary FIRST, then the two lists worth reading. CUSTOMER
+        # is the one nothing happens to, so it is a count and a CSV
+        # rather than a wall of rows.
+        print(f'{mails} mail body/sender pair(s) read, '
+              f'quoted threads cut off.')
         print(f'{len(rows)} shared number(s):')
-        for verdict in (OURS, UNCLEAR, CUSTOMER):
+        for verdict in (OURS, CUSTOMER, UNCLEAR):
             print(f'  {counts[verdict]:>4}  {verdict}')
-        print()
-        for r in rows:
-            print(f'  {r["verdict"]:<8} {r["phone"]}  {r["why"]}')
-            print(f'           {r["contacts"]}')
-        print(f'\nCSV: {path}')
+
+        for verdict in (OURS, UNCLEAR):
+            said = [r for r in rows if r['verdict'] == verdict]
+            if not said:
+                continue
+            print(f'\n── {verdict} ({len(said)}) ──')
+            for r in said:
+                print(f'  {r["phone"]}  {r["why"]}')
+                print(f'      {r["contacts"]}')
+        print(f'\nCSV: {path}  (CUSTOMER rows are in it too)')
 
         jobs = planned(rows)
         if a.apply:

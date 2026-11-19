@@ -17,6 +17,7 @@ never clears a number from a user's record, and it does nothing at all
 for a CUSTOMER or UNCLEAR number.
 """
 import os
+import re
 import sys
 
 os.environ.setdefault('SECRET_KEY', 'test-only-secret')
@@ -163,3 +164,114 @@ def test_the_ingest_drops_our_own_number(tmp_path, monkeypatch):
     # And it is wrapped, because a list that cannot be read must not
     # stop an ingest.
     assert 'except Exception' in after, after
+
+
+# ── the sender's own part, not the thread under it ───────────────────
+#
+# The 19 Nov follow-up: 0 OURS, because test (c) read the whole body.
+# Our signature quoted beneath a customer's reply counted as evidence
+# that the number was the customer's, so 8800394614 came out CUSTOMER
+# for companies in Zagreb, Korea, Spain and Japan at once.
+@pytest.mark.parametrize('tail', [
+    '\nOn Wed, 12 Nov 2026 at 14:02, A <a@b.c> wrote:\n> 8800394614',
+    '\n-----Original Message-----\nFrom: A <a@b.c>\n8800394614',
+    '\n________________________________\nFrom: A\n8800394614',
+    '\nFrom: Procam <x@procamgroup.in>\nSent: Wed\n8800394614',
+    '\n> 8800394614',
+    '\n---------- Forwarded message ----------\n8800394614',
+    '\nBegin forwarded message:\n8800394614',
+])
+def test_every_quote_marker_cuts_the_thread_off(mod, tail):
+    body = 'Our rate is attached.\nRegards\nSomebody\n' + tail
+    own = mod.unquoted(body)
+    assert '8800394614' not in re.sub(r'\D', '', own), own
+
+
+def test_the_senders_own_signature_is_kept(mod):
+    """It has to be: our number in our own signature is evidence (a).
+    A stripper that cut at "Sent from my" or "Best regards" would
+    delete the very thing being looked for."""
+    body = ('Dear Sir, our rate is attached.\n'
+            'Best regards\nProcam Logistics\n'
+            'Sent from my iPhone\n'
+            'Mob +91 88003 94614\n'
+            '\nOn Wed, 12 Nov 2026 at 14:02, X <x@y.z> wrote:\n> old\n')
+    own = mod.unquoted(body)
+    assert '8800394614' in re.sub(r'\D', '', own)
+
+
+def test_a_body_with_no_quote_is_kept_whole(mod):
+    body = 'First enquiry. Please call 98200 11111.'
+    assert mod.unquoted(body) == body
+
+
+def test_an_empty_body_is_empty(mod):
+    assert mod.unquoted('') == ''
+    assert mod.unquoted(None) == ''
+
+
+# ── company groups ──────────────────────────────────────────────────
+def test_one_group_trading_under_two_domains_is_one_group(mod):
+    """jupiterwagons.com and jupitertatravagonka.com share no domain and
+    are one customer. The first distinguishing word is what joins
+    them."""
+    a = mod.company_group_keys('Jupiter Wagons', 'e@jupiterwagons.com')
+    b = mod.company_group_keys('Jupiter Tatravagonka',
+                               'f@jupitertatravagonka.com')
+    assert a & b
+
+
+def test_the_same_name_twice_is_one_group(mod):
+    for one, two in (
+        (('Indo Tech Transformers', 'g@indotech.com'),
+         ('Indo Tech', 'h@indotech.co.in')),
+        (('Vedanta Ltd', 'a@vedanta.co.in'),
+         ('Vedanta Aluminium', 'b@vedantaalum.com')),
+    ):
+        assert mod.company_group_keys(*one) & mod.company_group_keys(*two), \
+            (one, two)
+
+
+def test_unrelated_companies_share_nothing(mod):
+    keys = [mod.company_group_keys(co, em) for co, em in (
+        ('Agentplus', 'a@agentplus.hr'),
+        ('Hyupjin', 'b@hyupjin.co.kr'),
+        ('Modal Trade', 'c@modaltrade.es'),
+        ('Voith Fuji', 'd@voith-fuji.jp'))]
+    for i, one in enumerate(keys):
+        for two in keys[i + 1:]:
+            assert not (one & two), (one, two)
+
+
+def test_a_legal_suffix_is_not_the_distinguishing_word(mod):
+    """"Pvt Ltd" and "Logistics" must not group two companies: half the
+    book would become one group and every number would read as ours."""
+    a = mod.company_group_keys('Alpha Logistics Pvt Ltd', 'a@alpha.com')
+    b = mod.company_group_keys('Beta Logistics Pvt Ltd', 'b@beta.com')
+    assert not (a & b), (a, b)
+
+
+def test_a_free_mailbox_groups_nobody(mod):
+    """Two contacts on gmail are not one company."""
+    a = mod.company_group_keys('', 'someone@gmail.com')
+    b = mod.company_group_keys('', 'another@gmail.com')
+    assert a == set() and b == set()
+
+
+def test_three_unrelated_groups_without_customer_evidence_is_ours(mod):
+    src = open(os.path.join(ROOT, 'scripts',
+                            '2026_11_19_shared_phone_evidence.py')).read()
+    assert 'unrelated >= 3 and not in_theirs' in src
+    # And the rule is only reached when (c) is NOT met, so a genuine
+    # shared line quoted by its owner stays theirs.
+    assert src.index('(in_ours or on_staff) and not in_theirs') < \
+        src.index('unrelated >= 3 and not in_theirs')
+
+
+def test_the_summary_comes_before_the_lists(mod):
+    src = open(os.path.join(ROOT, 'scripts',
+                            '2026_11_19_shared_phone_evidence.py')).read()
+    main = src.split('def main(')[1]
+    assert main.index("shared number(s):") < main.index('── {verdict}')
+    assert "for verdict in (OURS, CUSTOMER, UNCLEAR)" in main
+    assert "for verdict in (OURS, UNCLEAR)" in main
