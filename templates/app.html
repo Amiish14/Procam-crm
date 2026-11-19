@@ -810,6 +810,30 @@ table tbody tr:hover td { background: var(--p-surface-2) !important; }
   from { opacity: 0; transform: translateY(6px) scale(.99); }
   to   { opacity: 1; transform: translateY(0)   scale(1); }
 }
+/* ── The way out, pinned. UI sweep 19 Nov item 6 ──────────────────
+   The card scrolls (`overflow-y:auto`), so a sticky child stays put
+   while the content moves under it. `float:right` keeps it out of the
+   content's flow so no caller has to leave room for it, and the
+   negative margins pull it into the card's own padding rather than
+   taking a line of its own. */
+#preSalesModalX {
+  position: sticky; top: 0; float: right; z-index: 2;
+  margin: -4px -4px 0 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 36px; min-height: 36px;
+  border: 1px solid var(--p-border); border-radius: var(--rd);
+  background: var(--p-surface); color: var(--p-text-2);
+  font-size: 15px; line-height: 1; cursor: pointer;
+}
+#preSalesModalX:hover { background: var(--p-surface-3); color: var(--p-ink); }
+#preSalesModalX:focus-visible { outline: var(--focus-line); outline-offset: 2px; }
+@media (max-width: 767px) {
+  /* A finger, and the card uses the whole screen rather than 96% of it
+     with the close button somewhere below the fold. */
+  #preSalesModalX { min-width: 44px; min-height: 44px; }
+  #preSalesModalCard { width: 100% !important; max-height: 94dvh !important;
+                       padding: 10px !important; }
+}
 
 /* ── Sidebar (mobile) — still styled for phone drawer ─────── */
 .sb-sec { color: var(--p-text-3) !important; font-size: 10.5px !important; font-weight: 700 !important; letter-spacing: .08em !important; text-transform: uppercase; }
@@ -9177,11 +9201,28 @@ if (typeof openModal !== 'function') {
       m = document.createElement('div');
       m.id = 'preSalesModal';
       m.style.cssText = 'position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;';
-      m.innerHTML = '<div id="preSalesModalCard" style="background:#fff;width:min(880px,96%);max-height:92vh;overflow-y:auto;border-radius:12px;padding:12px;box-shadow:0 24px 60px rgba(0,0,0,.25);"></div>';
+      /* `mob` as well as the id. The watcher that sets
+         `body.modal-open` -- and so hides the floating chat button --
+         looks for `.mob`, and this dialog was the one that was not one:
+         UI sweep 19 Nov item 6, the button covering half of Close. */
+      m.className = 'mob';
+      m.innerHTML = '<div id="preSalesModalCard" style="background:#fff;width:min(880px,96%);max-height:92vh;overflow-y:auto;border-radius:12px;padding:12px;box-shadow:0 24px 60px rgba(0,0,0,.25);">'
+        /* A close that is always reachable, pinned to the top of the
+           card. The Close buttons the callers write sit at the END of
+           their content, so on a narrow screen there was no way out of
+           this dialog without scrolling to the bottom of it. Forty
+           callers write that content; one piece of chrome here serves
+           all of them. */
+        + '<button type="button" id="preSalesModalX" aria-label="Close"'
+        + ' onclick="closeModal()">&#10005;</button>'
+        + '<div id="preSalesModalBody"></div>'
+        + '</div>';
       m.onclick = (e)=>{ if (e.target === m) closeModal(); };
       document.body.appendChild(m);
     }
-    g('preSalesModalCard').innerHTML = html;
+    /* The body, not the card: the pinned close button lives in the card
+       and must survive every open. */
+    g('preSalesModalBody').innerHTML = html;
     m.style.display = 'flex';
   };
   window.closeModal = function() { const m=g('preSalesModal'); if(m) m.style.display='none'; };
