@@ -234,72 +234,13 @@
   --dur-out: var(--dur-out);
 }
 
-/* ── Dark, for the viewer who has asked their machine for it ──────
-   Only the tokens are redefined; nothing below this line styles a
-   component. An explicit light choice beats a dark machine. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg-app:       #0D0F13;
-    --bg-surface:   #15181F;
-    --bg-surface-2: #1A1E26;
-    --bg-surface-3: #212630;
-    --bg-hover:     #1F242D;
-    --line-1:       #2A2F3A;
-    --line-2:       #222730;
-    --line-strong:  #3A4150;
-
-    --fg-ink:       #F5F6F8;
-    --fg-ink-2:     #E4E6EB;
-    --fg-body:      #C9CDD6;
-    --fg-muted:     #99A0AD;
-    --fg-faint:     #6F7784;
-
-    --brand:        #F2566A;
-    --brand-strong: #FF7183;
-    --brand-soft:   #2A1419;
-    --brand-ring:   rgba(242, 86, 106, .26);
-
-    --ok-soft:   #0C2219;
-    --warn-soft: #2A1E08;
-    --bad-soft:  #2A1212;
-    --note-soft: #101C33;
-    --hold-soft: #1C1430;
-
-    --shadow-1: 0 1px 2px rgba(0,0,0,.40);
-    --shadow-2: 0 2px 6px rgba(0,0,0,.45);
-    --shadow-3: 0 8px 24px rgba(0,0,0,.55);
-    --shadow-4: 0 20px 48px rgba(0,0,0,.65);
-  }
-}
-
-:root[data-theme="dark"] {
-  --bg-app:       #0D0F13;
-  --bg-surface:   #15181F;
-  --bg-surface-2: #1A1E26;
-  --bg-surface-3: #212630;
-  --bg-hover:     #1F242D;
-  --line-1:       #2A2F3A;
-  --line-2:       #222730;
-  --line-strong:  #3A4150;
-  --fg-ink:       #F5F6F8;
-  --fg-ink-2:     #E4E6EB;
-  --fg-body:      #C9CDD6;
-  --fg-muted:     #99A0AD;
-  --fg-faint:     #6F7784;
-  --brand:        #F2566A;
-  --brand-strong: #FF7183;
-  --brand-soft:   #2A1419;
-  --brand-ring:   rgba(242, 86, 106, .26);
-  --ok-soft:   #0C2219;
-  --warn-soft: #2A1E08;
-  --bad-soft:  #2A1212;
-  --note-soft: #101C33;
-  --hold-soft: #1C1430;
-  --shadow-1: 0 1px 2px rgba(0,0,0,.40);
-  --shadow-2: 0 2px 6px rgba(0,0,0,.45);
-  --shadow-3: 0 8px 24px rgba(0,0,0,.55);
-  --shadow-4: 0 20px 48px rgba(0,0,0,.65);
-}
+/* ── LIGHT ONLY (CRM-UI-01, 19 Nov) ─────────────────────────────
+   The CRM is light whatever the viewer's machine asks for. The dark
+   tokens and the prefers-color-scheme switch are gone, and the page
+   tells the browser so, so form controls and scrollbars stay light
+   too. Removed on instruction: a half-styled dark CRM (the 18 Nov
+   UAT found white-on-white buttons) is worse than a light one. */
+:root, :root[data-theme] { color-scheme: light only; }
 
 /* ── The phone ────────────────────────────────────────────────────
    13.5px is comfortable at a desk and small in a lorry yard, which
