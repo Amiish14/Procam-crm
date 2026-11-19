@@ -204,6 +204,59 @@ def test_the_pickers_still_list_every_assignable_colleague(people):
         assert rows[code]['name'], code
 
 
+# ── who the two PIC pickers list, 19 Nov ─────────────────────────────
+#
+# Asked after the scoping: the account "Reassign PIC" list showed 32
+# people and the lead PIC pickers 132. Both read this one endpoint, so
+# the difference is in what each does with the answer:
+#
+#   CRM.empOptions()  (account Reassign PIC, templates/app.html)
+#       .filter(e => e.is_active !== false)    — leavers dropped
+#   EMPS.map(...)     (the assign dropdowns, templates/app.html:2296)
+#       no filter                              — leavers listed
+#
+# And `is_active` is only in the ADMIN projection, so the gap is one
+# only an administrator can see. For everybody else the server has
+# already filtered on `is_active`, and the two lists agree exactly.
+def test_the_admin_projection_lists_a_leaver_and_the_other_does_not(people):
+    with flask_app.app_context():
+        gone = Employee.query.filter_by(emp_code='MLOTHER').first()
+        gone.is_active = False
+        db.session.commit()
+    try:
+        full = _c('MLGRANT', 'user').get('/api/employees').get_json()
+        plain = _c('MLREP', 'user').get('/api/employees').get_json()
+        codes = lambda rows: [r['emp_code'] for r in rows]
+        assert 'MLOTHER' in codes(full), (
+            'the admin path does not filter is_active')
+        assert 'MLOTHER' not in codes(plain), (
+            'the non-admin path filters is_active server-side')
+        # Which is why the two pickers can only disagree for an admin:
+        # the flag a leaver would be dropped by is not even sent to
+        # anybody else.
+        assert 'is_active' in full[0]
+        assert 'is_active' not in plain[0]
+    finally:
+        with flask_app.app_context():
+            back = Employee.query.filter_by(emp_code='MLOTHER').first()
+            back.is_active = True
+            db.session.commit()
+
+
+def test_the_account_pickers_rule_is_active_employees_only():
+    """The rule the account list applies, in the file that applies it.
+    Reported rather than changed: it is the stricter of the two and
+    the right one -- a dropdown that offers somebody who has left is
+    how new work lands on a leaver."""
+    import os
+    app_html = open(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'templates', 'app.html')).read()
+    picker = app_html.split('CRM.empOptions = function()')[1][:400]
+    assert 'e.is_active !== false' in picker
+    assert 'localeCompare' in picker, 'and sorted by name'
+
+
 def test_an_administrator_is_unaffected(people):
     """`admin.employees` takes the full record, as it always did."""
     rows = _c('MLGRANT', 'user').get('/api/employees').get_json()
