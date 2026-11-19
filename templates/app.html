@@ -2441,6 +2441,30 @@ async function openContact(id, preloaded){
     + '</div>';
   host.insertBefore(box, host.firstChild);
   box.scrollIntoView({block: 'nearest'});
+  contactCalls(c, box);
+}
+
+/* CRM-UI-01: the contact card lists the calls logged with this person,
+   in the same shared entry as the account and the lead. Read-only:
+   the account timeline is the one already served; this keeps only the
+   entries filed against this contact. */
+async function contactCalls(c, box){
+  const aid = c.account_id || c.company_id;
+  if(!aid) return;
+  let acts = [];
+  try { acts = ((await api('/api/accounts/' + aid + '/activities')) || {}).activities || []; }
+  catch(_){ acts = []; }
+  acts = acts.filter(x => String(x.contact_id||'') === String(c.id));
+  const sec = document.createElement('div');
+  sec.style.cssText = 'padding:0 22px 16px';
+  sec.innerHTML = '<div style="font-size:10.5px;font-weight:700;letter-spacing:.06em;'
+    + 'text-transform:uppercase;color:var(--text-3);margin:6px 0 8px">Calls &amp; activity</div>'
+    + (acts.length
+        ? acts.map(x => callEntry({when:x.occurred_at, who:x.performed_by,
+            kind:x.kind, contact:c.name, outcome:x.subject, notes:x.body,
+            next_action:x.next_action, next_action_at:x.next_action_at})).join('')
+        : '<div style="font-size:12px;color:var(--text-3)">Nothing logged with this person yet.</div>');
+  box.appendChild(sec);
 }
 
 function deepLinkNotFound(kind, id, why){
@@ -3526,6 +3550,7 @@ async function openLd(id){
   if(window.ProcamAI&&window.ProcamAI.setContext)
     window.ProcamAI.setContext({type:'lead', id:l.id, label:l.company||('Lead #'+l.id)});
   ldValueInit(l);
+  window.CURRENT_LEAD_PIC = l.pic || '';
   loadLeadNotes(l.id);
   loadLeadClassification(l.id);
   loadLeadTasks(l.id);
@@ -3799,7 +3824,15 @@ async function loadLeadNotes(id){
                    + 'No notes yet.</div>';
     return;
   }
-  host.innerHTML = rows.map(nt=>`
+  host.innerHTML = rows.map(nt=>(nt.note_type==='call'||nt.note_type==='meeting')
+    ? callEntry({when:nt.created_at, who:nt.author_name||nt.author||'',
+        kind:NOTE_LABEL[nt.note_type], contact:(window.CURRENT_LEAD_PIC||''),
+        outcome:'', notes:nt.note_text,
+        extra:'<span style="margin-left:6px;display:inline-flex;gap:4px">'
+          +((nt.author===ME.emp_code||isAdminUser())?'<button class="btn btn-ghost btn-sm" style="padding:1px 7px;font-size:11px" onclick="editLeadNote('+nt.lead_id+','+nt.id+')">Edit</button>':'')
+          +'<button class="btn btn-ghost btn-sm" style="padding:1px 7px;font-size:11px" onclick="deleteLeadNote('+nt.lead_id+','+nt.id+')" title="Delete this note only — the email is not affected">Delete note</button></span>'})
+      + '<div id="noteBody'+nt.id+'" data-note-type="'+e(nt.note_type)+'" style="display:none">'+e(nt.note_text)+'</div>'
+    : `
     <div style="border-left:2px solid var(--border-2);padding:6px 0 6px 10px;margin-bottom:6px">
       <div style="font-size:11px;color:var(--text-3);display:flex;gap:8px;align-items:center">
         <b style="color:var(--ink-2)">${e(NOTE_LABEL[nt.note_type]||'Note')}</b>
@@ -3860,6 +3893,7 @@ function editLeadNote(leadId, noteId){
   const body = g('noteBody'+noteId);
   if(!body || body.dataset.editing) return;
   body.dataset.editing = '1';
+  body.style.display = 'block';   // a call note keeps its text hidden under the shared entry
   const original = body.textContent;
   body.innerHTML = `<textarea class="fmc" rows="3" id="noteEdit${noteId}"></textarea>
     <div style="display:flex;gap:6px;margin-top:4px">
@@ -8472,13 +8506,10 @@ function renderAcctDetail(a, activities, hist){
     </div>
     <h4 style="margin:1rem .5rem .3rem;">Activity Timeline</h4>
     <div style="max-height:220px;overflow-y:auto;padding:.5rem;">
-      ${activities.length ? activities.map(x=>`
-        <div style="padding:8px;border-bottom:1px solid #eef0f3;">
-          <div style="font-size:12px;color:#6b7280;">${e(x.occurred_at)} · ${e(x.performed_by)} · ${e(x.kind)}</div>
-          <div style="font-weight:500;">${e(x.subject||'—')}</div>
-          ${x.body?`<div style="font-size:13px;color:#374151;">${e(x.body)}</div>`:''}
-          ${x.next_action?`<div style="font-size:12px;color:#cc1e2e;margin-top:2px;">Next: ${e(x.next_action)}${x.next_action_at?` · by ${e(x.next_action_at)}`:''}</div>`:''}
-        </div>`).join('') : '<div style="color:#6b7280;padding:12px;">No activities yet. Log the first interaction.</div>'}
+      ${activities.length ? activities.map(x=>callEntry({
+          when:x.occurred_at, who:x.performed_by, kind:x.kind,
+          contact:x.contact_name||'', outcome:x.subject, notes:x.body,
+          next_action:x.next_action, next_action_at:x.next_action_at})).join('') : '<div style="color:#6b7280;padding:12px;">No activities yet. Log the first interaction.</div>'}
     </div>
     <h4 style="margin:1rem .5rem .3rem;font-family:var(--p-font-display);font-weight:700;color:var(--p-ink);letter-spacing:-0.005em;">PIC History</h4>
     <div style="padding:.5rem;">
@@ -9530,5 +9561,6 @@ function sbNarrow(on){
 })();
 </script>
 <script src="{{ url_prefix }}/static/js/lists.js?v={{ asset_v }}"></script>
+<script src="{{ url_prefix }}/static/js/call_entry.js?v={{ asset_v }}"></script>
 </body>
 </html>

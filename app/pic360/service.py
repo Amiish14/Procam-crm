@@ -113,6 +113,7 @@ def recent_activity(emp_code, days=30):
         'at': str(a.occurred_at)[:16] if a.occurred_at else '',
         'kind': (a.kind or 'note').title(),
         'subject': a.subject or '',
+        'body': (a.body or '')[:400],
         'lead_id': a.lead_id,
     } for a in rows]
 

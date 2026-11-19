@@ -1,3 +1,4 @@
+{% from "_call_entry.html" import call_entry %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -296,12 +297,19 @@
       <div class="panel">
         {% if data.timeline %}
         <div class="tl">{% for ev in data.timeline[:40] %}
+          {% if ev.kind not in ('Lead', 'Opportunity', 'Quote', 'Rfq', 'Task') %}
+          {{ call_entry(when=ev.at, who=ev.who, kind=ev.kind, contact=ev.contact or '',
+                        outcome=ev.title, notes=ev.body,
+                        next_action=ev.next_action or '', next_action_at=ev.next_action_at or '',
+                        link=url_prefix ~ ev.route) }}
+          {% else %}
           <div class="tl-item {{ ev.kind|lower }}">
             <div class="tl-when">{{ ev.at }}{% if ev.who %} · {{ ev.who }}{% endif %}</div>
             <div class="tl-title">
               <a href="{{ url_prefix }}{{ ev.route }}">{{ ev.title }}</a></div>
             {% if ev.body %}<div class="tl-body">{{ ev.body }}</div>{% endif %}
           </div>
+          {% endif %}
         {% endfor %}</div>
         {% else %}
         <div class="empty">Nothing recorded against this company yet.<br>

@@ -1,3 +1,4 @@
+{% from "_call_entry.html" import call_entry %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -121,12 +122,11 @@
   <div class="card-hd" id="sec-activity"><div class="card-ttl">Activity — last 30 days</div>
     <span class="b sN">{{ data.activity|length }}</span></div>
   {% if data.activity %}
-  <div class="table-wrap"><table>
-    <thead><tr><th>When</th><th>Type</th><th>Subject</th></tr></thead>
-    <tbody>{% for a in data.activity %}
-      <tr><td>{{ a.at }}</td><td><span class="pill">{{ a.kind }}</span></td>
-          <td><a href="{{ url_prefix }}/app?lead={{ a.lead_id }}">{{ a.subject or '—' }}</a></td></tr>
-    {% endfor %}</tbody></table></div>
+  <div class="panel">{% for a in data.activity %}
+    {{ call_entry(when=a.at, who=data.employee.name if data.employee is defined and data.employee else '', kind=a.kind,
+                  contact=a.contact or '', outcome=a.subject, notes=a.body or '',
+                  link=url_prefix ~ '/app?lead=' ~ a.lead_id) }}
+  {% endfor %}</div>
   {% else %}
   <div class="empty">No activity logged in the last 30 days.<br>
     <span class="tiny">Calls, meetings and visits recorded against leads appear here.</span></div>

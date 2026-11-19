@@ -1,0 +1,11 @@
+{#- CRM-UI-01: the server-rendered twin of static/js/call_entry.js.
+    Same markup, same order, "—" for an empty field. -#}
+{% macro call_entry(when='', who='', kind='', contact='', outcome='', notes='', next_action='', next_action_at='', link='') -%}
+<div class="pc-call">
+  <div class="pc-call-hd"><span class="pc-call-when">{{ when or '—' }}</span><span class="pc-call-who">{{ who or '' }}</span>{% if kind %}<span class="pc-call-kind">{{ kind }}</span>{% endif %}{% if link %}<a class="pc-call-open" href="{{ link }}">Open</a>{% endif %}</div>
+  <div class="pc-call-row"><span class="pc-call-k">Contact</span><span class="pc-call-v">{{ contact or '—' }}</span></div>
+  <div class="pc-call-row"><span class="pc-call-k">Outcome</span><span class="pc-call-v">{{ outcome or '—' }}</span></div>
+  <div class="pc-call-row"><span class="pc-call-k">Notes</span><span class="pc-call-v">{{ notes or '—' }}</span></div>
+  <div class="pc-call-row"><span class="pc-call-k">Next</span><span class="pc-call-v">{% if next_action %}{{ next_action }}{% if next_action_at %} (by {{ next_action_at }}){% endif %}{% else %}—{% endif %}</span></div>
+</div>
+{%- endmacro %}
