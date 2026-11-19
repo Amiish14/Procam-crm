@@ -103,3 +103,17 @@ def test_a_column_sort_is_still_honoured():
     found = ps.search(name='nis', sort='name', descending=True)
     names = [r['person'] for r in found['rows'] if r['person'].startswith('ZT')]
     assert names == sorted(names, key=str.lower, reverse=True)
+
+
+def test_the_new_contact_form_checks_when_the_email_or_phone_is_left():
+    """Fix 6: the warning appears before Save, from the same check."""
+    client = _client()
+    page = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'templates', 'app.html')).read()
+    assert 'id="ctE" type="email" onblur="ctLiveCheck()"' in page
+    assert 'id="ctP" onblur="ctLiveCheck()"' in page
+    assert "/api/contacts/search/duplicates?" in page
+    contact = _contact(name='ZT Ravi Nistala', mobile='+91-9958200001')
+    body = client.get('/api/contacts/search/duplicates?phone=9958200001'
+                      '&name=ZT%20Ravi%20Nistala').get_json()
+    assert body['ok'] and body['rows'][0]['contact_id'] == contact.id

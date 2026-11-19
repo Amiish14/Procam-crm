@@ -2078,7 +2078,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
       <div class="fmg"><label class="fml">Type</label><select class="fmc" id="ctType"><option value="person">Person</option><option value="company">Company</option><option value="agent">Overseas Agent</option></select></div>
       <div class="fmr"><div class="fmg"><label class="fml">Name *</label><input class="fmc" id="ctN"></div><div class="fmg"><label class="fml">Company / Organisation</label><input class="fmc" id="ctC"></div></div>
       <div class="fmr"><div class="fmg"><label class="fml">Designation</label><input class="fmc" id="ctD"></div><div class="fmg"><label class="fml">Industry</label><input class="fmc" id="ctI"></div></div>
-      <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="ctE" type="email"></div><div class="fmg"><label class="fml">Phone / Mobile</label><input class="fmc" id="ctP"></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="ctE" type="email" onblur="ctLiveCheck()"></div><div class="fmg"><label class="fml">Phone / Mobile</label><input class="fmc" id="ctP" onblur="ctLiveCheck()"></div></div>
       <div class="fmr"><div class="fmg"><label class="fml">Country</label><input class="fmc" id="ctCo" value="India"></div><div class="fmg"><label class="fml">State</label><select class="fmc" id="ctSt"><option value="">—</option><option>Andhra Pradesh</option><option>Arunachal Pradesh</option><option>Assam</option><option>Bihar</option><option>Chhattisgarh</option><option>Delhi</option><option>Goa</option><option>Gujarat</option><option>Haryana</option><option>Himachal Pradesh</option><option>Jammu and Kashmir</option><option>Jharkhand</option><option>Karnataka</option><option>Kerala</option><option>Ladakh</option><option>Madhya Pradesh</option><option>Maharashtra</option><option>Manipur</option><option>Meghalaya</option><option>Mizoram</option><option>Nagaland</option><option>Odisha</option><option>Puducherry</option><option>Punjab</option><option>Rajasthan</option><option>Sikkim</option><option>Tamil Nadu</option><option>Telangana</option><option>Tripura</option><option>Uttar Pradesh</option><option>Uttarakhand</option><option>West Bengal</option></select></div></div>
       <div class="fmg"><label class="fml">City</label><input class="fmc" id="ctCi"></div>
       <div class="fmr"><div class="fmg"><label class="fml">Website</label><input class="fmc" id="ctW" placeholder="https://"></div><div class="fmg"><label class="fml">LinkedIn</label><input class="fmc" id="ctL" placeholder="https://linkedin.com/in/..."></div></div>
@@ -6041,7 +6041,7 @@ function ctCardClicks(ev){
   });
 })();
 function ctTab(t){ctype=t;document.querySelectorAll('.tabs .tab').forEach((el,i)=>el.classList.toggle('on',['person','company','agent'][i]===t));rCt();}
-function openCt(){g('ctDupe').style.display='none';g('ctDupe').innerHTML='';g('ctN').value='';g('ctC').value='';g('ctD').value='';g('ctI').value='';g('ctE').value='';g('ctP').value='';g('ctCo').value='India';g('ctCi').value='';g('ctW').value='';g('ctL').value='';g('ctNote').value='';g('ctMob').style.display='flex';}
+function openCt(){_ctLastAsked='';g('ctDupe').style.display='none';g('ctDupe').innerHTML='';g('ctN').value='';g('ctC').value='';g('ctD').value='';g('ctI').value='';g('ctE').value='';g('ctP').value='';g('ctCo').value='India';g('ctCi').value='';g('ctW').value='';g('ctL').value='';g('ctNote').value='';g('ctMob').style.display='flex';}
 function ctBody(useExisting){
   return JSON.stringify({type:g('ctType').value,name:g('ctN').value,company:g('ctC').value,designation:g('ctD').value,industry:g('ctI').value,email:g('ctE').value,phone:g('ctP').value,country:g('ctCo').value,state:g('ctSt').value,city:g('ctCi').value,website:g('ctW').value,linkedin:g('ctL').value,agent_type:g('ctAt').value,notes:g('ctNote').value,use_existing:!!useExisting});
 }
@@ -6095,6 +6095,25 @@ function ctUseExisting(contactId, url){
   g('ctMob').style.display='none';
   if(contactId){ openContact(contactId); return; }
   if(url){ window.open(url, '_blank'); }
+}
+
+/* CRM-SEARCH-SCAN-01 fix 6 (UAT 18 Nov): the duplicate check ran only
+   on Save. It now runs as soon as the email or the phone is left, with
+   the same server check and the same panel, so "Use existing" is on
+   screen before anything has been typed into the rest of the form.
+   Asking creates nothing. */
+let _ctLastAsked='';
+async function ctLiveCheck(){
+  const email=(g('ctE').value||'').trim(), phone=(g('ctP').value||'').trim();
+  const digits=phone.replace(/\D/g,'');
+  if(!(email.includes('@')||digits.length>=8)) return;
+  const asked=email.toLowerCase()+'|'+digits+'|'+(g('ctN').value||'').trim().toLowerCase();
+  if(asked===_ctLastAsked) return;
+  _ctLastAsked=asked;
+  const r=await api('/api/contacts/search/duplicates?'+qp({email:email,phone:phone,name:g('ctN').value.trim(),company:g('ctC').value.trim()}));
+  const rows=(r&&r.rows)||[];
+  if(!rows.length){ g('ctDupe').style.display='none'; g('ctDupe').innerHTML=''; return; }
+  ctDupes({duplicates:rows,error:rows.length+' person(s) already on file look like this one. Use one of them, or press Save anyway if this is a different person.'});
 }
 
 async function saveCt(useExisting){
