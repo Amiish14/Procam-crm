@@ -244,6 +244,29 @@ def shared_numbers():
     return out
 
 
+def marked_held():
+    """{number: holders} for every marked number sitting on a contact.
+
+    `shared_numbers` only returns numbers on two or more companies,
+    which is the right net for FINDING suspects. It is the wrong net
+    once a person has marked one: a number of ours on a single
+    customer's record is just as wrong and nothing would have cleared
+    it.
+    """
+    from app import Contact
+    from app.services import own_numbers
+
+    want = own_numbers.numbers()
+    if not want:
+        return {}
+    out = defaultdict(list)
+    for c in Contact.query.all():
+        for field, written, said in _held_fields(c):
+            if said in want:
+                out[said].append((c, field, written))
+    return dict(out)
+
+
 def _mail_rows():
     """[(from_addr, body)] from every store that keeps both.
 
@@ -308,12 +331,19 @@ def classify(wanted=None):
     from app.services import own_people
 
     shared = shared_numbers()
+    # A MARKED NUMBER IS ALWAYS IN SCOPE, even where only one customer
+    # holds it: once a person has said it is ours, the copies filed
+    # against customers are wrong whether or not two of them share it.
+    shared.update(marked_held())
     if wanted:
         shared = {k: v for k, v in shared.items() if k in wanted}
+    from app.services import own_numbers
+
     mails = _mail_rows()
     by_domain = _bodies_by_domain(mails)
     ours_domains = own_people.own_domains()
     staff = _employee_numbers()
+    marked_all = own_numbers.numbers()
 
     our_text = ' '.join(text for domain, text in by_domain.items()
                         if any(domain == d or domain.endswith('.' + d)
@@ -336,6 +366,17 @@ def classify(wanted=None):
         in_theirs = [d for d in sorted(their_domains)
                      if said in (by_domain.get(d) or '')]
 
+        # (0) SOMEBODY HAS ALREADY DECIDED. A number in
+        # data/own_numbers.txt was marked by a person who looked at the
+        # trace, so it outranks every test below -- including a sighting
+        # in the customer's own words, which is exactly what a quoted
+        # signature looks like once it has been forwarded a few times.
+        #
+        # Without this, marking a number did nothing for the classifier:
+        # the ingest stopped capturing it and `--apply` still never
+        # cleared the copies already filed, which is the whole job.
+        marked = own_numbers.note_for(said)
+
         # (d) how many UNRELATED companies hold it. One number on three
         # or more groups is not a shared switchboard -- 8800394614 sat
         # on companies in Zagreb, Korea, Spain and Japan, which have
@@ -345,7 +386,9 @@ def classify(wanted=None):
         groups = company_groups(holders)
         unrelated = len(groups)
 
-        if (in_ours or on_staff) and not in_theirs:
+        if said in marked_all:
+            verdict = OURS
+        elif (in_ours or on_staff) and not in_theirs:
             verdict = OURS
         elif unrelated >= 3 and not in_theirs:
             verdict = OURS
@@ -354,6 +397,8 @@ def classify(wanted=None):
         else:
             verdict = UNCLEAR
         why = '; '.join(filter(None, [
+            ((f'marked ours — {marked}' if marked else 'marked ours')
+             if said in marked_all else ''),
             'in a body from our own domain' if in_ours else '',
             f'on {on_staff}\'s record' if on_staff else '',
             ('in a body from ' + ', '.join(in_theirs)) if in_theirs else '',
@@ -459,32 +504,122 @@ def trace(number):
           f'that.')
 
 
-def mark_ours(numbers, *, actor):
-    """Add numbers to the block list by hand, audited.
+def check_number(said):
+    """(digits, refusal). One of the two is always empty.
+
+    A number is refused rather than trimmed to fit: ten digits taken off
+    the end of something that was never one number is how this went
+    wrong in the first place.
+    """
+    raw = re.sub(r'\D', '', str(said or ''))
+    if not raw:
+        return '', 'no digits in it'
+    if len(raw) < 10:
+        return '', f'{len(raw)} digits — too short to be a number'
+    if len(raw) > 15:
+        return '', (f'{len(raw)} digits — longer than any phone number '
+                    f'(E.164 allows 15). Two numbers run together?')
+    return raw[-10:], ''
+
+
+def split_numbers(said):
+    """Every number in what the user typed, one at a time.
+
+    THE BUG THIS FIXES: `--mark-ours` took `nargs='+'`, so a comma list
+    arrived as ONE argument and `digits()` -- which keeps the last ten
+    digits of whatever it is given -- returned the tail of all five
+    numbers joined together. Four were silently dropped and the fifth
+    was the only one added. A function that quietly returns something
+    plausible for input it cannot parse is worse than one that refuses.
+
+    SPLIT ON COMMAS, NOT ON SPACES. A space belongs INSIDE a phone
+    number -- "+91 98181 01162" is one number, and the first version of
+    this split it into three and refused all three. Commas, semicolons
+    and newlines separate numbers; nothing else does.
+
+    The exception is a chunk too long to be one number whose
+    whitespace-separated pieces are each a valid number: that is
+    somebody who typed spaces instead of commas, and reading it their
+    way is better than refusing it. Where the pieces are NOT each
+    valid, the chunk is left whole and refused with its length, so the
+    reason names what was actually given.
+    """
+    out = []
+    for chunk in str(said or '').replace(';', ',').replace('\n', ',').split(','):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if len(re.sub(r'\D', '', chunk)) <= 15:
+            out.append(chunk)
+            continue
+        pieces = chunk.split()
+        if len(pieces) > 1 and all(not check_number(p)[1] for p in pieces):
+            out.extend(pieces)
+        else:
+            out.append(chunk)
+    return out
+
+
+def mark_ours(said_list, *, actor):
+    """Add numbers to the block list by hand, audited, one line each.
 
     For the case the evidence cannot settle and a person can -- item 7.
     It does NOT clear the number off anybody: that is `--apply`, which
     is audited per field and undoable per batch.
+
+    EVERY NUMBER GIVEN IS REPORTED -- added, already there, or refused
+    with the reason. Nothing is dropped in silence.
     """
     from app import db
     from app.services import audit, own_numbers
 
-    said = [digits(n) for n in numbers]
-    said = [n for n in said if n]
-    if not said:
-        sys.exit('  [STOP] --mark-ours needs a number of ten digits or more.')
-    added = own_numbers.add(said, note=f'marked by {actor}')
+    pieces = []
+    for said in said_list:
+        pieces.extend(split_numbers(said))
+    if not pieces:
+        sys.exit('  [STOP] --mark-ours needs at least one number.')
+
+    held = own_numbers.entries()
+    fresh, again, refused = [], [], []
+    for piece in pieces:
+        number, why = check_number(piece)
+        if why:
+            refused.append((piece, why))
+        elif number in held:
+            again.append((piece, number, held[number]))
+        elif number in [n for _p, n in fresh]:
+            again.append((piece, number, 'given twice in this command'))
+        else:
+            fresh.append((piece, number))
+
+    added = own_numbers.add([n for _p, n in fresh],
+                            note=f'marked by {actor}') if fresh else []
     for number in added:
         audit.record('phone.marked_ours', 'phone', None,
                      old={}, new={'phone': number},
                      actor=actor,
                      reason=f'{number} marked as a Procam number by hand',
                      commit=False)
-    db.session.commit()
-    print(f'{len(added)} number(s) added to data/own_numbers.txt'
-          + (f': {", ".join(added)}' if added else ' — already there'))
-    print('Nothing was cleared off any contact. Run the classifier to '
-          'do that.')
+    if added:
+        db.session.commit()
+
+    print(f'{len(pieces)} number(s) given:')
+    for piece, number in fresh:
+        mark = 'added' if number in added else 'NOT WRITTEN'
+        print(f'  {mark:<13} {piece:<22} → {number}')
+    for piece, number, note in again:
+        print(f'  {"already there":<13} {piece:<22} → {number}'
+              + (f'   ({note})' if note else ''))
+    for piece, why in refused:
+        print(f'  {"REFUSED":<13} {piece:<22} — {why}')
+    print(f'\n{len(added)} added, {len(again)} already there, '
+          f'{len(refused)} refused.')
+    if refused:
+        print('A refused number was NOT written and NOT trimmed to fit. '
+              'Give it again on\nits own if it is a real number.')
+    print('Nothing was cleared off any contact. Run the classifier '
+          '(no --mark-ours) to\ndo that: a marked number now reads as '
+          'OURS there.')
     return added
 
 
@@ -616,9 +751,10 @@ def main():
     ap.add_argument('--actor', help='employee id; required with --apply')
     ap.add_argument('--trace', metavar='NUMBER',
                     help='show everywhere one number appears, and stop')
-    ap.add_argument('--mark-ours', dest='mark_ours', nargs='+',
-                    metavar='NUMBER',
-                    help='add numbers to data/own_numbers.txt by hand')
+    ap.add_argument('--mark-ours', dest='mark_ours', action='append',
+                    default=[], metavar='NUMBERS',
+                    help='add numbers to data/own_numbers.txt by hand; '
+                         'a comma list, and the flag may be repeated')
     a = ap.parse_args()
 
     os.environ.setdefault('SECRET_KEY', 'read-only')

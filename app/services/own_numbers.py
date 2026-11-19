@@ -39,7 +39,7 @@ PATH = os.path.join(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))), 'data', 'own_numbers.txt')
 
 _lock = threading.Lock()
-_cache = {'at': None, 'numbers': frozenset()}
+_cache = {'at': None, 'numbers': frozenset(), 'entries': {}}
 
 
 def digits(value):
@@ -49,16 +49,15 @@ def digits(value):
 
 
 def _read():
-    out = set()
+    """{number: the note beside it}. The note says who decided."""
+    out = {}
     try:
         with open(PATH, encoding='utf-8') as fh:
             for line in fh:
-                line = line.split('#', 1)[0].strip()
-                if not line:
-                    continue
-                said = digits(line)
+                body, _, note = line.partition('#')
+                said = digits(body)
                 if said:
-                    out.add(said)
+                    out[said] = note.strip()
     except FileNotFoundError:
         pass
     except Exception:                                      # noqa: BLE001
@@ -66,21 +65,44 @@ def _read():
         # OPEN on purpose: the worst case is the fault this file exists
         # to fix, and the worst case of failing closed is an enquiry
         # with no phone on it at all.
-        return frozenset()
-    return frozenset(out)
+        return {}
+    return out
 
 
-def numbers():
-    """The list, re-read when the file has changed underneath us."""
+def entries():
+    """{number: note}, re-read when the file has changed underneath us.
+
+    The note is what a screen or a report shows as the REASON -- "marked
+    by DIR12010", "batch PHONE-20261119-1". A number with no note is
+    still ours; it just cannot say who said so.
+    """
     try:
         stamp = os.path.getmtime(PATH)
     except OSError:
         stamp = None
     with _lock:
-        if _cache['at'] != stamp:
-            _cache['numbers'] = _read()
+        # `.get`, not `[...]`: a cache dict handed to us without every
+        # key -- a test's monkeypatch, an older copy of this module --
+        # must re-read the file, not raise. A rights or ingest path
+        # that fails on its own cache is worse than a slow one.
+        if _cache.get('at') != stamp or 'entries' not in _cache:
+            _cache['entries'] = _read()
+            _cache['numbers'] = frozenset(_cache['entries'])
             _cache['at'] = stamp
-        return _cache['numbers']
+        return dict(_cache.get('entries') or {})
+
+
+def numbers():
+    """Just the numbers."""
+    entries()
+    with _lock:
+        return _cache.get('numbers') or frozenset()
+
+
+def note_for(value):
+    """Why this number is ours, in the words of whoever marked it."""
+    said = digits(value)
+    return entries().get(said, '') if said else ''
 
 
 def is_ours(value):

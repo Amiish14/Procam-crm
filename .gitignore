@@ -53,3 +53,11 @@ backups/
 # client names. It belongs on the server and in somebody's hands,
 # not in the repository.
 docs/exports/*.xlsx
+
+# Written on the server by
+# scripts/2026_11_19_shared_phone_evidence.py (--apply / --mark-ours)
+# and read by the mail ingest. It is live data, not a curated list like
+# portal_senders.txt beside it: tracking it would let a deploy overwrite
+# the numbers somebody marked on the server, and would carry real phone
+# numbers into the repository.
+data/own_numbers.txt
