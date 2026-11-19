@@ -274,7 +274,15 @@ table tbody tr:hover > td { background: var(--bg-hover); }
    handler changes. */
 @media (max-width: 767px) {
   .mob, .modal-backdrop { padding: 0 !important; align-items: stretch !important; }
-  .mod, .mod-sm, .mod-lg, .modal, dialog {
+  /* `dialog[open]`, NOT `dialog`. UI re-check 19 Nov item 3: the
+     browser hides a closed dialog with `dialog:not([open]){display:
+     none}` in its OWN stylesheet, and any author rule beats that --
+     so `display:flex` here was turning every closed dialog on the
+     page back on. The empty "New RFQ" and "New quote" forms sat at
+     the bottom of those pages before anybody pressed the button.
+     Geometry can apply to a closed dialog harmlessly; `display`
+     cannot. */
+  .mod, .mod-sm, .mod-lg, .modal, dialog[open] {
     max-width: 100vw !important; width: 100vw !important;
     min-height: 100dvh; max-height: 100dvh; margin: 0 !important;
     border-radius: 0 !important; border: 0 !important;

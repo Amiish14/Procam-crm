@@ -366,6 +366,12 @@ input::placeholder,textarea::placeholder{color:var(--p-text-4)}
 dialog{border:0;border-radius:var(--rd-lg);padding:0;max-width:660px;
   width:92vw;box-shadow:var(--el-4);color:var(--p-text)}
 dialog::backdrop{background:rgba(10,11,15,.42);backdrop-filter:blur(2px)}
+/* Said out loud, at every width, because the browser's own version of
+   this line loses to any author rule that sets `display` on `dialog`
+   -- which is exactly how the closed "New RFQ" form came to sit at the
+   bottom of the page on a phone. No `!important`: a script that shows
+   a dialog by setting an inline style should still be able to. */
+dialog:not([open]){display:none}
 .modal-wrap{padding:var(--s-6)}
 .modal-wrap h2{margin-bottom:var(--s-4)}
 

@@ -41,11 +41,50 @@ def available():
 
 #: The handful of globals the CRM's templates reach for. Everything is
 #: permitted, so the page under test carries every link it ever would.
+#:
+#: `url_prefix` is the repo itself. The templates build their asset
+#: paths as `{{ url_prefix }}/static/css/...`, and with an empty prefix
+#: that is an absolute path -- which on `file://` means the root of the
+#: disk, so every stylesheet and script 404s silently and the page is
+#: measured unstyled. Three pages looked as though they overflowed
+#: because of that, and none of them did.
 CONTEXT = dict(
-    url_prefix='', asset_v='t', request=type('R', (), {'path': '/rfqs'})(),
+    url_prefix='file://' + ROOT, asset_v='t',
+    request=type('R', (), {'path': '/rfqs'})(),
     can=lambda *_: True, feature=lambda *_: True, feature_for=lambda *_: True,
     csrf_token=lambda: 'x',
 )
+
+class Blank(jinja2.ChainableUndefined):
+    """Every name a page reaches for that this harness has not got.
+
+    A detail page wants `company.name`, `rfq.lines`, twenty more; the
+    layout being measured does not depend on any of them. Jinja's own
+    undefined prints as nothing but raises the moment a template asks
+    it for an attribute or walks it, so a page with one record in it
+    cannot be rendered at all. This one chains, iterates empty and is
+    false, so the page renders its chrome, its tables and its dialogs
+    -- which is what gets measured.
+
+    It is deliberately not the application's behaviour: a real missing
+    value SHOULD be loud. This is a layout rig.
+    """
+
+    def __iter__(self):
+        return iter(())
+
+    def __len__(self):
+        return 0
+
+    def __call__(self, *a, **k):
+        """A page may call a helper the app registers rather than read
+        a value -- `restriction_level(name)` on the company page. The
+        call answers blank like everything else here."""
+        return self._new()
+
+    def _new(self):
+        return Blank(hint=self._undefined_hint, name=self._undefined_name)
+
 
 PAGE = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -90,9 +129,12 @@ window.addEventListener('load', run);
 
 
 def render(template, probe, width=1255, height=900, extra_css='',
-           extra_body='', scale=1):
+           extra_body='', scale=1, **context):
     """Render `template` in an iframe `width` wide, run `probe` against
     it in Chrome, and return what it measured.
+
+    Anything in `context` is added to the template's own, for a page
+    that needs a row or a record to render at all.
 
     `probe` is JavaScript declaring `function probe()` and returning a
     JSON-able object. Inside it, `D` is the document under test and `W`
@@ -101,10 +143,20 @@ def render(template, probe, width=1255, height=900, extra_css='',
     """
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(os.path.join(ROOT, 'templates')),
-        extensions=['jinja2.ext.do'])
+        extensions=['jinja2.ext.do'], undefined=Blank)
     env.globals.update(CONTEXT)
-    body = env.get_template(template).render(**CONTEXT) + extra_body
-    page = PAGE.format(root='file://' + ROOT, body=body, extra_css=extra_css)
+    body = env.get_template(template).render(**dict(CONTEXT, **context))
+    if '<html' in body[:400].lower():
+        # A whole page: it has its own head, its own stylesheets and
+        # its own viewport meta. Wrapping it in PAGE would nest two
+        # documents and put its <link>s in a <body>.
+        page = body.replace('</body>', extra_body + '</body>', 1) \
+            if '</body>' in body else body + extra_body
+        if extra_css:
+            page = page.replace('</head>', extra_css + '</head>', 1)
+    else:
+        page = PAGE.format(root='file://' + ROOT, body=body + extra_body,
+                           extra_css=extra_css)
     host = HOST.format(width=width, height=height, probe=probe)
 
     with tempfile.TemporaryDirectory() as tmp:
