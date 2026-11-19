@@ -270,6 +270,11 @@ def _contact_rows(f, sc):
     q = sc_mod.contacts(Contact.query, sc=sc)
     if f['name']:
         q = q.filter(Contact.name.ilike(_like(f['name'])))
+    if f.get('email'):
+        q = q.filter(Contact.email.ilike(_like(f['email'])))
+    if f.get('phone'):
+        tail = _like(f['phone'][-5:])
+        q = q.filter(or_(Contact.mobile.like(tail), Contact.phone.like(tail)))
     if f['company']:
         ids = _account_ids_for(f['company'])
         clause = [Contact.company.ilike(_like(f['company']))]
@@ -306,6 +311,11 @@ def _lead_rows(f, sc):
     q = q.filter(Lead.pic.isnot(None), Lead.pic != '')
     if f['name']:
         q = q.filter(Lead.pic.ilike(_like(f['name'])))
+    if f.get('email'):
+        q = q.filter(Lead.email.ilike(_like(f['email'])))
+    if f.get('phone'):
+        tail = _like(f['phone'][-5:])
+        q = q.filter(or_(Lead.phone.like(tail), Lead.phone2.like(tail)))
     if f['company']:
         ids = _account_ids_for(f['company'])
         clause = [Lead.company.ilike(_like(f['company']))]
@@ -500,6 +510,142 @@ def _merge(rows):
     return out
 
 
+_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+$')
+
+
+def query_kind(text):
+    """'email', 'phone' or 'name' — what was typed in the Name box.
+
+    A phone is six or more digits with nothing but spacing and
+    punctuation around them; anything with a letter is a name.
+    """
+    text = (text or '').strip()
+    if not text:
+        return ''
+    if '@' in text and _EMAIL_RE.match(text):
+        return 'email'
+    if not re.search(r'[A-Za-z]', text) \
+            and len(re.sub(r'\D', '', text)) >= 6:
+        return 'phone'
+    return 'name'
+
+
+def name_rank(asked, person):
+    """0 whole name, 1 starts with it, 2 a word starts with it, 3 any."""
+    want = ' '.join(str(asked or '').lower().split())
+    have = ' '.join(str(person or '').lower().split())
+    if not want:
+        return 3
+    if have == want:
+        return 0
+    if have.startswith(want):
+        return 1
+    if re.search(r'(^|[\s.,\-/(])' + re.escape(want), have):
+        return 2
+    return 3
+
+
+#: Words that say what a company IS rather than which one it is.
+_GENERIC = frozenset((
+    'oy', 'ab', 'as', 'a/s', 'ag', 'gmbh', 'bv', 'nv', 'sa', 'spa',
+    'srl', 'llc', 'inc', 'co', 'corp', 'corporation', 'company', 'the',
+    'ltd', 'limited', 'pvt', 'private', 'plc', 'pte', 'group', 'india',
+    'logistics', 'international', 'global', 'services', 'solutions',
+    'shipping', 'industries', 'enterprises', 'and', 'of', 'm/s', 'ms',
+))
+
+
+def company_tokens(*values):
+    """The distinctive words of a company name or an email domain."""
+    out = set()
+    for value in values:
+        text = str(value or '').lower()
+        if '@' in text:
+            text = text.split('@', 1)[1].rsplit('.', 1)[0]
+            text = text.replace('.', ' ')
+        for word in re.split(r'[^a-z0-9/]+', text):
+            if word and word not in _GENERIC and len(word) > 1:
+                out.add(word)
+    return out
+
+
+def _merge_same_name_same_company(rows):
+    """Fix 4 (UAT 17/18 Nov): one person shown three times.
+
+    "Alina Kovalenko" was a contact (Hacklin) and the PIC on two leads
+    filed as "Hacklin Logistics Ltd" and "Oy Hacklin Logistics Ltd."
+    with no email or phone of their own, so the email/phone merge had
+    nothing to join them on. The same NAME at the same COMPANY is one
+    person UNLESS the two rows carry different emails or different
+    phones — then they are two people who share a name, and both stay.
+    """
+    out = []
+    for row in rows:
+        name = ' '.join(str(row.get('person') or '').lower().split())
+        tokens = company_tokens(row.get('company'), *row.get('emails') or [])
+        held = None
+        if name and tokens:
+            for other in out:
+                if ' '.join(str(other.get('person') or '').lower()
+                            .split()) != name:
+                    continue
+                theirs = other.get('_tokens') or set()
+                if not (tokens <= theirs or theirs <= tokens):
+                    continue
+                mine_e = {_email_key(e) for e in row.get('emails') or []} - {''}
+                their_e = {_email_key(e) for e in other.get('emails') or []} - {''}
+                if mine_e and their_e and not (mine_e & their_e):
+                    continue
+                mine_p = {_digits(p) for p in row.get('phones') or []} - {''}
+                their_p = {_digits(p) for p in other.get('phones') or []} - {''}
+                if mine_p and their_p and not (mine_p & their_p):
+                    continue
+                held = other
+                break
+        if held is None:
+            row['_tokens'] = tokens
+            out.append(row)
+            continue
+        # The contact row wins, exactly as in `_merge`.
+        if row['kind'] == 'contact' and held['kind'] != 'contact':
+            out[out.index(held)] = row
+            row['_tokens'] = tokens | (held.get('_tokens') or set())
+            row['sources'] = row.get('sources') or [row['label']]
+            row.setdefault('also_leads', 0)
+            _absorb(row, held)
+        else:
+            held['_tokens'] = (held.get('_tokens') or set()) | tokens
+            _absorb(held, row)
+    for row in out:
+        row.pop('_tokens', None)
+    return out
+
+
+def _absorb(into, extra):
+    """Fold one row into another, keeping what only it knows."""
+    into['sources'] = (into.get('sources') or [into['label']]) + \
+        (extra.get('sources') or [extra['label']])
+    into['also_leads'] = (into.get('also_leads') or 0) + \
+        (extra.get('also_leads') or 0) + (1 if extra['kind'] == 'lead' else 0)
+    for key in ('designation', 'country', 'location', 'vertical',
+                'industry', 'owner', 'company'):
+        if not into.get(key) and extra.get(key):
+            into[key] = extra[key]
+    for key in ('phones', 'emails'):
+        seen = {str(v).lower() for v in into.get(key) or []}
+        for value in extra.get(key) or []:
+            if str(value).lower() not in seen:
+                into[key] = (into.get(key) or []) + [value]
+                seen.add(str(value).lower())
+    if extra['kind'] == 'lead' and not into.get('lead_id'):
+        into['lead_id'] = extra['id']
+        into['lead_url'] = extra['url']
+    if not into.get('person_url') and extra.get('person_url'):
+        into['person_url'] = extra['person_url']
+    if (extra.get('last_activity') or '') > (into.get('last_activity') or ''):
+        into['last_activity'] = extra['last_activity']
+
+
 SORTS = {
     'name': lambda r: (r['person'] or '').lower(),
     'company': lambda r: (r['company'] or '').lower(),
@@ -523,6 +669,16 @@ def search(*, name='', company='', country='', location='', vertical='',
          'location': (location or '').strip(),
          'vertical': (vertical or '').strip(),
          'industry': (industry or '').strip()}
+    # CRM-SEARCH-SCAN-01 fix 1 (UAT 17/18 Nov): the Name box also
+    # takes an email address or a phone number, across contacts AND
+    # lead PICs. An address or a number is the person, so it is
+    # looked up on those columns instead of the name.
+    f['email'], f['phone'] = '', ''
+    kind = query_kind(f['name'])
+    if kind == 'email':
+        f['email'], f['name'] = f['name'].lower(), ''
+    elif kind == 'phone':
+        f['phone'], f['name'] = re.sub(r'\D', '', f['name']), ''
     asked = {k: v for k, v in f.items() if v}
 
     rows = []
@@ -556,7 +712,15 @@ def search(*, name='', company='', country='', location='', vertical='',
     # a robot row cannot absorb a real one's phone and survive.
     rows = [r for r in rows if not _is_a_robot(r)]
 
+    if f['phone']:
+        want = f['phone']
+        rows = [r for r in rows
+                if any(want in re.sub(r'\D', '', str(p))
+                       or (_digits(p) and _digits(p) == want[-10:])
+                       for p in r['phones'])]
+
     rows = _merge(rows)
+    rows = _merge_same_name_same_company(rows)
     for row in rows:
         # One line, however many places the person turned up in: the
         # list is read across, not down, and four labels in a cell is
@@ -568,6 +732,13 @@ def search(*, name='', company='', country='', location='', vertical='',
             if extra else first)
     key = SORTS.get(sort, SORTS['name'])
     rows.sort(key=key, reverse=bool(descending))
+    # Fix 5: what was typed as a name ranks by how well it matches —
+    # the whole name, then a name that starts with it, then a word
+    # that starts with it, then anywhere. Only for the default
+    # A–Z order; a column the user sorts on is honoured as asked.
+    if f['name'] and sort == 'name' and not descending:
+        rows.sort(key=lambda r: (name_rank(f['name'], r['person']),
+                                 (r['person'] or '').lower()))
 
     total = len(rows)
     page = max(int(page or 1), 1)
