@@ -46,6 +46,16 @@
                text-decoration:none; }
   .mo-tabs a.on { color:#BC1D2F; font-weight:700; }
 </style>
+<!-- UI sweep 19 Nov item 5: the ingest log's table was 877px wide in a
+     441px screen and "Create lead" was cut off its end. This is the
+     card view the Leads and RFQ lists use: `lists.css` turns a table
+     inside a `.tw` wrapper into cards under 768px.
+
+     AFTER the block above, deliberately. `table.mo th,td` and
+     `.tw tbody td` have the same specificity, so whichever is written
+     second wins -- and the one that has to win on a phone is the card
+     view. -->
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/lists.css?v={{ asset_v }}">
 </head>
 <body>
 {% include "_crm_topbar.html" %}
@@ -73,6 +83,9 @@
   </div>
   {% block tabs %}{% endblock %}
   {% block body %}{% endblock %}
+<!-- Stamps each cell with its column's heading, so the cards carry
+     labels without any page rewriting its rows. -->
+<script src="{{ url_prefix }}/static/js/lists.js?v={{ asset_v }}"></script>
 </div>
 </body>
 </html>

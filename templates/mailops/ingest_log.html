@@ -36,11 +36,20 @@
   <button class="btn" type="submit">Filter</button>
 </form>
 
+<div class="tw">
 <table class="mo">
+  {# `thead` and `tbody` written out, not left to the parser. A browser
+     inserts a `tbody` on its own and NEVER a `thead`, and the card view
+     reads its labels from `thead tr` -- so without this the cards came
+     out unlabelled and the header row stayed on screen as a card of
+     its own. #}
+  <thead>
   <tr>
     <th>Received</th><th>From</th><th>Subject</th><th>Outcome</th>
     <th>Lead</th><th>Why</th><th></th>
   </tr>
+  </thead>
+  <tbody>
   {% for r in rows %}
   <tr>
     <td style="font-size:12px;color:#6b7280;white-space:nowrap">
@@ -72,7 +81,9 @@
   <tr><td colspan="7" class="mo-note">
     Nothing logged yet. Rows appear here as mail arrives.</td></tr>
   {% endfor %}
+  </tbody>
 </table>
+</div>
 
 <div class="mo-note" style="margin-top:14px">
   Showing {{ (page - 1) * size + 1 if rows else 0 }}–{{ (page - 1) * size + rows|length }}
