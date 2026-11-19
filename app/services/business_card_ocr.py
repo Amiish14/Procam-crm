@@ -290,7 +290,7 @@ def extract_business_card(image_bytes: bytes,
     """
     from app.services import card_fields, card_image, card_parse, card_read
 
-    notes, pages = [], []
+    notes, pages, evidence = [], [], []
     pictures = [(image_bytes, mime)] + list(sides or [])
     if preprocess and image_bytes:
         try:
@@ -308,7 +308,8 @@ def extract_business_card(image_bytes: bytes,
     # The second pass, when the box has it and the switch is on. It
     # also decides which way up each picture is.
     if pages and not card_text:
-        read_text, read_notes = card_read.read_pages(pages)
+        read_text, read_notes, evidence = \
+            card_read.read_pages_with_evidence(pages)
         notes.extend(read_notes)
         if read_text.strip():
             card_text = read_text
@@ -350,6 +351,20 @@ def extract_business_card(image_bytes: bytes,
         out['confidence'] = card_confidence.score(
             out, readings=[_as_fields(r) for r in readings],
             conflicts=out['conflicts'], derived=derived, notes=notes)
+        # CRM-SCAN-02: content-first candidates for company, name,
+        # designation and state, scored from every reading the reader
+        # produced, the email domain, the CRM's own accounts and what
+        # this domain was corrected to before. The runners-up go to the
+        # review screen as a dropdown; the evidence to the accuracy page.
+        try:
+            from app.services import card_smart
+            out = card_smart.rescore(
+                out, out['raw_text'], *[r.get('text') or '' for r in evidence])
+        except Exception as exc:                          # noqa: BLE001
+            notes.append(f'the candidate scorer could not run ({exc})')
+        out['ocr_evidence'] = [
+            {k: r.get(k) for k in ('side', 'rotation', 'how', 'score', 'text')}
+            for r in evidence][:24]
         out['confidence_summary'] = card_confidence.summary(
             out['confidence'])
         out['notes'] = notes

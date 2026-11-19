@@ -89,6 +89,57 @@ def _store(fs):
         return dest_path, fh.read(), (mime or 'image/jpeg')
 
 
+#: The fields the accuracy page scores, read against saved.
+ACCURACY_FIELDS = ('name', 'designation', 'company', 'email', 'mobile',
+                   'telephone', 'website', 'city', 'state', 'postal_code')
+
+
+def _same(a, b):
+    import re as _re
+    f = lambda v: _re.sub(r'[^a-z0-9]', '', str(v or '').lower())
+    return f(a) == f(b)
+
+
+@bp.route('/business-cards/accuracy')
+def accuracy_page():
+    """CRM-SCAN-02: how often each field was read right, card by card,
+    with the reader's evidence — every segmentation it tried, its score,
+    and the text it returned. Read-only."""
+    from flask import redirect, session, url_for
+    if 'emp_code' not in session:
+        return redirect(url_for('login'))
+    rows = (BusinessCardImport.query
+            .order_by(BusinessCardImport.id.desc()).limit(100).all())
+    totals = {f: [0, 0] for f in ACCURACY_FIELDS}
+    cards = []
+    for row in rows:
+        ex = row.extracted_json or {}
+        as_read = ex.get('_as_read')
+        checks = []
+        if row.status == 'Saved' and isinstance(as_read, dict):
+            for f in ACCURACY_FIELDS:
+                saved, read = ex.get(f) or '', as_read.get(f) or ''
+                if not saved and not read:
+                    continue
+                ok = _same(saved, read)
+                totals[f][0] += 1 if ok else 0
+                totals[f][1] += 1
+                checks.append({'field': f, 'read': read, 'saved': saved,
+                               'ok': ok})
+        cards.append({'id': row.id, 'status': row.status,
+                      'at': str(row.uploaded_at or '')[:16],
+                      'checks': checks,
+                      'evidence': ex.get('ocr_evidence') or [],
+                      'candidates': ex.get('candidates') or {},
+                      'notes': [n for n in (row.prep_notes or '').split('\n')
+                                if n.strip()]})
+    per_field = [{'field': f, 'right': r, 'of': n,
+                  'pct': round(100.0 * r / n) if n else None}
+                 for f, (r, n) in totals.items()]
+    return render_template('business_card/accuracy.html', cards=cards,
+                           per_field=per_field)
+
+
 @bp.route('/api/business-cards/upload', methods=['POST'])
 @_require_auth
 def api_upload():
@@ -352,8 +403,19 @@ def api_save(card_id):
     link_account_id = data.get('link_account_id')
     link_contact_id = data.get('link_contact_id')
 
+    # What was READ, before the reviewer's corrections overwrite it —
+    # CRM-SCAN-02 learns from the difference on a successful save.
+    _as_read = dict(row.extracted_json or {})
     # Persist the corrected extraction back so audit is complete.
     row.extracted_json = fields or row.extracted_json
+    if fields and isinstance(row.extracted_json, dict):
+        # Kept for the accuracy page: what the reader said, beside what
+        # the reviewer saved, plus the reader's evidence.
+        row.extracted_json = dict(row.extracted_json)
+        row.extracted_json['_as_read'] = {
+            k: _as_read.get(k) for k in ACCURACY_FIELDS}
+        if _as_read.get('ocr_evidence') and not fields.get('ocr_evidence'):
+            row.extracted_json['ocr_evidence'] = _as_read['ocr_evidence']
 
     person_name  = (fields.get('name') or '').strip()
     company_name = (fields.get('company') or '').strip()
@@ -513,6 +575,11 @@ def api_save(card_id):
         created_lead = lead.id
 
     row.status = 'Saved'
+    try:
+        from app.services import card_smart
+        card_smart.learn(_as_read, fields, actor=_emp())
+    except Exception as exc:                              # noqa: BLE001
+        current_app.logger.warning('card learning skipped: %s', exc)
     db.session.commit()
     return jsonify(ok=True, card=row.to_dict(),
                    classifications=applied, lead_id=created_lead)

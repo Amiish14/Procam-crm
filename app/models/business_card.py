@@ -65,3 +65,27 @@ class BusinessCardImport(db.Model):
             'linked_contact_id': self.linked_contact_id,
             'remarks': self.remarks or '',
         }
+
+
+class CardDomainHint(db.Model):
+    """What a card from this email domain was corrected to — CRM-SCAN-02.
+
+    One row per (domain, field). Written when a reviewer saves a card
+    whose company differs from what was read; read by
+    `card_smart.rescore` as the strongest company candidate for the
+    next card from the same domain. A new table: created by
+    `db.create_all()` at boot, nothing else changes.
+    """
+    __tablename__ = 'card_domain_hints'
+
+    id         = db.Column(db.Integer, primary_key=True)
+    domain     = db.Column(db.String(120), nullable=False, index=True)
+    field      = db.Column(db.String(40), nullable=False, default='company')
+    value      = db.Column(db.String(255), nullable=False)
+    times      = db.Column(db.Integer, default=1)
+    updated_by = db.Column(db.String(20))
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow,
+                           onupdate=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint('domain', 'field',
+                                          name='uq_card_domain_field'),)

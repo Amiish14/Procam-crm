@@ -262,9 +262,17 @@
           : `<input id="f_${k}" value="${(ex[k]||'').replace(/"/g,'&quot;')}"${
               flagged ? ' style="border-color:var(--amber,#b45309);background:#FFFBEB"' : ''}>`)
         + (why ? `<div class="muted" style="font-size:11px;margin-top:3px">${
-              String(why).replace(/</g,'&lt;')}</div>` : '')
+              confBadge(c)}${String(why).replace(/</g,'&lt;')}</div>` : '')
+        + candidatePick(k, ex, c)
         + (EXTRA_OF[k] ? extras(ex, EXTRA_OF[k], 'f_'+k) : '');
       wrap.appendChild(div);
+    });
+    wrap.querySelectorAll('select.cand-pick').forEach(sel=>{
+      sel.onchange = () => {
+        const t = $(sel.dataset.target);
+        if (t && sel.value) { t.value = sel.value; t.focus(); }
+        sel.selectedIndex = 0;
+      };
     });
     wrap.querySelectorAll('.pick-extra').forEach(a=>{
       a.onclick = ev => {
@@ -354,6 +362,34 @@
       out[k] = ($('f_'+k) ? $('f_'+k).value : '').trim();
     });
     return out;
+  }
+
+  /* CRM-SCAN-02: how sure the reader is, as a word, and the other
+     readings it weighed for this field as a dropdown. Picking one
+     fills the box; nothing is saved until Save. */
+  function confBadge(c){
+    if (!c || c.empty || c.score == null) return '';
+    const s = Number(c.score);
+    const [label, col] = s >= 85 ? ['High', '#1a7f37']
+                       : s >= 70 ? ['Medium', '#9a6700'] : ['Low', '#b42318'];
+    return `<span class="conf-badge" style="display:inline-block;margin-right:6px;padding:0 6px;border-radius:999px;border:1px solid ${col};color:${col};font-weight:600">${label} · ${s}</span>`;
+  }
+  function candidatePick(k, ex, c){
+    const ranked = ((ex.candidates || {})[k] || []).map(r => r.value);
+    const alts = (c && c.alternatives) || [];
+    const current = String(ex[k] || '').toLowerCase();
+    const seen = new Set([current]);
+    const opts = [];
+    ranked.concat(alts).forEach(v => {
+      const key = String(v || '').toLowerCase();
+      if (v && !seen.has(key)) { seen.add(key); opts.push(v); }
+    });
+    if (!opts.length) return '';
+    const esc = v => String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+    return `<select class="cand-pick" data-target="f_${k}" style="margin-top:4px;font-size:12px;width:100%">
+      <option value="">Other readings (${opts.length})…</option>
+      ${opts.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('')}
+    </select>`;
   }
 
   async function save(choice, confirmDuplicate){

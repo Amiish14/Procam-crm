@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Card reading accuracy — Procam CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/tokens.css?v={{ asset_v }}">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/crm.css?v={{ asset_v }}">
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/ui.css?v={{ asset_v }}">
+<style>
+  .acc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:12px 0 20px}
+  .acc-k{border:1px solid var(--line-1);border-radius:8px;padding:10px 12px;background:var(--bg-surface)}
+  .acc-k b{display:block;font-size:20px}
+  .acc-card{border:1px solid var(--line-1);border-radius:10px;padding:12px 14px;margin-bottom:14px;background:var(--bg-surface)}
+  .acc-ok{color:var(--ok,#1a7f37)} .acc-bad{color:var(--bad,#b42318)}
+  .acc-ev{white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace;font-size:12px;
+          background:var(--bg-surface-2);border-radius:6px;padding:8px;max-height:220px;overflow:auto}
+  details{margin-top:6px} summary{cursor:pointer;font-size:13px}
+  table.acc{width:100%;border-collapse:collapse;font-size:13px}
+  table.acc td,table.acc th{padding:4px 6px;border-bottom:1px solid var(--line-2);text-align:left}
+</style>
+</head>
+<body>
+{% include "_crm_topbar.html" %}
+<div class="crm-wrap">
+<h1>Card reading accuracy</h1>
+<p class="muted">Each saved card compares what was read with what the reviewer saved,
+field by field. Below each card is the reader's evidence: every way it read the card,
+how card-like each result looked, and the text it returned. Nothing on this page changes data.</p>
+
+<div class="acc-grid">
+{% for f in per_field %}
+  <div class="acc-k"><span class="muted">{{ f.field }}</span>
+    <b>{% if f.pct is not none %}{{ f.pct }}%{% else %}—{% endif %}</b>
+    <span class="muted">{{ f.right }} of {{ f.of }} right</span></div>
+{% endfor %}
+</div>
+
+{% for c in cards %}
+<div class="acc-card">
+  <div><b>Card #{{ c.id }}</b> · {{ c.at }} · {{ c.status }}
+    · <a href="{{ url_prefix }}/business-cards/{{ c.id }}/image" target="_blank">picture</a></div>
+  {% if c.checks %}
+  <table class="acc"><thead><tr><th>Field</th><th>Read</th><th>Saved</th><th></th></tr></thead><tbody>
+  {% for k in c.checks %}
+    <tr><td>{{ k.field }}</td><td>{{ k.read or '—' }}</td><td>{{ k.saved or '—' }}</td>
+        <td class="{{ 'acc-ok' if k.ok else 'acc-bad' }}">{{ 'right' if k.ok else 'corrected' }}</td></tr>
+  {% endfor %}</tbody></table>
+  {% else %}
+  <div class="muted">Not saved yet, or saved before the comparison was kept.</div>
+  {% endif %}
+  {% if c.candidates %}
+  <details><summary>Candidates the scorer weighed</summary>
+    {% for field, ranked in c.candidates.items() %}
+      <div style="margin-top:4px"><b>{{ field }}</b>:
+      {% for r in ranked %}{{ r.value }} <span class="muted">({{ r.score }} — {{ r.why }})</span>{% if not loop.last %} · {% endif %}{% endfor %}</div>
+    {% endfor %}
+  </details>
+  {% endif %}
+  {% if c.evidence %}
+  <details><summary>Reader evidence — {{ c.evidence|length }} reading(s)</summary>
+    {% for r in c.evidence %}
+      <div style="margin-top:8px" class="muted">{{ r.side }} · turned {{ r.rotation or 0 }}° · {{ r.how }} · score {{ r.score }}</div>
+      <div class="acc-ev">{{ r.text }}</div>
+    {% endfor %}
+  </details>
+  {% endif %}
+  {% if c.notes %}<div class="muted" style="margin-top:6px">{{ c.notes|join(' · ') }}</div>{% endif %}
+</div>
+{% else %}
+<div class="muted">No cards scanned yet.</div>
+{% endfor %}
+</div>
+</body>
+</html>
