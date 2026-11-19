@@ -189,6 +189,21 @@ def test_no_client_side_fetch_bypasses_the_prefix():
           'with {{ url_prefix }}.')
 
 
+def _prefix_roots(text):
+    """Constants in this template that hold the prefix itself.
+
+    The quotes are optional, and that mattered: `const PREFIX = {{
+    url_prefix | tojson }}` was recognised and `const PREFIX = "{{
+    url_prefix }}"` was not, although three pages and four lists use
+    the second form. With no root found, nothing in the file could be
+    traced to the prefix, so the guard below reported the very helper
+    that does the prefixing.
+    """
+    return set(re.findall(
+        r'(?:const|let|var)\s+(\w+)\s*=\s*[\'"`]?\{\{\s*url_prefix',
+        text))
+
+
 def _local_prefixers(text):
     """Names in this template that already add the prefix.
 
@@ -198,8 +213,7 @@ def _local_prefixers(text):
     traced back to `url_prefix` in this same file — a helper called
     `u` that adds something else is not a prefixer.
     """
-    roots = set(re.findall(
-        r'(?:const|let|var)\s+(\w+)\s*=\s*\{\{\s*url_prefix', text))
+    roots = _prefix_roots(text)
     if not roots:
         return ()
     found = set()
@@ -215,6 +229,38 @@ def _local_prefixers(text):
     return tuple(found)
 
 
+def test_a_helper_that_prefixes_inside_itself_is_safe():
+    """`function post(path){ fetch(PREFIX + path) }` is prefixed, and
+    the call site passing `/api/...` is right to."""
+    text = ('const PREFIX = "{{ url_prefix }}";\n'
+            'async function post(path, body){ const r = await '
+            'fetch(PREFIX + path, {method:"POST"}); }\n')
+    assert 'PREFIX' in _prefix_roots(text)
+
+
+def test_a_quoted_prefix_constant_is_recognised_too():
+    """`const URL_PREFIX = "{{ url_prefix }}"` is the form the RFQ,
+    quote and competitor lists use, and it read as no prefixer at all
+    -- which turned the guard into a false alarm naming the very
+    helper that does the prefixing. A false alarm from a guard against
+    silent failure is the one fault it must not have, because the next
+    alarm is read as noise."""
+    text = ('const URL_PREFIX = "{{ url_prefix }}";\n'
+            'function crmUrl(p){ return URL_PREFIX + p; }\n')
+    assert _local_prefixers(text) == ('crmUrl(',)
+
+
+def test_a_wrapper_is_not_blamed_for_the_next_functions_fetch():
+    """The window that looks for a `fetch()` inside a helper must stop
+    at that helper's own closing brace."""
+    text = ('const URL_PREFIX = "{{ url_prefix }}";\n'
+            'function crmUrl(p){ return URL_PREFIX + p; }\n'
+            'async function jfetch(url, opts){ const r = '
+            'await fetch(url, opts); return r.json(); }\n'
+            "crmUrl('/rfqs/1');\n")
+    assert 'crmUrl(' in _local_prefixers(text)
+
+
 def test_a_local_prefixer_is_recognised_as_one():
     """The guard above is only as useful as its ability to tell a
     prefixed call from an unprefixed one."""
@@ -224,56 +270,92 @@ def test_a_local_prefixer_is_recognised_as_one():
     assert _local_prefixers(text) == ('u(',)
 
 
+#: A function whose body reaches a fetch() call. `[^{}]` in the body,
+#: so the window cannot run past the end of the function it started in
+#: and pick up the NEXT function's fetch(). That is what happened on
+#: the RFQ and competitor lists: the one-line `crmUrl` helper was
+#: credited with the `fetch()` inside the `jfetch` defined under it and
+#: reported for handing itself an unprefixed path -- while the loose
+#: version was also swallowing whole functions and missing real ones.
+_WRAPPER = re.compile(
+    r'(?:async\s+)?function\s+(\w+)\s*\([^)]*\)\s*\{'
+    r'([^{}]{0,400}?)fetch\(([^;]{0,120})',
+    re.S)
+
+
+def _unprefixed_wrapper_calls(text, rel='<text>'):
+    """Call sites that hand a bare absolute path to a helper which
+    passes it to fetch() without prefixing it."""
+    # 14 Nov. A template may build its own prefixer -- Account link has
+    # `const PREFIX = {{ url_prefix | tojson }}` and `const u = (p) =>
+    # PREFIX + p`, and calls `fetch(u(path))`. That is prefixed, and
+    # this guard was calling it a silent 404: a false alarm from a
+    # guard against silent failure is the one fault it must not have,
+    # because the next alarm is read as noise.
+    #
+    # The ROOTS count as well as the helpers. `fetch(PREFIX + path)`
+    # inside a helper is prefixed, and saying so is the difference
+    # between this guard naming three pages that are correct and
+    # naming none.
+    prefixers = _local_prefixers(text)
+    roots = _prefix_roots(text)
+    safe_words = ('url_prefix', 'crmUrl') + prefixers + tuple(roots)
+    unsafe = set()
+    for m in _WRAPPER.finditer(text):
+        name, body, fetch_arg = m.group(1), m.group(2), m.group(3)
+        # Prefixing may happen on the fetch line or earlier in the body.
+        if any(word in fetch_arg for word in safe_words) \
+           or 'url_prefix' in body or 'crmUrl' in body:
+            continue
+        unsafe.add(name)
+    out = []
+    for name in sorted(unsafe):
+        call = re.compile(re.escape(name) + r"""\(\s*(['"`])(/(?!/)[^'"`]*)""")
+        for n, line in enumerate(text.splitlines(), 1):
+            for m in call.finditer(line):
+                out.append(f'{rel}:{n}: {name}("{m.group(2)}")')
+    return out
+
+
 def test_no_fetch_wrapper_bypasses_the_prefix():
     """The same bug, one level of indirection down.
 
     test_no_client_side_fetch_bypasses_the_prefix only sees a literal
-    fetch('/api/...'). Three pages — the quote list, quote detail and the
-    handover queue — routed every call through a local `jf(u)` helper
-    that passed the bare path straight to fetch(), so they rendered fine
-    and loaded nothing, exactly like the funnels did.
+    fetch('/api/...'). Three pages -- the quote list, quote detail and
+    the handover queue -- routed every call through a local `jf(u)`
+    helper that passed the bare path straight to fetch(), so they
+    rendered fine and loaded nothing, exactly like the funnels did.
 
     So: find each helper in a template that calls fetch() on its own
-    argument, and if the helper doesn't prefix, no call site may hand it
-    a bare absolute path.
+    argument, and if the helper doesn't prefix, no call site may hand
+    it a bare absolute path.
     """
-    # A function whose body reaches a fetch() call — non-greedy to the
-    # first fetch, which is enough to see whether the URL is prefixed.
-    wrapper_pat = re.compile(
-        r'(?:async\s+)?function\s+(\w+)\s*\([^)]*\)\s*\{(.{0,400}?)fetch\(([^;]{0,120})',
-        re.S)
     offenders = []
     for tpl in glob.glob(os.path.join(_TEMPLATES, '**', '*.html'),
                          recursive=True):
         rel = os.path.relpath(tpl, _ROOT)
-        text = open(tpl).read()
-        # 14 Nov. A template may build its own prefixer -- Account
-        # link has `const PREFIX = {{ url_prefix | tojson }}` and
-        # `const u = (p) => PREFIX + p`, and calls `fetch(u(path))`.
-        # That is prefixed, and this guard was calling it a silent
-        # 404: a false alarm from a guard against silent failure is
-        # the one fault it must not have, because the next alarm is
-        # read as noise.
-        prefixers = _local_prefixers(text)
-        safe_words = ('url_prefix', 'crmUrl') + prefixers
-        unsafe = set()
-        for m in wrapper_pat.finditer(text):
-            name, body, fetch_arg = m.group(1), m.group(2), m.group(3)
-            # Prefixing may happen on the fetch line or earlier in the body.
-            if any(word in fetch_arg for word in safe_words) \
-               or 'url_prefix' in body or 'crmUrl' in body:
-                continue
-            unsafe.add(name)
-        for name in unsafe:
-            call = re.compile(re.escape(name) + r"""\(\s*(['"`])(/(?!/)[^'"`]*)""")
-            for n, line in enumerate(text.splitlines(), 1):
-                for m in call.finditer(line):
-                    offenders.append(f'{rel}:{n}: {name}("{m.group(2)}")')
+        offenders += _unprefixed_wrapper_calls(open(tpl).read(), rel)
     assert not offenders, (
         'These helpers pass an unprefixed path to fetch(), so the page '
         'loads and stays empty:\n  ' + '\n  '.join(offenders)
         + '\n\nPrefix inside the helper (as bulk_admin/leads.html does) '
           'or at the call site.')
+
+
+def test_the_guard_still_catches_a_helper_that_does_not_prefix():
+    """The fault it was built for, which the fixes above must not have
+    taken the teeth out of."""
+    text = ('function jf(u){ return fetch(u, {credentials:"same-origin"})'
+            '.then(r => r.json()); }\n'
+            "jf('/api/quotes');\n")
+    assert _unprefixed_wrapper_calls(text) == ['<text>:2: jf("/api/quotes")']
+
+
+def test_a_relative_path_is_not_an_offence():
+    """Only an absolute path breaks behind a prefix."""
+    text = ('function jf(u){ return fetch(u); }\n'
+            "jf('api/quotes');\n")
+    assert _unprefixed_wrapper_calls(text) == []
 
 
 @pytest.mark.parametrize('path', [
