@@ -3450,6 +3450,7 @@ async function openLd(id){
     <div class="fm-s">Contact information</div>
     <div class="fmr"><div class="fmg"><label class="fml">Contact person</label><input class="fmc" id="lPic" value="${e(l.pic||'')}"></div><div class="fmg"><label class="fml">Designation</label><input class="fmc" id="lDes" value="${e(l.designation||'')}"></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="lEm" value="${e(l.email||'')}"></div><div class="fmg"><label class="fml">Phone</label><input class="fmc" id="lPh" value="${e(l.phone||'')}"></div></div>
+    <div class="fmr"><div class="fmg"><label class="fml">Country <span style="color:var(--text-3);font-weight:400">— of the contact person</span></label><input class="fmc" id="lCtry" value="${e(l.country||'')}" data-was="${e(l.country||'')}" placeholder="e.g. Finland" autocomplete="country-name"></div><div class="fmg"></div></div>
     <div class="fmr"><div class="fmg"><label class="fml">Primary PIC</label><select class="fmc" id="lAsgn" data-was="${e(l.assigned_to||'')}" ${isAdmin?'':'disabled'}>${uOpts}</select>
       {# CRM-WA-01 §3 — the PIC's own address, so the lead can say who
          to write to. Read from the employee master through EMPS, not
@@ -4386,6 +4387,11 @@ async function saveLd(){
   const data={
     pic:g('lPic')?.value, designation:g('lDes')?.value,
     email:g('lEm')?.value, phone:g('lPh')?.value,
+    // UAT 19 Nov: the PIC's country, the column the country fixes write.
+    // Sent only when changed: the lead's country reads "India" when it
+    // is empty, and saving any lead must not write that default.
+    country:(g('lCtry') && g('lCtry').value.trim() !== (g('lCtry').dataset.was||'')
+             ? g('lCtry').value.trim() : undefined),
     assigned_to:g('lAsgn')?.value,
     secondary_owner:g('lAsgn2')?.value ?? '',
     reassignment_reason:g('lReasgn')?.value || '',
