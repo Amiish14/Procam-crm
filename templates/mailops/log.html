@@ -35,13 +35,19 @@
 
 <form method="post" action="{{ url_prefix }}/admin/email/log/resend">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+     needs -- `lists.css` and `lists.js` already load in the shell. #}
+  <div class="tw">
   <table class="mo">
+    <thead>
     <tr>
       <th style="width:30px"></th><th>When</th><th>Event</th>
       <th>Recipient</th><th>Subject</th><th>Status</th>
       <th class="num">Tries</th><th class="num">SMTP</th>
       <th class="num">Policy</th><th>Error</th>
     </tr>
+    </thead>
+    <tbody>
     {% for r in rows %}
     <tr>
       <td>{% if r.status in ('failed','cancelled') %}
@@ -68,7 +74,9 @@
     <tr><td colspan="10" class="mo-note">
       Nothing has been queued yet.</td></tr>
     {% endfor %}
+    </tbody>
   </table>
+  </div>
   {% if rows %}
   <div style="margin-top:12px">
     <button class="btn" type="submit">Resend the ticked messages</button>

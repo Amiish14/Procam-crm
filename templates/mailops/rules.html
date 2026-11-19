@@ -15,7 +15,16 @@
 {% block body %}
 <div class="mo-card">
   <h3>Feature flags</h3>
+  {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+     needs -- `lists.css` and `lists.js` already load in the shell. #}
+  <div class="tw">
   <table class="mo">
+    {# Same four columns as switches.html, so the same names. #}
+    
+    <thead>
+    <tr><th>Switch</th><th>What it does</th><th>Set in</th><th>On</th></tr>
+    </thead>
+    <tbody>
     {% for name, note, state, source in flags %}
     <tr>
       <td style="width:230px"><code>{{ name }}</code></td>
@@ -25,7 +34,9 @@
         {{ 'on' if state else 'off' }}</span></td>
     </tr>
     {% endfor %}
+    </tbody>
   </table>
+  </div>
   <p class="mo-note">
     Flags are read from the environment at each use, so changing one in
     <code>.env</code> takes effect on the next restart. No deploy, no
@@ -40,11 +51,17 @@
   state rather than a silent gap.
 </p>
 
+{# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+   needs -- `lists.css` and `lists.js` already load in the shell. #}
+<div class="tw">
 <table class="mo">
+  <thead>
   <tr>
     <th>Event</th><th>Who is told</th><th>Channels</th><th>When</th>
     <th>Fired by</th>
   </tr>
+  </thead>
+  <tbody>
   {% for row in rows %}
   <tr>
     <td>
@@ -67,5 +84,7 @@
     </td>
   </tr>
   {% endfor %}
+  </tbody>
 </table>
+</div>
 {% endblock %}

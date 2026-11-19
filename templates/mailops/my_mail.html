@@ -53,7 +53,11 @@ leads@procamgroup.in{% endblock %}
 
 <div class="mo-card">
   <h3>{{ rows|length }} message{{ '' if rows|length == 1 else 's' }}</h3>
+  {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+     needs -- `lists.css` and `lists.js` already load in the shell. #}
+  <div class="tw">
   <table class="mo">
+    <thead>
     <tr>
       <th style="width:110px">Received</th>
       <th>Original sender</th>
@@ -64,6 +68,8 @@ leads@procamgroup.in{% endblock %}
       <th>Why</th>
       <th style="width:90px"></th>
     </tr>
+    </thead>
+    <tbody>
     {% for r in rows %}
     <tr {% if focus and focus == r.id|string %}style="background:#FFFBEB"{% endif %}>
       <td style="white-space:nowrap">{{ r.received_at or '—' }}</td>
@@ -94,7 +100,9 @@ leads@procamgroup.in{% endblock %}
       Nothing here. Mail you forward to leads@procamgroup.in appears on
       this page with what the CRM did about it.</td></tr>
     {% endfor %}
+    </tbody>
   </table>
+  </div>
   <p class="mo-note">A message filed against a lead that is Lost, On Hold
     or Not Interested is still filed — it is just somewhere you would not
     look. The <strong>Stage</strong> column is there to show you that.</p>

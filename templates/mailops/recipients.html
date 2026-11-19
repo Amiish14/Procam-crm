@@ -49,9 +49,15 @@
 
 <div class="mo-card">
   <h3>Per event</h3>
+  {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+     needs -- `lists.css` and `lists.js` already load in the shell. #}
+  <div class="tw">
   <table class="mo">
+    <thead>
     <tr><th>Event</th><th>To</th><th>CC</th><th>Email</th><th>Bell</th>
       <th>Version</th><th></th></tr>
+    </thead>
+    <tbody>
     {% for row in rows %}
     {% set open_now = (focus == row.event) %}
     <tr>
@@ -104,6 +110,8 @@
     </td></tr>
     {% endif %}
     {% endfor %}
+    </tbody>
   </table>
+  </div>
 </div>
 {% endblock %}

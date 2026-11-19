@@ -12,8 +12,14 @@
 {% endblock %}
 
 {% block body %}
+{# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+   needs -- `lists.css` and `lists.js` already load in the shell. #}
+<div class="tw">
 <table class="mo">
+  <thead>
   <tr><th>Report</th><th>When</th><th>Who</th><th>Flag</th></tr>
+  </thead>
+  <tbody>
   {% for name, unit, ist, utc, who, flag in schedules %}
   <tr>
     <td><strong>{{ name }}</strong>
@@ -29,7 +35,9 @@
     </td>
   </tr>
   {% endfor %}
+  </tbody>
 </table>
+</div>
 
 <p class="mo-note">
   A timer that is installed but whose flag is off starts, finds the flag
@@ -41,10 +49,16 @@
 <div class="mo-card" style="margin-top:20px">
   <h3>This week's freeze — {{ week }}</h3>
   {% if frozen %}
+  {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+     needs -- `lists.css` and `lists.js` already load in the shell. #}
+  <div class="tw">
   <table class="mo">
+    <thead>
     <tr><th>Scope</th><th class="num">Open</th><th class="num">Value</th>
       <th class="num">Won</th><th class="num">Lost</th><th class="num">Late</th>
       <th>Taken</th></tr>
+    </thead>
+    <tbody>
     {% for row in frozen %}
     <tr>
       <td>{{ row.scope_label or row.scope_key }}</td>
@@ -56,7 +70,9 @@
       <td style="font-size:12px;color:#6b7280">{{ row.taken_at|string|truncate(16, True, '') }}</td>
     </tr>
     {% endfor %}
+    </tbody>
   </table>
+  </div>
   {% else %}
   <p class="mo-note">
     Nothing frozen for this week yet. The Friday job writes it; until

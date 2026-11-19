@@ -48,9 +48,15 @@ person for their own vertical. Changing it needs <code>admin.email</code>.</p>
     </form>
     {% endfor %}
   {% endif %}
+  {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+     needs -- `lists.css` and `lists.js` already load in the shell. #}
+  <div class="tw">
   <table class="mo">
+    <thead>
     <tr><th>Vertical</th><th>Head</th><th>Deputy</th><th>Active</th>
       <th>Note</th>{% if can_edit %}<th></th>{% endif %}</tr>
+    </thead>
+    <tbody>
     {% for row in rows %}
     {% set fid = 'vh-' ~ loop.index %}
     <tr>
@@ -98,7 +104,9 @@ person for their own vertical. Changing it needs <code>admin.email</code>.</p>
       {% endif %}
     </tr>
     {% endfor %}
+    </tbody>
   </table>
+  </div>
   <p class="mo-note">A vertical with no match anywhere falls back to
     <strong>{{ fallback }}</strong>, so somebody senior is copied rather
     than nobody. The head is also written back to the employee record's
@@ -112,9 +120,15 @@ person for their own vertical. Changing it needs <code>admin.email</code>.</p>
     holds four. An unmapped name has no head, so the head is copied on
     nothing — which is invisible until somebody asks why they never heard
     about a job in their own vertical.</p>
+  {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+     needs -- `lists.css` and `lists.js` already load in the shell. #}
+  <div class="tw">
   <table class="mo">
+    <thead>
     <tr><th>Name on the record</th><th>Means</th>
       {% if can_edit %}<th></th>{% endif %}</tr>
+    </thead>
+    <tbody>
     {% for a in aliases %}
     <tr>
       <td><code>{{ a.alias }}</code></td>
@@ -132,7 +146,9 @@ person for their own vertical. Changing it needs <code>admin.email</code>.</p>
       {% endif %}
     </tr>
     {% endfor %}
+    </tbody>
   </table>
+  </div>
 
   {% if can_edit %}
   <form method="post" action="{{ url_prefix }}/admin/email/verticals/alias"
@@ -154,12 +170,20 @@ person for their own vertical. Changing it needs <code>admin.email</code>.</p>
 {% if unmapped %}
 <div class="mo-card" style="border-color:#FCD34D;background:#FFFBEB">
   <h3>Names in use that map to nothing</h3>
+  {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+     needs -- `lists.css` and `lists.js` already load in the shell. #}
+  <div class="tw">
   <table class="mo">
+    <thead>
     <tr><th>Name on the record</th><th class="num">Records</th></tr>
+    </thead>
+    <tbody>
     {% for name, count in unmapped %}
     <tr><td><code>{{ name }}</code></td><td class="num">{{ count }}</td></tr>
     {% endfor %}
+    </tbody>
   </table>
+  </div>
   <p class="mo-note">Each of these is a lead or an account whose head is
     copied on nothing. They are listed again in the administrators'
     morning report until they are mapped.</p>

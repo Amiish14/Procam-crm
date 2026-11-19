@@ -80,8 +80,14 @@
       Everything is on unless you tick it here. A notification you mute
       still appears on the bell.
     </p>
+    {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+       needs -- `lists.css` and `lists.js` already load in the shell. #}
+    <div class="tw">
     <table class="mo">
+      <thead>
       <tr><th style="width:34px">Mute</th><th>What happens</th><th>When</th></tr>
+      </thead>
+      <tbody>
       {% for row in events %}
       <tr>
         <td><input type="checkbox" name="muted" value="{{ row.event }}"
@@ -92,7 +98,9 @@
           {{ 'as it happens' if row.source == 'event' else 'on a timer' }}</td>
       </tr>
       {% endfor %}
+      </tbody>
     </table>
+    </div>
   </div>
 
   <button class="btn" type="submit">Save</button>

@@ -26,8 +26,14 @@
       preferences — quiet hours hold it, and muting the event silences
       it for them. A copy nobody wants is a copy nobody reads.
     </p>
+    {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+       needs -- `lists.css` and `lists.js` already load in the shell. #}
+    <div class="tw">
     <table class="mo" style="margin-top:12px">
+      <thead>
       <tr><th style="width:34px"></th><th>Who</th><th>Address</th></tr>
+      </thead>
+      <tbody>
       {% for p in people %}
       <tr>
         <td><input type="checkbox" name="recipient" value="{{ p.emp_code }}"
@@ -37,13 +43,21 @@
         <td style="font-size:12.5px;color:#6b7280">{{ p.email }}</td>
       </tr>
       {% endfor %}
+      </tbody>
     </table>
+    </div>
   </div>
 
   <div class="mo-card">
     <h3>Which events they are copied on</h3>
+    {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+       needs -- `lists.css` and `lists.js` already load in the shell. #}
+    <div class="tw">
     <table class="mo">
+      <thead>
       <tr><th style="width:34px">Copy</th><th>Event</th><th>Normally goes to</th></tr>
+      </thead>
+      <tbody>
       {% for row in events %}
       <tr>
         <td><input type="checkbox" name="copy_event" value="{{ row.event }}"
@@ -54,7 +68,9 @@
           {{ row.to|join(', ') or '—' }}</td>
       </tr>
       {% endfor %}
+      </tbody>
     </table>
+    </div>
   </div>
 
   <div class="mo-card">

@@ -14,6 +14,15 @@
     take one <code>name = number</code> per line. A change applies at once.</p>
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {# UI sweep 19 Nov. The only table here that gets NO `thead`, and
+       deliberately: it is a form laid out as a table -- a label in the
+       left cell, its input in the right -- not a list of records. The
+       `.tw` wrapper is still worth having, because on a phone it
+       stacks each label above its own field instead of squeezing a
+       six-row textarea into 70% of 441px. There is nothing to label
+       the cells WITH, so inventing a "Setting / Value" header row
+       would put two words of chrome above every field. #}
+    <div class="tw">
     <table class="mo">
       {% for key, value, note, multi in rows %}
       <tr>
@@ -27,6 +36,7 @@
       </tr>
       {% endfor %}
     </table>
+    </div>
     <button type="submit">Save rules</button>
   </form>
 </div>

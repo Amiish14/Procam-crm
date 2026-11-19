@@ -22,9 +22,15 @@
 
 <div class="mo-card">
   <h3>{{ rows|length }} in place</h3>
+  {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+     needs -- `lists.css` and `lists.js` already load in the shell. #}
+  <div class="tw">
   <table class="mo">
+    <thead>
     <tr><th>Who has left</th><th>Their leads go to</th><th>Active</th>
       <th>Note</th><th></th></tr>
+    </thead>
+    <tbody>
     {% for r in rows %}
     {% set left = by_code.get(r.from_emp_code) %}
     {% set to = by_code.get(r.to_emp_code) %}
@@ -51,7 +57,9 @@
       </td>
     </tr>
     {% endfor %}
+    </tbody>
   </table>
+  </div>
 </div>
 
 <div class="mo-card">

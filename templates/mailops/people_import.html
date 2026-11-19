@@ -59,9 +59,15 @@
 
 <div class="mo-card">
   <h3>What this would do</h3>
+  {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+     needs -- `lists.css` and `lists.js` already load in the shell. #}
+  <div class="tw">
   <table class="mo">
+    <thead>
     <tr><th>Row</th><th>Code</th><th>Name in the file</th><th>Address</th>
       <th>Action</th><th>Detail</th></tr>
+    </thead>
+    <tbody>
     {% for item in plan %}
     <tr {% if item.action == 'invalid' %}style="background:#FEF2F2"
         {% elif item.action == 'not_found' %}style="background:#FFFBEB"
@@ -75,7 +81,9 @@
       <td>{{ item.detail }}</td>
     </tr>
     {% endfor %}
+    </tbody>
   </table>
+  </div>
 
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

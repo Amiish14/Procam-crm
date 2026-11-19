@@ -27,9 +27,15 @@
 {% if bad %}
 <div class="mo-card">
   <h3>The list</h3>
+  {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+     needs -- `lists.css` and `lists.js` already load in the shell. #}
+  <div class="tw">
   <table class="mo">
+    <thead>
     <tr><th>Code</th><th>Name</th><th>Vertical</th><th>Address on file</th>
       <th>Why it cannot work</th></tr>
+    </thead>
+    <tbody>
     {% for row in bad %}
     <tr>
       <td><code>{{ row.emp_code }}</code></td>
@@ -39,7 +45,9 @@
       <td>{{ row.reason }}</td>
     </tr>
     {% endfor %}
+    </tbody>
   </table>
+  </div>
   <p class="mo-note">Fix these on the employee record. They are counted
     again in the administrators' morning report until they are fixed.</p>
 </div>

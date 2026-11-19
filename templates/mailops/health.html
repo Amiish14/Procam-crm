@@ -44,21 +44,40 @@
 
 <div class="mo-card">
   <h3>Flags</h3>
+  {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+     needs -- `lists.css` and `lists.js` already load in the shell. #}
+  <div class="tw">
   <table class="mo">
+    {# The header row these four columns never had: without it the card
+       view has nothing to label its cells with. The names are the ones
+       switches.html already uses for the same data. #}
+    
+    <thead>
+    <tr><th>Switch</th><th>What it does</th><th>Set in</th><th>On</th></tr>
+    </thead>
+    <tbody>
     {% for name, note, state, source in flags %}
     <tr><td style="width:230px"><code>{{ name }}</code></td><td>{{ note }}</td>
       <td style="width:90px" class="mo-note">{{ source }}</td>
       <td style="width:70px"><span class="mo-pill {{ 'on' if state else 'off' }}">
         {{ 'on' if state else 'off' }}</span></td></tr>
     {% endfor %}
+    </tbody>
   </table>
+  </div>
 </div>
 
 <div class="mo-card">
   <h3>Job leases</h3>
   {% if leases %}
+  {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+     needs -- `lists.css` and `lists.js` already load in the shell. #}
+  <div class="tw">
   <table class="mo">
+    <thead>
     <tr><th>Job</th><th>State</th><th>Holder</th><th>Expires</th></tr>
+    </thead>
+    <tbody>
     {% for l in leases %}
     <tr><td><code>{{ l.name }}</code></td>
       <td><span class="mo-pill {{ 'on' if l.held else 'off' }}">
@@ -66,7 +85,9 @@
       <td style="font-size:12px;color:#6b7280">{{ l.holder }}</td>
       <td style="font-size:12px;color:#6b7280">{{ l.expires_at }}</td></tr>
     {% endfor %}
+    </tbody>
   </table>
+  </div>
   {% else %}
   <p class="mo-note">No job has needed a lease yet.</p>
   {% endif %}
@@ -77,9 +98,15 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="mo-card">
     <h3>Failed — the last {{ h.failures|length }}</h3>
+    {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+       needs -- `lists.css` and `lists.js` already load in the shell. #}
+    <div class="tw">
     <table class="mo">
+      <thead>
       <tr><th style="width:34px"></th><th>To</th><th>Subject</th>
         <th>Tries</th><th>Why it failed</th><th>Raised</th></tr>
+      </thead>
+      <tbody>
       {% for f in h.failures %}
       <tr>
         <td><input type="checkbox" name="id" value="{{ f.id }}"></td>
@@ -91,7 +118,9 @@
         <td style="font-size:12px;color:#6b7280">{{ f.created_at }}</td>
       </tr>
       {% endfor %}
+      </tbody>
     </table>
+    </div>
     <div style="margin-top:12px">
       <button class="btn" type="submit">Try these again</button>
       <button class="btn" type="submit" style="background:#6b7280"

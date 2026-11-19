@@ -17,9 +17,15 @@
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="what" value="flags">
+    {# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+       needs -- `lists.css` and `lists.js` already load in the shell. #}
+    <div class="tw">
     <table class="mo">
+      <thead>
       <tr><th>Switch</th><th>What it does</th><th>Set in</th><th>On</th>
         <th>Fall back to .env</th></tr>
+      </thead>
+      <tbody>
       {% for name, note, state, source in flags %}
       <tr {% if name == kill_switch %}style="background:#FEF2F2"{% endif %}>
         <td><code>{{ name }}</code></td>
@@ -30,7 +36,9 @@
         <td><input type="checkbox" name="clear_{{ name }}"></td>
       </tr>
       {% endfor %}
+      </tbody>
     </table>
+    </div>
     <p class="mo-note"><strong>{{ kill_switch }}</strong> stops all
       outbound CRM email immediately. Nothing is lost: the queue keeps
       filling and the worker holds, so turning it off releases everything

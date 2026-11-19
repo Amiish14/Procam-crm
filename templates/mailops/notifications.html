@@ -51,11 +51,17 @@
   <button class="btn" type="submit">Filter</button>
 </form>
 
+{# UI sweep 19 Nov: `.tw` + a real `thead` is all the card view
+   needs -- `lists.css` and `lists.js` already load in the shell. #}
+<div class="tw">
 <table class="mo">
+  <thead>
   <tr>
     <th>When</th><th>To</th><th>Address used</th><th>About</th>
     <th>What</th><th>Status</th><th>Why it did not go</th><th></th>
   </tr>
+  </thead>
+  <tbody>
   {% for r in rows %}
   <tr>
     <td style="white-space:nowrap">{{ r.created_at|string|truncate(16, True, '') }}</td>
@@ -100,5 +106,7 @@
   <tr><td colspan="8" style="text-align:center;padding:30px"
           class="muted">Nothing to show.</td></tr>
   {% endfor %}
+  </tbody>
 </table>
+</div>
 {% endblock %}
