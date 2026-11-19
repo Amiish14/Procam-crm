@@ -55,6 +55,21 @@ a:hover{color:var(--p-red)}
 .crm-top nav a.on{background:var(--p-red-soft);color:var(--p-red)}
 .crm-top .spacer{margin-left:auto;flex-shrink:0}
 
+/* ── The bar on a narrow screen. UI sweep 19 Nov item 3 ───────────
+   On a DESKTOP the <details> and its panel do not draw: the nav and
+   the toolbar are flex children of the bar, as they always were. */
+.crm-more,.crm-more-panel{display:contents}
+.crm-more > summary{display:none}
+/* A browser without `display:contents` would stack the two in a block
+   and lose the spacer's `margin-left:auto`, so it gets the bar as a
+   wrapping row instead -- taller, never broken. */
+@supports not (display:contents){
+  .crm-more{display:flex;align-items:center;gap:var(--s-4);
+    flex:1 1 auto;min-width:0}
+  .crm-more-panel{display:flex;align-items:center;gap:var(--s-4);
+    flex:1 1 auto;min-width:0}
+}
+
 .crm-wrap{max-width:1440px;margin:0 auto;padding:var(--s-6) var(--s-8) 0}
 
 /* ── Page header ─────────────────────────────────────────────────── */
@@ -386,7 +401,38 @@ dialog::backdrop{background:rgba(10,11,15,.42);backdrop-filter:blur(2px)}
 @media (max-width:820px){
   .crm-wrap{padding:var(--s-4) var(--s-4) 0}
   .crm-top{padding:0 var(--s-4)}
-  .crm-top nav{display:none}
+  /* `nav{display:none}` used to live here. It stopped the bar
+     overflowing and took every section away with it: on a phone the
+     only way to Quotes or RFQs was to know the URL. The nav is in the
+     menu now, with the four toolbar buttons that were overflowing. */
+  .crm-more{display:block;margin-left:auto;position:relative}
+  .crm-more > summary{
+    display:inline-flex;align-items:center;gap:6px;
+    min-height:44px;padding:0 12px;border-radius:var(--rd);
+    border:1px solid var(--p-border-strong);background:var(--p-surface);
+    color:var(--p-ink);font-size:13px;font-weight:600;
+    white-space:nowrap;cursor:pointer;list-style:none}
+  .crm-more > summary::-webkit-details-marker{display:none}
+  .crm-more > summary::marker{content:''}
+  .crm-more[open] > summary{border-color:var(--p-red);color:var(--p-red)}
+  .crm-more-panel{
+    display:block;position:absolute;right:0;top:calc(100% + 6px);
+    width:min(290px,calc(100vw - 24px));max-height:calc(100vh - 80px);
+    overflow-y:auto;background:var(--p-surface);
+    border:1px solid var(--p-border);border-radius:var(--rd-md);
+    box-shadow:0 12px 32px rgba(11,13,18,.16);padding:6px;z-index:60}
+  .crm-more-panel nav{display:block;overflow:visible}
+  .crm-more-panel nav a,
+  .crm-more-panel .toolbar a{
+    display:flex;align-items:center;min-height:44px;
+    padding:0 10px;border-radius:var(--rd);font-size:14px}
+  /* The toolbar keeps its buttons' words and loses its `margin-left:
+     auto`, which only means anything in a row. */
+  .crm-more-panel .toolbar{
+    display:block;margin-left:0;margin-top:6px;padding-top:6px;
+    border-top:1px solid var(--p-divider)}
+  .crm-more-panel .toolbar .btn{width:100%;justify-content:flex-start;
+    height:auto}
   .hero{align-items:flex-start;flex-direction:column}
   .row2{grid-template-columns:1fr}
 }

@@ -10,6 +10,25 @@
      if feature_for('FEATURE_CRM2') else '/app' }}">
     <img src="https://www.procamlogistics.com/public/frontend/assets/img/logo.png" alt="Procam"> CRM
   </a>
+  {# UI sweep 19 Nov item 3. Everything but the brand lives inside one
+     <details>, so a phone gets a single Menu button instead of a bar
+     505px wide in a 441px screen with "Back to CRM" cut off its end.
+
+     On a desktop the <details> and its panel are `display:contents`,
+     so the nav and the toolbar are laid out as direct children of the
+     bar exactly as they were -- the desktop bar is not changed, it
+     just has an ancestor that does not draw.
+
+     ONE COPY OF EVERY LINK. A phone menu built by duplicating the
+     markup would be a second list to keep in step with the
+     permissions, and the first thing to drift. #}
+  <details class="crm-more">
+    <summary class="crm-more-btn" aria-label="Sections and tools">
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round"
+           aria-hidden="true"><path d="M3 6h18"/><path d="M3 12h18"/>
+        <path d="M3 18h18"/></svg>Menu</summary>
+    <div class="crm-more-panel">
   <nav aria-label="Sections">
     {# First, because it is the landing page. #}
     {% if feature_for('FEATURE_CRM2') %}
@@ -87,6 +106,8 @@
     <a class="btn tiny ghost" href="{{ url_prefix }}/help">Help</a>
     <a class="btn tiny" href="{{ url_prefix }}/app">Back to CRM</a>
   </div>
+    </div>
+  </details>
 </header>
 
 {# Procam AI is available on every screen, §6.1 #}
