@@ -336,10 +336,31 @@ dialog::backdrop{background:rgba(10,11,15,.42);backdrop-filter:blur(2px)}
   text-transform:uppercase;color:var(--p-text-3);margin:var(--s-5) 0 var(--s-2)}
 .drop{border:1px dashed var(--p-border-strong);border-radius:var(--rd-md);
   padding:var(--s-10) var(--s-5);text-align:center;background:var(--p-surface);
+  position:relative;
   cursor:pointer;transition:border-color var(--dur-out),
     background var(--dur-out)}
 .drop:hover,.drop.dark,.drop.dragover{border-color:var(--p-red);
   background:var(--p-red-soft)}
+/* THE NATIVE FILE CONTROL IS NEVER DRAWN. UI sweep 19 Nov item 1.
+   `input,select,textarea` above gives every input a border, 11px of
+   padding and a fixed 34px height -- 42px on a phone -- and
+   `input[type=file]` is an input, so Chrome's own "Choose File" button
+   was being painted inside the drop zone: two controls for one action,
+   and on the back-of-card label (14px of padding) it sat on top of the
+   two lines of text.
+
+   The input STAYS IN THE DOM and stays inside the <label>, which is
+   what makes the whole zone clickable -- so this is clipped rather
+   than `display:none`: a clipped input still takes keyboard focus, and
+   `:focus-within` below puts the ring on the zone where it can be
+   seen. `display:none` would take the scanner away from anybody
+   working down the page with a keyboard. */
+.drop input[type="file"]{
+  position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);
+  white-space:nowrap}
+.drop:focus-within{border-color:var(--p-red);
+  box-shadow:0 0 0 3px var(--brand-ring,rgba(199,36,53,.22))}
 .bar{height:8px;background:var(--p-surface-3);border-radius:var(--rd-full);
   overflow:hidden}
 .bar > span{display:block;height:100%;background:var(--p-red);
