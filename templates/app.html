@@ -2465,10 +2465,23 @@ async function openContact(id, preloaded){
    change audited, the duplicate check on save ("Save anyway" keeps a
    second record on purpose), and a placeholder account refused. */
 const CE_PLACEHOLDERS = ['new lead','unknown','n/a','na','email','info','test','to review','tbd','none','-'];
-let ceState = {id: null, accountId: null, accountName: ''};
+/* `companyAtOpen` is the text the company box was FILLED WITH when the
+   form opened, and `picked` says whether somebody chose an account from
+   the list during this edit. Together they answer the only question the
+   company guard should ask: has the company been CHANGED?
+
+   UAT 19 Nov: contact #443 carries the text "HACKLIN LOGISTICS LTD" and
+   no linked account, so the box opened full and `accountId` was null —
+   and the guard refused every save, including one that only touched the
+   phone. A contact whose company nobody has linked yet is most of this
+   book; being unable to correct a phone number until somebody finds the
+   right account is a worse fault than the untidiness it was protecting
+   against. */
+let ceState = {id: null, accountId: null, accountName: '',
+               companyAtOpen: '', picked: false};
 async function openContactEdit(c){
   ceState = {id: c.id, accountId: c.account_id || c.company_id || null,
-             accountName: c.company || ''};
+             accountName: c.company || '', companyAtOpen: '', picked: false};
   let mob = g('ceMob');
   if (mob) mob.remove();
   mob = document.createElement('div');
@@ -2503,6 +2516,9 @@ async function openContactEdit(c){
     + '<button class="btn btn-red" id="ceSave" onclick="saveContactEdit(false)">Save</button></div></div>';
   document.body.appendChild(mob);
   mob.style.display = 'flex';
+  // What the box actually holds now — blank for a placeholder company,
+  // which is how a placeholder still gets asked about.
+  ceState.companyAtOpen = (g('ceCo').value || '').trim();
   try {
     const v = await api('/api/contacts/search/suggest?field=vertical&all=1');
     const sel = g('ceVt');
@@ -2522,8 +2538,18 @@ async function openContactEdit(c){
 let _ceTimer = null;
 function ceSearch(){
   clearTimeout(_ceTimer);
-  ceState.accountId = null;
-  g('ceCoHint').textContent = 'Pick an account from the list to link it.';
+  ceState.picked = false;
+  const now = (g('ceCo').value || '').trim();
+  if (now === ceState.companyAtOpen) {
+    // Typed and then put back exactly as it was: nothing has changed,
+    // so nothing is asked for and the existing link stands.
+    g('ceCoHint').textContent = ceState.accountId
+      ? 'Unchanged — still linked to account #' + ceState.accountId + '.'
+      : 'Unchanged.';
+  } else {
+    ceState.accountId = null;
+    g('ceCoHint').textContent = 'Pick an account from the list to link it.';
+  }
   _ceTimer = setTimeout(async () => {
     const q = (g('ceCo').value || '').trim();
     const menu = g('ceCoMenu');
@@ -2545,7 +2571,7 @@ function ceSearch(){
   }, 200);
 }
 function cePick(id, name){
-  ceState.accountId = id; ceState.accountName = name;
+  ceState.accountId = id; ceState.accountName = name; ceState.picked = true;
   g('ceCo').value = name;
   g('ceCoMenu').style.display = 'none';
   g('ceCoHint').textContent = 'Will be linked to account #' + id + '.';
@@ -2553,8 +2579,26 @@ function cePick(id, name){
 async function saveContactEdit(saveAnyway){
   const err = g('ceErr'); err.style.display = 'none';
   const typed = (g('ceCo').value || '').trim();
-  if (typed && !ceState.accountId) {
-    err.textContent = 'Pick the company from the list so the contact is linked to its account.';
+  // THE COMPANY IS ONLY ASKED ABOUT WHEN IT HAS BEEN CHANGED.
+  //
+  // An account is how a contact is found afterwards, so a company typed
+  // as free text is worth refusing -- but only when somebody is typing
+  // it. Holding a phone-number correction hostage to a link nobody has
+  // made yet refuses the edit that was actually asked for, and #443 is
+  // one of hundreds in that state.
+  const companyChanged = typed !== ceState.companyAtOpen;
+  if (companyChanged && typed && !ceState.accountId) {
+    err.textContent = 'Pick the company from the list so the contact is '
+      + 'linked to its account — or put it back as it was and save the '
+      + 'rest.';
+    err.style.display = 'block'; return;
+  }
+  if (companyChanged && !typed) {
+    // Emptying the box is not a way of unlinking: the save carries no
+    // company at all, so the clearing would be silently ignored. Said
+    // out loud rather than swallowed.
+    err.textContent = 'Clearing the company here does not unlink the '
+      + 'account. Pick the right company, or put it back as it was.';
     err.style.display = 'block'; return;
   }
   const body = {
@@ -2564,7 +2608,10 @@ async function saveContactEdit(saveAnyway){
     state: g('ceSt').value.trim(), city: g('ceCity').value.trim(),
     vertical: g('ceVt').value, save_anyway: !!saveAnyway,
   };
-  if (ceState.accountId) body.company_id = ceState.accountId;
+  // Sent only where somebody picked one just now. An untouched company
+  // sends nothing at all, so the server leaves the text and the link
+  // exactly as they were -- which is what "untouched" has to mean.
+  if (ceState.picked && ceState.accountId) body.company_id = ceState.accountId;
   const r = await api('/api/contacts/' + ceState.id, {method: 'PUT', body: JSON.stringify(body)});
   if (r && r.ok) {
     g('ceMob').remove();
