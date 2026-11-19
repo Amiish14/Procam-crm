@@ -383,6 +383,111 @@ def classify(wanted=None):
     return rows, len(mails)
 
 
+def trace(number):
+    """Everywhere one number appears, and who sent the mail it was in.
+
+    UAT 19 Nov item 7: Jenna Nirho is on a `.fi` address with
+    +91-7573976297, and the question is simply whether that number is
+    ours. This answers it without classifying anything -- one number,
+    every place it turns up, so a person can decide.
+    """
+    from app import Contact, Lead
+    from app.services import own_people
+
+    want = digits(number)
+    if not want:
+        sys.exit(f'  [STOP] {number!r} is not ten digits or more.')
+    ours_domains = own_people.own_domains()
+
+    print(f'══ {want} ══')
+
+    held = []
+    for kind, query in (('contact', Contact.query),
+                        ('lead', Lead.query)):
+        for row in query.all():
+            for field, written, said in _held_fields(row):
+                if said == want:
+                    held.append((kind, row, field, written))
+    print(f'\n── on {len(held)} record(s) ──')
+    for kind, row, field, written in held:
+        who = getattr(row, 'name', None) or getattr(row, 'pic', None) or ''
+        print(f'  {kind:<8} #{row.id:<6} {who[:24]:<24} '
+              f'{(getattr(row, "company", "") or "—")[:22]:<22} '
+              f'{field}={written}')
+
+    staff = _employee_numbers()
+    print(f'\n── on a Procam user\'s record ──')
+    print(f'  {staff[want]}' if want in staff
+          else '  no — no employee record carries it')
+
+    mails = _mail_rows()
+    print(f'\n── in the part of a body its sender wrote '
+          f'({len(mails)} read) ──')
+    seen = defaultdict(int)
+    for sender, body in mails:
+        said = str(sender or '').strip().lower()
+        if '@' not in said or not body:
+            continue
+        if want in re.sub(r'\D', '', unquoted(body)):
+            seen[said.rsplit('@', 1)[1].strip('>,; ')] += 1
+    if not seen:
+        print('  nowhere — no sender\'s own words carry it')
+    for domain, n in sorted(seen.items(), key=lambda kv: -kv[1]):
+        mine = any(domain == d or domain.endswith('.' + d)
+                   for d in ours_domains)
+        print(f'  {n:>4} mail(s) from {domain}'
+              + ('   <-- our own domain' if mine else ''))
+
+    quoted = defaultdict(int)
+    for sender, body in mails:
+        said = str(sender or '').strip().lower()
+        if '@' not in said or not body:
+            continue
+        whole = re.sub(r'\D', '', str(body))
+        if want in whole and want not in re.sub(r'\D', '',
+                                                unquoted(body)):
+            quoted[said.rsplit('@', 1)[1].strip('>,; ')] += 1
+    if quoted:
+        print(f'\n── and quoted under a reply, which is NOT evidence ──')
+        for domain, n in sorted(quoted.items(), key=lambda kv: -kv[1]):
+            print(f'  {n:>4} mail(s) from {domain}')
+
+    print(f'\nIf it is ours:\n'
+          f'  --mark-ours {want} --actor DIR12010\n'
+          f'which adds it to data/own_numbers.txt so the ingest stops '
+          f'capturing it.\nIt clears nothing: run the classifier for '
+          f'that.')
+
+
+def mark_ours(numbers, *, actor):
+    """Add numbers to the block list by hand, audited.
+
+    For the case the evidence cannot settle and a person can -- item 7.
+    It does NOT clear the number off anybody: that is `--apply`, which
+    is audited per field and undoable per batch.
+    """
+    from app import db
+    from app.services import audit, own_numbers
+
+    said = [digits(n) for n in numbers]
+    said = [n for n in said if n]
+    if not said:
+        sys.exit('  [STOP] --mark-ours needs a number of ten digits or more.')
+    added = own_numbers.add(said, note=f'marked by {actor}')
+    for number in added:
+        audit.record('phone.marked_ours', 'phone', None,
+                     old={}, new={'phone': number},
+                     actor=actor,
+                     reason=f'{number} marked as a Procam number by hand',
+                     commit=False)
+    db.session.commit()
+    print(f'{len(added)} number(s) added to data/own_numbers.txt'
+          + (f': {", ".join(added)}' if added else ' — already there'))
+    print('Nothing was cleared off any contact. Run the classifier to '
+          'do that.')
+    return added
+
+
 def write_csv(path, rows, fields):
     path = os.path.abspath(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -509,6 +614,11 @@ def main():
     ap.add_argument('--undo', action='store_true')
     ap.add_argument('--batch')
     ap.add_argument('--actor', help='employee id; required with --apply')
+    ap.add_argument('--trace', metavar='NUMBER',
+                    help='show everywhere one number appears, and stop')
+    ap.add_argument('--mark-ours', dest='mark_ours', nargs='+',
+                    metavar='NUMBER',
+                    help='add numbers to data/own_numbers.txt by hand')
     a = ap.parse_args()
 
     os.environ.setdefault('SECRET_KEY', 'read-only')
@@ -516,6 +626,14 @@ def main():
     from app import app as flask_app
 
     with flask_app.app_context():
+        if a.trace:
+            trace(a.trace)
+            return
+        if a.mark_ours:
+            if not a.actor:
+                sys.exit('  [STOP] --mark-ours needs --actor.')
+            mark_ours(a.mark_ours, actor=a.actor)
+            return
         if a.undo:
             if not (a.batch and a.actor):
                 sys.exit('  [STOP] --undo needs --batch and --actor.')

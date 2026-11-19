@@ -130,17 +130,58 @@ def from_domain(domain):
     return CC_TLD.get(tld), tld
 
 
-def phones_of(row):
-    out = []
+def phones_of(row, *, drop_ours=True):
+    """(numbers worth reading, numbers that are ours).
+
+    UAT 19 Nov item 6. A number of OURS on a customer's record is not
+    evidence about where that customer sits -- it is our own signature,
+    captured off a forwarded enquiry. Counting it made Ville Ekholm a
+    conflict (a .fi domain against an Indian mobile) when the mobile was
+    never his: with it set aside, the domain is the only evidence and he
+    is in Finland.
+
+    `data/own_numbers.txt` is the same list the ingest reads, written by
+    scripts/2026_11_19_shared_phone_evidence.py.
+    """
+    out, ours = [], []
+    try:
+        from app.services import own_numbers
+        mine = own_numbers.is_ours
+    except Exception:                                      # noqa: BLE001
+        def mine(_v):
+            return False
     for attr in ('phone', 'phone2', 'mobile', 'alt_phone'):
         said = getattr(row, attr, None)
-        if said:
+        if not said:
+            continue
+        if drop_ours and mine(said):
+            ours.append(str(said))
+            continue
+        out.append(str(said))
+    return out, ours
+
+
+def emails_of(row):
+    """Every address on the record. A lead carries two."""
+    out = []
+    for attr in ('email', 'email2'):
+        said = getattr(row, attr, None)
+        if said and '@' in str(said):
             out.append(str(said))
     return out
 
 
-def evidence(contact):
-    """(country, how, detail) or (None, '', detail) for one contact.
+def name_of(row):
+    """The person's name, whichever table this row came from."""
+    return (getattr(row, 'name', None)
+            or getattr(row, 'pic', None) or '')
+
+
+def evidence(row):
+    """(country, how, detail) or (None, '', detail) for one record.
+
+    Works on a contact or on a lead: both carry addresses and numbers,
+    and `name_of` knows which column holds the person.
 
     Returns None where there is nothing, and also where the two kinds
     of evidence name two different countries -- a disagreement is not a
@@ -148,15 +189,22 @@ def evidence(contact):
     """
     from app.services.people_search import country_from_phone
 
-    domain = domain_of(contact.email)
-    by_domain, tld = from_domain(domain)
-    numbers = phones_of(contact)
+    by_domain, tld, domain = None, '', ''
+    for address in emails_of(row):
+        said = domain_of(address)
+        country, this_tld = from_domain(said)
+        if country:
+            by_domain, tld, domain = country, this_tld, said
+            break
+        domain = domain or said
+    numbers, ours = phones_of(row)
     by_phone = country_from_phone(*numbers) or None
     said = {c for c in (by_domain, by_phone) if c}
     detail = ' / '.join(
         [f'domain {domain} (.{tld})' if by_domain else
          (f'domain {domain}' if domain else 'no email')]
-        + [f'phone {by_phone}' if by_phone else 'no international phone'])
+        + [f'phone {by_phone}' if by_phone else 'no international phone']
+        + ([f'{len(ours)} of our own number(s) set aside'] if ours else []))
     if len(said) > 1:
         return None, 'disagree', (
             f'domain says {by_domain}, phone says {by_phone} — left alone')
@@ -187,44 +235,63 @@ def _ours(number):
     return ''
 
 
-def survey(every=False):
-    from app import Contact
+def _sources():
+    """(label, query) for every table that files a country on a person.
 
+    UAT 19 Nov item 5: the lead PICs were missing. Mikko Lindroos is the
+    person on lead #12168 on a `.fi` address and was filed as India --
+    and no amount of reading the contacts table was ever going to find
+    him, because he is not in it.
+    """
+    from app import Contact, Lead
+    yield 'contact', Contact.query
+    yield 'lead', (Lead.query
+                   .filter(Lead.is_archived.isnot(True),
+                           Lead.junk_deleted.isnot(True),
+                           Lead.merged_into_id.is_(None),
+                           Lead.pic.isnot(None), Lead.pic != ''))
+
+
+def survey(every=False):
     rows, skipped, counted = [], defaultdict(int), 0
-    for c in Contact.query.all():
-        counted += 1
-        filed = (c.country or '').strip()
-        is_india = filed.lower() in INDIA
-        country, how, detail = evidence(c)
-        if how == 'disagree':
-            skipped['the two kinds of evidence disagree'] += 1
-            if not every:
+    for kind, query in _sources():
+        for row in query.all():
+            counted += 1
+            filed = (row.country or '').strip()
+            is_india = filed.lower() in INDIA
+            country, how, detail = evidence(row)
+            if how == 'disagree':
+                skipped['the two kinds of evidence disagree'] += 1
+                if not every:
+                    continue
+            if country is None and how != 'disagree':
+                skipped['no evidence either way'] += 1
                 continue
-        if country is None and how != 'disagree':
-            skipped['no evidence either way'] += 1
-            continue
-        if not every and not is_india:
-            skipped['filed as something other than India'] += 1
-            continue
-        if country and filed.lower() == country.lower():
-            skipped['already agrees'] += 1
-            continue
-        rows.append({
-            'contact_id': c.id,
-            'name': c.name or '',
-            'company': getattr(c, 'company', '') or '',
-            'email': c.email or '',
-            'phones': '; '.join(phones_of(c)),
-            'country_on_record': filed or '(blank)',
-            'country_the_evidence_suggests': country or '(conflicting)',
-            'evidence': how or 'conflicting',
-            'detail': detail,
-            'would_change': 'yes' if (country and is_india) else 'no',
-            '_row': c,
-            '_country': country,
-        })
+            if not every and not is_india:
+                skipped['filed as something other than India'] += 1
+                continue
+            if country and filed.lower() == country.lower():
+                skipped['already agrees'] += 1
+                continue
+            rows.append({
+                'record': kind,
+                'id': row.id,
+                'name': name_of(row),
+                'company': (getattr(row, 'company', '') or ''),
+                'email': '; '.join(emails_of(row)),
+                'phones': '; '.join(phones_of(row)[0]),
+                'country_on_record': filed or '(blank)',
+                'country_the_evidence_suggests': country or '(conflicting)',
+                'evidence': how or 'conflicting',
+                'detail': detail,
+                'would_change': 'yes' if (country and is_india) else 'no',
+                '_row': row,
+                '_kind': kind,
+                '_country': country,
+            })
     rows.sort(key=lambda r: (r['country_the_evidence_suggests'],
-                             r['company'].lower(), r['name'].lower()))
+                             r['record'], r['company'].lower(),
+                             r['name'].lower()))
     return rows, skipped, counted
 
 
@@ -234,7 +301,7 @@ def shared_phones():
 
     by_number = defaultdict(list)
     for c in Contact.query.all():
-        for number in phones_of(c):
+        for number in phones_of(c, drop_ours=False)[0]:
             digits = re.sub(r'\D', '', number)[-10:]
             if len(digits) == 10:
                 by_number[digits].append((c, number))
@@ -294,14 +361,15 @@ def apply(rows, *, batch, actor):
         for r in rows:
             if r['would_change'] != 'yes':
                 continue
-            row, want = r['_row'], r['_country']
+            row, want, kind = r['_row'], r['_country'], r['_kind']
             was = (row.country or '').strip()
             if was.lower() not in INDIA:
                 continue        # edited since the survey
             row.country = want
-            audit.record(ACTION, 'contact', row.id,
+            audit.record(ACTION, kind, row.id,
                          old={'country': was},
-                         new={'country': want, 'batch': batch},
+                         new={'country': want, 'batch': batch,
+                              'record': kind},
                          actor=actor,
                          reason=(f'batch {batch}: {r["evidence"]} says '
                                  f'{want} — {r["detail"]}'),
@@ -317,10 +385,11 @@ def apply(rows, *, batch, actor):
 
 
 def undo(batch, actor):
-    from app import Contact, db
+    from app import Contact, Lead, db
     from app.models.audit import AuditEvent
     from app.services import audit
 
+    models = {'contact': Contact, 'lead': Lead}
     back, left = 0, 0
     try:
         for ev in (AuditEvent.query.filter(AuditEvent.action == ACTION)
@@ -328,7 +397,13 @@ def undo(batch, actor):
             new = ev.new_value if isinstance(ev.new_value, dict) else {}
             if str(new.get('batch') or '') != batch:
                 continue
-            row = db.session.get(Contact, int(ev.entity_id))
+            # `record` names the table. Older rows carry none, and were
+            # all contacts -- the lead half did not exist then.
+            model = models.get(str(new.get('record') or ev.entity_type
+                                   or 'contact'))
+            if model is None:
+                continue
+            row = db.session.get(model, int(ev.entity_id))
             if row is None:
                 continue
             if (row.country or '').strip() != (new.get('country') or ''):
@@ -337,9 +412,11 @@ def undo(batch, actor):
             was = (ev.old_value or {}).get('country') \
                 if isinstance(ev.old_value, dict) else None
             row.country = was
-            audit.record(UNDONE, 'contact', row.id,
+            audit.record(UNDONE, ev.entity_type, row.id,
                          old={'country': new.get('country')},
-                         new={'country': was, 'batch': batch}, actor=actor,
+                         new={'country': was, 'batch': batch,
+                              'record': new.get('record') or 'contact'},
+                         actor=actor,
                          reason=f'undo of batch {batch}', commit=False)
             back += 1
         db.session.commit()
@@ -379,12 +456,12 @@ def main():
 
         rows, skipped, counted = survey(every=a.all)
         would = [r for r in rows if r['would_change'] == 'yes']
-        fields = ['contact_id', 'name', 'company', 'email', 'phones',
+        fields = ['record', 'id', 'name', 'company', 'email', 'phones',
                   'country_on_record', 'country_the_evidence_suggests',
                   'evidence', 'detail', 'would_change']
         path = write_csv(a.out, rows, fields)
 
-        print(f'{counted} contacts read.')
+        print(f'{counted} record(s) read — contacts and lead PICs.')
         for why, n in sorted(skipped.items(), key=lambda kv: -kv[1]):
             print(f'  {n:>6}  {why}')
         print(f'  {len(rows):>6}  listed, of which {len(would)} '
