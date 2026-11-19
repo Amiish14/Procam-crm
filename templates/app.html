@@ -2442,7 +2442,149 @@ async function openContact(id, preloaded){
     + '</div>';
   host.insertBefore(box, host.firstChild);
   box.scrollIntoView({block: 'nearest'});
+  // UAT 19 Nov: Edit, beside Close. The server decides the right.
+  const closeBtn = [...box.querySelectorAll('button')].find(b => b.textContent.trim() === 'Close');
+  if (closeBtn) {
+    const ed = document.createElement('button');
+    ed.className = 'btn btn-red btn-sm'; ed.textContent = 'Edit';
+    ed.style.marginRight = '6px';
+    ed.onclick = () => openContactEdit(c);
+    closeBtn.parentNode.insertBefore(ed, closeBtn);
+  }
   contactCalls(c, box);
+  if (location.hash === '#edit') {
+    history.replaceState(null, '', location.pathname + location.search);
+    openContactEdit(c);
+  }
+}
+
+/* ── UAT 19 Nov: edit a contact ─────────────────────────────────────
+   Name, designation, company (an existing account, searched), email,
+   phone and mobile, country, state, city and the desk. Saved through
+   PUT /api/contacts/<id>: the same right as editing a lead, every
+   change audited, the duplicate check on save ("Save anyway" keeps a
+   second record on purpose), and a placeholder account refused. */
+const CE_PLACEHOLDERS = ['new lead','unknown','n/a','na','email','info','test','to review','tbd','none','-'];
+let ceState = {id: null, accountId: null, accountName: ''};
+async function openContactEdit(c){
+  ceState = {id: c.id, accountId: c.account_id || c.company_id || null,
+             accountName: c.company || ''};
+  let mob = g('ceMob');
+  if (mob) mob.remove();
+  mob = document.createElement('div');
+  mob.className = 'mob'; mob.id = 'ceMob';
+  mob.onclick = ev => { if (ev.target === mob) mob.remove(); };
+  const f = (id, label, value, extra) => '<div class="fmg"><label class="fml" for="'+id+'">'+label+'</label>'
+    + '<input class="fmc" id="'+id+'" value="'+e(value||'')+'" '+(extra||'')+'></div>';
+  const placeholderCo = CE_PLACEHOLDERS.includes(String(c.company||'').trim().toLowerCase());
+  mob.innerHTML = '<div class="mod mod-sm" onclick="event.stopPropagation()">'
+    + '<div class="mhd"><div><div class="m-ttl">Edit contact</div>'
+    + '<div style="font-size:12px;color:var(--text-3)">#'+c.id+' · '+e(c.name||'')+'</div></div>'
+    + '<button class="mx" onclick="g(\'ceMob\').remove()">✕</button></div>'
+    + '<div class="mbdy">'
+    + '<div class="fmr">'+f('ceName','Name *',c.name)+f('ceDes','Designation',c.designation)+'</div>'
+    + '<div class="fmg" style="position:relative"><label class="fml" for="ceCo">Company — pick the account</label>'
+    + '<input class="fmc" id="ceCo" autocomplete="off" value="'+e(placeholderCo ? '' : (c.company||''))+'" '
+    +   'placeholder="Type 2+ letters of the company" oninput="ceSearch()">'
+    + '<div id="ceCoHint" style="font-size:11.5px;color:var(--text-3);margin-top:3px">'
+    +   (placeholderCo ? '"'+e(c.company)+'" is a placeholder — pick the real company.' :
+        (ceState.accountId ? 'Linked to account #'+ceState.accountId+'.' : 'Not linked to an account yet.')) + '</div>'
+    + '<div id="ceCoMenu" class="fs-menu" style="display:none;position:absolute;left:0;right:0;z-index:50;background:var(--bg-surface);border:1px solid var(--line-1);border-radius:7px;max-height:220px;overflow:auto"></div></div>'
+    + '<div class="fmr">'+f('ceEm','Email',c.email,'type="email"')+f('ceMobN','Mobile',c.mobile)+'</div>'
+    + '<div class="fmr">'+f('cePh','Phone',c.phone)+f('ceCtry','Country',c.country)+'</div>'
+    + '<div class="fmr">'+f('ceSt','State',c.state)+f('ceCity','City',c.city)+'</div>'
+    + '<div class="fmg"><label class="fml" for="ceVt">Vertical — the Procam desk</label>'
+    + '<select class="fmc" id="ceVt"><option value="">— not set —</option></select></div>'
+    + '<div id="ceDupe" style="display:none"></div>'
+    + '<div id="ceErr" style="display:none;color:var(--bad,#b42318);font-size:12.5px;margin-top:6px"></div>'
+    + '</div>'
+    + '<div class="mft" style="display:flex;justify-content:flex-end;gap:8px;padding:12px 20px">'
+    + '<button class="btn btn-ghost" onclick="g(\'ceMob\').remove()">Cancel</button>'
+    + '<button class="btn btn-red" id="ceSave" onclick="saveContactEdit(false)">Save</button></div></div>';
+  document.body.appendChild(mob);
+  mob.style.display = 'flex';
+  try {
+    const v = await api('/api/contacts/search/suggest?field=vertical&all=1');
+    const sel = g('ceVt');
+    (v.values || []).forEach(name => {
+      const o = document.createElement('option'); o.value = name; o.textContent = name;
+      sel.appendChild(o);
+    });
+    if (c.vertical) {
+      if (![...sel.options].some(o => o.value === c.vertical)) {
+        const o = document.createElement('option'); o.value = c.vertical; o.textContent = c.vertical;
+        sel.appendChild(o);
+      }
+      sel.value = c.vertical;
+    }
+  } catch (_) {}
+}
+let _ceTimer = null;
+function ceSearch(){
+  clearTimeout(_ceTimer);
+  ceState.accountId = null;
+  g('ceCoHint').textContent = 'Pick an account from the list to link it.';
+  _ceTimer = setTimeout(async () => {
+    const q = (g('ceCo').value || '').trim();
+    const menu = g('ceCoMenu');
+    if (q.length < 2) { menu.style.display = 'none'; return; }
+    let rows = await api('/api/companies?q=' + encodeURIComponent(q));
+    rows = (Array.isArray(rows) ? rows : [])
+      .filter(a => !CE_PLACEHOLDERS.includes(String(a.name||'').trim().toLowerCase()))
+      .sort((a, b) => {
+        const s = x => String(x.name||'').toLowerCase().startsWith(q.toLowerCase()) ? 0 : 1;
+        return s(a) - s(b) || String(a.name).localeCompare(String(b.name));
+      }).slice(0, 12);
+    menu.innerHTML = rows.length
+      ? rows.map(a => '<div style="padding:7px 10px;cursor:pointer;font-size:13px" '
+          + 'onmousedown="cePick('+a.id+',this.dataset.n)" data-n="'+e(a.name)+'">'
+          + e(a.name) + (a.city ? ' <span style="color:var(--text-3)">· '+e(a.city)+'</span>' : '')
+          + '</div>').join('')
+      : '<div style="padding:7px 10px;font-size:12.5px;color:var(--text-3)">No account by that name. Create it under Accounts first, then pick it here.</div>';
+    menu.style.display = 'block';
+  }, 200);
+}
+function cePick(id, name){
+  ceState.accountId = id; ceState.accountName = name;
+  g('ceCo').value = name;
+  g('ceCoMenu').style.display = 'none';
+  g('ceCoHint').textContent = 'Will be linked to account #' + id + '.';
+}
+async function saveContactEdit(saveAnyway){
+  const err = g('ceErr'); err.style.display = 'none';
+  const typed = (g('ceCo').value || '').trim();
+  if (typed && !ceState.accountId) {
+    err.textContent = 'Pick the company from the list so the contact is linked to its account.';
+    err.style.display = 'block'; return;
+  }
+  const body = {
+    name: g('ceName').value.trim(), designation: g('ceDes').value.trim(),
+    email: g('ceEm').value.trim(), mobile: g('ceMobN').value.trim(),
+    phone: g('cePh').value.trim(), country: g('ceCtry').value.trim(),
+    state: g('ceSt').value.trim(), city: g('ceCity').value.trim(),
+    vertical: g('ceVt').value, save_anyway: !!saveAnyway,
+  };
+  if (ceState.accountId) body.company_id = ceState.accountId;
+  const r = await api('/api/contacts/' + ceState.id, {method: 'PUT', body: JSON.stringify(body)});
+  if (r && r.ok) {
+    g('ceMob').remove();
+    toast('Contact saved ✓', 'ok');
+    openContact(ceState.id);
+    return;
+  }
+  if (r && r.needs === 'duplicate_check') {
+    const host = g('ceDupe');
+    host.style.display = 'block';
+    host.innerHTML = '<div style="margin-top:10px;border:1px solid var(--line-1);border-radius:8px;padding:10px 12px;background:var(--bg-surface-2)">'
+      + '<div style="font-weight:600;font-size:13px;margin-bottom:6px">' + e(r.error) + '</div>'
+      + (r.duplicates || []).map(d => '<div style="font-size:12.5px;padding:4px 0;border-top:1px solid var(--line-2)">'
+          + (d.person_url ? '<a href="' + e(crmUrl(d.person_url)) + '" target="_blank">' + e(d.person || '') + '</a>' : e(d.person || ''))
+          + ' <span style="color:var(--text-3)">' + e(d.source_note || d.label || '') + ' · matched on ' + e(d.why || '') + '</span></div>').join('')
+      + '<button class="btn btn-red" style="margin-top:8px;font-size:12px" onclick="saveContactEdit(true)">Save anyway — this is a different person</button></div>';
+    return;
+  }
+  err.textContent = (r && r.error) || 'The contact was not saved.';
+  err.style.display = 'block';
 }
 
 /* CRM-UI-01: the contact card lists the calls logged with this person,

@@ -504,8 +504,9 @@ def _shape_contact(row, accounts):
         'country': country,
         'country_from': country_from,
         'location': location,
-        'vertical': (vertical_master.canonical(account.vertical)
-                     if account is not None else '') or '',
+        'vertical': (vertical_master.canonical(getattr(row, 'vertical', None))
+                     or (vertical_master.canonical(account.vertical)
+                         if account is not None else '') or ''),
         'industry': (row.industry or '')
                     or ((account.industry or '') if account else ''),
         'phones': phones,

@@ -304,12 +304,16 @@ function row(r){
     ? `<a href="${esc(PREFIX + where)}">${esc(r.person || '(no name)')}</a>`
     : esc(r.person || '(no name)');
   const sources = r.source_note || (r.sources || [r.label]).join(' · ');
+  // UAT 19 Nov: a contact can be edited straight from the results.
+  const edit = r.contact_id
+    ? ` · <a class="fs-edit" href="${esc(PREFIX + '/app?contact=' + r.contact_id + '#edit')}">Edit</a>`
+    : '';
   const country = esc(r.country || '—')
     + (r.country_from ? ` <span class="fs-src">(${esc(r.country_from)})</span>` : '');
   const cell = (n, body) => `<td data-label="${COLS[n]}">${body}</td>`;
   return `<tr>
     ${cell(0, `<div>${name}</div>`
-             + `<div class="fs-src">${esc(sources)}</div>`)}
+             + `<div class="fs-src">${esc(sources)}${edit}</div>`)}
     ${cell(1, esc(r.company || '—'))}
     ${cell(2, esc(r.designation || '—'))}
     ${cell(3, country)}

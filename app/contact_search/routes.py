@@ -78,6 +78,11 @@ def api_suggest():
     if field not in ('company', 'country', 'location', 'vertical',
                      'industry'):
         return jsonify(ok=False, error='No such field.'), 400
+    if field == 'vertical' and request.args.get('all'):
+        # The contact edit form: every Procam desk, not only those in use.
+        from app.services import vertical_master
+        return jsonify(ok=True, field=field,
+                       values=list(vertical_master.CANONICAL))
     return jsonify(ok=True, field=field,
                    values=people_search.suggest(
                        field, request.args.get('q') or ''))

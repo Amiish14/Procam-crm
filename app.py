@@ -1080,6 +1080,9 @@ class Contact(db.Model):
     #: go back to is a transcription, not a record.
     card_image_path       = db.Column(db.Text, nullable=True)
     decision_role         = db.Column(db.String(40), nullable=True)   # Decision Maker / Influencer / User / Procurement
+    #: The Procam desk this person deals with (UAT 19 Nov, contact edit).
+    #: Optional; when empty the search reads the account's vertical.
+    vertical              = db.Column(db.String(80), nullable=True)
 
     def to_dict(self):
         return {
@@ -1096,6 +1099,7 @@ class Contact(db.Model):
             'address': getattr(self, 'address', '') or '',
             'postal_code': getattr(self, 'postal_code', '') or '',
             'state': self.state or '',
+            'vertical': getattr(self, 'vertical', '') or '',
             # The card this person was read off, if they came from one.
             # The path is never sent to the browser — only whether
             # there is one, and the route that serves it.
@@ -4241,7 +4245,17 @@ def api_contact_card_image(cid):
 @app.route('/api/contacts/<int:cid>', methods=['PUT'])
 @require_auth
 def api_update_contact(cid):
+    """Edit a contact — UAT 19 Nov.
+
+    The same right as editing a lead: the owner, or anybody whose scope
+    reaches the owner. Every changed field is audited. The company is
+    an ACCOUNT picked from the list (`company_id`): the text follows the
+    account's name, and a placeholder account ("New Lead", "Unknown") is
+    refused. The duplicate check runs on save against everybody else,
+    and `save_anyway` keeps a second record on purpose.
+    """
     from app.access import scope as _scope
+    from app.services import audit as _audit
     ct = Contact.query.get_or_404(cid)
     sc = _scope.current()
     # Editing is for the contact's owner (or someone whose scope reaches
@@ -4249,17 +4263,68 @@ def api_update_contact(cid):
     # permission to change it.
     if not (sc.codes is None or sc.reaches(ct.assigned_to or '')):
         return jsonify({'error': 'Forbidden'}), 403
-    d = request.get_json()
-    for f in ('name','company','designation','industry','email','phone','mobile',
-              'country','city','website','linkedin','agent_type','notes','contact_type'):
-        if f in d: setattr(ct, f, d[f])
+    d = request.get_json() or {}
+    fields = ('name', 'company', 'designation', 'industry', 'email', 'phone',
+              'mobile', 'country', 'state', 'city', 'website', 'linkedin',
+              'agent_type', 'notes', 'contact_type', 'vertical')
+    before = {f: getattr(ct, f, None) for f in fields
+              + ('company_id', 'account_id', 'assigned_to')}
+
+    if 'name' in d and not str(d.get('name') or '').strip():
+        return jsonify({'error': 'A contact needs a name.'}), 400
+
+    account = None
+    if d.get('company_id'):
+        from app.services import account_match as _am
+        account = db.session.get(Company, int(d['company_id']))
+        if account is None:
+            return jsonify({'error': 'That account does not exist.'}), 400
+        why = _am.not_a_customer(account)
+        if why:
+            return jsonify({'error': f'{why} — pick the real company.'}), 400
+
+    if not d.get('save_anyway'):
+        try:
+            from app.services import people_search as _ps
+            dupes = [r for r in _ps.duplicates_of(
+                email=d.get('email', ct.email) or '',
+                phone=d.get('mobile') or d.get('phone') or ct.mobile or ct.phone or '',
+                name=d.get('name', ct.name) or '',
+                company=(account.name if account is not None
+                         else d.get('company', ct.company)) or '')
+                if not (r.get('kind') == 'contact'
+                        and int(r.get('contact_id') or r.get('id') or 0) == ct.id)]
+        except Exception:                                 # noqa: BLE001
+            dupes = []
+        changed_identity = any(
+            k in d and (d.get(k) or '') != (getattr(ct, k, None) or '')
+            for k in ('email', 'phone', 'mobile', 'name'))
+        if dupes and changed_identity:
+            return jsonify({
+                'ok': False, 'needs': 'duplicate_check', 'duplicates': dupes,
+                'error': (f'{len(dupes)} other person(s) on file look like '
+                          f'this one. Open one of them, or press Save anyway '
+                          f'if this is a different person.')}), 409
+
+    for f in fields:
+        if f in d:
+            value = d[f]
+            setattr(ct, f, value.strip() if isinstance(value, str) else value)
+    if account is not None:
+        ct.company_id = account.id
+        ct.account_id = account.id
+        ct.company = account.name
     if 'assigned_to' in d and d['assigned_to'] != ct.assigned_to:
         if sc.codes is not None:
             return jsonify({'error': 'Only an administrator with company-'
                                      'wide access can reassign a contact'}), 403
         ct.assigned_to = d['assigned_to']
+    after = {f: getattr(ct, f, None) for f in before}
+    _audit.record_change('contact.edited', 'contact', ct.id, before, after,
+                         actor=session.get('emp_code'),
+                         reason='edited on the contact card')
     db.session.commit()
-    return jsonify({'ok': True})
+    return jsonify({'ok': True, 'contact': ct.to_dict()})
 
 @app.route('/api/contacts/<int:cid>', methods=['DELETE'])
 @require_auth
@@ -6143,6 +6208,8 @@ def init_db():
             ('contacts',      'address',          'TEXT'),
             ('contacts',      'postal_code',      'VARCHAR(16)'),
             ('contacts',      'card_image_path',  'TEXT'),
+            # UAT 19 Nov — the desk, editable on the contact card.
+            ('contacts',      'vertical',         'VARCHAR(80)'),
             ('business_card_imports', 'back_image_path', 'TEXT'),
             ('business_card_imports', 'confidence_json', 'JSON'),
             ('business_card_imports', 'prep_notes',      'TEXT'),
