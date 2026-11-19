@@ -15,6 +15,16 @@ def test_dialogs_become_full_screen_sheets_on_a_phone():
         assert rule in block, rule
 
 
+#: Comments stripped before anything is scanned. The rule being
+#: checked is "nothing in Stage 4 hides an element", and a comment
+#: that EXPLAINS a `display:none` -- the note on `dialog[open]` says
+#: the browser's own `dialog:not([open]){display:none}` loses to any
+#: author rule -- is prose, not a rule. A test nobody can edit a
+#: comment past is a test that gets edited instead.
+def _rules(text):
+    return re.sub(r'/\*.*?\*/', '', text, flags=re.S)
+
+
 def test_stage_four_is_layout_only():
-    block = CSS[CSS.index('Stage 4: forms and modals'):]
+    block = _rules(CSS[CSS.index('Stage 4: forms and modals'):])
     assert not re.search(r'display:\s*none', block)

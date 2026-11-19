@@ -29,7 +29,7 @@ CSS = os.path.join(ROOT, 'static', 'css', 'crm.css')
 
 #: The bar's own breakpoint, wider than the phone block: nineteen
 #: links and buttons wrap to three rows on a 900px tablet.
-MENU_BELOW = 1024
+MENU_BELOW = 1280
 
 
 def _block(at):
@@ -173,7 +173,7 @@ def test_the_tighter_middle_widths_hide_nothing():
     """Between the menu's cut-off and a full desktop the links are set
     tighter, which is what keeps the bar to two rows at 1255px. Padding
     only -- no `display:none`, nothing cut."""
-    said = _block('@media (min-width:821px) and (max-width:1399px)')
+    said = _block('@media (min-width:1280px) and (max-width:1535px)')
     assert 'display:none' not in said
     assert 'overflow:hidden' not in said
     assert '.crm-top nav a{padding:' in said

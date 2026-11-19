@@ -41,7 +41,7 @@ needs_chrome = pytest.mark.skipif(not render_probe.available(),
 #: Where the bar becomes one Menu button. Its own breakpoint, wider
 #: than the phone block: nineteen links wrap to three rows on a 900px
 #: tablet and a 147px sticky bar is worse than a button.
-MENU_BELOW = 1024
+MENU_BELOW = 1280
 
 PROBE = """
 function probe(){
@@ -83,8 +83,10 @@ def wide():
 
 @pytest.fixture(scope='module')
 def laptop():
-    """1255px: the width the re-check was done at."""
-    return render_probe.render('_crm_topbar.html', PROBE, width=1255)
+    """1366px, the commonest desktop width here. The re-check was done
+    at 1255, which is now below the menu's cut-off -- see
+    `test_a_laptop_narrower_than_the_cut_off_gets_the_menu`."""
+    return render_probe.render('_crm_topbar.html', PROBE, width=1366)
 
 
 @pytest.fixture(scope='module')
@@ -105,7 +107,7 @@ def phone_open():
 
 # ── the regression itself ────────────────────────────────────────────
 @needs_chrome
-@pytest.mark.parametrize('width', [1024, 1255, 1366, 1440, 1920])
+@pytest.mark.parametrize('width', [1280, 1366, 1440, 1536, 1920])
 def test_a_desktop_shows_every_link(width):
     r = render_probe.render('_crm_topbar.html', PROBE, width=width)
     assert r['hidden'] == [], (width, 'links not laid out')
@@ -113,7 +115,7 @@ def test_a_desktop_shows_every_link(width):
 
 
 @needs_chrome
-@pytest.mark.parametrize('width', [1024, 1255, 1366, 1440, 1920])
+@pytest.mark.parametrize('width', [1280, 1366, 1440, 1536, 1920])
 def test_a_desktop_has_no_menu_button(width):
     r = render_probe.render('_crm_topbar.html', PROBE, width=width)
     assert r['menuButton'] is False, width
@@ -122,7 +124,7 @@ def test_a_desktop_has_no_menu_button(width):
 
 # ── and the overflow that was behind it ──────────────────────────────
 @needs_chrome
-@pytest.mark.parametrize('width', [1024, 1255, 1366, 1440, 1920])
+@pytest.mark.parametrize('width', [1280, 1366, 1440, 1536, 1920])
 def test_nothing_runs_off_the_screen(width):
     """Opening the menu by hand made the page 1383px on a 1255px
     screen. The links wrap now instead of overflowing, and nothing is
@@ -151,6 +153,19 @@ def test_a_phone_gets_one_button_and_a_closed_menu(phone):
     assert phone['barHeight'] <= 72, phone['barHeight']
     assert phone['tap'] >= 44, ('the button is under the tap minimum',
                                 phone['tap'])
+
+
+@needs_chrome
+@pytest.mark.parametrize('width', [1024, 1152, 1255, 1279])
+def test_a_laptop_narrower_than_the_cut_off_gets_the_menu(width):
+    """The nav needs 936px at its tightest. Beside the brand on a
+    1279px screen that is still the sections on their own row and the
+    four buttons on a third, and a 106px sticky bar is worse than a
+    button -- every link is one tap away either way."""
+    r = render_probe.render('_crm_topbar.html', PROBE, width=width)
+    assert r['menuButton'] is True, width
+    assert r['panelDisplay'] == 'none', width
+    assert r['barHeight'] <= 72, (width, r['barHeight'])
 
 
 @needs_chrome
@@ -219,3 +234,16 @@ def test_the_menu_has_its_own_breakpoint_above_the_phone_block():
     at = css.index('@media (max-width:%dpx)' % (MENU_BELOW - 1))
     block = css[at:css.index('/* ── Page header', at)]
     assert '.crm-more{display:block' in block
+
+
+@needs_chrome
+@pytest.mark.parametrize('width', [1280, 1366, 1440, 1536, 1680, 1920, 2560])
+def test_no_desktop_width_gives_a_third_row(width):
+    """Measured across the widths in use, because the bands that keep
+    this to two rows were set from measurements and a band's edge is
+    exactly where it would come back. 1440px read as 87px through a
+    window Chrome had clamped and 127px through an exact viewport --
+    the first reading is why the harness renders into an iframe."""
+    r = render_probe.render('_crm_topbar.html', PROBE, width=width)
+    assert r['barHeight'] <= 100, (width, r['barHeight'])
+    assert r['hidden'] == [], width

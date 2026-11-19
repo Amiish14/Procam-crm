@@ -76,30 +76,36 @@ a:hover{color:var(--p-red)}
     flex:1 1 auto;min-width:0}
 }
 
-/* Nineteen links and buttons wrap to three rows on a 1255px screen,
-   which is a sticky bar taking a sixth of the window. Between the
-   menu's cut-off and a full desktop they are set tighter, which is
-   what brings the bar back to two rows there. Nothing is hidden and
-   nothing is cut: the only thing that changes is the padding. */
-@media (min-width:821px) and (max-width:1399px){
+/* Between the menu's cut-off and a wide desktop the links are set
+   tighter, which is what keeps the bar to two rows from 1280 to
+   1535px. Nothing is hidden and nothing is cut: the only thing that
+   changes is the spacing.
+
+   The upper bound is 1535px, not 1399: at a true 1440px viewport the
+   full-size nav needs 1228px and wraps to THREE rows. The first
+   reading that said otherwise came from a window Chrome had clamped,
+   which is the kind of thing an iframe-exact harness is for. */
+@media (min-width:1280px) and (max-width:1535px){
   .crm-top{gap:var(--s-3); padding:3px var(--s-4)}
   .crm-top nav{gap:1px}
   .crm-top nav a{padding:6px 7px; font-size:12.5px}
   .crm-brand{padding-right:var(--s-3); font-size:14px}
   .crm-top .toolbar{gap:var(--s-1)}
 }
-
 .crm-wrap{max-width:1440px;margin:0 auto;padding:var(--s-6) var(--s-8) 0}
 
 
 /* ── The bar collapses into one menu ──────────────────────────────
-   Its OWN breakpoint, wider than the phone block below: nineteen
-   links and buttons wrap to three rows on a 900px tablet, and a
-   sticky bar 147px tall is worse than a button. `nav{display:none}`
+   Its OWN breakpoint, far wider than the phone block below, and the
+   width is measured rather than chosen: the nav needs 936px at its
+   tightest, and beside the brand on a 1279px screen that still puts
+   the sections on their own row and the four buttons on a third. A
+   sticky bar 106px tall is worse than a button. From 1280px up it
+   fits in two rows, so that is where the menu stops. `nav{display:none}`
    used to live in the phone block and took every section away with
    it -- on a phone the only route to Quotes or RFQs was knowing the
    URL. They are all in the menu now. */
-@media (max-width:1023px){
+@media (max-width:1279px){
   .crm-top{gap:var(--s-3)}
   .crm-more{display:block;margin-left:auto;position:relative}
   /* Clipped rather than `display:none`, so the menu can be reached and
