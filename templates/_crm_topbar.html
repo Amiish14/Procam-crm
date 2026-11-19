@@ -10,24 +10,38 @@
      if feature_for('FEATURE_CRM2') else '/app' }}">
     <img src="https://www.procamlogistics.com/public/frontend/assets/img/logo.png" alt="Procam"> CRM
   </a>
-  {# UI sweep 19 Nov item 3. Everything but the brand lives inside one
-     <details>, so a phone gets a single Menu button instead of a bar
-     505px wide in a 441px screen with "Back to CRM" cut off its end.
+  {# UI sweep 19 Nov item 3, and the re-check that followed it.
+     Everything but the brand lives in one collapsible group, so below
+     1024px the bar is a single Menu button instead of nineteen links
+     and buttons wrapping to three rows -- or, as it was, a bar 505px
+     wide in a 441px screen with "Back to CRM" cut off its end.
 
-     On a desktop the <details> and its panel are `display:contents`,
-     so the nav and the toolbar are laid out as direct children of the
-     bar exactly as they were -- the desktop bar is not changed, it
-     just has an ancestor that does not draw.
+     A CHECKBOX AND A LABEL, not a disclosure element. The first
+     attempt used one and broke the desktop bar: a closed `details`
+     keeps its content in the UA's own shadow tree (the
+     `::details-content` slot), and nothing an author stylesheet says
+     about the panel -- `display:contents` included -- reaches past
+     that. At desktop width the links sat inside a shut menu whose
+     button was `display:none`, so the bar showed the logo alone, on
+     every page, which is what shipped.
+
+     A checkbox has no shadow tree. The label opens it on a phone with
+     no script at all; at desktop width the input and the label are
+     both `display:none` while the panel is `display:contents`, so the
+     nav and the toolbar are flex children of the bar exactly as they
+     were before any of this, and the bar WRAPS rather than hiding
+     what does not fit.
 
      ONE COPY OF EVERY LINK. A phone menu built by duplicating the
      markup would be a second list to keep in step with the
      permissions, and the first thing to drift. #}
-  <details class="crm-more">
-    <summary class="crm-more-btn" aria-label="Sections and tools">
+  <div class="crm-more">
+    <input class="crm-more-toggle" type="checkbox" id="crmMoreToggle">
+    <label class="crm-more-btn" for="crmMoreToggle">
       <svg viewBox="0 0 24 24" width="17" height="17" fill="none"
            stroke="currentColor" stroke-width="2" stroke-linecap="round"
            aria-hidden="true"><path d="M3 6h18"/><path d="M3 12h18"/>
-        <path d="M3 18h18"/></svg>Menu</summary>
+        <path d="M3 18h18"/></svg>Menu</label>
     <div class="crm-more-panel">
   <nav aria-label="Sections">
     {# First, because it is the landing page. #}
@@ -107,7 +121,7 @@
     <a class="btn tiny" href="{{ url_prefix }}/app">Back to CRM</a>
   </div>
     </div>
-  </details>
+  </div>
 </header>
 
 {# Procam AI is available on every screen, §6.1 #}

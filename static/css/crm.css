@@ -33,8 +33,14 @@ a:hover{color:var(--p-red)}
 /* ── Top bar ─────────────────────────────────────────────────────── */
 .crm-top{
   background:var(--p-surface); border-bottom:1px solid var(--p-border);
-  height:56px; display:flex; align-items:center; gap:var(--s-4);
-  padding:0 var(--s-6); position:sticky; top:0; z-index:50;
+  /* `min-height`, not `height`, and it wraps: fifteen sections and
+     four buttons measured 1383px on a 1255px screen, and `overflow:
+     hidden` on the nav answered that by silently cutting the last two
+     off. A second row is the honest answer -- at one row the bar is
+     56px as before, because the content is shorter than that. */
+  min-height:56px; display:flex; align-items:center; flex-wrap:wrap;
+  gap:var(--s-4); padding:4px var(--s-6);
+  position:sticky; top:0; z-index:50;
 }
 .crm-brand{
   display:inline-flex; align-items:center; gap:var(--s-2);
@@ -44,7 +50,7 @@ a:hover{color:var(--p-red)}
 }
 .crm-brand img{height:24px;width:auto;display:block}
 .crm-top nav{display:flex;align-items:center;gap:var(--s-1);min-width:0;
-  overflow:hidden}
+  flex-wrap:wrap}
 .crm-top nav a{
   font-size:13px; font-weight:600; color:var(--p-text-2);
   padding:7px 11px; border-radius:var(--rd);
@@ -59,7 +65,7 @@ a:hover{color:var(--p-red)}
    On a DESKTOP the <details> and its panel do not draw: the nav and
    the toolbar are flex children of the bar, as they always were. */
 .crm-more,.crm-more-panel{display:contents}
-.crm-more > summary{display:none}
+.crm-more-toggle,.crm-more-btn{display:none}
 /* A browser without `display:contents` would stack the two in a block
    and lose the spacer's `margin-left:auto`, so it gets the bar as a
    wrapping row instead -- taller, never broken. */
@@ -70,7 +76,69 @@ a:hover{color:var(--p-red)}
     flex:1 1 auto;min-width:0}
 }
 
+/* Nineteen links and buttons wrap to three rows on a 1255px screen,
+   which is a sticky bar taking a sixth of the window. Between the
+   menu's cut-off and a full desktop they are set tighter, which is
+   what brings the bar back to two rows there. Nothing is hidden and
+   nothing is cut: the only thing that changes is the padding. */
+@media (min-width:821px) and (max-width:1399px){
+  .crm-top{gap:var(--s-3); padding:3px var(--s-4)}
+  .crm-top nav{gap:1px}
+  .crm-top nav a{padding:6px 7px; font-size:12.5px}
+  .crm-brand{padding-right:var(--s-3); font-size:14px}
+  .crm-top .toolbar{gap:var(--s-1)}
+}
+
 .crm-wrap{max-width:1440px;margin:0 auto;padding:var(--s-6) var(--s-8) 0}
+
+
+/* ── The bar collapses into one menu ──────────────────────────────
+   Its OWN breakpoint, wider than the phone block below: nineteen
+   links and buttons wrap to three rows on a 900px tablet, and a
+   sticky bar 147px tall is worse than a button. `nav{display:none}`
+   used to live in the phone block and took every section away with
+   it -- on a phone the only route to Quotes or RFQs was knowing the
+   URL. They are all in the menu now. */
+@media (max-width:1023px){
+  .crm-top{gap:var(--s-3)}
+  .crm-more{display:block;margin-left:auto;position:relative}
+  /* Clipped rather than `display:none`, so the menu can be reached and
+     opened from the keyboard; the ring below shows where focus is. */
+  .crm-more-toggle{
+    display:block;position:absolute;width:1px;height:1px;padding:0;
+    margin:-1px;border:0;overflow:hidden;clip:rect(0 0 0 0);
+    clip-path:inset(50%);white-space:nowrap}
+  .crm-more-btn{
+    display:inline-flex;align-items:center;gap:6px;
+    min-height:44px;padding:0 12px;border-radius:var(--rd);
+    border:1px solid var(--p-border-strong);background:var(--p-surface);
+    color:var(--p-ink);font-size:13px;font-weight:600;
+    white-space:nowrap;cursor:pointer}
+  .crm-more-toggle:checked ~ .crm-more-btn{
+    border-color:var(--p-red);color:var(--p-red)}
+  .crm-more-toggle:focus-visible ~ .crm-more-btn{
+    border-color:var(--p-red);
+    box-shadow:0 0 0 3px var(--brand-ring,rgba(199,36,53,.22))}
+  .crm-more-panel{
+    display:none;position:absolute;right:0;top:calc(100% + 6px);
+    width:min(290px,calc(100vw - 24px));max-height:calc(100vh - 80px);
+    overflow-y:auto;background:var(--p-surface);
+    border:1px solid var(--p-border);border-radius:var(--rd-md);
+    box-shadow:0 12px 32px rgba(11,13,18,.16);padding:6px;z-index:60}
+  .crm-more-toggle:checked ~ .crm-more-panel{display:block}
+  .crm-more-panel nav{display:block;overflow:visible;flex-wrap:nowrap}
+  .crm-more-panel nav a,
+  .crm-more-panel .toolbar a{
+    display:flex;align-items:center;min-height:44px;
+    padding:0 10px;border-radius:var(--rd);font-size:14px}
+  /* The toolbar keeps its buttons' words and loses its `margin-left:
+     auto`, which only means anything in a row. */
+  .crm-more-panel .toolbar{
+    display:block;margin-left:0;margin-top:6px;padding-top:6px;
+    border-top:1px solid var(--p-divider)}
+  .crm-more-panel .toolbar .btn{width:100%;justify-content:flex-start;
+    height:auto}
+}
 
 /* ── Page header ─────────────────────────────────────────────────── */
 .hero{
@@ -401,38 +469,6 @@ dialog::backdrop{background:rgba(10,11,15,.42);backdrop-filter:blur(2px)}
 @media (max-width:820px){
   .crm-wrap{padding:var(--s-4) var(--s-4) 0}
   .crm-top{padding:0 var(--s-4)}
-  /* `nav{display:none}` used to live here. It stopped the bar
-     overflowing and took every section away with it: on a phone the
-     only way to Quotes or RFQs was to know the URL. The nav is in the
-     menu now, with the four toolbar buttons that were overflowing. */
-  .crm-more{display:block;margin-left:auto;position:relative}
-  .crm-more > summary{
-    display:inline-flex;align-items:center;gap:6px;
-    min-height:44px;padding:0 12px;border-radius:var(--rd);
-    border:1px solid var(--p-border-strong);background:var(--p-surface);
-    color:var(--p-ink);font-size:13px;font-weight:600;
-    white-space:nowrap;cursor:pointer;list-style:none}
-  .crm-more > summary::-webkit-details-marker{display:none}
-  .crm-more > summary::marker{content:''}
-  .crm-more[open] > summary{border-color:var(--p-red);color:var(--p-red)}
-  .crm-more-panel{
-    display:block;position:absolute;right:0;top:calc(100% + 6px);
-    width:min(290px,calc(100vw - 24px));max-height:calc(100vh - 80px);
-    overflow-y:auto;background:var(--p-surface);
-    border:1px solid var(--p-border);border-radius:var(--rd-md);
-    box-shadow:0 12px 32px rgba(11,13,18,.16);padding:6px;z-index:60}
-  .crm-more-panel nav{display:block;overflow:visible}
-  .crm-more-panel nav a,
-  .crm-more-panel .toolbar a{
-    display:flex;align-items:center;min-height:44px;
-    padding:0 10px;border-radius:var(--rd);font-size:14px}
-  /* The toolbar keeps its buttons' words and loses its `margin-left:
-     auto`, which only means anything in a row. */
-  .crm-more-panel .toolbar{
-    display:block;margin-left:0;margin-top:6px;padding-top:6px;
-    border-top:1px solid var(--p-divider)}
-  .crm-more-panel .toolbar .btn{width:100%;justify-content:flex-start;
-    height:auto}
   .hero{align-items:flex-start;flex-direction:column}
   .row2{grid-template-columns:1fr}
 }
