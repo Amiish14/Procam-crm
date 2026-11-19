@@ -79,6 +79,31 @@ DIAL_CODES = {
     '92': 'Pakistan', '880': 'Bangladesh', '94': 'Sri Lanka',
     '977': 'Nepal', '95': 'Myanmar', '98': 'Iran', '964': 'Iraq',
     '962': 'Jordan', '961': 'Lebanon', '972': 'Israel',
+    # UAT 19 Nov item 3. Finland was missing, which is how a Hacklin
+    # contact on +358 kept its country of India: the dialling code is
+    # the strongest evidence there is about where somebody sits, and a
+    # code absent from this table reads as no evidence at all rather
+    # than as a gap. The rest are the European and Asian codes the
+    # same book carries addresses for.
+    '358': 'Finland', '372': 'Estonia', '371': 'Latvia',
+    '370': 'Lithuania', '353': 'Ireland', '354': 'Iceland',
+    '30': 'Greece', '36': 'Hungary', '40': 'Romania', '359': 'Bulgaria',
+    '420': 'Czechia', '421': 'Slovakia', '385': 'Croatia',
+    '386': 'Slovenia', '381': 'Serbia', '380': 'Ukraine',
+    '375': 'Belarus',
+    '212': 'Morocco', '216': 'Tunisia', '213': 'Algeria',
+    '218': 'Libya', '249': 'Sudan', '251': 'Ethiopia',
+    '255': 'Tanzania', '256': 'Uganda', '260': 'Zambia',
+    '263': 'Zimbabwe', '264': 'Namibia', '267': 'Botswana',
+    '233': 'Ghana', '225': 'Ivory Coast', '221': 'Senegal',
+    '968': 'Oman', '967': 'Yemen', '960': 'Maldives',
+    '975': 'Bhutan', '93': 'Afghanistan', '855': 'Cambodia',
+    '856': 'Laos', '673': 'Brunei',
+    '976': 'Mongolia', '992': 'Tajikistan', '993': 'Turkmenistan',
+    '994': 'Azerbaijan', '995': 'Georgia', '998': 'Uzbekistan',
+    '51': 'Peru', '58': 'Venezuela', '593': 'Ecuador',
+    '595': 'Paraguay', '598': 'Uruguay', '591': 'Bolivia',
+    '506': 'Costa Rica', '507': 'Panama', '53': 'Cuba',
 }
 
 #: Longest first, so +9714… reads as 971 and not as 9.
@@ -210,6 +235,50 @@ def _pic_reads_as_a_company(person, company=None):
             and said.lower() == theirs:
         return True
     return False
+
+
+def not_a_customer_person(row):
+    """Why this row is not somebody to ring, or ''. UAT 19 Nov item 1.
+
+    One predicate for all three places a row is offered as a person --
+    the search, the duplicate check on email and the duplicate check on
+    phone. They each had their own `_is_a_robot` filter and only the
+    search had learnt about company-shaped PICs, so a row excluded from
+    the results was still offered as a duplicate.
+
+    Four ways of not being a customer person:
+
+      a robot          a portal's delivery address, a noreply
+      us               our own domain, or a PIC named "Procam …"
+      a company        a legal form in a lead's name box
+      nothing left     a row whose only address was one of the above
+
+    Returns the reason, because they are fixed differently: a portal
+    address is the portal's, ours is a lead filed with our own mailbox
+    in the PIC box, and a company in the name box is a lead whose
+    enquiry arrived without a person on it.
+    """
+    person = row.get('person')
+    if _is_a_robot(row):
+        return 'a portal or system address, not a person'
+    ours, why = _we_are(person, row)
+    if ours:
+        return why
+    if row.get('kind') == 'lead' \
+            and _pic_reads_as_a_company(person, row.get('company')):
+        return 'the name box holds a company, not a person'
+    return ''
+
+
+def _we_are(person, row):
+    """(True, why) when the row is Procam rather than a customer."""
+    try:
+        from app.services import own_people
+    except Exception:                                      # noqa: BLE001
+        return False, ''
+    addresses = list(row.get('emails') or []) \
+        + list(row.get('system_emails') or [])
+    return own_people.is_us(person, *addresses)
 
 
 def _is_a_robot(row):
@@ -761,15 +830,7 @@ def search(*, name='', company='', country='', location='', vertical='',
 
     # The portal's own address is not a person. Before the merge, so
     # a robot row cannot absorb a real one's phone and survive.
-    rows = [r for r in rows if not _is_a_robot(r)]
-    # Nor is a company typed into a lead's name box. Only lead rows:
-    # a CONTACT is a record somebody created as a person, and a
-    # contact named like a company is a data fault to fix on the
-    # record rather than a row to hide from its owner.
-    rows = [r for r in rows
-            if r['kind'] != 'lead'
-            or not _pic_reads_as_a_company(r.get('person'),
-                                           r.get('company'))]
+    rows = [r for r in rows if not not_a_customer_person(r)]
 
     if f['phone']:
         want = f['phone']
@@ -1068,7 +1129,7 @@ def duplicates_of(*, email='', phone='', name='', company='', sc=None,
         take([r for r in
               _merge([_shape_contact(c, accounts) for c in contacts]
                      + [_shape_lead(l, accounts) for l in leads])
-              if not _is_a_robot(r)],
+              if not not_a_customer_person(r)],
              'the same email address')
 
     if want_phone and len(out) < limit:
@@ -1091,7 +1152,7 @@ def duplicates_of(*, email='', phone='', name='', company='', sc=None,
         rows = [r for r in
                 _merge([_shape_contact(c, accounts) for c in contacts]
                        + [_shape_lead(l, accounts) for l in leads])
-                if not _is_a_robot(r)]
+                if not not_a_customer_person(r)]
         take([r for r in rows
               if want_phone in [_digits(p) for p in r['phones']]],
              'the same phone number')

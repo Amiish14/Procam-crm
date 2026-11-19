@@ -8435,7 +8435,7 @@ async function acctOpenCreate(){
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem;padding:.5rem;">
       <label>Name*<input class="fi" id="naNm" style="width:100%;"></label>
       <label>Industry<input class="fi" id="naInd" style="width:100%;"></label>
-      <label>Country<input class="fi" id="naCty" value="India" style="width:100%;"></label>
+      <label>Country <span style="color:var(--p-red)">*</span><input class="fi" id="naCty" placeholder="Country" autocomplete="country-name" required style="width:100%;"></label>
       <label>State<input class="fi" id="naSt" style="width:100%;"></label>
       <label>City<input class="fi" id="naCi" style="width:100%;"></label>
       <label>Website<input class="fi" id="naWeb" style="width:100%;"></label>
@@ -8457,6 +8457,13 @@ async function acctOpenCreate(){
 async function acctSubmit(){
   const name = g('naNm').value.trim();
   if (!name){ alert('Name required'); return; }
+  // UAT 19 Nov item 2. Same fault as the contact form: the box arrived
+  // holding "India", so an account nobody corrected was filed as
+  // Indian. Asked for, not assumed.
+  if (!g('naCty').value.trim()){
+    alert('Country is needed \u2014 it is not assumed any more.');
+    g('naCty').focus(); return;
+  }
   const tags = Array.from(document.querySelectorAll('#naTags input:checked')).map(c=>c.value);
   const body = {
     name,
