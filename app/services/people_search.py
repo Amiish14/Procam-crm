@@ -161,6 +161,57 @@ def _real_emails(*values):
     return out, bad
 
 
+#: Words that make a line a COMPANY and not a person. Legal forms only,
+#: deliberately: `card_parse.SUFFIXES` also holds trade words --
+#: logistics, steel, transport -- which is right for reading a business
+#: card and wrong here, because dropping a result is worse than showing
+#: one and somebody called Mr Cargo is not a hypothesis worth acting on.
+#: These are forms no person's name carries.
+COMPANY_FORMS = frozenset((
+    'ltd', 'ltd.', 'limited', 'pvt', 'pvt.', 'private', 'llp', 'llc',
+    'inc', 'inc.', 'incorporated', 'corp', 'corp.', 'corporation',
+    'gmbh', 'ag', 'oy', 'oyj', 'ab', 'a/s', 'aps', 'bv', 'b.v.', 'nv',
+    'n.v.', 'plc', 'pte', 'sdn', 'bhd', 'sa', 's.a.', 'srl', 's.r.l.',
+    'spa', 's.p.a.', 'kg', 'kft', 'zoo', 'sp', 'pllc', 'co', 'co.',
+))
+
+
+def _pic_reads_as_a_company(person, company=None):
+    """Is this PIC a company name typed into the person box?
+
+    UAT 18 Nov item 9: a search for "Hacklin" returned a LEAD whose
+    person was not a person. The name box on a lead is free text and
+    takes whatever the enquiry arrived with, so some of them hold the
+    counterparty's company instead of anybody's name -- and then every
+    search for that company finds a "person" nobody can ring.
+
+    Two tests, both of which have to be safe on a real name, because a
+    dropped result is a person somebody cannot find:
+
+      a legal form as a WHOLE WORD -- Oy, Ltd, GmbH, Pvt. No name
+      carries one, and matching whole words keeps "Oyelaran" and
+      "Ltdungu" out of it.
+
+      the same text as the company on the same record, which is the
+      box having been filled in twice rather than once.
+
+    A single word is NOT enough on its own: plenty of real PICs are a
+    first name only, and a one-word brand is indistinguishable from
+    one.
+    """
+    said = ' '.join(str(person or '').split())
+    if not said:
+        return False
+    words = [w.strip('(),;:').lower() for w in said.split()]
+    if any(w in COMPANY_FORMS for w in words):
+        return True
+    theirs = ' '.join(str(company or '').split()).lower()
+    if theirs and theirs not in ('unknown', '-', 'n/a', 'na') \
+            and said.lower() == theirs:
+        return True
+    return False
+
+
 def _is_a_robot(row):
     """A result row that is an address, not a person.
 
@@ -711,6 +762,14 @@ def search(*, name='', company='', country='', location='', vertical='',
     # The portal's own address is not a person. Before the merge, so
     # a robot row cannot absorb a real one's phone and survive.
     rows = [r for r in rows if not _is_a_robot(r)]
+    # Nor is a company typed into a lead's name box. Only lead rows:
+    # a CONTACT is a record somebody created as a person, and a
+    # contact named like a company is a data fault to fix on the
+    # record rather than a row to hide from its owner.
+    rows = [r for r in rows
+            if r['kind'] != 'lead'
+            or not _pic_reads_as_a_company(r.get('person'),
+                                           r.get('company'))]
 
     if f['phone']:
         want = f['phone']

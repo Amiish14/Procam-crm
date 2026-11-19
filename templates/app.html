@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
 <meta name="csrf-token" content="">
 <script>
   (function() {
@@ -2079,7 +2080,7 @@ catch (err) { console.error('Employee list could not start loading', err); }
       <div class="fmr"><div class="fmg"><label class="fml">Name *</label><input class="fmc" id="ctN"></div><div class="fmg"><label class="fml">Company / Organisation</label><input class="fmc" id="ctC"></div></div>
       <div class="fmr"><div class="fmg"><label class="fml">Designation</label><input class="fmc" id="ctD"></div><div class="fmg"><label class="fml">Industry</label><input class="fmc" id="ctI"></div></div>
       <div class="fmr"><div class="fmg"><label class="fml">Email</label><input class="fmc" id="ctE" type="email" onblur="ctLiveCheck()"></div><div class="fmg"><label class="fml">Phone / Mobile</label><input class="fmc" id="ctP" onblur="ctLiveCheck()"></div></div>
-      <div class="fmr"><div class="fmg"><label class="fml">Country</label><input class="fmc" id="ctCo" value="India"></div><div class="fmg"><label class="fml">State</label><select class="fmc" id="ctSt"><option value="">—</option><option>Andhra Pradesh</option><option>Arunachal Pradesh</option><option>Assam</option><option>Bihar</option><option>Chhattisgarh</option><option>Delhi</option><option>Goa</option><option>Gujarat</option><option>Haryana</option><option>Himachal Pradesh</option><option>Jammu and Kashmir</option><option>Jharkhand</option><option>Karnataka</option><option>Kerala</option><option>Ladakh</option><option>Madhya Pradesh</option><option>Maharashtra</option><option>Manipur</option><option>Meghalaya</option><option>Mizoram</option><option>Nagaland</option><option>Odisha</option><option>Puducherry</option><option>Punjab</option><option>Rajasthan</option><option>Sikkim</option><option>Tamil Nadu</option><option>Telangana</option><option>Tripura</option><option>Uttar Pradesh</option><option>Uttarakhand</option><option>West Bengal</option></select></div></div>
+      <div class="fmr"><div class="fmg"><label class="fml">Country <span style="color:var(--p-red)">*</span></label><input class="fmc" id="ctCo" placeholder="Country" autocomplete="country-name" required></div><div class="fmg"><label class="fml">State</label><select class="fmc" id="ctSt"><option value="">—</option><option>Andhra Pradesh</option><option>Arunachal Pradesh</option><option>Assam</option><option>Bihar</option><option>Chhattisgarh</option><option>Delhi</option><option>Goa</option><option>Gujarat</option><option>Haryana</option><option>Himachal Pradesh</option><option>Jammu and Kashmir</option><option>Jharkhand</option><option>Karnataka</option><option>Kerala</option><option>Ladakh</option><option>Madhya Pradesh</option><option>Maharashtra</option><option>Manipur</option><option>Meghalaya</option><option>Mizoram</option><option>Nagaland</option><option>Odisha</option><option>Puducherry</option><option>Punjab</option><option>Rajasthan</option><option>Sikkim</option><option>Tamil Nadu</option><option>Telangana</option><option>Tripura</option><option>Uttar Pradesh</option><option>Uttarakhand</option><option>West Bengal</option></select></div></div>
       <div class="fmg"><label class="fml">City</label><input class="fmc" id="ctCi"></div>
       <div class="fmr"><div class="fmg"><label class="fml">Website</label><input class="fmc" id="ctW" placeholder="https://"></div><div class="fmg"><label class="fml">LinkedIn</label><input class="fmc" id="ctL" placeholder="https://linkedin.com/in/..."></div></div>
       <div class="fmg"><label class="fml">Agent Type / Category</label><select class="fmc" id="ctAt"><option value="">—</option><option>Overseas Agent</option><option>Partner</option><option>Vendor</option><option>Client</option><option>Consultant</option></select></div>
@@ -6075,7 +6076,7 @@ function ctCardClicks(ev){
   });
 })();
 function ctTab(t){ctype=t;document.querySelectorAll('.tabs .tab').forEach((el,i)=>el.classList.toggle('on',['person','company','agent'][i]===t));rCt();}
-function openCt(){_ctLastAsked='';g('ctDupe').style.display='none';g('ctDupe').innerHTML='';g('ctN').value='';g('ctC').value='';g('ctD').value='';g('ctI').value='';g('ctE').value='';g('ctP').value='';g('ctCo').value='India';g('ctCi').value='';g('ctW').value='';g('ctL').value='';g('ctNote').value='';g('ctMob').style.display='flex';}
+function openCt(){_ctLastAsked='';g('ctDupe').style.display='none';g('ctDupe').innerHTML='';g('ctN').value='';g('ctC').value='';g('ctD').value='';g('ctI').value='';g('ctE').value='';g('ctP').value='';g('ctCo').value='';g('ctCi').value='';g('ctW').value='';g('ctL').value='';g('ctNote').value='';g('ctMob').style.display='flex';}
 function ctBody(useExisting){
   return JSON.stringify({type:g('ctType').value,name:g('ctN').value,company:g('ctC').value,designation:g('ctD').value,industry:g('ctI').value,email:g('ctE').value,phone:g('ctP').value,country:g('ctCo').value,state:g('ctSt').value,city:g('ctCi').value,website:g('ctW').value,linkedin:g('ctL').value,agent_type:g('ctAt').value,notes:g('ctNote').value,use_existing:!!useExisting});
 }
@@ -6152,6 +6153,16 @@ async function ctLiveCheck(){
 
 async function saveCt(useExisting){
   g('ctDupe').style.display='none';
+  // CRM UAT 18 Nov item 8. The box used to arrive holding "India", so
+  // every contact nobody corrected was filed as Indian -- 670 of them,
+  // including the ones whose own email domain is .fi or .de. Blank and
+  // required instead: a country somebody chose is worth something, and
+  // one the form chose is worth less than nothing because it reads the
+  // same as a choice.
+  if(!g('ctCo').value.trim()){
+    toast('Country is needed — it is not assumed any more.','err');
+    g('ctCo').focus();return;
+  }
   const r=await api('/api/contacts',{method:'POST',body:ctBody(useExisting)});
   if(r.ok){g('ctMob').style.display='none';rCt();toast('Contact saved ✓','ok');return;}
   if(r.needs==='duplicate_check'){ctDupes(r);return;}
