@@ -11,6 +11,12 @@
 <!-- CRM-UI-01 Stage 1: the primitives, after the page styles
      so they are the last word on how a control looks. -->
 <link rel="stylesheet" href="{{ url_prefix }}/static/css/ui.css?v={{ asset_v }}">
+<!-- UI re-check 19 Nov item 4: at 441px the last three columns were off
+     the screen. The same card view the Leads and RFQ lists use --
+     `lists.css` turns a `.tw` table into cards under 768px and
+     `lists.js` stamps each cell with its column's heading, so the rows
+     this page renders need no rewriting. -->
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/lists.css?v={{ asset_v }}">
 </head>
 <body>
 {% include "_crm_topbar.html" %}
@@ -40,6 +46,7 @@
   <input id="fRfq" type="number" placeholder="RFQ ID" oninput="render()">
 </div>
 
+<div class="tw">
 <table>
   <thead>
     <tr>
@@ -50,6 +57,7 @@
   </thead>
   <tbody id="tbody"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
 </table>
+</div>
 
 <dialog id="m">
   <form method="dialog" class="modal-wrap" id="createForm">
@@ -133,6 +141,9 @@ async function submitCreate() {
 }
 load();
 </script>
+<!-- After the rows are rendered: `lists.js` watches the tbody, so a
+     list that refetches itself is re-stamped without being asked. -->
+<script src="{{ url_prefix }}/static/js/lists.js?v={{ asset_v }}"></script>
 </div><!-- /crm-wrap -->
 </body>
 </html>
