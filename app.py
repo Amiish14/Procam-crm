@@ -474,6 +474,15 @@ class Employee(db.Model):
     locked_until    = db.Column(db.DateTime)
     # An administrator-issued temporary password stops working after this.
     temp_password_expires_at = db.Column(db.DateTime)
+    # LEFT THE COMPANY, which is not the same fact as `is_active`.
+    # is_active false means "cannot sign in", and it is used for a
+    # suspension, a long leave and a leaver alike -- so nothing could
+    # tell them apart, and the Employee Master's Activate button would
+    # happily put a departed person back into every picker. This date
+    # is the durable answer: set once, by `app/services/leavers.py`,
+    # and reactivation refuses while it is set.
+    left_on   = db.Column(db.Date, nullable=True)
+    left_note = db.Column(db.String(200))
 
     def set_password(self, pw):
         self.password_hash = generate_password_hash(pw)
@@ -492,6 +501,11 @@ class Employee(db.Model):
             'is_vertical_head': bool(self.is_vertical_head),
             'is_super_admin': bool(self.is_super_admin),
             'must_change_pw': self.must_change_pw, 'is_active': self.is_active,
+            # Two different facts, and the screens need both: an
+            # inactive person may come back on Monday, a leaver may not.
+            'has_left': bool(self.left_on),
+            'left_on': str(self.left_on) if self.left_on else '',
+            'left_note': self.left_note or '',
             'industries': json.loads(self.industries or '[]'),
             'joined_on': str(self.joined_on) if self.joined_on else ''
         }
@@ -2471,6 +2485,14 @@ def api_update_employee(eid):
             body_warnings = []
     else:
         body_warnings = []
+    # A leaver does not come back by having one checkbox ticked. The
+    # Activate button and this endpoint are the same call, so the guard
+    # lives here rather than in the screen.
+    from app.services import leavers
+    _refused_back = leavers.refuse_reactivation(emp, d)
+    if _refused_back:
+        return jsonify({'error': _refused_back}), 400
+
     # Clearing the address stores nothing, not a blank. `email` is
     # unique: two rows holding '' are a duplicate and the second save
     # fails with a server error, while two rows holding NULL are fine.
@@ -2487,6 +2509,13 @@ def api_update_employee(eid):
             setattr(emp, field, d[field])
     if 'industries' in d:
         emp.industries = json.dumps(d['industries'])
+    # Somebody who has come back. Only the clearing direction: the
+    # marking direction goes through app/services/leavers.mark_left,
+    # which also ends their sessions and writes the batch row an undo
+    # reads.
+    if 'left_on' in d and not d.get('left_on') and emp.left_on:
+        emp.left_on, emp.left_note = None, None
+        changed.append('left_on')
     body = {'ok': True}
     if body_warnings:
         body['warnings'] = body_warnings
@@ -6218,6 +6247,8 @@ def init_db():
             ('quotes',        'incoterm_place',   'VARCHAR(160)'),
             ('quotes',        'gst_treatment',    'VARCHAR(24)'),
             ('rfqs',          'direction',        'VARCHAR(12)'),
+            ('employees',     'left_on',          'DATE'),
+            ('employees',     'left_note',        'VARCHAR(200)'),
             ('rfqs',          'shipper_name',     'VARCHAR(200)'),
             ('rfqs',          'shipper_address',  'TEXT'),
             ('rfqs',          'consignee_name',   'VARCHAR(200)'),

@@ -101,6 +101,9 @@ WATCH = {
         'is_super_admin': 'employee.role_change',
         'is_vertical_head': 'employee.role_change',
         'is_active': 'employee.activation_change',
+        # Left the company, which is a different fact from inactive.
+        'left_on': 'employee.activation_change',
+        'left_note': 'employee.activation_change',
         'password_hash': 'employee.password_change',
         'must_change_pw': 'employee.password_change',
         'vertical': 'employee.update',

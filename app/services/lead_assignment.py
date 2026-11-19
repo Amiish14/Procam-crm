@@ -41,9 +41,13 @@ def validate(primary_code, secondary_code):
         emp = _employee(code)
         if emp is None:
             return f'{label} PIC {code} is not an employee.'
-        if not emp.is_active:
-            return (f'{label} PIC {emp.name} is not an active employee — '
-                    f'the lead would sit with nobody.')
+        # "Has left" and "is not active" are different answers: one
+        # says pick somebody else, the other says switch the account
+        # on. Saying the wrong one sends people to the wrong screen.
+        from app.services import leavers
+        said = leavers.why_not_assignable(emp, f'{label} PIC')
+        if said:
+            return said
     return None
 
 

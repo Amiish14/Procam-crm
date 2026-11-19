@@ -2276,6 +2276,19 @@ const api=async(url,opts={})=>{
   if(!ct.includes('application/json')){console.error('Non-JSON response from',fullUrl,r.status);return {};}
   return r.json();
 };
+/* Who may be GIVEN work, which is not everybody in EMPS.
+   EMPS stays the whole list on purpose: the "All Team" filters need a
+   departed person's name in them, because filtering by it is how you
+   find the leads they left behind. What must never offer them is an
+   assignment control -- the server refuses it (lead_assignment.validate,
+   directory._active_employee), so an option that cannot be saved is a
+   trap, and for a leaver it is also the wrong answer to look for.
+   `has_left` only reaches an administrator's payload; everybody else's
+   list is active staff already, which excludes a leaver by itself. */
+function ASSIGNABLE(){
+  return (Array.isArray(EMPS)?EMPS:[]).filter(
+    em => em.is_active!==false && !em.has_left);
+}
 const qp=(o)=>Object.entries(o).filter(([,v])=>v).map(([k,v])=>`${k}=${encodeURIComponent(v)}`).join('&');
 
 // ── INIT ──
@@ -2290,6 +2303,7 @@ async function init(){
   try{
     EMPS = await api('/api/employees');
   } catch(err){ console.error('Failed to load employees:', err); EMPS = []; }
+  if(!Array.isArray(EMPS)) EMPS = [];
   // CRM-JUNK-DELETE-01: one probe, so the shell knows whether to draw
   // the select column and the bulk bar. A 404 means it does not.
   try{ await junkAvailable(); } catch(_){}
@@ -2312,7 +2326,11 @@ async function init(){
   }
   g('dDate').textContent=new Date().toLocaleDateString('en-IN',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
   // Populate assign dropdowns
-  const tOpts=EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join('');
+  /* The whole team, leavers included: these are the "All Team"
+     FILTERS, and filtering by a departed person is how their open work
+     gets found. Marked, so nobody reads the list as assignable. */
+  const tOpts=EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}${
+    em.has_left?' — left':(em.is_active===false?' — inactive':'')}</option>`).join('');
   ['aAsgn','opAsgn','blkU','inbNewAsgn','inbQualAsgn','inbPropAsgn','inbNegAsgn','inbDecAsgn'].forEach(id=>{const el=g(id);if(el&&el.tagName==='SELECT')el.insertAdjacentHTML('beforeend',tOpts);});
   nav('dash');
   // Last, so the lists are hydrated and the dashboard has painted: the
@@ -3618,15 +3636,15 @@ async function openLd(id){
      left matched no option, the select fell back to option zero, and
      saving reassigned the lead to whoever happened to be first. Same
      defect as the vertical select, same remedy. */
-  const _ownOpt=(code,label)=>(code && !EMPS.some(em=>em.emp_code===code))
+  const _ownOpt=(code,label)=>(code && !ASSIGNABLE().some(em=>em.emp_code===code))
     ? `<option value="${e(code)}" selected>${e(label||code)} — no longer active</option>` : '';
   const uOpts=_ownOpt(l.assigned_to, l.assigned_name)
-    +EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('');
+    +ASSIGNABLE().map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('');
   // Optional, and blank by default — a secondary is encouraged, never
   // forced, so the picker must open on "nobody".
   const sOpts='<option value="">— none —</option>'
     +_ownOpt(l.secondary_owner, l.secondary_owner_name)
-    +EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.secondary_owner?' selected':''}>${e(em.name)}</option>`).join('');
+    +ASSIGNABLE().map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.secondary_owner?' selected':''}>${e(em.name)}</option>`).join('');
   g('ldBdy').innerHTML=`
     <div id="ldAcct"></div>
     ${renderEmailSummaryCard(l)}
@@ -4990,7 +5008,7 @@ function laNewPanel(){
           <select class="fmc" id="laVt">${verticalOptions(
             (g('lVt')||{}).value || '')}</select></div>
         <div class="fmg"><label class="fml">Account owner / PIC</label>
-          <select class="fmc" id="laOwn">${EMPS.map(em=>
+          <select class="fmc" id="laOwn">${ASSIGNABLE().map(em=>
             `<option value="${e(em.emp_code)}">${e(em.name)}</option>`
           ).join('')}</select>
           <div style="font-size:11.5px;color:var(--text-3);margin-top:4px"
@@ -4999,7 +5017,7 @@ function laNewPanel(){
       <div class="fmr">
         <div class="fmg"><label class="fml">Secondary PIC</label>
           <select class="fmc" id="laSec"><option value="">— none —</option>
-            ${EMPS.map(em=>`<option value="${e(em.emp_code)}">${
+            ${ASSIGNABLE().map(em=>`<option value="${e(em.emp_code)}">${
               e(em.name)}</option>`).join('')}</select></div>
         <div class="fmg"><label class="fml">City / State</label>
           <input class="fmc" id="laCity" placeholder="Bangalore, Karnataka">
@@ -6453,7 +6471,7 @@ async function seedNews(){
 async function openNewsModal(id,title){
   newsId=id;
   g('nTitle').textContent=title;
-  const uOpts='<option value="">-- Select --</option>'+EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join('');
+  const uOpts='<option value="">-- Select --</option>'+ASSIGNABLE().map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join('');
   g('nAsgn').innerHTML=uOpts; g('nCo').value='';
   g('nMob').style.display='flex';
 }
@@ -7221,8 +7239,8 @@ async function rAssign(){
     <td><input type="checkbox" class="ac" value="${l.id}"></td>
     <td><div class="td-m">${e(l.company)}</div><div class="td-s">${e(l.industry||'')}</div></td>
     <td style="font-size:11.5px">${e(l.industry||'—')}</td><td style="font-size:11.5px">${e(l.state||'—')}</td>
-    <td><select class="fi" style="width:150px;padding:5px" onchange="assignOne(${l.id},this.value,undefined,'${e(l.assigned_to||'')}',this)"><option value="">— Assign —</option>${EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('')}</select></td>
-    <td><select class="fi" style="width:150px;padding:5px" onchange="assignOne(${l.id},'${e(l.assigned_to||'')}',this.value)"><option value="">— none —</option>${EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.secondary_owner?' selected':''}>${e(em.name)}</option>`).join('')}</select></td>
+    <td><select class="fi" style="width:150px;padding:5px" onchange="assignOne(${l.id},this.value,undefined,'${e(l.assigned_to||'')}',this)"><option value="">— Assign —</option>${ASSIGNABLE().map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.assigned_to?' selected':''}>${e(em.name)}</option>`).join('')}</select></td>
+    <td><select class="fi" style="width:150px;padding:5px" onchange="assignOne(${l.id},'${e(l.assigned_to||'')}',this.value)"><option value="">— none —</option>${ASSIGNABLE().map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===l.secondary_owner?' selected':''}>${e(em.name)}</option>`).join('')}</select></td>
     <td>${srb(l.source)}</td>
   </tr>`).join('');
   // Populate industry filter if empty
@@ -7231,8 +7249,8 @@ async function rAssign(){
     g('asI').innerHTML='<option value="">All</option>'+inds.map(i=>`<option>${e(i)}</option>`).join('');
   }
   // Bulk user select
-  if(g('blkU').children.length<2) g('blkU').insertAdjacentHTML('beforeend',EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join(''));
-  if(g('blkU2') && g('blkU2').children.length<2) g('blkU2').insertAdjacentHTML('beforeend',EMPS.map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join(''));
+  if(g('blkU').children.length<2) g('blkU').insertAdjacentHTML('beforeend',ASSIGNABLE().map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join(''));
+  if(g('blkU2') && g('blkU2').children.length<2) g('blkU2').insertAdjacentHTML('beforeend',ASSIGNABLE().map(em=>`<option value="${e(em.emp_code)}">${e(em.name)}</option>`).join(''));
 }
 const REASSIGN_REASONS = ['Different geography','Different service vertical',
   'Different customer relationship owner','Capacity / workload',
@@ -7329,7 +7347,7 @@ async function rEmps(){
         <div style="font-size:12px;color:var(--text-3);margin-top:2px">${emp.email?e(emp.email):(emp.email_hidden?'<span style="color:var(--text-3)">address not shown — outside what you can see</span>':'<span style="color:#b0421a">no email address — CRM mail to this person cannot be delivered</span>')}</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
-        ${full&&!emp.is_active?'<span class="b sL" title="Deactivated: this account cannot sign in, and the team pickers do not offer this person">Inactive · cannot sign in</span>':''}
+        ${full&&emp.has_left?`<span class="b sL" title="Recorded as having left. Reactivating takes clearing that first.">Left Procam${emp.left_on?' · '+e(emp.left_on):''}</span>`:(full&&!emp.is_active?'<span class="b sL" title="Deactivated: this account cannot sign in, and the team pickers do not offer this person">Inactive · cannot sign in</span>':'')}
         ${full?`<button class="btn btn-ghost btn-sm" onclick="openEmpEdit(${emp.id})">Edit</button>
         <button class="btn btn-ghost btn-sm" onclick="resetPw(${emp.id})">Reset password</button>
         <button class="btn btn-ghost btn-sm" onclick="toggleEmp(${emp.id})">${emp.is_active?'Deactivate':'Activate'}</button>`:''}
@@ -7854,7 +7872,7 @@ async function upTab(t){
       <div id="upSt" style="margin-top:16px"></div>
     </div></div>`;
   }else if(t==='mn'){
-    const uOpts=EMPS.map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===ME.emp_code?' selected':''}>${e(em.name)}</option>`).join('');
+    const uOpts=ASSIGNABLE().map(em=>`<option value="${e(em.emp_code)}"${em.emp_code===ME.emp_code?' selected':''}>${e(em.name)}</option>`).join('');
     g('upCnt').innerHTML=`<div class="card"><div style="padding:16px">
       <div class="fmr"><div class="fmg"><label class="fml">Company *</label><input class="fmc" id="mnCo"></div><div class="fmg"><label class="fml">Project</label><input class="fmc" id="mnPr"></div></div>
       <div class="fmr"><div class="fmg"><label class="fml">Industry</label><input class="fmc" id="mnIn"></div><div class="fmg"><label class="fml">State</label><input class="fmc" id="mnSt"></div></div>
