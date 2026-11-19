@@ -27,7 +27,12 @@
   <div class="toolbar">
     <a class="btn" href="{{ url_prefix }}/rfqs">← All RFQs</a>
     <button class="btn primary" onclick="advance()">Advance status →</button>
-    <button class="btn success" onclick="openAddLine()">+ Add rate line</button>
+    {# UI sweep 19 Nov item 7: this was the only green button in the
+       product's toolbars. Green is kept for an action that CONCLUDES
+       something -- Approve, Mark Won -- and adding a row to a table
+       concludes nothing, so it takes the same style as every other
+       primary action beside it. #}
+    <button class="btn primary" onclick="openAddLine()">+ Add rate line</button>
   </div>
 </div>
 
@@ -128,7 +133,9 @@
     <div class="field"><label>Remarks</label><textarea name="remarks"></textarea></div>
     <div class="actions">
       <button type="button" class="btn" onclick="document.getElementById('rateModal').close()">Cancel</button>
-      <button type="button" class="btn success" onclick="submitRate()">Submit rate</button>
+      {# The same, in this page's dialog: every other dialog in the
+         app submits with the primary style. #}
+      <button type="button" class="btn primary" onclick="submitRate()">Submit rate</button>
     </div>
   </form>
 </dialog>
