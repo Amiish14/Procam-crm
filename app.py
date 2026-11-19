@@ -4145,7 +4145,12 @@ def api_create_contact():
     db.session.commit()
     # If Type=Company, also upsert the Company master so pipeline dashboards
     # get proper State + Industry columns instead of '—'.
-    if ct.contact_type == 'company' and ct.company:
+    # UAT 19 Nov: a placeholder ("New Lead", "Unknown") is never made
+    # into an account here — that is how #847 "New Lead" came to hold
+    # several real customers' contacts.
+    from app.services import lead_account as _la_ph
+    if ct.contact_type == 'company' and ct.company \
+            and not _la_ph.is_placeholder(ct.company):
         existing = Company.query.filter(
             db.func.lower(Company.name) == ct.company.strip().lower()).first()
         if not existing:

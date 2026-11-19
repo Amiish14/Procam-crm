@@ -308,7 +308,7 @@ def api_get(card_id):
     return jsonify(ok=True, card=row.to_dict())
 
 
-def _account_for(company_name, website='', email=''):
+def _account_for_any(company_name, website='', email=''):
     """The account this card belongs to, aliases and all.
 
     Three readings, each the one the rest of the CRM already uses:
@@ -365,6 +365,25 @@ def _account_for(company_name, website='', email=''):
             pass
     return None
 
+
+
+def _account_for(company_name, website='', email=''):
+    """`_account_for_any`, never a placeholder or a portal (UAT 19 Nov).
+
+    A card whose domain or name matched #847 "New Lead" filed a real
+    person under a row that is not a company. The same refusal the mail
+    intake, the account gate and the lead picker use.
+    """
+    found = _account_for_any(company_name, website, email)
+    if found is None:
+        return None
+    try:
+        from app.services import account_match
+        if account_match.not_a_customer(found):
+            return None
+    except Exception:                                     # noqa: BLE001
+        pass
+    return found
 
 def _card_extras(fields, row):
     """The columns Part 2 added, filled only where the model has them.
