@@ -126,15 +126,89 @@ def test_without_the_permission_the_admin_record_is_not_listed(people):
     for field in ('must_change_pw', 'mobile', 'is_active', 'joined_on',
                   'is_super_admin', 'department', 'designation', 'id'):
         assert field not in rows[0], field
-    assert set(rows[0]) == {'emp_code', 'name', 'vertical', 'role', 'email'}
+    for row in rows:
+        # `email_hidden` only where the address is withheld, so the
+        # lead screen can tell "no address on record" from "not yours
+        # to see" -- two different answers that have to read
+        # differently.
+        assert set(row) <= {'emp_code', 'name', 'vertical', 'role',
+                            'email', 'email_hidden'}, set(row)
+        assert {'emp_code', 'name', 'email'} <= set(row)
 
 
 def test_the_work_address_is_there_for_the_dropdowns(people):
     """The half of CRM-WA-01 §3 that the test above used to deny. If
     this is ever withdrawn it should be withdrawn on purpose, with
     this test changed by the same hand."""
-    rows = _c('MLREP', 'user').get('/api/employees').get_json()
+    rows = _c('MLGRANT', 'user').get('/api/employees').get_json()
     assert 'email' in rows[0]
+    assert any(r['email'] for r in rows), 'no address reached anybody'
+
+
+# ── the address is scoped like /people/<code>, 19 Nov ────────────────
+def _rows(code, role='user'):
+    return {r['emp_code']: r
+            for r in _c(code, role).get('/api/employees').get_json()}
+
+
+def test_an_unrestricted_user_sees_every_address(people):
+    """DataScope.ALL — `visible_codes()` is None, and nothing is
+    withheld."""
+    rows = _rows('MLGRANT')
+    assert rows
+    assert not any(r.get('email_hidden') for r in rows.values())
+
+
+def test_a_user_with_own_scope_sees_no_colleagues_address(people):
+    """This is the exposure that was found: every active employee's
+    work address, in one call, to anybody signed in. `/people/<code>`
+    refuses the same person with `p360.may_view`, so the two disagreed
+    about who is reachable."""
+    rows = _rows('MLREP')
+    assert rows['MLOTHER']['email'] == ''
+    assert rows['MLOTHER']['email_hidden'] is True
+    assert rows['MLHEAD']['email'] == ''
+
+
+def test_a_user_always_sees_their_own_address(people):
+    """A picker that cannot show you your own address is a bug, not a
+    precaution -- and it is the PIC's own address the lead screen
+    prints for most people."""
+    with flask_app.app_context():
+        me = Employee.query.filter_by(emp_code='MLREP').first()
+        me.email = 'mlrep@procamlogistics.com'
+        db.session.commit()
+    rows = _rows('MLREP')
+    assert rows['MLREP']['email'] == 'mlrep@procamlogistics.com'
+    assert 'email_hidden' not in rows['MLREP']
+
+
+def test_a_vertical_head_sees_their_own_vertical_and_not_the_others(people):
+    """DataScope.VERTICAL. MLHEAD and MLREP are both Warehousing;
+    MLOTHER is Installation."""
+    rows = _rows('MLHEAD')
+    assert 'email_hidden' not in rows['MLREP'], (
+        'a vertical head cannot reach their own vertical')
+    assert rows['MLOTHER'].get('email_hidden') is True
+
+
+def test_the_pickers_still_list_every_assignable_colleague(people):
+    """What the scoping deliberately does NOT do. These rows are the
+    owner and assignee dropdowns: a rep with OWN scope would otherwise
+    find nobody but themselves in a reassignment dropdown. A code and
+    a name are already on every lead row they can see; the address is
+    what was over-shared, so the address is what is scoped."""
+    rows = _rows('MLREP')
+    for code in ('MLHEAD', 'MLOTHER', 'MLGRANT', 'MLNARROW'):
+        assert code in rows, code
+        assert rows[code]['name'], code
+
+
+def test_an_administrator_is_unaffected(people):
+    """`admin.employees` takes the full record, as it always did."""
+    rows = _c('MLGRANT', 'user').get('/api/employees').get_json()
+    assert 'must_change_pw' in rows[0]
+    assert not any('email_hidden' in r for r in rows)
 
 
 def test_an_inactive_colleague_is_not_listed_to_a_plain_user(people):

@@ -192,15 +192,42 @@ def flask_app():
     return A.app
 
 
+#: A code that exists only for this file, with the one permission the
+#: alias needs granted to it here. Signing in as an existing admin was
+#: enough serially and not under `-n auto`: the gate resolves against
+#: the database, these suites share one per process, and a worker that
+#: got a different one had no profile for that code -- so the redirect
+#: came back as a refusal and three tests failed for a reason that had
+#: nothing to do with the redirect.
+SCAN_USER = 'UISCAN01'
+
+
 @pytest.fixture(scope='module')
 def client(flask_app):
-    """Signed in as an admin, because the alias is gated exactly like
-    the page it stands for (`module.business_cards`). A signed-out
-    client would only ever see the refusal, which is what
+    """Signed in with `module.business_cards`, because the alias is
+    gated exactly like the page it stands for. A signed-out client
+    would only ever see the refusal, which is what
     `test_the_alias_is_gated_like_the_page_it_stands_for` checks."""
+    from app import db, Employee
+    from app.access.service import set_profile
+    from app.models.access import DataScope
+
+    with flask_app.app_context():
+        db.create_all()
+        emp = Employee.query.filter_by(emp_code=SCAN_USER).first()
+        if emp is None:
+            emp = Employee(emp_code=SCAN_USER, name='UI sweep')
+            db.session.add(emp)
+        emp.role, emp.vertical, emp.is_active = 'user', 'All', True
+        emp.must_change_pw, emp.is_super_admin, emp.session_version = \
+            False, False, 0
+        db.session.commit()
+        set_profile(SCAN_USER, DataScope.ALL, ['module.business_cards'],
+                    actor='SYSTEM')
+
     c = flask_app.test_client()
     with c.session_transaction() as sess:
-        sess.update(emp_code='DIR12010', name='Tech team', role='admin',
+        sess.update(emp_code=SCAN_USER, name='UI sweep', role='user',
                     vertical='All', sv=0)
     return c
 

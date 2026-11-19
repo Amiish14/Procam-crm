@@ -5286,10 +5286,17 @@ const DATE_CHIP = {
 };
 
 /* CRM-WA-01 §3 — the Primary PIC's work address under the dropdown.
-   EMPS comes from /api/employees, which now returns `email` to
-   everybody rather than to administrators only; that omission is why
-   the lead screen could show who the PIC was and not how to reach
-   them. */
+   EMPS comes from /api/employees, which returns `email` to everybody
+   rather than to administrators only; that omission is why the lead
+   screen could show who the PIC was and not how to reach them.
+
+   19 Nov: the address is SCOPED there now, to the colleagues this
+   user may look at, and a withheld one arrives blank with
+   `email_hidden` set. That flag is the whole reason it is sent: the
+   blank branch below says the record has no address and CRM mail to
+   them cannot be delivered, which for a withheld address is a lie
+   about the data — it would send somebody to fix a record that is
+   already right. */
 function picMailShow(){
   const box = g('lAsgnMail'), sel = g('lAsgn');
   if (!box || !sel) return;
@@ -5302,9 +5309,13 @@ function picMailShow(){
     const mail = (emp.email || '').trim();
     box.innerHTML = mail
       ? `<a href="mailto:${e(mail)}">${e(mail)}</a>`
-      : '<span style="color:#b0421a">No email address on this '
-        + 'employee\'s record — CRM mail to them cannot be '
-        + 'delivered.</span>';
+      : (emp.email_hidden
+        ? '<span style="color:var(--text-3)">Address not shown — this '
+          + 'person is outside what you can see. CRM mail to them is '
+          + 'unaffected.</span>'
+        : '<span style="color:#b0421a">No email address on this '
+          + 'employee\'s record — CRM mail to them cannot be '
+          + 'delivered.</span>');
   };
   sel.addEventListener('change', draw);
   draw();

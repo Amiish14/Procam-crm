@@ -2346,16 +2346,56 @@ def api_employees():
         #
         # It is a colleague's work address, and withholding it here was
         # inconsistent rather than protective: /people/<code> (the PIC
-        # 360 screen, app/pic360) already shows the same address to any
-        # signed-in user, and every notification the CRM sends carries
-        # it. The mobile number is deliberately still not included —
-        # nothing in the CRM shows that in bulk.
+        # 360 screen, app/pic360) shows the same address, and every
+        # notification the CRM sends carries it. The mobile number is
+        # deliberately still not included — nothing in the CRM shows
+        # that in bulk.
+        #
+        # 19 Nov: SCOPED, which is the half that was missing. The
+        # precedent above is narrower than what this did. /people/
+        # <code> refuses with `p360.may_view`, so a vertical head sees
+        # their own vertical and not every colleague — and this was
+        # handing every active employee's address to anybody signed in,
+        # in one call. The same gate now decides each address, so the
+        # two cannot disagree about who is reachable.
+        #
+        # THE LIST ITSELF IS NOT FILTERED, deliberately. These rows are
+        # the owner and assignee pickers: they need every assignable
+        # person's code and name, and a rep with OWN scope would
+        # otherwise find nobody but themselves in a reassignment
+        # dropdown. What was over-shared is the address, so that is
+        # what is scoped; a code and a name are already on every lead
+        # row the user can see.
+        from app.pic360 import service as p360
+        reach = p360.visible_codes()        # None = unrestricted
+        me = session.get('emp_code') or ''
         emps = Employee.query.filter_by(is_active=True).with_entities(
             Employee.emp_code, Employee.name, Employee.vertical,
             Employee.role, Employee.email).all()
-        return jsonify([{'emp_code': e.emp_code, 'name': e.name,
-                         'vertical': e.vertical, 'role': e.role,
-                         'email': e.email or ''} for e in emps])
+
+        def _may(e):
+            # Your own address is always yours to see, whatever the
+            # scope says: a picker that cannot show you your own
+            # address is a bug, not a precaution.
+            return reach is None or e.emp_code == me or e.emp_code in reach
+
+        # `email_hidden` matters more than it looks. The lead screen
+        # prints "No email address on this employee's record — CRM mail
+        # to them cannot be delivered" when the address is blank, and
+        # for a withheld one that is a lie about the data that would
+        # send somebody to fix a record that is already correct. An
+        # empty address and an address that is not yours to see are
+        # different answers and have to read differently.
+        out = []
+        for e in emps:
+            may = _may(e)
+            row = {'emp_code': e.emp_code, 'name': e.name,
+                   'vertical': e.vertical, 'role': e.role,
+                   'email': (e.email or '') if may else ''}
+            if not may:
+                row['email_hidden'] = True
+            out.append(row)
+        return jsonify(out)
     emps = Employee.query.order_by(Employee.name).all()
     return jsonify([e.to_dict() for e in emps])
 
