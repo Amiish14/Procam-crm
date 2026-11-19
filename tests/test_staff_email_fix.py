@@ -542,3 +542,184 @@ def test_the_seeders_own_expression_keeps_nothing_as_nothing():
     assert seeded(None) is None
     assert seeded('   ') is None
     assert seeded(' asha.v@procamgroup.in ') == 'asha.v@procamgroup.in'
+
+
+# ── --set and --from-csv: an address somebody knows ──────────────────
+# Evidence can only find what the CRM has already seen, and the people
+# nobody has ever mailed through the CRM are exactly the ones left on
+# the HR list. These tests are the other way in, and they matter most
+# where they refuse: a typed address has no evidence behind it, so the
+# only protection is the checks below.
+def _stated(pairs):
+    with flask_app.app_context():
+        return fix.stated(pairs, DOMAINS)
+
+
+def _state_and_apply(pairs, batch):
+    """Both halves in ONE app context, which is where the rows' Employee
+    objects live: the session is scoped to the context, so rows built in
+    one and written in the next are detached and the write is silently
+    lost. `main()` does both inside one context too."""
+    with flask_app.app_context():
+        rows = fix.stated(pairs, DOMAINS)
+        return fix.apply(rows, batch=batch, actor='DIR12010'), rows
+
+
+def _one(pairs):
+    rows = _stated(pairs)
+    assert len(rows) == 1
+    return rows[0]
+
+
+def test_a_stated_address_is_proposed_without_any_evidence(world):
+    """ZZ004 has no address and no evidence anywhere. Stated, it is
+    still an answer -- that is the whole point of the flag."""
+    row = _one([('ZZ004', 'devdas.p@procamgroup.in', 'a signature')])
+    assert row['conflict'] == ''
+    assert row['proposed'] == 'devdas.p@procamgroup.in'
+    assert row['source'] == 'stated'
+    assert 'a signature' in row['detail'], 'the audit must say where from'
+
+
+def test_a_stated_address_is_written_and_can_be_undone(world):
+    n, _ = _state_and_apply([('ZZ004', 'devdas.p@procamgroup.in', '--set #1')],
+                            'SEML-SET-1')
+    assert n == 1
+    assert _emails()['ZZ004'] == 'devdas.p@procamgroup.in'
+    with flask_app.app_context():
+        assert fix.undo('SEML-SET-1', 'DIR12010') == 1
+    assert _emails()['ZZ004'] in ('', None)
+
+
+def test_a_stated_address_replaces_even_a_real_one(world):
+    """ZZ006 holds a real-looking address, and the evidence path
+    deliberately never touches such a row. A stated one must: the
+    person typing it knows something this database does not -- and the
+    old value is in the audit row, so it is not lost."""
+    n, rows = _state_and_apply(
+        [('ZZ006', 'farhan.qureshi@procamlogistics.com', 'HR')],
+        'SEML-SET-REAL')
+    assert rows[0]['conflict'] == ''
+    assert n == 1
+    assert _emails()['ZZ006'] == 'farhan.qureshi@procamlogistics.com'
+    with flask_app.app_context():
+        fix.undo('SEML-SET-REAL', 'DIR12010')
+    assert _emails()['ZZ006'] == 'farhan.q@procamlogistics.com'
+
+
+def test_a_stated_address_is_audited_like_any_other(world):
+    from app.models.audit import AuditEvent
+    _state_and_apply([('ZZ004', 'devdas.p@procamgroup.in', 'HR list line 7')],
+                     'SEML-SET-AUD')
+    with flask_app.app_context():
+        ev = [e for e in AuditEvent.query.filter(
+            AuditEvent.action == fix.ACTION).all()
+            if isinstance(e.new_value, dict)
+            and e.new_value.get('batch') == 'SEML-SET-AUD']
+    assert len(ev) == 1
+    assert ev[0].actor == 'DIR12010'
+    assert ev[0].new_value.get('source') == 'stated'
+    assert 'HR list line 7' in (ev[0].reason or '')
+
+
+def test_an_address_another_employee_holds_is_refused(world):
+    """`employees.email` is unique. Writing it twice fails the
+    transaction and takes the whole batch with it, so this has to be
+    caught before anything is written."""
+    row = _one([('ZZ004', 'esha.f@procamgroup.in', 'HR')])
+    assert 'already on ZZ999' in row['conflict']
+    assert row['proposed'] == ''
+    before = _emails()
+    n, _ = _state_and_apply([('ZZ004', 'esha.f@procamgroup.in', 'HR')],
+                            'SEML-SET-DUP')
+    assert n == 0
+    assert _emails() == before
+
+
+def test_an_unknown_employee_code_is_refused(world):
+    row = _one([('ZZ777', 'nobody@procamgroup.in', 'HR')])
+    assert 'no employee has the code ZZ777' in row['conflict']
+
+
+def test_something_that_is_not_an_address_is_refused(world):
+    for said in ('not an address', 'two@@at.com', 'bare@domain'):
+        row = _one([('ZZ004', said, 'HR')])
+        assert 'not an email address' in row['conflict'], said
+
+
+def test_the_made_up_shape_cannot_be_stated_either(world):
+    """The flag is a way in, not a way around rule 4."""
+    row = _one([('ZZ004', 'emp42020@procamgroup.in', 'HR')])
+    assert 'emp<code>@' in row['conflict']
+
+
+def test_two_addresses_for_one_person_refuses_both(world):
+    rows = _stated([('ZZ004', 'a.b@procamgroup.in', 'HR line 2'),
+                    ('ZZ004', 'c.d@procamgroup.in', 'HR line 9')])
+    assert len(rows) == 2
+    for r in rows:
+        assert 'two addresses stated for this person' in r['conflict']
+        assert r['proposed'] == ''
+
+
+def test_one_address_for_two_people_refuses_both(world):
+    rows = _stated([('ZZ004', 'shared@procamgroup.in', 'HR line 2'),
+                    ('ZZ003', 'shared@procamgroup.in', 'HR line 9')])
+    assert len(rows) == 2
+    for r in rows:
+        assert 'more than one person' in r['conflict']
+
+
+def test_stating_what_is_already_there_is_not_a_change(world):
+    row = _one([('ZZ006', 'farhan.q@procamlogistics.com', 'HR')])
+    assert 'nothing to do' in row['conflict']
+
+
+def test_an_outside_domain_is_written_but_said_out_loud(world):
+    """A contractor or a group company may genuinely be elsewhere, and
+    a stated address is a decision. Written -- and flagged, because
+    every other address in this file is on our own domains."""
+    row = _one([('ZZ004', 'd.pillai@someother.example', 'HR')])
+    assert row['conflict'] == '', 'stated, so not refused'
+    assert row['_note'], 'but noted'
+    assert 'NOTE' in row['detail']
+
+
+def test_set_wants_code_equals_address():
+    assert fix.parse_set(['ZZ004=a.b@procamgroup.in']) == [
+        ('ZZ004', 'a.b@procamgroup.in', '--set #1 on the command line')]
+    assert fix.parse_set(['zz004=A.B@Procamgroup.in'])[0][0] == 'ZZ004'
+    with pytest.raises(SystemExit):
+        fix.parse_set(['ZZ004 a.b@procamgroup.in'])
+
+
+def test_the_hr_csv_is_read_by_column_name_not_by_position(tmp_path):
+    p = tmp_path / 'hr.csv'
+    p.write_text('Name,Email Address,Emp Code\n'
+                 'Somebody,a.b@procamgroup.in,ZZ004\n'
+                 'Nobody,,\n', encoding='utf-8')
+    got = fix.read_set_csv(str(p))
+    assert got == [('ZZ004', 'a.b@procamgroup.in', 'hr.csv line 2')], got
+
+
+def test_a_csv_without_the_two_columns_stops_rather_than_guesses(tmp_path):
+    p = tmp_path / 'hr.csv'
+    p.write_text('name,phone\nSomebody,99999\n', encoding='utf-8')
+    with pytest.raises(SystemExit):
+        fix.read_set_csv(str(p))
+
+
+def test_a_stated_run_does_not_overwrite_the_evidence_csvs():
+    """The two other CSVs are the evidence survey and HR's backlog. A
+    run that states one address must not replace either with one row."""
+    import io as _io
+    src = _io.open(os.path.join(_ROOT, 'scripts',
+                                '2026_11_19_staff_email_fix.py'),
+                   encoding='utf-8').read()
+    assert fix.SET_CSV != fix.OUT_CSV != fix.UNRESOLVED_CSV
+    assert fix.SET_CSV != fix.UNRESOLVED_CSV
+    # And the stated branch returns before the survey's writes.
+    branch = src.split('if args.set_ or args.from_csv:', 1)[1]
+    branch = branch.split('tms, tms_note = tms_employees()', 1)[0]
+    assert 'args.set_out' in branch
+    assert 'args.unresolved_out' not in branch

@@ -7,6 +7,14 @@
     .venv/bin/python scripts/2026_11_19_staff_email_fix.py --undo \
         --batch SEML-20261119-1 --actor DIR12010
 
+And for an address nobody can find but somebody knows -- HR's list, or
+the person's own signature -- stated instead of searched for:
+
+    .venv/bin/python scripts/2026_11_19_staff_email_fix.py \
+        --set ZZ0001=first.last@procamgroup.in
+    .venv/bin/python scripts/2026_11_19_staff_email_fix.py \
+        --from-csv docs/hr_addresses.csv --apply --actor DIR12010
+
 WHAT IS WRONG
 
 Most employee rows carry an address that was never a mailbox. The
@@ -88,6 +96,10 @@ BATCH_PREFIX = 'SEML'
 
 OUT_CSV = 'docs/staff_email_fix.csv'
 UNRESOLVED_CSV = 'docs/staff_email_unresolved.csv'
+#: --set / --from-csv write their own file. They must not overwrite
+#: the two above: those are the evidence survey and HR's backlog, and
+#: a run that states one address would replace both with one row.
+SET_CSV = 'docs/staff_email_set.csv'
 
 #: `emp<digits>@anything`, which is the shape the seeder made. Case
 #: insensitive, and the domain is not pinned: the fault is the local
@@ -103,6 +115,8 @@ BODY_LINE = re.compile(r'^\s*(from|to|cc)\s*:\s*(.+)$', re.I | re.M)
 #: How much each kind of evidence is worth when two addresses compete.
 #: A code the ingest itself paired with an address outranks any number
 #: of display-name matches, because nothing about it is inferred.
+#: `stated` is not in this table on purpose: a stated address does not
+#: compete with evidence, it replaces the search. See `stated()`.
 WEIGHT = {'forwarded': 100, 'lead_fwd': 40, 'login': 30, 'tms': 25,
           'header': 5, 'body': 3}
 
@@ -404,6 +418,166 @@ def survey(domains, *, tms=None, everyone=False):
     return rows, unresolved
 
 
+# ── stated addresses: --set and --from-csv ───────────────────────────
+# Evidence can only find an address the CRM has already seen. Everything
+# else is known by a person -- HR's list, or somebody's own signature --
+# and this is the way that gets in without being typed into the database
+# by hand. It writes the same audit rows and the same batch, so --undo
+# does not care which way an address arrived.
+def parse_set(values):
+    """`--set CODE=address`, repeatable, as (code, address, where)."""
+    out = []
+    for i, raw in enumerate(values or [], start=1):
+        said = (raw or '').strip()
+        if '=' not in said:
+            sys.exit(f'  [STOP] --set wants CODE=address, got {said!r}.')
+        code, addr = said.split('=', 1)
+        out.append((code.strip().upper(), addr.strip(),
+                    f'--set #{i} on the command line'))
+    return out
+
+
+def read_set_csv(path):
+    """HR's list: any CSV with an employee code column and an email one.
+
+    The column names are not pinned to one spelling, because the file
+    comes from whoever has the answers rather than from this repo.
+    """
+    full = os.path.abspath(path)
+    if not os.path.exists(full):
+        sys.exit(f'  [STOP] no such file: {full}')
+    out = []
+    with open(full, newline='', encoding='utf-8-sig') as fh:
+        reader = csv.DictReader(fh)
+        heads = {(n or '').strip().lower().replace(' ', '_').replace('-', '_'):
+                 n for n in (reader.fieldnames or [])}
+        code_col = next((heads[k] for k in ('emp_code', 'code',
+                                            'employee_code', 'employee')
+                         if k in heads), None)
+        mail_col = next((heads[k] for k in ('email', 'email_address',
+                                           'address', 'mail', 'proposed')
+                         if k in heads), None)
+        if not (code_col and mail_col):
+            found = ', '.join(reader.fieldnames or []) or 'no header at all'
+            sys.exit(f'  [STOP] {full} needs an emp_code column and an '
+                     f'email column. It has: {found}.')
+        for n, row in enumerate(reader, start=2):
+            code = (row.get(code_col) or '').strip().upper()
+            addr = (row.get(mail_col) or '').strip()
+            if not (code or addr):
+                continue
+            out.append((code, addr, f'{os.path.basename(full)} line {n}'))
+    if not out:
+        sys.exit(f'  [STOP] {full} has a header and no rows.')
+    return out
+
+
+def stated(pairs, domains):
+    """Rows in the survey's shape, one per stated address.
+
+    A refusal goes in `conflict`, which is what `--apply` reads, so a
+    bad line in HR's list is reported and skipped rather than stopping
+    the good ones.
+    """
+    from app import Employee
+
+    by_code = {(e.emp_code or '').upper(): e for e in Employee.query.all()}
+    taken = {}
+    for e in by_code.values():
+        addr = (e.email or '').strip().lower()
+        if addr:
+            taken[addr] = e.emp_code
+
+    # Contradictions inside the input itself, which neither the database
+    # nor the uniqueness constraint would catch: the same person given
+    # two addresses, or one address given to two people.
+    per_code, per_addr = defaultdict(set), defaultdict(set)
+    for code, addr, _w in pairs:
+        per_code[code].add(addr.strip().lower())
+        per_addr[addr.strip().lower()].add(code)
+
+    rows = []
+    for code, addr, where in pairs:
+        low = addr.strip().lower()
+        emp = by_code.get(code)
+        current = (emp.email or '').strip() if emp is not None else ''
+        refusal, note = '', ''
+        if not (code and addr):
+            refusal = 'needs both an employee code and an address'
+        elif emp is None:
+            refusal = f'no employee has the code {code}'
+        elif not ADDR.fullmatch(addr):
+            refusal = f'{addr} is not an email address'
+        elif looks_generated(addr):
+            refusal = (f'{addr} is the made-up emp<code>@ shape this '
+                       f'script exists to remove')
+        elif len(per_code[code]) > 1:
+            refusal = ('two addresses stated for this person: '
+                       + ', '.join(sorted(per_code[code])))
+        elif len(per_addr[low]) > 1:
+            refusal = ('this address is stated for more than one person: '
+                       + ', '.join(sorted(per_addr[low])))
+        elif taken.get(low, code) != code:
+            refusal = f'{addr} is already on {taken[low]} — email is unique'
+        elif current.lower() == low:
+            refusal = f'already set to {addr} — nothing to do'
+        elif not is_ours(low, domains):
+            # Allowed, because somebody stated it and a contractor or a
+            # group company may genuinely be elsewhere -- but said out
+            # loud, since every other address here is on our own domains.
+            note = ('not one of our domains ('
+                    + ', '.join(sorted(domains)) + ')')
+        rows.append({
+            'emp_code': code,
+            'name': (emp.name or '') if emp is not None else '',
+            'current': current,
+            'current_kind': ('generated' if looks_generated(current)
+                             else ('empty' if not current else 'real')),
+            'proposed': '' if refusal else addr.strip(),
+            'source': 'stated',
+            'evidence_count': 1,
+            'detail': (f'stated — {where}'
+                       + (f' — NOTE: {note}' if note else '')),
+            'conflict': refusal,
+            'all_candidates': addr.strip(),
+            '_emp': emp,
+            '_addr': '' if refusal else low,
+            # A stated address replaces whatever is on the row, including
+            # a real-looking one: a person who types it knows something
+            # this database does not. The old value is in the audit row,
+            # so --undo puts it back.
+            '_force': True,
+            '_note': note,
+        })
+    return rows
+
+
+def report_stated(rows):
+    good = [r for r in rows if r['proposed']]
+    bad = [r for r in rows if r['conflict']]
+    print('\n' + '═' * 68)
+    print('  STATED ADDRESSES — not found, told')
+    print('═' * 68)
+    print(f'  stated            {len(rows)}')
+    print(f'  will be written   {len(good)}')
+    print(f'  refused          {len(bad)}')
+    if good:
+        print('\n  TO BE WRITTEN')
+        for r in good:
+            was = r['current'] or '(nothing)'
+            print(f'    {r["emp_code"]:<12} {(r["name"] or "")[:22]:<22} '
+                  f'{was[:30]:<30} → {r["proposed"]}')
+            if r['current_kind'] == 'real':
+                print(f'    {"":<12} [REPLACES a real-looking address]')
+            if r['_note']:
+                print(f'    {"":<12} [NOTE] {r["_note"]}')
+    if bad:
+        print('\n  REFUSED — nothing written for these')
+        for r in bad:
+            print(f'    {r["emp_code"] or "(no code)":<12} '
+                  f'{r["conflict"][:80]}')
+
+
 def write_csv(path, rows, fields):
     path = os.path.abspath(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -494,7 +668,7 @@ def apply(rows, *, batch, actor):
             # Edited since the survey: somebody has put a real address
             # on this row while this was being read, and theirs is a
             # decision where this is a guess from evidence.
-            if was and not looks_generated(was):
+            if was and not looks_generated(was) and not r.get('_force'):
                 skipped.append(f'{emp.emp_code}: now has {was}')
                 continue
             # And the address must still be free.
@@ -583,6 +757,15 @@ def main():
     ap.add_argument('--undo', action='store_true')
     ap.add_argument('--batch')
     ap.add_argument('--actor', help='employee id; required with --apply')
+    ap.add_argument('--set', action='append', dest='set_',
+                    metavar='CODE=ADDRESS',
+                    help='state one address, bypassing the evidence '
+                         'search. Repeatable.')
+    ap.add_argument('--from-csv', dest='from_csv', metavar='FILE',
+                    help="state many: a CSV with emp_code and email "
+                         "columns (HR's list)")
+    ap.add_argument('--set-out', dest='set_out', default=SET_CSV,
+                    help='where the stated run writes its report')
     args = ap.parse_args()
 
     import app as A
@@ -594,6 +777,28 @@ def main():
             return undo(args.batch, args.actor)
 
         domains = own_domains()
+
+        # --set / --from-csv is its own run, not an addition to the
+        # survey: one intent per command, so the dry run shows exactly
+        # what was asked for and --apply writes nothing else.
+        if args.set_ or args.from_csv:
+            pairs = parse_set(args.set_)
+            if args.from_csv:
+                pairs += read_set_csv(args.from_csv)
+            rows = stated(pairs, domains)
+            report_stated(rows)
+            said = write_csv(args.set_out, rows, FIELDS)
+            print(f'\n  CSV        {said}')
+            if not args.apply:
+                n = len([r for r in rows if r['proposed']])
+                print(f'\n  DRY RUN — nothing written. {n} row(s) would '
+                      f'change.')
+                print('  Add --apply --actor DIR12010 to write them.')
+                return 0
+            if not args.actor:
+                sys.exit('  [STOP] --apply needs --actor, an employee id.')
+            return apply(rows, batch=next_batch_id(), actor=args.actor)
+
         tms, tms_note = tms_employees()
         rows, unresolved = survey(domains, tms=tms, everyone=args.all)
         report(rows, unresolved, tms_note=tms_note)

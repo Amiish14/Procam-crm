@@ -2471,6 +2471,13 @@ def api_update_employee(eid):
             body_warnings = []
     else:
         body_warnings = []
+    # Clearing the address stores nothing, not a blank. `email` is
+    # unique: two rows holding '' are a duplicate and the second save
+    # fails with a server error, while two rows holding NULL are fine.
+    # Same reason the seeder stopped writing '' — and Employee Master
+    # now has an Edit, so clearing one is a thing a person can do.
+    if 'email' in d:
+        d['email'] = (d.get('email') or '').strip() or None
     changed = []
     for field in ('name','email','mobile','department','designation','vertical',
                   'role','is_active','is_vertical_head'):

@@ -2136,6 +2136,26 @@ catch (err) { console.error('Employee list could not start loading', err); }
   </div>
 </div>
 
+<!-- EDIT EMPLOYEE — email, designation and vertical, the three fields
+     that go stale and the three an administrator has to be able to put
+     right. Every one of them is audited by the model listener
+     (app/services/audit_listener.py: email / designation / vertical →
+     employee.update), so there is a row saying who changed what. -->
+<div class="mob" id="eeMob" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+  <div class="mod mod-sm" onclick="event.stopPropagation()">
+    <div class="mhd"><div class="m-ic">✏️</div><div><div class="m-ttl">Edit Employee</div><div class="m-sub" id="eeWho">—</div></div><button class="mx" onclick="document.getElementById('eeMob').style.display='none'">✕</button></div>
+    <div class="mbdy">
+      <input type="hidden" id="eeId">
+      <div class="fmg"><label class="fml">Email</label><input class="fmc" id="eeEmail" type="email" placeholder="first.last@procamgroup.com">
+        <div style="font-size:11.5px;color:var(--text-3);margin-top:5px">Every CRM notification for this person goes here. Leave it empty rather than inventing one — an address that is not a mailbox looks fine and delivers nothing.</div>
+      </div>
+      <div class="fmr"><div class="fmg"><label class="fml">Designation</label><input class="fmc" id="eeDesig"></div>
+        <div class="fmg"><label class="fml">Vertical</label><select class="fmc" id="eeVert"></select></div></div>
+    </div>
+    <div class="mft"><button class="btn btn-ghost" onclick="document.getElementById('eeMob').style.display='none'">Cancel</button><button class="btn btn-red" onclick="saveEmpEdit()">Save changes</button></div>
+  </div>
+</div>
+
 <!-- NEWS ASSIGN MODAL -->
 <div class="mob" id="nMob" style="display:none" onclick="if(event.target===this)this.style.display='none'">
   <div class="mod mod-sm" onclick="event.stopPropagation()">
@@ -7273,10 +7293,30 @@ async function bulkAssign(){
 }
 
 // ── EMPLOYEES ──
+// The rows last drawn, so the edit form does not have to fetch them
+// again and cannot edit a row that is no longer on screen.
+let EMPS_ADMIN=[];
+const EMP_VERTS=['Heavy Transport','Project Freight','Warehousing',
+                 'Installation','All'];
+
 async function rEmps(){
   let emps=await api('/api/employees');
   if(!Array.isArray(emps))emps=[];
-  g('empCnt').innerHTML=emps.map(emp=>{
+  EMPS_ADMIN=emps;
+  /* `id` and `is_active` come back only for somebody who holds
+     admin.employees in the Access Matrix; without it this endpoint
+     answers with the pickers' narrow projection (code, name, vertical,
+     role, email). The sidebar entry is gated on the ROLE instead, so an
+     admin whose matrix row does not tick Employee Master landed here
+     and got a screen that lied: no is_active, so EVERY row read
+     "Activate" — active staff included — and no id, so Reset password
+     called /api/employees/undefined. The payload now decides what is
+     drawn, and the page says which of the two it is. */
+  const full=emps.length===0||('is_active' in emps[0]);
+  g('empCnt').innerHTML=(full?'':`<div class="card" style="padding:13px;margin-bottom:12px;border-left:3px solid var(--p-amber,#B45309)">
+      <div style="font-weight:600;margin-bottom:4px">Read-only — this list is not the Employee Master's own</div>
+      <div style="font-size:12.5px;color:var(--text-2);line-height:1.55">Your Access Matrix row does not include <strong>Employee Master</strong>, so this screen is showing the team picker's list instead: active staff only, without the active/inactive state or the per-row controls. Ask for that permission on User Access Matrix, or ask somebody who has it.</div>
+    </div>`)+emps.map(emp=>{
     const ini=emp.name.split(' ').map(w=>w[0]).slice(0,2).join('');
     const leads_hint=''; // Could fetch lead count here
     return `<div class="emp-card">
@@ -7286,13 +7326,13 @@ async function rEmps(){
           ${emp.role==='admin'?'<span class="b sL" style="margin-left:6px">Admin</span>':emp.role==='presales'?'<span class="b sC" style="margin-left:6px">Pre-Sales</span>':''}
         </div>
         <div class="e-meta">${e(emp.designation||'—')} · ${e(emp.department||'—')} · ${e(emp.vertical||'—')}</div>
-        <div style="font-size:12px;color:var(--text-3);margin-top:2px">${e(emp.email||'—')}</div>
+        <div style="font-size:12px;color:var(--text-3);margin-top:2px">${emp.email?e(emp.email):(emp.email_hidden?'<span style="color:var(--text-3)">address not shown — outside what you can see</span>':'<span style="color:#b0421a">no email address — CRM mail to this person cannot be delivered</span>')}</div>
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+        ${full&&!emp.is_active?'<span class="b sL" title="Deactivated: this account cannot sign in, and the team pickers do not offer this person">Inactive · cannot sign in</span>':''}
+        ${full?`<button class="btn btn-ghost btn-sm" onclick="openEmpEdit(${emp.id})">Edit</button>
         <button class="btn btn-ghost btn-sm" onclick="resetPw(${emp.id})">Reset password</button>
-        <button class="btn btn-ghost btn-sm" onclick="toggleEmp(${emp.id})">
-          ${emp.is_active?'Deactivate':'Activate'}
-        </button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleEmp(${emp.id})">${emp.is_active?'Deactivate':'Activate'}</button>`:''}
       </div>
     </div>`;
   }).join('');
@@ -7309,6 +7349,42 @@ async function saveEmp(){
     if(r.temp_password)prompt('Temporary password for '+name+' — copy it now, it is shown only once:',r.temp_password);}
   else toast(r.error||'Error','err');
 }
+function openEmpEdit(id){
+  const emp=EMPS_ADMIN.find(x=>x.id===id);
+  if(!emp){toast('That employee is no longer on this list','err');return;}
+  g('eeId').value=emp.id;
+  g('eeWho').textContent=`${emp.name} · ${emp.emp_code}`;
+  g('eeEmail').value=emp.email||'';
+  g('eeDesig').value=emp.designation||'';
+  /* The employee's own vertical is always an option, even when it is
+     not one of the five below. Without it the select falls back to
+     option zero and saving moves the person to a vertical nobody
+     chose — the same defect as the owner select on the lead screen. */
+  const vs=EMP_VERTS.slice();
+  if(emp.vertical&&!vs.includes(emp.vertical))vs.unshift(emp.vertical);
+  g('eeVert').innerHTML='<option value="">— none —</option>'
+    +vs.map(v=>`<option value="${e(v)}"${v===emp.vertical?' selected':''}>${e(v)}</option>`).join('');
+  g('eeMob').style.display='flex';
+}
+
+async function saveEmpEdit(){
+  const id=parseInt(g('eeId').value,10);
+  if(!id){toast('No employee selected','err');return;}
+  const r=await api(`/api/employees/${id}`,{method:'PUT',body:JSON.stringify({
+    email:g('eeEmail').value.trim(),
+    designation:g('eeDesig').value.trim(),
+    vertical:g('eeVert').value})});
+  if(r.error){toast(r.error,'err');return;}
+  if(!r.ok){toast('Not saved','err');return;}
+  g('eeMob').style.display='none';
+  await rEmps();
+  /* A shared departmental mailbox is a warning, not a refusal: saved,
+     and said, because a notification meant for one person being read
+     by whoever gets there first is worth knowing about. */
+  toast((r.warnings&&r.warnings.length)?r.warnings[0]:'Saved ✓',
+        (r.warnings&&r.warnings.length)?'err':'ok');
+}
+
 async function resetPw(id){
   if(!confirm('Reset this password? A new temporary password will be generated.'))return;
   const r=await api(`/api/employees/${id}`,{method:'PUT',body:JSON.stringify({reset_password:true})});
