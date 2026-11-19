@@ -47,7 +47,10 @@ def test_other_headers():
     r, _csp_ = _csp()
     assert r.headers.get('X-Frame-Options') == 'DENY'
     assert r.headers.get('X-Content-Type-Options') == 'nosniff'
-    assert 'camera=()' in (r.headers.get('Permissions-Policy') or '')
+    policy = r.headers.get('Permissions-Policy') or ''
+    # The card scan's camera, for the CRM's own pages only.
+    assert 'camera=(self)' in policy
+    assert 'microphone=()' in policy
     assert r.headers.get('Cross-Origin-Opener-Policy') == 'same-origin'
 
 

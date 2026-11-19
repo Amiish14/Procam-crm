@@ -379,11 +379,12 @@ Talisman(app,
          content_security_policy_report_only=(
              (os.environ.get('CSP_MODE') or 'enforce').lower()
              == 'report-only'),
-         # The CRM uses the clipboard and file inputs; nothing else here
-         # needs the camera (card photos come through a file input),
-         # microphone, location, payment or USB.
+         # The CRM uses the clipboard and file inputs. The camera is
+         # allowed for the CRM's OWN pages only (CRM-UI-01 Stage 5: the
+         # full-screen card scan); no other origin and no frame can use
+         # it. Microphone, location, payment and USB stay off.
          permissions_policy={
-             'camera': '()', 'microphone': '()', 'geolocation': '()',
+             'camera': '(self)', 'microphone': '()', 'geolocation': '()',
              'payment': '()', 'usb': '()', 'interest-cohort': '()',
          },
          # Under /CRM the bare path reached nginx's root, not this app,

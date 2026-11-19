@@ -109,3 +109,13 @@ def test_the_review_form_shows_confidence_and_a_dropdown():
         os.path.abspath(__file__))), 'templates', 'business_card',
         'scan.html')).read()
     assert 'function confBadge' in html and 'cand-pick' in html
+
+
+def test_the_scan_page_has_a_full_screen_camera(client):
+    page = client.get('/business-cards/scan')
+    html = page.get_data(as_text=True)
+    assert 'id="cam-open"' in html and 'getUserMedia' in html
+    assert "facingMode" in html and 'cam-frame' in html
+    # Falls back to the phone's own camera through the file box.
+    assert 'file.click()' in html
+    assert 'camera=(self)' in (page.headers.get('Permissions-Policy') or '')
