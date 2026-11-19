@@ -17,6 +17,16 @@
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #2563eb) 35%, transparent);
   }
 </style>
+<!-- UI re-check 19 Nov, after the quotes list. Ten columns ran 304px
+     off a 441px screen. The same card view the Leads, RFQ and quote
+     lists use: `lists.css` turns a `.tw` table into cards under 768px
+     and `lists.js` stamps each cell with its column's heading.
+
+     AFTER the block above, deliberately: a `.tw tbody td` rule and the
+     `tr.is-target > td` rule there have different specificities and do
+     not collide, but the card view must have the last word on layout
+     at a phone width whatever is added to that block later. -->
+<link rel="stylesheet" href="{{ url_prefix }}/static/css/lists.css?v={{ asset_v }}">
 </head>
 <body>
 {% include "_crm_topbar.html" %}
@@ -48,9 +58,10 @@
   </select>
 </div>
 
+<div class="tw">
 <table>
   <thead><tr>
-    <th>#</th><th>Account</th><th>Vertical</th>
+    <th class="tbl-num">#</th><th>Account</th><th>Vertical</th>
     <th class="num">Won value</th>
     <th>Opp / Quote</th>
     <th>Customer PO</th>
@@ -58,6 +69,7 @@
   </tr></thead>
   <tbody id="tbody"><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
 </table>
+</div>
 
 <dialog id="poModal">
   <form method="dialog" class="modal-wrap" id="poForm">
@@ -145,7 +157,7 @@ async function load() {
   if (!rows.length) { tbody.innerHTML = '<tr><td colspan="10" class="empty">Nothing here.</td></tr>'; return; }
   tbody.innerHTML = rows.map(r => `
     <tr id="h${r.id}">
-      <td>${r.id}</td>
+      <td class="tbl-num">${r.id}</td>
       <td><b>${esc(r.account_name)}</b></td>
       <td>${esc(r.vertical)}</td>
       <td class="num">${Number(r.won_value||0).toLocaleString()}</td>
@@ -244,6 +256,9 @@ async function cancelH(hid) {
 applyDeepLink();
 load();
 </script>
+<!-- After the rows are rendered: `lists.js` watches the tbody, so a
+     list that refetches itself is re-stamped without being asked. -->
+<script src="{{ url_prefix }}/static/js/lists.js?v={{ asset_v }}"></script>
 </div><!-- /crm-wrap -->
 </body>
 </html>
