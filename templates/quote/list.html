@@ -69,6 +69,17 @@
 </dialog>
 
 <script>
+/* Every in-app navigation goes through this. UI sweep 19 Nov: clicking
+   RFQ-2026-0001 went to `/rfqs/1`, which nginx answers with a 404 --
+   the CRM is served under a prefix and these four pages were the only
+   ones building a path without it. The stylesheet links on the same
+   pages had it all along, which is why nothing else looked wrong.
+
+   Named `crmUrl` because that is what the single-page app and six admin
+   pages already call it. */
+const URL_PREFIX = "{{ url_prefix }}";
+function crmUrl(p){ return URL_PREFIX + p; }
+
 const CSRF = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
 async function jf(u, o) {
   o = o || {}; o.headers = Object.assign({'Content-Type':'application/json','X-CSRFToken': CSRF}, o.headers || {});
@@ -100,7 +111,7 @@ function render() {
   const tbody = document.getElementById('tbody');
   if (!rows.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty">No quotes.</td></tr>'; return; }
   tbody.innerHTML = rows.map(q => `
-    <tr onclick="location='/quotes/${q.id}'">
+    <tr onclick="location=crmUrl('/quotes/${q.id}')">
       <td><b>${q.quote_number}</b></td>
       <td>${esc(q.subject)}</td>
       <td>${pill(q.status)}</td>
@@ -117,7 +128,7 @@ async function submitCreate() {
   fd.forEach((v,k)=>{ if (v!=='' && v!=null) p[k]=v; });
   if (p.rfq_id) p.rfq_id = parseInt(p.rfq_id, 10);
   const j = await jf('/api/quotes', {method:'POST', body: JSON.stringify(p)});
-  if (j && j.ok) location = '/quotes/' + j.quote.id;
+  if (j && j.ok) location = crmUrl('/quotes/') + j.quote.id;
   else alert((j && j.error) || 'Create failed');
 }
 load();

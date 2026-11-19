@@ -127,6 +127,17 @@
 </dialog>
 
 <script>
+/* Every in-app navigation goes through this. UI sweep 19 Nov: clicking
+   RFQ-2026-0001 went to `/rfqs/1`, which nginx answers with a 404 --
+   the CRM is served under a prefix and these four pages were the only
+   ones building a path without it. The stylesheet links on the same
+   pages had it all along, which is why nothing else looked wrong.
+
+   Named `crmUrl` because that is what the single-page app and six admin
+   pages already call it. */
+const URL_PREFIX = "{{ url_prefix }}";
+function crmUrl(p){ return URL_PREFIX + p; }
+
 const QID = {{ quote.id }};
 const CSRF = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
 async function jf(u, o) {
@@ -202,7 +213,7 @@ async function revise() {
   const reason = prompt('Reason for revision?') || '';
   const j = await jf('/api/quotes/' + QID + '/revise',
                      {method:'POST', body: JSON.stringify({reason})});
-  if (j && j.ok) { alert('Created ' + j.quote.quote_number); location = '/quotes/' + j.quote.id; }
+  if (j && j.ok) { alert('Created ' + j.quote.quote_number); location = crmUrl('/quotes/') + j.quote.id; }
   else alert((j && j.error) || 'Failed');
 }
 async function markWon() {
