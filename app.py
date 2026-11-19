@@ -6453,7 +6453,27 @@ def init_db():
             for ec, nm, em, dept, desig, vert, role in EMPLOYEES:
                 e = Employee(
                     emp_code=ec, name=nm,
-                    email=em or f"{ec.lower()}@procamgroup.in",
+                    # A MISSING ADDRESS IS LEFT MISSING. This used to be
+                    # `em or f"{ec.lower()}@procamgroup.in"`, which gave
+                    # every employee the master had no address for an
+                    # address that was never a mailbox -- 110 of 117
+                    # rows here, 88 of 132 on the server. It looked like
+                    # an address and `email` is unique, so nothing ever
+                    # complained; every notification the CRM sent those
+                    # people went nowhere, and the one screen that shows
+                    # a PIC's address showed a string that cannot
+                    # receive mail.
+                    #
+                    # None, not '': `email` is unique, so two empty
+                    # strings are a duplicate while two NULLs are not,
+                    # and the second employee without an address used to
+                    # fail with a server error for exactly that reason
+                    # (see api_create_employee).
+                    #
+                    # scripts/2026_11_19_staff_email_fix.py finds the
+                    # real ones from the mail the CRM has already read,
+                    # and lists whoever is left for HR.
+                    email=(em or '').strip() or None,
                     department=dept, designation=desig,
                     vertical=vert, role=role,
                     is_active=True, industries='[]',

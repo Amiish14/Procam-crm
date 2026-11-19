@@ -61,3 +61,11 @@ docs/exports/*.xlsx
 # the numbers somebody marked on the server, and would carry real phone
 # numbers into the repository.
 data/own_numbers.txt
+
+# Output of scripts/2026_11_19_staff_email_fix.py. Both files list every
+# employee by code and name, which is exactly what must not be in the
+# repository -- and they are a run artifact, not content: regenerate
+# them with a dry run whenever they are wanted. No docs/*.csv has ever
+# been tracked, so this only says out loud what was already true.
+docs/staff_email_fix.csv
+docs/staff_email_unresolved.csv
