@@ -105,9 +105,54 @@ def test_email_administration_needs_the_email_permission(people):
     assert r.status_code == 403
 
 
-def test_without_the_permission_only_names_are_listed(people):
+def test_without_the_permission_the_admin_record_is_not_listed(people):
+    """What a signed-in user without `admin.employees` gets back.
+
+    This asserted that `email` was absent too, and it no longer is:
+    CRM-WA-01 §3 added the work address to this projection on purpose,
+    because narrowing it for the assignment dropdowns had removed the
+    one field anybody needed in order to contact the PIC on a lead --
+    an admin could see it and the sales team could not. The decision
+    is written out at the endpoint.
+
+    So the line this test holds is the ADMIN RECORD, not the address:
+    no password state, no mobile number, no joining date, no active
+    flag. The mobile is the one to watch -- nothing in the CRM shows a
+    colleague's mobile in bulk, and the address was added without it
+    deliberately.
+    """
     rows = _c('MLREP', 'user').get('/api/employees').get_json()
-    assert rows and 'must_change_pw' not in rows[0] and 'email' not in rows[0]
+    assert rows
+    for field in ('must_change_pw', 'mobile', 'is_active', 'joined_on',
+                  'is_super_admin', 'department', 'designation', 'id'):
+        assert field not in rows[0], field
+    assert set(rows[0]) == {'emp_code', 'name', 'vertical', 'role', 'email'}
+
+
+def test_the_work_address_is_there_for_the_dropdowns(people):
+    """The half of CRM-WA-01 §3 that the test above used to deny. If
+    this is ever withdrawn it should be withdrawn on purpose, with
+    this test changed by the same hand."""
+    rows = _c('MLREP', 'user').get('/api/employees').get_json()
+    assert 'email' in rows[0]
+
+
+def test_an_inactive_colleague_is_not_listed_to_a_plain_user(people):
+    """The non-admin projection filters on `is_active`, and it has to:
+    it does not carry the flag, so a leaver would be indistinguishable
+    from anybody else in an assignment dropdown."""
+    with flask_app.app_context():
+        gone = Employee.query.filter_by(emp_code='MLOTHER').first()
+        gone.is_active = False
+        db.session.commit()
+    try:
+        rows = _c('MLREP', 'user').get('/api/employees').get_json()
+        assert 'MLOTHER' not in [r['emp_code'] for r in rows]
+    finally:
+        with flask_app.app_context():
+            back = Employee.query.filter_by(emp_code='MLOTHER').first()
+            back.is_active = True
+            db.session.commit()
 
 
 def test_subscription_management_needs_the_email_permission(people):

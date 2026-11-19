@@ -379,14 +379,49 @@ def test_two_extensions_count_two(world):
 
 def test_an_extension_moves_the_follow_up_with_it(world):
     """§3.2 — at RFQ Generated the follow-up is a day before the
-    deadline, so a deadline that moves takes it along."""
-    lead = _lead(due=DUE, followup_date=date(2026, 11, 3))
-    _client().post(f'/api/leads/{lead.id}/quote-due/extend',
-                   json={'quote_due_at': '2026-11-20T18:00',
-                         'reason': 'client_extension'})
+    deadline, so a deadline that moves takes it along.
+
+    The dates are RELATIVE TO TODAY, and that is the point. They were
+    fixed — a deadline of 2026-11-20 and a follow-up of 2026-11-19 —
+    and the test passed until the real clock reached 19 Nov 2026, at
+    which point `propose()` clamped the answer to tomorrow, because it
+    will not offer a follow-up for today: "a follow-up due the moment
+    it is set is a follow-up that is already overdue". The rule is
+    right and the test was a time bomb; `test_the_days_before_rule_
+    never_proposes_today` below pins the clamp on purpose.
+    """
+    with flask_app.app_context():
+        today = qd.today_ist()
+    was = datetime.combine(today + timedelta(days=10),
+                           datetime.min.time()).replace(hour=12, minute=30)
+    moved_to = today + timedelta(days=20)
+    lead = _lead(due=was, followup_date=was.date() - timedelta(days=1))
+    r = _client().post(f'/api/leads/{lead.id}/quote-due/extend',
+                       json={'quote_due_at':
+                             moved_to.strftime('%Y-%m-%dT18:00'),
+                             'reason': 'client_extension'})
+    assert r.status_code == 200, r.get_json()
     with flask_app.app_context():
         assert db.session.get(Lead, lead.id).followup_date == \
-            date(2026, 11, 19)
+            moved_to - timedelta(days=1)
+
+
+def test_the_days_before_rule_never_proposes_today(world):
+    """The clamp the test above was tripping over, said outright.
+
+    A deadline tomorrow would put the rule's date at today, and a
+    follow-up due the moment it is set is already overdue -- 154 of
+    these ended up on an overdue list nobody could clear. So the
+    answer is tomorrow, even though that is the deadline itself.
+    """
+    with flask_app.app_context():
+        today = qd.today_ist()
+        lead = _lead(due=datetime.combine(
+            today + timedelta(days=1),
+            datetime.min.time()).replace(hour=12, minute=30))
+        got = db.session.get(Lead, lead.id)
+        assert followup.propose(got) == today + timedelta(days=1)
+        assert followup.propose(got) > today
 
 
 def test_a_date_chosen_by_a_person_is_not_moved(world):
