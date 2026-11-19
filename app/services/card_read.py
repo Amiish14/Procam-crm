@@ -56,6 +56,63 @@ DEFAULT_LANGS = 'eng'
 CONFIG = 'CARD_TEXT_READER_CONFIG'
 DEFAULT_CONFIG = '--oem 3 --psm 6'
 SPARSE_CONFIG = '--oem 3 --psm 11'
+#: CRM-SCAN-02: two more segmentations. 4 is "one column of text of
+#: varying sizes" — the card with a big name and small lines under it;
+#: 3 is the automatic page layout, which finds the columns of a
+#: two-column card. Every one is kept as evidence, best one wins.
+COLUMN_CONFIG = '--oem 3 --psm 4'
+AUTO_CONFIG = '--oem 3 --psm 3'
+
+
+def configs():
+    return (config(), SPARSE_CONFIG, COLUMN_CONFIG, AUTO_CONFIG)
+
+
+def blocks_from_data(data, width=0):
+    """Block/column-aware text from the reader's word boxes.
+
+    `data` is image_to_data(output_type=DICT). Words are grouped into
+    the reader's blocks and lines; blocks are ordered COLUMN first
+    (left edge clustered at 25% of the width), then top to bottom, so a
+    two-column card is read down the left, then down the right, instead
+    of across both. A blank line separates blocks.
+    """
+    words = []
+    n = len((data or {}).get('text') or [])
+    for i in range(n):
+        text = str(data['text'][i] or '').strip()
+        try:
+            conf = float(data.get('conf', ['0'] * n)[i])
+        except (TypeError, ValueError):
+            conf = 0.0
+        if not text or conf < 0:
+            continue
+        words.append({'b': data['block_num'][i], 'p': data['par_num'][i],
+                      'l': data['line_num'][i], 'x': data['left'][i],
+                      'y': data['top'][i], 'w': data['width'][i],
+                      't': text})
+    if not words:
+        return ''
+    width = width or max(w['x'] + w['w'] for w in words) or 1
+    blocks = {}
+    for w in words:
+        blocks.setdefault(w['b'], []).append(w)
+    ordered = []
+    for b, ws in blocks.items():
+        left = min(w['x'] for w in ws)
+        top = min(w['y'] for w in ws)
+        ordered.append((int(left / (width * 0.25)), top, b, ws))
+    ordered.sort(key=lambda t: (t[0], t[1]))
+    out = []
+    for _col, _top, _b, ws in ordered:
+        lines = {}
+        for w in ws:
+            lines.setdefault((w['p'], w['l']), []).append(w)
+        for key in sorted(lines, key=lambda k: min(w['y'] for w in lines[k])):
+            out.append(' '.join(w['t'] for w in sorted(lines[key],
+                                                       key=lambda w: w['x'])))
+        out.append('')
+    return '\n'.join(out).strip()
 
 #: Where the binary is, when it is not on PATH.
 CMD = 'TESSERACT_CMD'
@@ -222,8 +279,9 @@ def read_image(png_bytes, *, try_orientations=True):
                      in card_image.quarter_turns(img)]
 
         best = {'text': '', 'rotation': 0, 'how': '', 'score': -1}
+        readings = []
         for angle, candidate in tries:
-            for how in (config(), SPARSE_CONFIG):
+            for how in configs():
                 try:
                     text = _read_once(reader, candidate, how=how)
                 except Exception as exc:                  # noqa: BLE001
@@ -233,6 +291,8 @@ def read_image(png_bytes, *, try_orientations=True):
                             'ms': int((time.time() - started) * 1000),
                             'how': how, **shape}
                 score = _card_likeness(text)
+                readings.append({'rotation': angle, 'how': how,
+                                 'score': score, 'text': text})
                 if score > best['score']:
                     best = {'text': text, 'rotation': angle, 'how': how,
                             'score': score}
@@ -240,9 +300,28 @@ def read_image(png_bytes, *, try_orientations=True):
                     break          # the usual card, read the usual way
             if best['score'] >= WORTH_KEEPING:
                 break
+        # Block/column reading of the winning orientation, as one more
+        # candidate and one more piece of evidence.
+        try:
+            upright = dict(tries).get(best['rotation'], work)
+            data = reader.image_to_data(upright, lang=langs(),
+                                        config=AUTO_CONFIG,
+                                        output_type=reader.Output.DICT)
+            text = blocks_from_data(data, upright.size[0])
+            if text.strip():
+                score = _card_likeness(text)
+                readings.append({'rotation': best['rotation'],
+                                 'how': 'blocks', 'score': score,
+                                 'text': text})
+                if score > best['score']:
+                    best = {'text': text, 'rotation': best['rotation'],
+                            'how': 'blocks', 'score': score}
+        except Exception:                                 # noqa: BLE001
+            pass
         return {'text': best['text'], 'rotation': best['rotation'],
                 'error': '', 'ms': int((time.time() - started) * 1000),
-                'how': best['how'], 'score': best['score'], **shape}
+                'how': best['how'], 'score': best['score'],
+                'readings': readings, **shape}
     except Exception as exc:                              # noqa: BLE001
         return {'text': '', 'rotation': 0,
                 'error': f'the on-server reader failed '
@@ -253,11 +332,20 @@ def read_image(png_bytes, *, try_orientations=True):
 
 def read_pages(pages):
     """Every prepared picture, read and joined front-first."""
-    out, notes = [], []
+    text, notes, _evidence = read_pages_with_evidence(pages)
+    return text, notes
+
+
+def read_pages_with_evidence(pages):
+    """read_pages, plus every reading of every side for the accuracy
+    page and the candidate scorer: [{side, rotation, how, score, text}]."""
+    out, notes, evidence = [], [], []
     for n, png in enumerate(pages or []):
         found = read_image(png)
         where = 'front' if n == 0 else ('back' if n == 1
                                         else f'page {n + 1}')
+        for r in found.get('readings') or []:
+            evidence.append(dict(r, side=where))
         if found.get('error'):
             notes.append(f'{where}: {found["error"]}')
             break                 # the same reason will hold for page 2
@@ -269,4 +357,4 @@ def read_pages(pages):
         else:
             notes.append(f'{where}: the on-server reader found no text '
                          f'on it ({found.get("ms", 0)} ms)')
-    return '\n'.join(out), notes
+    return '\n'.join(out), notes, evidence
