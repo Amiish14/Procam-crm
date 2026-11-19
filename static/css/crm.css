@@ -417,7 +417,20 @@ dialog::backdrop{background:rgba(10,11,15,.42);backdrop-filter:blur(2px)}
   border-radius:var(--rd-sm);padding:1px 5px;font-size:12.5px}
 .sec{font-size:10.5px;font-weight:700;letter-spacing:.06em;
   text-transform:uppercase;color:var(--p-text-3);margin:var(--s-5) 0 var(--s-2)}
-.drop{border:1px dashed var(--p-border-strong);border-radius:var(--rd-md);
+.drop{
+  /* A <label> is INLINE, and this one never said otherwise. It got
+     away with it while the native file control was drawn inside it:
+     that control was an in-flow box wide and tall enough to give the
+     line something to be. Clipping the input (below) took the last
+     in-flow box out of the label, and an inline box takes no height
+     from its vertical padding and no width from `width` -- so both
+     zones collapsed to a sliver at the left edge, the padding
+     overflowed and they overlapped each other, and the second line of
+     text was cut to "cepts...".
+
+     One declaration, and it is the one that was always missing. */
+  display:block;
+  border:1px dashed var(--p-border-strong);border-radius:var(--rd-md);
   padding:var(--s-10) var(--s-5);text-align:center;background:var(--p-surface);
   position:relative;
   cursor:pointer;transition:border-color var(--dur-out),

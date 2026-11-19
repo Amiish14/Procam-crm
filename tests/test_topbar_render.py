@@ -45,7 +45,7 @@ MENU_BELOW = 1024
 
 PROBE = """
 function probe(){
-  var bar = document.querySelector('.crm-top');
+  var bar = D.querySelector('.crm-top');
   var vis = function(el){
     if (!el) return false;
     var r = el.getBoundingClientRect();
@@ -56,21 +56,24 @@ function probe(){
   return {
     barHeight: Math.round(bar.getBoundingClientRect().height),
     barOverflow: bar.scrollWidth - bar.clientWidth,
-    pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+    pageOverflow: D.documentElement.scrollWidth - W.innerWidth,
     total: links.length,
     shown: links.filter(vis).map(name),
     hidden: links.filter(function(a){ return !vis(a); }).map(name),
-    menuButton: vis(document.querySelector('.crm-more-btn')),
+    menuButton: vis(D.querySelector('.crm-more-btn')),
     panelDisplay: getComputedStyle(
-      document.querySelector('.crm-more-panel')).display,
-    tap: Math.round((document.querySelector('.crm-more-btn')
+      D.querySelector('.crm-more-panel')).display,
+    tap: Math.round((D.querySelector('.crm-more-btn')
       .getBoundingClientRect().height) || 0)
   };
 }
 """
 
 #: Opened by hand, which is what a phone does to it.
-OPEN = "<script>document.getElementById('crmMoreToggle').checked=true;</script>"
+#: `document`, not `D`: this one runs INSIDE the page under test,
+#: where there is no host window to reach through.
+OPEN = ("<script>document.getElementById('crmMoreToggle')"
+        ".checked = true;</script>")
 
 
 @pytest.fixture(scope='module')

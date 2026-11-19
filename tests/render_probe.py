@@ -55,43 +55,81 @@ PAGE = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 {extra_css}
 </head><body>
 {body}
+</body></html>"""
+
+#: The page under test is measured inside an IFRAME of exactly the
+#: width asked for, not in the browser window. Chrome on a Mac will
+#: not make a window narrower than about 466px, so `--window-size=390`
+#: and `--window-size=441` both laid out at 466 and a phone width could
+#: not be tested at all. An iframe is its own viewport: media queries,
+#: `100vw` and `innerWidth` all answer to its width, at any size.
+HOST = """<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>html,body{{margin:0;padding:0}}
+iframe{{border:0;display:block;width:{width}px;height:{height}px}}</style>
+</head><body>
+<iframe id="under" src="page.html"></iframe>
 <pre id="renderProbe"></pre>
-<script>{probe}
-document.getElementById('renderProbe').textContent =
-  JSON.stringify(probe(), null, 1);
+<script>
+function run(){{
+  var out;
+  try {{
+    var f = document.getElementById('under');
+    window.W = f.contentWindow;
+    window.D = f.contentDocument;
+    {probe}
+    out = probe();
+  }} catch (e) {{ out = {{probeError: String(e) + ' @ ' + e.stack}}; }}
+  document.getElementById('renderProbe').textContent =
+    JSON.stringify(out, null, 1);
+}}
+/* The host's own load event: the iframe's document does not exist
+   while this script is being parsed, so anything that reaches for it
+   here throws and the probe never runs at all. */
+window.addEventListener('load', run);
 </script></body></html>"""
 
 
 def render(template, probe, width=1255, height=900, extra_css='',
            extra_body='', scale=1):
-    """Render `template`, run `probe` (a JS function body named `probe`
-    returning a JSON-able object) in Chrome at `width`, return it."""
+    """Render `template` in an iframe `width` wide, run `probe` against
+    it in Chrome, and return what it measured.
+
+    `probe` is JavaScript declaring `function probe()` and returning a
+    JSON-able object. Inside it, `D` is the document under test and `W`
+    its window -- NOT the host page's, which is why nothing in a probe
+    says plain `document`.
+    """
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(os.path.join(ROOT, 'templates')),
         extensions=['jinja2.ext.do'])
     env.globals.update(CONTEXT)
     body = env.get_template(template).render(**CONTEXT) + extra_body
-    html = PAGE.format(root='file://' + ROOT, body=body, probe=probe,
-                       extra_css=extra_css)
+    page = PAGE.format(root='file://' + ROOT, body=body, extra_css=extra_css)
+    host = HOST.format(width=width, height=height, probe=probe)
 
     with tempfile.TemporaryDirectory() as tmp:
-        page = os.path.join(tmp, 'page.html')
-        with open(page, 'w') as fh:
-            fh.write(html)
+        with open(os.path.join(tmp, 'page.html'), 'w') as fh:
+            fh.write(page)
+        host_path = os.path.join(tmp, 'host.html')
+        with open(host_path, 'w') as fh:
+            fh.write(host)
         out = subprocess.run(
             [CHROME, '--headless=new', '--disable-gpu', '--no-sandbox',
              '--hide-scrollbars', '--allow-file-access-from-files',
              '--force-device-scale-factor=%s' % scale,
-             '--window-size=%d,%d' % (width, height),
+             '--window-size=%d,%d' % (max(width + 40, 900), height + 120),
              '--virtual-time-budget=4000', '--dump-dom',
              '--user-data-dir=' + os.path.join(tmp, 'profile'),
-             'file://' + page],
+             'file://' + host_path],
             capture_output=True, text=True, timeout=120)
     dom = out.stdout
     m = re.search(r'<pre id="renderProbe">(.*?)</pre>', dom, re.S)
-    if not m:
+    if not m or not m.group(1).strip():
         raise AssertionError('the page never ran its probe:\n'
                              + (out.stderr or dom)[-2000:])
     text = (m.group(1).replace('&lt;', '<').replace('&gt;', '>')
             .replace('&amp;', '&').replace('&quot;', '"'))
-    return json.loads(text)
+    got = json.loads(text)
+    if isinstance(got, dict) and 'probeError' in got:
+        raise AssertionError('the probe threw: ' + got['probeError'])
+    return got
