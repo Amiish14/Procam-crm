@@ -306,4 +306,9 @@ table tbody tr:hover > td { background: var(--bg-hover); }
     min-height: 44px; font-size: 16px !important; width: 100%; }
   .mod textarea { min-height: 88px; }
   .mx { min-width: 44px; min-height: 44px; }
+  /* The sheet's pinned close, at a finger size. UI sweep 19 Nov: on a
+     phone these dialogs are full-height sheets whose only way out was
+     Cancel at the bottom of the form. */
+  dialog .sheet-x { width: 44px; height: 44px; font-size: 19px;
+    margin: -6px -6px 0 0; }
 }

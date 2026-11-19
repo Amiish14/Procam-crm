@@ -14,8 +14,8 @@ from functools import wraps
 import mimetypes
 import os
 
-from flask import (Blueprint, jsonify, render_template, request, session,
-                   url_for,
+from flask import (Blueprint, jsonify, redirect, render_template, request,
+                   session, url_for,
                    current_app)
 
 from app import db
@@ -64,6 +64,27 @@ def _card_or_404(card_id):
 
 
 # ─── HTML page ───────────────────────────────────────────────────────────
+@bp.route('/scan')
+def scan_alias():
+    """UI sweep 19 Nov: /scan is what people type, and typed it 404s.
+
+    The page has always been at /business-cards/scan and the UAT sheets
+    say /scan, which is the shorter name and the one that gets
+    remembered -- so the short one answers rather than the sheet being
+    corrected.
+
+    302, not 301: a permanent redirect is cached by the browser for
+    good, and if this page ever moves again every bookmark would keep
+    pointing at a path nobody can change. `url_for` carries the prefix
+    the CRM is served under, so this works behind /CRM.
+
+    No auth guard: it is a redirect to a guarded page, which refuses or
+    sends on to the sign-in itself. A second guard here would only mean
+    two places to keep in step.
+    """
+    return redirect(url_for('business_card.scan_page'), code=302)
+
+
 @bp.route('/business-cards/scan')
 @_require_auth
 def scan_page():

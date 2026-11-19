@@ -132,7 +132,22 @@ a:hover{color:var(--p-red)}
     border:1px solid var(--p-border);border-radius:var(--rd-md);
     box-shadow:0 12px 32px rgba(11,13,18,.16);padding:6px;z-index:60}
   .crm-more-toggle:checked ~ .crm-more-panel{display:block}
+  /* The floating chat button is fixed to the bottom-right corner and
+     the open menu reaches it, so "Back to CRM" -- the last item, and
+     the one most likely to be wanted -- sat behind the pill. The
+     button steps aside, which is what it already does while a dialog
+     is open (`body.modal-open` in shell.css); this is the same idea
+     said in CSS, since the menu needs no script.
+     `.pai-fab` is a sibling of the bar: the copilot panel is included
+     straight after `</header>`. */
+  .crm-top:has(.crm-more-toggle:checked) ~ .pai-fab{display:none}
   .crm-more-panel nav{display:block;overflow:visible;flex-wrap:nowrap}
+  /* Where `:has()` is not available the button cannot be reached from
+     the bar, so the list keeps clear of it instead: 44px of button,
+     12px of its own margin, and room to tap below the last item. */
+  @supports not selector(:has(*)){
+    .crm-more-panel{padding-bottom:68px}
+  }
   .crm-more-panel nav a,
   .crm-more-panel .toolbar a{
     display:flex;align-items:center;min-height:44px;
@@ -378,6 +393,31 @@ dialog::backdrop{background:rgba(10,11,15,.42);backdrop-filter:blur(2px)}
    bottom of the page on a phone. No `!important`: a script that shows
    a dialog by setting an inline style should still be able to. */
 dialog:not([open]){display:none}
+/* ── The pinned close on a sheet. UI sweep 19 Nov ──────────────────
+   Every one of these dialogs puts Cancel at the BOTTOM of a form that
+   is a full-height sheet on a phone, so getting out of one meant
+   scrolling to the end of it. The account modal grew a pinned close
+   for the same reason (96aa0b6) and this is its twin -- one button,
+   written by `static/js/sheets.js` rather than into ten templates, so
+   the eleventh dialog gets it too.
+
+   `position:sticky` with `float:right` so it rides the top of the
+   scrolling content and no form has to leave a gap for it. */
+dialog .sheet-x{
+  position:sticky;top:0;float:right;z-index:3;
+  width:32px;height:32px;margin:-4px -4px 0 0;
+  display:inline-flex;align-items:center;justify-content:center;
+  border:0;border-radius:var(--rd);background:transparent;
+  color:var(--p-text-2);font-size:17px;line-height:1;cursor:pointer}
+dialog .sheet-x:hover{background:var(--p-surface-3);color:var(--p-ink)}
+dialog .sheet-x:focus-visible{outline:2px solid var(--p-red);
+  outline-offset:1px}
+/* While a dialog is open the chat button is not a destination: it sits
+   over the sheet's own sticky footer, so a tap meant for Create RFQ
+   could land on Procam AI. `shell.css` says this for the single-page
+   app and the module pages do not load `shell.css` -- so until now
+   `sheets.js` was setting a class nothing on these pages read. */
+body.modal-open .pai-fab{display:none}
 .modal-wrap{padding:var(--s-6)}
 .modal-wrap h2{margin-bottom:var(--s-4)}
 

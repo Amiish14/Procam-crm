@@ -25,6 +25,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import glob
+import re
+
 import pytest
 
 import render_probe
@@ -140,11 +142,20 @@ def test_the_closed_state_is_stated_in_our_own_stylesheet():
         'a script that shows a dialog by inline style should still win')
 
 
+def _markup(text):
+    """Comments out. A Jinja comment explaining what the shared sheet
+    script does to every dialog is prose, not a dialog -- and a test
+    nobody can edit a comment past is a test that gets edited instead
+    of the code."""
+    text = re.sub(r'\{#.*?#\}', '', text, flags=re.S)
+    return re.sub(r'<!--.*?-->', '', text, flags=re.S)
+
+
 def test_every_dialog_in_the_repo_is_covered():
     """A page with a dialog that nobody measures is how this comes
     back."""
     found = {os.path.relpath(p, os.path.join(ROOT, 'templates'))
              for p in glob.glob(os.path.join(ROOT, 'templates', '**',
                                              '*.html'), recursive=True)
-             if '<dialog' in open(p).read()}
+             if '<dialog' in _markup(open(p).read())}
     assert found == set(PAGES), found.symmetric_difference(set(PAGES))

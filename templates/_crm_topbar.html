@@ -127,6 +127,13 @@
 {# Procam AI is available on every screen, §6.1 #}
 {% include "_copilot_panel.html" %}
 
+{# UI sweep 19 Nov: a pinned close on every dialog on the page, and
+   `body.modal-open` while one is open so the chat button and the
+   bottom bar step aside. Loaded here because every page with a dialog
+   includes this bar -- one definition rather than ten, and the
+   eleventh dialog gets it without being told. #}
+<script src="{{ url_prefix }}/static/js/sheets.js?v={{ asset_v }}"></script>
+
 {% if feature('FEATURE_MY_MAIL') %}
 <script>
 /* The badge is fetched rather than rendered: the count needs a query
