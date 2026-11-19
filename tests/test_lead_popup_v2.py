@@ -654,7 +654,12 @@ def test_the_account_search_needs_three_letters():
         '/api/leads/new/accounts?q=LF').get_json()['rows'] == []
     rows = _client().get(
         '/api/leads/new/accounts?q=Hitachi').get_json()['rows']
-    assert rows and rows[0]['name'].startswith(PREFIX)
+    # Any row, not the first. These suites share one in-process
+    # database, so another module's account with the same realistic
+    # name sorts above this fixture's -- and which module has run is
+    # not this test's business. It was one of the five false failures
+    # under `-n auto` on 19 Nov.
+    assert [r for r in rows if r['name'].startswith(PREFIX)], rows
 
 
 def test_a_blocked_account_is_shown_marked_rather_than_hidden():

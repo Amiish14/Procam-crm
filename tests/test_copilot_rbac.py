@@ -691,6 +691,26 @@ def test_an_owned_account_still_routes_to_its_owner(world):
         assert 'Contact the account owner' in (answer.result.headline or '')
 
 
+def _rows_out(model):
+    """Every row of one table as (table, {column: value}).
+
+    Deleting other modules' rows and putting them back is the only way
+    this test can assert "none at all" in a database it shares with
+    them. Reflected from the columns rather than listed, so a new
+    column is carried too instead of being silently dropped.
+    """
+    table = model.__table__
+    return [(table, {c.name: getattr(row, c.name) for c in table.columns})
+            for row in model.query.all()]
+
+
+def _rows_back(kept):
+    """Put them back, parents first, with the ids they had."""
+    for table, values in reversed(kept):
+        db.session.execute(table.insert().values(**values))
+    db.session.commit()
+
+
 def test_an_empty_module_says_so_rather_than_reporting_good_news(world):
     """Production had zero RFQs and zero quotes, and the answer was
     "Every RFQ in your scope has been quoted" — true, and read as
@@ -700,11 +720,24 @@ def test_an_empty_module_says_so_rather_than_reporting_good_news(world):
     from app.models.rfq import RFQ
 
     with flask_app.app_context():
-        # the fixture's own rows, set aside for this test only
-        RFQ.query.filter(RFQ.rfq_number.like('R-CP-%')).delete(
-            synchronize_session=False)
-        Quote.query.filter(Quote.quote_number.like('Q-CP-%')).delete(
-            synchronize_session=False)
+        # EVERY rfq and quote, not only this fixture's. The assertion is
+        # about a CRM that holds none at all, and these suites share one
+        # in-process database -- so whether another module had already
+        # created an RFQ decided whether this passed, and under `-n auto`
+        # that depends on which worker ran what. It was one of the five
+        # false failures on 19 Nov.
+        #
+        # Inside a savepoint and rolled back at the end, so no other
+        # module's fixture loses its rows: deleting them for real would
+        # trade this flake for somebody else's.
+        #
+        # Not a savepoint: a handler under test commits, which closes it,
+        # and then the deletes are real and the next test in this file
+        # finds an empty module of its own. So the rows are copied out
+        # column by column, deleted, and put back with their own ids.
+        kept = _rows_out(Quote) + _rows_out(RFQ)
+        Quote.query.delete(synchronize_session=False)
+        RFQ.query.delete(synchronize_session=False)
         db.session.commit()
         try:
             sc = _scope_for('CPADM', DataScope.ALL)
@@ -718,16 +751,7 @@ def test_an_empty_module_says_so_rather_than_reporting_good_news(world):
                 assert 'quoted' not in r.headline.lower() or key != \
                     'rfqs_unquoted'
         finally:
-            db.session.add(RFQ(rfq_number='R-CP-1', subject='Acct rfq',
-                               account_id=world['mine']['account'],
-                               lead_id=world['mine']['lead'],
-                               lead_driver='CPREP'))
-            db.session.add(Quote(
-                quote_number='Q-CP-1', subject='Acct quote',
-                account_id=world['mine']['account'],
-                lead_id=world['mine']['lead'], prepared_by_id='CPREP',
-                status='Submitted', total_amount=1_000_000))
-            db.session.commit()
+            _rows_back(kept)
 
 
 def test_a_populated_module_still_answers_normally(world):

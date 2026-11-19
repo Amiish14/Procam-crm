@@ -13,6 +13,7 @@ into an element, and `--dump-dom` to read it back. Nothing is
 installed, and `available()` is false wherever Chrome is not, so the
 suite still runs on the server.
 """
+import contextlib
 import json
 import os
 import re
@@ -128,6 +129,45 @@ window.addEventListener('load', run);
 </script></body></html>"""
 
 
+#: Chrome is one machine-wide resource, and `-n auto` runs several of
+#: these suites at once. Three probes racing for it was the whole of
+#: "5 failed" on 19 Nov: the pages were right, the browsers were
+#: starting on a loaded machine and one of them never got to a first
+#: frame inside its time budget. So the renders queue, across
+#: processes, on a lock file -- which is what makes a parallel run of
+#: the render suites agree with a serial one.
+_LOCK = os.path.join(tempfile.gettempdir(), 'procam-render-probe.lock')
+
+
+@contextlib.contextmanager
+def _only_one_browser():
+    try:
+        import fcntl
+    except ImportError:                       # not POSIX: run unlocked
+        yield
+        return
+    with open(_LOCK, 'a+') as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _chrome(host_path, *, width, height, scale, profile):
+    """One headless render, with nobody else rendering at the time."""
+    with _only_one_browser():
+        return subprocess.run(
+            [CHROME, '--headless=new', '--disable-gpu', '--no-sandbox',
+             '--hide-scrollbars', '--allow-file-access-from-files',
+             '--force-device-scale-factor=%s' % scale,
+             '--window-size=%d,%d' % (max(width + 40, 900), height + 120),
+             '--virtual-time-budget=4000', '--dump-dom',
+             '--user-data-dir=' + profile,
+             'file://' + host_path],
+            capture_output=True, text=True, timeout=180)
+
+
 def render(template, probe, width=1255, height=900, extra_css='',
            extra_body='', scale=1, **context):
     """Render `template` in an iframe `width` wide, run `probe` against
@@ -165,19 +205,21 @@ def render(template, probe, width=1255, height=900, extra_css='',
         host_path = os.path.join(tmp, 'host.html')
         with open(host_path, 'w') as fh:
             fh.write(host)
-        out = subprocess.run(
-            [CHROME, '--headless=new', '--disable-gpu', '--no-sandbox',
-             '--hide-scrollbars', '--allow-file-access-from-files',
-             '--force-device-scale-factor=%s' % scale,
-             '--window-size=%d,%d' % (max(width + 40, 900), height + 120),
-             '--virtual-time-budget=4000', '--dump-dom',
-             '--user-data-dir=' + os.path.join(tmp, 'profile'),
-             'file://' + host_path],
-            capture_output=True, text=True, timeout=120)
-    dom = out.stdout
-    m = re.search(r'<pre id="renderProbe">(.*?)</pre>', dom, re.S)
+        out, dom, m = None, '', None
+        # Twice at most. `--virtual-time-budget` is a budget in virtual
+        # time, but getting to the first frame is real work on a real
+        # machine, and a browser that was still starting when the
+        # budget ran out dumps a DOM with no measurement in it. That
+        # is not a layout fault and must not read as one.
+        for _attempt in (1, 2):
+            out = _chrome(host_path, width=width, height=height, scale=scale,
+                          profile=os.path.join(tmp, 'profile%d' % _attempt))
+            dom = out.stdout
+            m = re.search(r'<pre id="renderProbe">(.*?)</pre>', dom, re.S)
+            if m and m.group(1).strip():
+                break
     if not m or not m.group(1).strip():
-        raise AssertionError('the page never ran its probe:\n'
+        raise AssertionError('the page never ran its probe, twice:\n'
                              + (out.stderr or dom)[-2000:])
     text = (m.group(1).replace('&lt;', '<').replace('&gt;', '>')
             .replace('&amp;', '&').replace('&quot;', '"'))
