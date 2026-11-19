@@ -124,6 +124,26 @@ def _apply_overrides_and_defaults(merged: dict, extracted: dict,
     if not extracted.get("phone") and phone_norm and phone_norm not in body_norm:
         merged["phone_primary"] = None
 
+    # And drop OUR OWN numbers, for the same reason the forwarder's own
+    # email and company are dropped twenty lines up: a Procam signature
+    # at the bottom of a forwarded enquiry is not the customer's contact
+    # details. UAT 19 Nov, shared-phone follow-up -- +91-7738155449 was
+    # captured onto contacts at two different companies this way, and
+    # 24 numbers are shared like that.
+    #
+    # `data/own_numbers.txt`, written only by the evidence script and
+    # only for a number the evidence calls OURS. Fails open: a list that
+    # cannot be read leaves the phone alone rather than leaving the
+    # enquiry with no number on it.
+    try:
+        from app.services import own_numbers
+        for field in ("phone_primary", "phone_secondary"):
+            if own_numbers.is_ours(merged.get(field)):
+                merged[field] = None
+                merged["needs_review"] = True
+    except Exception:                                      # noqa: BLE001
+        pass
+
     # One-line summary
     if not merged.get("one_line_summary"):
         subj = (extracted.get("subject") or "").strip()
